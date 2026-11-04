@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -36,6 +36,7 @@ describe("logs output format parsing", () => {
                 Layer.succeed(CliArgs, { args }),
                 mockOutput({ format: "text" }).layer,
                 BunServices.layer,
+                BunCrypto.layer,
                 legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
                 mockRuntimeInfo({ homeDir: home, cwd: home }),
                 mockAnalytics().layer,

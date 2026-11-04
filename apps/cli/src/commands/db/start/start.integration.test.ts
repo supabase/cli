@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -101,7 +101,7 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+        const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
         spawned.push({ args });
 
         if (!ChildProcess.isStandardCommand(command)) {
@@ -482,7 +482,7 @@ function setup(opts: SetupOpts = {}) {
         yield* writeProjectFile(workdir, ".env", opts.projectEnvContents);
       }
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
   const out = mockOutput({ format: opts.format ?? "text" });
   const http = alwaysReadyHttpClient();
   const telemetry = mockTelemetryStateTracked();
@@ -530,6 +530,7 @@ function setup(opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     out.layer,
     configValuesLayer({ output: out.layer }),
     cliSettings,
@@ -581,13 +582,13 @@ const readCurrentBranch = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.readFileString(yield* currentBranchPath(workdir));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const currentBranchExists = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.exists(yield* currentBranchPath(workdir));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 describe("db start", () => {
   beforeEach(() => {
@@ -1039,6 +1040,17 @@ describe("db start", () => {
     });
   });
 
+  it.effect("emits the health-start flags on a supported engine", () => {
+    const base = freshVolumeRoute(defaultRoute());
+    const { layer, child } = setup({
+      route: (args) => (args[0] === "version" ? { stdout: ["1.44 1.44 1.56"] } : base(args)),
+    });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(createArgs(child.spawned)).toContain("--health-start-interval");
+    });
+  });
+
   it.effect("starts when Docker's health check cannot exec but the host can connect", () => {
     const s = setup({ route: execFailedHealthRoute(freshVolumeRoute(defaultRoute())) });
     return Effect.gen(function* () {
@@ -1263,7 +1275,7 @@ describe("db start", () => {
             expect(stateAtConnect.length).toBeGreaterThan(1);
             expect(stateAtConnect.every((state) => state === "busy")).toBe(true);
             expect(yield* gateState(gate)).toBe("free");
-          }).pipe(Effect.provide(BunServices.layer));
+          }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
         },
       );
     }
@@ -1916,7 +1928,7 @@ describe("db start", () => {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             return yield* fs.readFileString(path.join(tempRoot.current, "supabase", "config.toml"));
-          }).pipe(Effect.provide(BunServices.layer));
+          }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
           expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
           expect(out.stderrText).not.toContain("auto_expose_new_tables");
         }

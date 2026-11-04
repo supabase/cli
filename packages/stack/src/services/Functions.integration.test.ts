@@ -1,8 +1,7 @@
-import { NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
-  Crypto,
   Deferred,
   Effect,
   Exit,
@@ -14,6 +13,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
@@ -145,7 +145,11 @@ describe("service catalog", () => {
           expect(inspectorResponse.status).toBe(200);
           yield* instance.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 
@@ -198,7 +202,11 @@ describe("service catalog", () => {
         yield* Scope.close(scope, Exit.void);
         expect(yield* fs.exists(sentinel)).toBe(true);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   const ancestors = [
@@ -294,7 +302,11 @@ describe("service catalog", () => {
             expect(yield* response.text).toBe("shared");
             yield* instance.stop;
           }),
-        ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
       { timeout: 120_000 },
     );
 
@@ -368,7 +380,11 @@ describe("service catalog", () => {
           expect(yield* response.text).toBe("config");
           yield* instance.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 
@@ -456,7 +472,11 @@ describe("service catalog", () => {
           );
           yield* instance.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 });
@@ -592,7 +612,11 @@ for (const runtime of ["native", testEngine] as const) {
             ),
           );
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 }
@@ -690,7 +714,11 @@ it.live(
           ),
         );
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 120_000 },
 );
 
@@ -739,7 +767,8 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
         fs: yield* FileSystem.FileSystem,
         path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
-        crypto: yield* Crypto.Crypto,
+        crypto: yield* SecureRandom.SecureRandom,
+        digest: yield* Digest.Digest,
         client: yield* HttpClient.HttpClient,
         spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
         container,
@@ -785,5 +814,9 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         static_files: ["/__supabase_project/source/*.txt"],
       });
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );

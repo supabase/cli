@@ -28,6 +28,7 @@ import { parseUrl } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue, localDbContainerId } from "../docker-ids.ts";
 import { isBitbucketPipeline } from "../bitbucket-pipeline.ts";
+import { dockerSupportsHealthStartInterval } from "../container-cli.ts";
 import { holdProjectLifecycleLock } from "../project-lifecycle-lock.ts";
 import { dbNotRunningError } from "../status-errors.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
@@ -267,7 +268,10 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     hostname,
     dbContainerId,
     dbPort: values.dbPort,
-    containerOpts,
+    containerOpts: {
+      ...containerOpts,
+      healthStartInterval: yield* dockerSupportsHealthStartInterval(spawner),
+    },
     // `db reset` has no `fromBackup` concept at all, so `postgresSpecBase` omits it.
     postgresSpec: { ...postgresSpecBase, fromBackup },
     // Only the `db` container's own image, resolved lazily, right where it would be

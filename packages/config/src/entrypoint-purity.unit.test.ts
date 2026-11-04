@@ -536,6 +536,7 @@ describe("src/internal.ts export surface", () => {
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "unmappedSecretApiPaths",
+        "withoutSafeIntegerBounds",
         "writeCliConfigDocumentText",
       ]
     `);

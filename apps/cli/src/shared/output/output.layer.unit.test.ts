@@ -10,6 +10,7 @@ import {
   Layer,
   Option,
   PlatformError,
+  Scheduler,
   Schema,
   Sink,
   Stdio,
@@ -17,7 +18,7 @@ import {
 } from "effect";
 import { TestClock } from "effect/testing";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
-import { mockTty } from "../../../tests/helpers/mocks.ts";
+import { epipe, mockTty, overrideStreamErrored } from "../../../tests/helpers/mocks.ts";
 import {
   announceTarget,
   CommandTarget,
@@ -845,6 +846,85 @@ describe("Output", () => {
         }).pipe(provideLayer(stdio.layer));
       },
     );
+
+    it.effect("drops diagnostics once a direct write broke stderr", () => {
+      const stdio = mockStdio();
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stderr, epipe);
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        yield* out.raw("payload\n");
+
+        expect(stdio.stderr).toEqual([]);
+        expect(stdio.stdout).toEqual(["payload\n"]);
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("ends the command once a direct write broke stdout", () => {
+      const stdio = mockStdio();
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stdout, epipe);
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        const exit = yield* Effect.exit(out.raw("payload\n"));
+
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(StdoutClosedError);
+        expect(stdio.stderr).toEqual(["diagnostic\n"]);
+        expect(stdio.stdout).toEqual([]);
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("never yields between the stream check and the write", () => {
+      let inWindow = false;
+      let windows = 0;
+      let yieldChecks = 0;
+      let suspensions = 0;
+      const stdio = Layer.succeed(
+        Stdio.Stdio,
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.empty,
+          stdout: () =>
+            Sink.forEach((_item: string | Uint8Array) =>
+              Effect.sync(() => {
+                inWindow = false;
+              }),
+            ),
+          stderr: () => Sink.drain,
+        }),
+      );
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stdout, () => {
+          inWindow = true;
+          windows++;
+          /* Bun delivers the pending error in a microtask; it runs inside the window only if the
+             write suspends there. */
+          queueMicrotask(() => {
+            if (inWindow) suspensions++;
+          });
+          return null;
+        });
+        const scheduler = yield* Scheduler.Scheduler;
+        const out = yield* Output;
+        yield* out.raw("payload\n").pipe(
+          Effect.provideService(Scheduler.Scheduler, {
+            executionMode: scheduler.executionMode,
+            shouldYield: (fiber) => {
+              if (inWindow) yieldChecks++;
+              return scheduler.shouldYield(fiber);
+            },
+            makeDispatcher: () => scheduler.makeDispatcher(),
+          }),
+        );
+
+        expect({ windows, inWindow, yieldChecks, suspensions }).toEqual({
+          windows: 1,
+          inWindow: false,
+          yieldChecks: 0,
+          suspensions: 0,
+        });
+      }).pipe(provideLayer(stdio));
+    });
 
     it.effect("keeps writing stdout once the stderr reader has closed", () => {
       const stdio = brokenStdio("stderr", "EPIPE");

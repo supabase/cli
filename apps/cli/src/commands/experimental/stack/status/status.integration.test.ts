@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema, Stream } from "effect";
 import {
@@ -279,13 +279,14 @@ const runStatus = (input: {
       mockCommandSettings({ workdir: projectRoot, supabaseHome: root }),
       cliConfigValuesTestLayer,
       BunServices.layer,
+      BunCrypto.layer,
       runtimeInfoLayer,
     );
     if (input.config === "explicit" || input.config === "multiline-functions-env")
       yield* seedLock(root).pipe(Effect.provide(layer));
     const effect = stackStatus(input.flags ?? flags()).pipe(Effect.provide(layer));
     return { effect, out, root };
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 it.effect("renders connections and a services summary without internal IDs", () =>
   Effect.gen(function* () {

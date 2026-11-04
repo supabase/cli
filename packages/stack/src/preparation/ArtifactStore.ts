@@ -1,14 +1,5 @@
-import {
-  Clock,
-  Crypto,
-  Effect,
-  FileSystem,
-  Option,
-  Path,
-  PlatformError,
-  Predicate,
-  Scope,
-} from "effect";
+import { Clock, Effect, FileSystem, Option, Path, PlatformError, Predicate, Scope } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
@@ -53,7 +44,8 @@ export interface ArtifactSource {
     PreparationError | ArtifactIntegrityError,
     | FileSystem.FileSystem
     | Path.Path
-    | Crypto.Crypto
+    | SecureRandom.SecureRandom
+    | Digest.Digest
     | ChildProcessSpawner.ChildProcessSpawner
     | HttpClient.HttpClient
   >;
@@ -646,7 +638,7 @@ const walkCache = (
 const retireGeneration = Effect.fn("ArtifactStore.retireGeneration")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom["Service"],
   keyRoot: string,
   digest: string,
 ): Effect.fn.Return<boolean, never> {
@@ -667,7 +659,7 @@ const retireGeneration = Effect.fn("ArtifactStore.retireGeneration")(function* (
             return undefined;
           if (yield* isSymlink(fs, stagingRoot)) return undefined;
           yield* fs.makeDirectory(stagingRoot, { recursive: true, mode: 0o700 });
-          const token = yield* crypto.randomUUIDv4;
+          const token = yield* crypto.uuidV4();
           const slotLockPath = stagingLockFor(path, stagingRoot, token);
           const slotDir = stagingDirFor(path, stagingRoot, token);
           const slotConnection = yield* acquireLock(slotLockPath, "create").pipe(
@@ -703,7 +695,7 @@ const retireGeneration = Effect.fn("ArtifactStore.retireGeneration")(function* (
 const sweepCache = Effect.fn("ArtifactStore.sweep")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom["Service"],
   cacheRoot: string,
 ): Effect.fn.Return<number, never> {
   const { generations, stagingRoots } = yield* walkCache(fs, path, cacheRoot);
@@ -776,7 +768,8 @@ const isPublishTargetTaken = (cause: unknown): boolean =>
 const publishGeneration = Effect.fn("ArtifactStore.publish")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom["Service"],
+  digest: Digest.Digest["Service"],
   childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   cacheRoot: string,
   source: ArtifactSource,
@@ -789,14 +782,7 @@ const publishGeneration = Effect.fn("ArtifactStore.publish")(function* (
     "create artifact staging root",
     fs.makeDirectory(resolved.stagingRoot, { recursive: true, mode: 0o700 }),
   );
-  const token = yield* crypto.randomUUIDv4.pipe(
-    Effect.mapError((cause) =>
-      artifactError(`Unable to allocate artifact staging name: ${cause.message}`, {
-        key: request.key,
-        cause,
-      }),
-    ),
-  );
+  const token = yield* crypto.uuidV4();
   const stagingDir = stagingDirFor(path, resolved.stagingRoot, token);
   const stagingLockPath = stagingLockFor(path, resolved.stagingRoot, token);
   const content = path.join(stagingDir, STAGING_CONTENT_NAME);
@@ -823,7 +809,8 @@ const publishGeneration = Effect.fn("ArtifactStore.publish")(function* (
       yield* source.materialize(request, content, resolved.expectedSha256, onProgress).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
+        Effect.provideService(Digest.Digest, digest),
         // The source owns the exact tar process boundary; the store only supplies the
         // already-owned process service captured by its constructor.
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
@@ -905,7 +892,8 @@ const publishGeneration = Effect.fn("ArtifactStore.publish")(function* (
 const prepareOrResolve = Effect.fn("ArtifactStore.prepareOrResolve")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom["Service"],
+  digest: Digest.Digest["Service"],
   childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   cacheRoot: string,
   source: ArtifactSource,
@@ -920,6 +908,7 @@ const prepareOrResolve = Effect.fn("ArtifactStore.prepareOrResolve")(function* (
     fs,
     path,
     crypto,
+    digest,
     childProcessSpawner,
     cacheRoot,
     source,
@@ -936,7 +925,8 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   if (options.cacheRoot.trim().length === 0)
     return yield* artifactError("Artifact cache root must not be blank");
@@ -991,6 +981,7 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
             fs,
             path,
             crypto,
+            digest,
             childProcessSpawner,
             cacheRoot,
             options.source,
@@ -1034,6 +1025,7 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
       fs,
       path,
       crypto,
+      digest,
       childProcessSpawner,
       cacheRoot,
       options.source,

@@ -139,6 +139,8 @@ const POSTGREST_WRITE_RESPONSE = {
   max_rows: 0,
   db_pool: null,
   db_pool_acquisition_timeout: null,
+  db_pool_max_lifetime: null,
+  db_pool_max_idletime: null,
 };
 
 /**
@@ -1505,6 +1507,54 @@ otp_expiry = 120
         const data = yield* decodeJsonRecord(success?.data);
         expect(data["unmanaged"]).toEqual([["storage", "analytics", "max_namespaces"]]);
         expect(data["unsupported"]).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("pushes a declared auth.email.require_current_password to the Auth config", () => {
+    const { layer, api } = setup({
+      toml: `project_id = "test"\n[auth.email]\nrequire_current_password = true\n`,
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
+      const update = api.requests.find(
+        (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+      );
+      expect(update?.body).toEqual({ security_update_password_require_current_password: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "leaves a hosted require_current_password toggle on when the file does not declare the key",
+    () => {
+      const { layer, api, out } = setup({
+        toml: `project_id = "test"\n[auth]\nminimum_password_length = 12\n`,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (a) => ({
+              ...a,
+              auth: {
+                ...asJsonRecord(a["auth"]),
+                security_update_password_require_current_password: true,
+              },
+            }),
+          }),
+        },
+        format: "json",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
+        const update = api.requests.find(
+          (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
+        );
+        expect(update?.body).toEqual({ password_min_length: 12 });
+        const success = out.messages.find((m) => m.type === "success");
+        const data = yield* decodeJsonRecord(success?.data);
+        expect(data["remote_only"]).toBe(1);
       }).pipe(Effect.provide(layer));
     },
   );

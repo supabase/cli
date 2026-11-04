@@ -307,6 +307,16 @@ export function sanitizeOpenApiSchema(
     sanitized[key] = rawValue;
   }
 
+  // Binary bodies are rewritten to `BinaryInput` by matching the bare format annotation, so
+  // extra annotations such as `description` would leave them typed as plain strings.
+  if (sanitized.type === "string" && sanitized.format === "binary") {
+    return {
+      type: "string",
+      format: "binary",
+      ...(sanitized.nullable === true ? { nullable: true } : {}),
+    };
+  }
+
   if (
     sanitized.type === "string" &&
     sanitized.format === "uuid" &&
@@ -497,6 +507,32 @@ function containsBinarySchema(schema: OpenApiSchema): boolean {
 
 function replaceBinarySchemaCode(code: string): string {
   return code.replace(/Schema\.String\.annotate\(\{\s*"format":\s*"binary"\s*\}\)/g, "BinaryInput");
+}
+
+// Renders the shorthands newer Effect codegen emits in their expanded form, so the committed
+// contracts stay byte-stable across Effect releases; both spellings build the same checks.
+// String literals and comments pass through untouched.
+export function expandSchemaShorthands(code: string): string {
+  const expandCode = (segment: string) =>
+    segment
+      .replace(
+        /Schema\.Int(?![\w$])/g,
+        'Schema.Number.check(Schema.isInt().annotate({ "expected": "an integer" }))',
+      )
+      .replace(
+        /Schema\.Finite(?![\w$])/g,
+        'Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number" }))',
+      )
+      .replace(/new globalThis\.RegExp\(/g, "new RegExp(");
+  const opaque =
+    /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+  let result = "";
+  let last = 0;
+  for (const match of code.matchAll(opaque)) {
+    result += expandCode(code.slice(last, match.index)) + match[0];
+    last = match.index + match[0].length;
+  }
+  return result + expandCode(code.slice(last));
 }
 
 function replaceOpenStringCode(code: string): string {
@@ -989,7 +1025,7 @@ function renderSchemaSource(
   );
 
   const finalizeCode = (code: string): string => {
-    const withOpenStrings = replaceOpenStringCode(code);
+    const withOpenStrings = replaceOpenStringCode(expandSchemaShorthands(code));
     return hasBinaryInputs ? replaceBinarySchemaCode(withOpenStrings) : withOpenStrings;
   };
 

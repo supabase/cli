@@ -463,11 +463,13 @@ interface LaunchOutcome {
 /** Planned units of work for one build: a run-scoped unit holds one launch, a block-scoped one many. */
 export interface PlannedUnit {
   readonly build: Build;
+  /** Block index for block-scoped units. */
+  readonly block?: number;
   readonly launches: ReadonlyArray<"warmup" | "timed">;
 }
 
 /** Measured launches per block for `block`-scoped workloads. */
-export const BLOCK_SIZE = 5;
+export const BLOCK_SIZE = 2;
 
 /**
  * Units in execution order. `run` scope reuses {@link buildRunPlan}, one launch per unit.
@@ -495,7 +497,7 @@ export function buildUnitPlan(
       ...Array.from({ length: measured }, () => "timed" as const),
     ];
     const order: ReadonlyArray<Build> = block % 2 === 0 ? ["base", "branch"] : ["branch", "base"];
-    for (const build of order) units.push({ build, launches });
+    for (const build of order) units.push({ build, block, launches });
   }
   return units;
 }
@@ -644,7 +646,7 @@ export const runWorkloadBench = (
     const plan = buildUnitPlan(runs, warmup, scope);
     const started = yield* Clock.currentTimeNanos;
 
-    const timed: Record<Build, Array<{ wallMs: number; exitCode: number }>> = {
+    const timed: Record<Build, Array<{ wallMs: number; exitCode: number; block?: number }>> = {
       base: [],
       branch: [],
     };
@@ -668,10 +670,14 @@ export const runWorkloadBench = (
           (options.cpuProf && build === "branch" && !alreadyProfiled),
       );
 
-    const record = (build: Build, outcomes: ReadonlyArray<LaunchOutcome>) => {
+    const record = (build: Build, outcomes: ReadonlyArray<LaunchOutcome>, block?: number) => {
       for (const outcome of outcomes) {
         if (outcome.kind === "timed") {
-          timed[build].push({ wallMs: outcome.wallMs, exitCode: outcome.exitCode });
+          timed[build].push({
+            wallMs: outcome.wallMs,
+            exitCode: outcome.exitCode,
+            ...(block === undefined ? {} : { block }),
+          });
         } else if (outcome.kind === "traced") {
           traced[build].push({ exitCode: outcome.exitCode, trace: outcome.trace });
         }
@@ -728,6 +734,7 @@ export const runWorkloadBench = (
           teardownFailures,
           onProfile,
         }),
+        planned.block,
       );
     }
 

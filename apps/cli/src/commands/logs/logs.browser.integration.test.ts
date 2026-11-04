@@ -28,6 +28,7 @@ const setup = Effect.fnUntraced(function* <E>(session: LogsSession<E>) {
       Terminal.make({
         columns: Effect.sync(() => columns),
         rows: Effect.sync(() => rows),
+        size: Queue.unbounded<Terminal.Size, Cause.Done>(),
         readInput: Effect.succeed(input),
         readLine: Effect.die("unused"),
         display: (text) => Queue.offer(frames, text).pipe(Effect.asVoid),
@@ -189,6 +190,7 @@ it.effect("restores the terminal even if entering the alternate screen fails", (
         Terminal.make({
           columns: Effect.succeed(80),
           rows: Effect.succeed(12),
+          size: Queue.unbounded<Terminal.Size, Cause.Done>(),
           readInput: Effect.succeed(input),
           readLine: Effect.die("unused"),
           display: (text) =>

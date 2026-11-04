@@ -1,10 +1,9 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { CliConfigStore } from "@supabase/config/effect";
 import {
   Cause,
   Config,
   Console,
-  Crypto,
   Effect,
   Exit,
   FileSystem,
@@ -17,6 +16,7 @@ import {
   Scope,
   Stdio,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { CliError, CliOutput, Command } from "effect/cli";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -95,7 +95,8 @@ export type AllowedRunCliServices =
   | CliSettings
   | CommandRuntime
   | FileSystem.FileSystem
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | LegacyProjectState
   | Path.Path
   | ProcessControl
@@ -614,7 +615,7 @@ export interface RunCliOptions<BeforeParseError = never> {
   readonly analyticsLayer: Layer.Layer<
     Analytics,
     Config.ConfigError | PlatformError.PlatformError,
-    CliSettings | Crypto.Crypto | FileSystem.FileSystem | Path.Path | RuntimeInfo | Tty
+    CliSettings | SecureRandom.SecureRandom | FileSystem.FileSystem | Path.Path | RuntimeInfo | Tty
   >;
   /**
    * Runs just before the process exits on any invocation that exits 0 — the seam for the CLI's
@@ -676,7 +677,9 @@ export function cliProgramFor<
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
     Layer.provideMerge(cliArgsLayer(cliArgs)),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(BunServices.layer, BunCrypto.layerSecureRandom, BunCrypto.layerDigest),
+    ),
   );
   return withoutParseErrorHelpDump(
     commandProgram.pipe(
@@ -777,6 +780,7 @@ export const runCli = Effect.fnUntraced(function* <
   const handledProgramLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),
     Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(BunCrypto.layerSecureRandom),
     Layer.provideMerge(cliConfigProviderLayer),
   );
 

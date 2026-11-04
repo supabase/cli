@@ -24,8 +24,9 @@ S3 protocol/vector controls are forwarded to their services. Storage receives th
 keys and region, and uses the gateway's `/storage/v1` prefix to verify S3 signatures and to build
 resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PORT` are accepted
 and ignored: the stack runs no Vector service.
-Encrypted JWT secrets are decrypted before shared credentials are derived, and encrypted
-`[edge_runtime.secrets]` values are decrypted before they reach the Functions service. `db.health_timeout`
+Encrypted JWT secrets are decrypted before shared credentials are derived. `[edge_runtime.secrets]`
+names are uppercased, empty or unresolved `env()` values and `SUPABASE_`-prefixed names are dropped,
+and encrypted values are decrypted before they reach the Functions service. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
 Studio receives the database connection, the Functions management directory/URL, and Analytics
@@ -64,7 +65,9 @@ secret key (`sb_secret_…`) or a JWT, values that themselves carry such a pair 
 URL with a token), and URL userinfo.
 
 Public ports are reserved in one SQLite registry per OS user at `<passwd home>/.supabase/ports.sqlite`,
-which `$SUPABASE_HOME` does not affect and which has no override. A stopped stack's automatic
+which `$SUPABASE_HOME` does not affect and which has no override. The registry uses SQLite's WAL
+mode, so `<passwd home>/.supabase` must be on a local filesystem, and `ports.sqlite-wal` and
+`ports.sqlite-shm` sit next to it while a connection is open. A stopped stack's automatic
 ports stay reserved across every other stack's starts, including in a different state root, and
 starting it again reuses the same ports. A configured port is reserved only while its listener is
 open, so a stopped stack never blocks another project's configured port; a configured port takes

@@ -208,10 +208,17 @@ const getResponse = (
   return new Response(body, { status, headers });
 };
 
+/** Lets browsers read router errors on requests that skip the preflight; preflights still fail. */
+const ERROR_CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey",
+  "Access-Control-Expose-Headers": "sb-error-code",
+};
+
 const getAuthErrorResponse = ({ code, message = "Invalid JWT" }: AuthFailure) =>
   getResponse({ code, message, msg: message }, STATUS_CODE.Unauthorized, {
+    ...ERROR_CORS_HEADERS,
     "sb-error-code": code,
-    "Access-Control-Expose-Headers": "sb-error-code",
   });
 
 const getWorkerErrorResponse = (error: unknown) => {
@@ -223,6 +230,7 @@ const getWorkerErrorResponse = (error: unknown) => {
           message: SB_SPECIFIC_ERROR_REASON[sbCode],
         },
         sbCode,
+        ERROR_CORS_HEADERS,
       );
     }
   }
@@ -232,6 +240,7 @@ const getWorkerErrorResponse = (error: unknown) => {
       message: "Request failed due to an internal server error",
     },
     STATUS_CODE.InternalServerError,
+    ERROR_CORS_HEADERS,
   );
 };
 
@@ -423,9 +432,11 @@ Deno.serve({
         if (pathname === "/_internal/metric")
           return Response.json(yield* foreign(() => EdgeRuntime.getRuntimeMetrics()));
         const functionName = pathname.split("/")[1];
-        if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (!functionName)
+          return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
         const config = yield* functionConfig(functionName);
-        if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (!config)
+          return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
         yield* warnPlainDenoConfig(functionName, config);
         if (request.method !== "OPTIONS" && config.verifyJWT) {
           const token = getAuthToken(request);
@@ -521,5 +532,6 @@ Deno.serve({
         message: "Request failed due to an internal server error",
       },
       500,
+      ERROR_CORS_HEADERS,
     ),
 });

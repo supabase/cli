@@ -296,6 +296,7 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_ACCESS_TOKEN: "platform auth",
   SUPABASE_ACTIVE_HELP: "shell completion",
   SUPABASE_ANON_KEY: "functions runtime env",
+  SUPABASE_API_MAX_RETRIES: "platform api retries",
   SUPABASE_API_URL: "platform profile",
   SUPABASE_BASELINE: "pgdata snapshot marker file name",
   SUPABASE_CA_SKIP_VERIFY: "telemetry signal",

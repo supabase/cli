@@ -1,4 +1,5 @@
 AccessTokenRequiredError
+ApiMaxRetriesError
 BackupListNetworkError
 BackupListUnexpectedStatusError
 BackupRestoreNetworkError
@@ -132,6 +133,7 @@ DbConfigLibpqEnvError
 DbConfigListBansNetworkError
 DbConfigListBansStatusError
 DbConfigLoadError
+DbConfigLoginRoleMissingPrivilegedRoleError
 DbConfigLoginRoleNetworkError
 DbConfigLoginRoleStatusError
 DbConfigParseUrlError
@@ -283,6 +285,7 @@ InitConfigExistsError
 InitParseSettingsError
 InspectCsvqError
 InspectReportMkdirError
+InspectReportOutputFlagUnsupportedError
 InspectReportWriteError
 InvalidAccessTokenError
 InvalidComputeExcludeError

@@ -20,11 +20,16 @@
 //            Without it, raw markdown notes are printed to stdout.
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { $ } from "bun";
-import { Console, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Array as Arr, Console, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import semanticRelease from "semantic-release";
-import { channelForTag, releaseBranchForTag } from "./release-channels.ts";
+import semanticRelease, { type AnalyzeCommitsContext } from "semantic-release";
+import {
+  channelForTag,
+  isInChannelHistory,
+  releaseBranchForTag,
+  releaseTypeBetween,
+} from "./release-channels.ts";
 
 class JsonParseFailed extends Data.TaggedError("JsonParseFailed")<{ readonly cause: unknown }> {}
 
@@ -151,19 +156,6 @@ const main = Effect.gen(function* () {
         $`git -C ${repoRoot} remote get-url origin`.text(),
       )).trim();
 
-      // Notes refs aren't fetched by `git clone`. Pull from the source repo first
-      // (network-free), then from origin so even tags whose notes haven't been
-      // sync'd locally yet are available.
-      yield* shell(() =>
-        $`git -C ${clone} fetch --no-tags --quiet ${repoRoot} +refs/notes/*:refs/notes/*`
-          .nothrow()
-          .quiet(),
-      );
-      yield* shell(() =>
-        $`git -C ${clone} fetch --no-tags --quiet ${originUrl} +refs/notes/*:refs/notes/*`
-          .nothrow()
-          .quiet(),
-      );
       // One fetch per branch: git aborts a multi-ref fetch when any named ref is missing, and `next`
       // may not exist. The `v*.x` glob matches zero or more branches without failing.
       for (const branchSpec of ["main", "develop", "next", "v*.x"]) {
@@ -207,6 +199,13 @@ const main = Effect.gen(function* () {
       for (const ct of coincidentTags) {
         yield* shell(() => $`git -C ${clone} tag -d ${ct}`.quiet().nothrow());
       }
+      const targetChannel = channelForTag(tag);
+      const tagsOutsideChannel = (yield* shell(() => $`git -C ${clone} tag --list`.text()))
+        .split("\n")
+        .filter((t) => t && !isInChannelHistory(t, targetChannel));
+      if (tagsOutsideChannel.length > 0) {
+        yield* shell(() => $`git -C ${clone} tag -d ${tagsOutsideChannel}`.quiet());
+      }
       yield* shell(() => $`git -C ${clone} checkout -B ${branch} ${sha} --quiet`);
 
       // The clone only carries refs/heads/$BRANCH locally; seed the other
@@ -224,23 +223,34 @@ const main = Effect.gen(function* () {
         }
       }
 
-      // semantic-release's notes reader returns channels=[null] for any tag
-      // missing an annotation, and the prerelease filter drops those tags
-      // entirely — walking lastRelease back far enough to drag unrelated commits
-      // into the changelog. Seed a channel note for every reachable tag that
-      // lacks one, inferring the channel from the tag name.
+      // semantic-release reads one channel note per commit (semantic-release/semantic-release#4073),
+      // so the clone keeps only this channel's prereleases and rebuilds one note per tagged
+      // commit from tag names.
       const mergedTagsOut = yield* shell(() =>
         $`git -C ${clone} tag --merged HEAD --sort=v:refname`.text(),
       );
       const mergedTags = mergedTagsOut.split("\n").filter((t) => t && t !== tag);
-      for (const prevTag of mergedTags) {
-        const noteCheck = yield* shell(() =>
-          $`git -C ${clone} notes --ref semantic-release show ${prevTag}`.nothrow().quiet(),
+      const taggedCommits = (yield* shell(() =>
+        $`git -C ${clone} rev-parse ${mergedTags.map((t) => `refs/tags/${t}^{commit}`)}`.text(),
+      ))
+        .split("\n")
+        .filter(Boolean);
+      if (taggedCommits.length !== mergedTags.length) {
+        yield* Console.error(
+          `Resolved ${taggedCommits.length} commits for ${mergedTags.length} tags merged into ${tag}`,
         );
-        if (noteCheck.exitCode === 0) continue;
-        const payload = yield* encodeJson({ channels: [channelForTag(prevTag)] });
+        return yield* Effect.sync(() => process.exit(1));
+      }
+      const channelByCommit = new Map<string, ReturnType<typeof channelForTag>>();
+      for (const [prevTag, commit] of Arr.zip(mergedTags, taggedCommits)) {
+        if (prevTag.includes("-") || !channelByCommit.has(commit)) {
+          channelByCommit.set(commit, channelForTag(prevTag));
+        }
+      }
+      for (const [commit, channel] of channelByCommit) {
+        const payload = yield* encodeJson({ channels: [channel] });
         yield* shell(() =>
-          $`git -C ${clone} notes --ref semantic-release add -f -m ${payload} ${prevTag}^{commit}`.quiet(),
+          $`git -C ${clone} notes --ref semantic-release add -f -m ${payload} ${commit}`.quiet(),
         );
       }
 
@@ -280,10 +290,25 @@ const main = Effect.gen(function* () {
         delete childEnv[key];
       }
 
+      const expected = tag.replace(/^v/, "");
+      // A dispatch `version` can force a release its commits do not imply (e.g. only `ci:` commits).
+      const releaseFloor = {
+        analyzeCommits: (_config: unknown, context: AnalyzeCommitsContext) =>
+          releaseTypeBetween(context.lastRelease.version, expected),
+      };
+      const configuredPlugins = Array.isArray(rootPkg.release?.plugins)
+        ? rootPkg.release.plugins
+        : [];
+
       const result = yield* Effect.tryPromise({
         try: () =>
           semanticRelease(
-            { dryRun: true, noCi: true, repositoryUrl: repoUrl },
+            {
+              dryRun: true,
+              noCi: true,
+              repositoryUrl: repoUrl,
+              plugins: [...configuredPlugins, releaseFloor],
+            },
             {
               cwd: path.join(clone, "apps/cli"),
               env: childEnv,
@@ -299,7 +324,6 @@ const main = Effect.gen(function* () {
         return yield* Effect.sync(() => process.exit(1));
       }
 
-      const expected = tag.replace(/^v/, "");
       if (result.nextRelease.version !== expected) {
         yield* Console.error(
           `semantic-release computed v${result.nextRelease.version} but expected ${tag}; ` +

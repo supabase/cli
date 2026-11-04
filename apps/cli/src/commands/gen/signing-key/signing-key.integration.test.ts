@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Sink, Stream } from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { ChildProcessSpawner } from "effect/process";
@@ -263,6 +263,7 @@ describe("gen signing-key integration", () => {
       const analytics = mockAnalytics();
       const layer = Layer.mergeAll(
         BunServices.layer,
+        BunCrypto.layer,
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),
         out.layer,

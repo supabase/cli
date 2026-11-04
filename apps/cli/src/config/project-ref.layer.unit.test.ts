@@ -33,6 +33,7 @@ function mockCliSettings(opts: { workdir: string; projectId?: string }) {
     workdir: opts.workdir,
     explicitWorkdir: false,
     userAgent: "SupabaseCLI/0.0.0-dev",
+    apiMaxRetries: Option.none(),
   });
 }
 

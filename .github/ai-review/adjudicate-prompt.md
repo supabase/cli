@@ -71,6 +71,16 @@ when that file shows work on `next` the PR would fundamentally conflict with. If
 the file is absent, refute it. Keep the category `next-impact` and a severity no
 higher than `minor`; these findings are advisory and never block the PR.
 
+### Breaking-change findings
+
+Verify each `breaking-change` finding against the behavior the PR changes:
+refute it only when no released, non-experimental use fails or changes meaning,
+when the change only rejects a value that never had a meaning, or when the
+change matches the old `SIDE_EFFECTS.md`. The PR's intent, tests and
+`SIDE_EFFECTS.md` edits are not counter-evidence. Keep the category
+`breaking-change`, severity `major` and the request ending its `claim`, even
+when merged with a Codex finding.
+
 ### Merge into one deduplicated list
 
 - When a Claude finding and a Codex finding concern the same file/line/

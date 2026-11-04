@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/cli";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
@@ -89,7 +89,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommandRunId]).toEqual(expect.any(String));
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -118,7 +118,7 @@ describe("stack command telemetry", () => {
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -138,7 +138,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommand]).toBe("stack destroy");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -157,7 +157,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommand]).toBe("logs");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -177,7 +177,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommand]).toBe("stack restart");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 });

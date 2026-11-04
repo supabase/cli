@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -367,7 +367,7 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 
@@ -430,7 +430,7 @@ describe("experimental stack start native lifecycle", () => {
             );
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 
@@ -549,7 +549,7 @@ describe("experimental stack start native lifecycle", () => {
             expect(ownerPids.filter((pid) => pid !== undefined)).toHaveLength(2);
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 60_000 },
   );
 
@@ -610,7 +610,7 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 
@@ -681,7 +681,7 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 120_000 },
   );
 
@@ -743,7 +743,7 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, locations.stateRoot, locations.cacheRoot);
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 });

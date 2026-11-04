@@ -1,6 +1,7 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
@@ -130,8 +131,8 @@ describe("native stack Storage gateway", () => {
               apiKey: credentials.apiKey,
               userAgent: "stack-storage-native-integration",
             });
-            const crypto = yield* Crypto.Crypto;
-            const bucket = `native-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+            const crypto = yield* SecureRandom.SecureRandom;
+            const bucket = `native-${(yield* crypto.uuidV4()).slice(0, 8)}`;
             const local = path.join(root, "payload.txt");
             yield* fs.writeFileString(local, "native storage payload");
 
@@ -177,7 +178,7 @@ describe("native stack Storage gateway", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(layers));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 });

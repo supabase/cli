@@ -80,7 +80,7 @@ The `workspace` fixture is what triggers scenario setup — if you destructure `
 
 Always return `runE2e(...)` from the body: Vitest does not run a returned Effect, so the harness fails a test that requests `run` or `runNoProjectId` and passes without executing it. A custom runner added with `testBehaviour.extend` gets the same check by wrapping its CLI Effect in `runGuard.track(...)`, as `stackRun` does. Pass the test's `signal` so a Vitest timeout interrupts the body.
 
-This workspace is under the Effect lint (`.oxlintrc.effect.json`, warnings are errors), which rejects `async` test bodies, global `fetch`, `process.env` and `JSON.parse` in Effect code. Decode JSON stdout with `decodeJsonOutput(schema)(result.stdout)`, which reports a stdout excerpt on failure.
+This workspace is under the Effect lint (`.oxlintrc.json`, warnings are errors), which rejects `async` test bodies, global `fetch`, `process.env` and `JSON.parse` in Effect code. Decode JSON stdout with `decodeJsonOutput(schema)(result.stdout)`, which reports a stdout excerpt on failure.
 
 Available fixtures:
 

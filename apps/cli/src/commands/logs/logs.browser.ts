@@ -1,7 +1,8 @@
+import { BunTerminal } from "@effect/platform-bun";
 import type { LogsSession } from "./logs.session.ts";
 import { LogsClipboard } from "./logs.clipboard.ts";
 import process from "node:process";
-import { Clock, Effect, Exit, Option, Queue, Schema, Stream, Terminal } from "effect";
+import { Clock, Effect, Exit, Layer, Option, Queue, Schema, Stream, Terminal } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
@@ -16,6 +17,11 @@ import {
   resizeBrowser,
   type LogsBrowserWindow,
 } from "./logs.browser.format.ts";
+
+export const logsTerminalLayer = Layer.effect(
+  Terminal.Terminal,
+  BunTerminal.make(() => false),
+);
 
 export const useLogsBrowser = Effect.fnUntraced(function* () {
   const output = yield* Output;

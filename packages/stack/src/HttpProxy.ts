@@ -37,6 +37,8 @@ export interface HttpRoute {
   readonly keyRewrite?: HttpRouteKeyRewrite;
   /** Sends each write over a fresh upstream connection; reads still share the pool and its retry. */
   readonly freshWrites?: boolean;
+  /** Leaves CORS, preflights included, to the upstream, like Edge Functions on the platform. */
+  readonly upstreamCors?: boolean;
 }
 
 /** Configures Supabase API-key rewriting for one HTTP route. */
@@ -447,7 +449,7 @@ const forward = Effect.fn("HttpProxy.forward")(function* (
           sent.bytes += chunk.length;
         });
         response.once("finish", onFinish);
-        setCors(response, request);
+        if (route.upstreamCors !== true) setCors(response, request);
         response.statusCode = value.statusCode ?? 502;
         for (const [name, header] of Object.entries(value.headers)) {
           if (header !== undefined && !hopByHop.has(name.toLowerCase()))
@@ -676,8 +678,9 @@ export const makeHttpProxy = (options: {
               const route = yield* Ref.get(routes).pipe(
                 Effect.map((current) => routeFor(request.url ?? "/", current)),
               );
-              setCors(response, request);
-              if (request.method === "OPTIONS") respond(response, sent, 204);
+              if (route?.upstreamCors !== true) setCors(response, request);
+              if (request.method === "OPTIONS" && route?.upstreamCors !== true)
+                respond(response, sent, 204);
               else if (route === undefined) respond(response, sent, 404, "Not Found");
               else {
                 yield* proxyRequest(request, response, route, agent, sent).pipe(

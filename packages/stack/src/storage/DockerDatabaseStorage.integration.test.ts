@@ -1,10 +1,9 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { fileURLToPath } from "node:url";
 import {
   Clock,
   ConfigProvider,
-  Crypto,
   Data,
   Deferred,
   Effect,
@@ -20,9 +19,10 @@ import {
   Ref,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
-import { resolveArtifact, type ArtifactPin } from "../Artifacts.ts";
+import { resolveArtifact, slimImageMirrors, type ArtifactPin } from "../Artifacts.ts";
 import {
   makeContainerRuntime,
   removeStackContainers,
@@ -42,6 +42,19 @@ const dockerTarget: EngineTarget = { engine: "docker", argv: [], daemonId: "test
 const containerTarget: EngineTarget = { ...engineTarget, argv: [] };
 const postgresImage = (pin: ArtifactPin) =>
   resolveArtifact({ service: "database", pin }).pipe(Effect.map(({ image }) => image));
+/** Falls back to the registry mirror the stack wires in production when the primary rate-limits. */
+const containerRuntime = (options: Parameters<typeof makeContainerRuntime>[0]) =>
+  makeContainerRuntime({ imageMirrors: slimImageMirrors, ...options });
+/** Pulls a database image for direct engine runs, returning the mirror reference when it fell back. */
+const preparedPostgresImage = Effect.fnUntraced(function* (
+  pin: ArtifactPin,
+  target: EngineTarget = dockerTarget,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-image-" });
+  const container = yield* containerRuntime({ target, root });
+  return yield* container.prepareImage(yield* postgresImage(pin));
+});
 const Marker = Schema.Struct({
   backend: Schema.Literals(["docker", "host"]),
   volume: Schema.optionalKey(Schema.String),
@@ -88,7 +101,7 @@ const fakeHelperEngine = (
     Effect.gen(function* () {
       if (!ChildProcess.isStandardCommand(command))
         return yield* Effect.die("unexpected piped command");
-      const args = [...command.args];
+      const args = command.args.map(String);
       commands.push(args);
       if (args[0] === "info") return handle(0, "fake-daemon-id");
       if (args[0] === "version") return handle(0, "27.0.0|27.0.0");
@@ -195,15 +208,15 @@ const ownerDeathScenario = (mode: "instance" | "shared" | "stall-before-start") 
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const shared = mode === "shared";
       const stalled = mode === "stall-before-start";
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-owner-death-" });
-      const stackId = `storage-owner-death-${yield* crypto.randomUUIDv4}`;
+      const stackId = `storage-owner-death-${yield* crypto.uuidV4()}`;
       const filter = `label=com.supabase.stack=${stackId}`;
       // Pull before spawning so a cold image cache does not consume the owner's readiness timeout.
-      const container = yield* makeContainerRuntime({ target: dockerTarget, root });
+      const container = yield* containerRuntime({ target: dockerTarget, root });
       yield* container.prepareImage(yield* postgresImage(selection.database));
       const child = yield* spawner.spawn(
         ChildProcess.make(
@@ -312,7 +325,7 @@ const ownerDeathScenario = (mode: "instance" | "shared" | "stall-before-start") 
       }
       expect(yield* engine(["ps", "-aq", "--filter", filter])).toBe("");
     }),
-  ).pipe(Effect.provide(NodeServices.layer));
+  ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 // The volume backend, helper registry and volume-labelling contracts exist only on Docker; Podman
 // always stores data in host directories, covered by the host storage suite below.
@@ -340,7 +353,8 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const root = yield* fs.makeTempDirectoryScoped({
             prefix: "docker-helper-create-cancel-",
           });
@@ -393,6 +407,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
+            digest,
             spawner,
             container: {
               prepare: () => Effect.void,
@@ -410,43 +425,59 @@ describe.runIf(testEngine === "docker")(
           yield* Fiber.await(operation);
           expect(yield* Ref.get(removals)).toEqual([true]);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
-    it.effect("reports a helper readiness timeout alongside Docker warnings", () =>
+    it.effect("reports a helper readiness timeout with Docker warnings and the helper state", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-timeout-" });
           const waiting = yield* Deferred.make<void>();
           const commands: string[][] = [];
+          let attachKilled = false;
           const warning =
             "WARNING: The requested image's platform does not match the host platform";
           const spawner = ChildProcessSpawner.make((command) =>
             Effect.gen(function* () {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected command");
-              commands.push([...command.args]);
+              commands.push(command.args.map(String));
               const creating = command.args[0] === "create";
               const attaching = command.args[0] === "start";
+              const encode = (text: string) => Stream.succeed(new TextEncoder().encode(text));
+              // `--rm` removes the helper once its attach is killed, so later inspection fails.
+              const removed = command.args[0] === "inspect" && attachKilled;
               return ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(0),
-                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(removed ? 1 : 0)),
                 isRunning: Effect.succeed(false),
-                kill: () => Effect.void,
+                kill: () =>
+                  Effect.sync(() => {
+                    if (attaching) attachKilled = true;
+                  }),
                 stdin: Sink.drain,
                 stdout: attaching
                   ? Stream.fromEffect(Deferred.succeed(waiting, undefined)).pipe(
                       Stream.drain,
                       Stream.concat(Stream.never),
                     )
-                  : Stream.empty,
+                  : command.args[0] === "inspect" && !removed
+                    ? encode("running\t0\t\n")
+                    : command.args[0] === "logs"
+                      ? encode("supabase-helper-ready\n")
+                      : Stream.empty,
                 // Docker prints the platform warning while creating the container, before start.
                 stderr: creating
-                  ? Stream.succeed(new TextEncoder().encode(`${warning}\n`))
-                  : Stream.empty,
+                  ? encode(`${warning}\n`)
+                  : removed
+                    ? encode("Error: No such container\n")
+                    : command.args[0] === "logs"
+                      ? encode("helper stderr line\n")
+                      : Stream.empty,
                 all: Stream.empty,
                 getInputFd: () => Sink.drain,
                 getOutputFd: () => Stream.empty,
@@ -465,6 +496,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
+            digest,
             spawner,
             container: {
               prepare: () => Effect.void,
@@ -482,7 +514,12 @@ describe.runIf(testEngine === "docker")(
           yield* TestClock.adjust("30 seconds");
           const failure = yield* Fiber.join(operation);
           expect(failure.message).toBe(
-            `Database helper did not become ready within 30 seconds: ${warning}`,
+            [
+              `Database helper did not become ready within 30 seconds: ${warning}`,
+              "helper state: running (exit 0)",
+              "helper logs: supabase-helper-ready",
+              "helper stderr line",
+            ].join("\n"),
           );
           const create = commands.find((args) => args[0] === "create");
           const name = create?.[create.indexOf("--name") + 1];
@@ -498,7 +535,9 @@ describe.runIf(testEngine === "docker")(
           ]);
           expect(commands.filter((args) => args[0] === "rm")).toEqual([["rm", "-f", name]]);
         }),
-      ).pipe(Effect.provide([NodeServices.layer, TestClock.layer()])),
+      ).pipe(
+        Effect.provide([Layer.merge(NodeServices.layer, NodeCrypto.layer), TestClock.layer()]),
+      ),
     );
 
     it.effect("bounds helper creation and still removes the helper by name afterwards", () =>
@@ -506,7 +545,8 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const root = yield* fs.makeTempDirectoryScoped({
             prefix: "docker-helper-create-timeout-",
           });
@@ -520,7 +560,7 @@ describe.runIf(testEngine === "docker")(
             Effect.gen(function* () {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected command");
-              commands.push([...command.args]);
+              commands.push(command.args.map(String));
               const create = command.args[0] === "create";
               if (create) yield* Deferred.succeed(creating, undefined);
               const missing = command.args[0] === "rm" && !(yield* Ref.getAndSet(present, false));
@@ -560,6 +600,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
+            digest,
             spawner,
             container: {
               prepare: () => Effect.void,
@@ -593,7 +634,9 @@ describe.runIf(testEngine === "docker")(
           ]);
           expect(yield* Ref.get(present)).toBe(false);
         }),
-      ).pipe(Effect.provide([NodeServices.layer, TestClock.layer()])),
+      ).pipe(
+        Effect.provide([Layer.merge(NodeServices.layer, NodeCrypto.layer), TestClock.layer()]),
+      ),
     );
 
     it.live("starts a storage helper with the mirror image selected during preparation", () => {
@@ -602,7 +645,8 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-helper-mirror-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
@@ -625,6 +669,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
+            digest,
             container,
             spawner,
           });
@@ -639,7 +684,7 @@ describe.runIf(testEngine === "docker")(
             engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
           ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
     });
 
     it.live("round-trips PostgreSQL 15 data with its catalog image", () =>
@@ -647,8 +692,9 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(database15);
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
+          const helperImage = yield* preparedPostgresImage(database15);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-pg15-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
@@ -657,12 +703,12 @@ describe.runIf(testEngine === "docker")(
           yield* fs.makeDirectory(sourceRoot, { recursive: true });
           yield* fs.makeDirectory(targetRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const stackId = `storage-pg15-${yield* crypto.randomUUIDv4}`;
+          const stackId = `storage-pg15-${yield* crypto.uuidV4()}`;
           const makeStorage = (instanceId: string, instanceRoot: string) =>
             makeDockerDatabaseStorage({
               runtime: "docker",
@@ -675,6 +721,7 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
+              digest,
               container,
               spawner,
             });
@@ -745,7 +792,7 @@ describe.runIf(testEngine === "docker")(
           yield* source.destroyData(database15);
           yield* engine(["volume", "rm", sourceMarker.volume]);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("round-trips stopped data and protects managed namespaces", () =>
@@ -753,8 +800,9 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-" });
           const stateRoot = path.join(root, "state");
           const storageRoot = path.join(stateRoot, "stack", "data");
@@ -764,7 +812,7 @@ describe.runIf(testEngine === "docker")(
           yield* fs.makeDirectory(sourceRoot, { recursive: true });
           yield* fs.makeDirectory(targetRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -786,6 +834,7 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
+              digest,
               container,
               spawner,
             });
@@ -947,7 +996,7 @@ describe.runIf(testEngine === "docker")(
           yield* target.destroyData(selection.database);
           yield* engine(["volume", "rm", sourceMarker.volume]);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("labels its volume with the configured test run", () =>
@@ -955,19 +1004,20 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-test-run-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
           const instanceRoot = path.join(storageRoot, "database");
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const stackId = `storage-test-run-${yield* crypto.randomUUIDv4}`;
-          const testRunId = `storage-test-run-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+          const stackId = `storage-test-run-${yield* crypto.uuidV4()}`;
+          const testRunId = `storage-test-run-${(yield* crypto.uuidV4()).slice(0, 8)}`;
           // This run id overrides the ambient one, so the shared run teardown never sees the volume.
           yield* Effect.addFinalizer(() => removeTestRunVolumes(testRunId).pipe(Effect.orDie));
           const storage = yield* makeDockerDatabaseStorage({
@@ -981,6 +1031,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
+            digest,
             container,
             spawner,
           });
@@ -1007,7 +1058,7 @@ describe.runIf(testEngine === "docker")(
           ]);
           expect(labels).toBe(testRunId);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("removes an unprepared storage without requiring Docker", () =>
@@ -1015,7 +1066,8 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-empty-" });
           const instanceRoot = path.join(root, "state", "stack", "data", "empty");
@@ -1030,6 +1082,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
+            digest,
             container: undefined,
             spawner,
           });
@@ -1039,7 +1092,7 @@ describe.runIf(testEngine === "docker")(
             false,
           );
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live(
@@ -1049,7 +1102,8 @@ describe.runIf(testEngine === "docker")(
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
-            const crypto = yield* Crypto.Crypto;
+            const crypto = yield* SecureRandom.SecureRandom;
+            const digest = yield* Digest.Digest;
             const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
             const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-crash-" });
             const instanceRoot = path.join(root, "state", "stack", "data", "crash");
@@ -1057,7 +1111,7 @@ describe.runIf(testEngine === "docker")(
             const cacheRoot = path.join(root, "cache");
             yield* fs.makeDirectory(instanceRoot, { recursive: true });
             const markerPath = path.join(instanceRoot, ".supabase-database-storage.json");
-            const helperImage = yield* postgresImage(selection.database);
+            const helperImage = yield* preparedPostgresImage(selection.database);
             const storage = yield* makeDockerDatabaseStorage({
               runtime: "docker",
               target: dockerTarget,
@@ -1069,7 +1123,8 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
-              container: yield* makeContainerRuntime({
+              digest,
+              container: yield* containerRuntime({
                 target: dockerTarget,
                 root: instanceRoot,
               }),
@@ -1188,7 +1243,7 @@ describe.runIf(testEngine === "docker")(
             );
             expect(afterRetry.initialized).toBe(true);
           }),
-        ).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
       20_000,
     );
 
@@ -1197,8 +1252,9 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-unmarked-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
@@ -1224,7 +1280,7 @@ describe.runIf(testEngine === "docker")(
             "-c",
             "chown -R 100:101 /instance/data /instance/.supabase-snapshots; chmod -R 700 /instance/data /instance/.supabase-snapshots",
           ]);
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -1232,7 +1288,7 @@ describe.runIf(testEngine === "docker")(
           const storage = yield* makeDockerDatabaseStorage({
             runtime: "docker",
             target: dockerTarget,
-            stackId: `storage-unmarked-${yield* crypto.randomUUIDv4}`,
+            stackId: `storage-unmarked-${yield* crypto.uuidV4()}`,
             instanceId: "unmarked",
             instanceRoot,
             root: storageRoot,
@@ -1240,6 +1296,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
+            digest,
             container,
             spawner,
           });
@@ -1255,7 +1312,7 @@ describe.runIf(testEngine === "docker")(
           expect(yield* fs.exists(markerPath)).toBe(false);
           yield* fs.remove(cacheRoot, { recursive: true, force: true });
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("refuses to adopt unmarked Docker data at startup", () =>
@@ -1263,7 +1320,8 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-unmarked-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const instanceRoot = path.join(storageRoot, "unmarked");
@@ -1281,7 +1339,8 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
-            container: yield* makeContainerRuntime({
+            digest,
+            container: yield* containerRuntime({
               target: dockerTarget,
               root,
             }),
@@ -1295,7 +1354,7 @@ describe.runIf(testEngine === "docker")(
           );
           expect(yield* fs.readFileString(path.join(dataRoot, "PG_VERSION"))).toBe("17\n");
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("recovers after an owned helper is removed externally", () =>
@@ -1303,23 +1362,24 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-helper-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
           const instanceRoot = path.join(storageRoot, "recovery");
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const stackId = `storage-helper-recovery-${yield* crypto.randomUUIDv4}`;
+          const stackId = `storage-helper-recovery-${yield* crypto.uuidV4()}`;
           const instanceId = "recovery";
           const helperScope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(helperScope, Exit.void));
-          const helperRegistry = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4).pipe(
+          const helperRegistry = yield* makeDockerHelperRegistry(yield* crypto.uuidV4()).pipe(
             Effect.provideService(Scope.Scope, helperScope),
           );
           const storage = yield* makeDockerDatabaseStorage({
@@ -1333,6 +1393,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
+            digest,
             container,
             spawner,
             helpers: helperRegistry,
@@ -1360,7 +1421,7 @@ describe.runIf(testEngine === "docker")(
           yield* Scope.close(helperScope, Exit.void);
           yield* engine(["volume", "rm", volume]);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("keeps another owner's volume helper running when one owner closes", () =>
@@ -1368,7 +1429,8 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
           const root = yield* fs.makeTempDirectoryScoped({
             prefix: "docker-storage-helper-owner-",
           });
@@ -1377,12 +1439,12 @@ describe.runIf(testEngine === "docker")(
           const instanceRoot = path.join(storageRoot, "database");
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const stackId = `storage-helper-owner-${yield* crypto.randomUUIDv4}`;
+          const stackId = `storage-helper-owner-${yield* crypto.uuidV4()}`;
           const firstScope = yield* Scope.make();
           const secondScope = yield* Scope.make();
           yield* Effect.addFinalizer(() =>
@@ -1418,6 +1480,7 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
+              digest,
               container,
               spawner,
               helpers,
@@ -1457,7 +1520,7 @@ describe.runIf(testEngine === "docker")(
           yield* secondStorage.destroyData(selection.database);
           yield* Scope.close(secondScope, Exit.void);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("destroys an initialized storage after its volume is removed", () =>
@@ -1465,20 +1528,21 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-missing-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
           const instanceRoot = path.join(storageRoot, "missing");
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const stackId = `storage-missing-${yield* crypto.randomUUIDv4}`;
+          const stackId = `storage-missing-${yield* crypto.uuidV4()}`;
           const makeStorage = () =>
             makeDockerDatabaseStorage({
               runtime: "docker",
@@ -1491,6 +1555,7 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
+              digest,
               container,
               spawner,
             });
@@ -1543,7 +1608,7 @@ describe.runIf(testEngine === "docker")(
             }),
           );
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live(
@@ -1553,20 +1618,21 @@ describe.runIf(testEngine === "docker")(
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
-            const crypto = yield* Crypto.Crypto;
-            const helperImage = yield* postgresImage(selection.database);
+            const crypto = yield* SecureRandom.SecureRandom;
+            const digest = yield* Digest.Digest;
+            const helperImage = yield* preparedPostgresImage(selection.database);
             const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-no-marker-" });
             const storageRoot = path.join(root, "state", "stack", "data");
             const cacheRoot = path.join(root, "cache");
             const instanceRoot = path.join(storageRoot, "sleeping");
             yield* fs.makeDirectory(instanceRoot, { recursive: true });
             yield* fs.makeDirectory(cacheRoot, { recursive: true });
-            const container = yield* makeContainerRuntime({
+            const container = yield* containerRuntime({
               target: dockerTarget,
               root,
             });
             const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-            const stackId = `storage-no-marker-${yield* crypto.randomUUIDv4}`;
+            const stackId = `storage-no-marker-${yield* crypto.uuidV4()}`;
             // One storage object spans the whole case, the way an Owner keeps one per instance for
             // the stack's lifetime: its resolved identity stays in memory across the sleep below.
             const storage = yield* makeDockerDatabaseStorage({
@@ -1580,6 +1646,7 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
+              digest,
               container,
               spawner,
             });
@@ -1625,7 +1692,7 @@ describe.runIf(testEngine === "docker")(
             expect(remaining.trim()).toBe("absent");
             yield* engine(["volume", "rm", volume]);
           }),
-        ).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live(
@@ -1635,8 +1702,9 @@ describe.runIf(testEngine === "docker")(
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
-            const crypto = yield* Crypto.Crypto;
-            const helperImage = yield* postgresImage(selection.database);
+            const crypto = yield* SecureRandom.SecureRandom;
+            const digest = yield* Digest.Digest;
+            const helperImage = yield* preparedPostgresImage(selection.database);
             // `root` is deleted entirely below; nest it under the scope's own temp dir so the test
             // framework's own cleanup of that outer, still-present directory does not fail.
             const tempDir = yield* fs.makeTempDirectoryScoped({
@@ -1648,12 +1716,12 @@ describe.runIf(testEngine === "docker")(
             const instanceRoot = path.join(storageRoot, "sleeping");
             yield* fs.makeDirectory(instanceRoot, { recursive: true });
             yield* fs.makeDirectory(cacheRoot, { recursive: true });
-            const container = yield* makeContainerRuntime({
+            const container = yield* containerRuntime({
               target: dockerTarget,
               root,
             });
             const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-            const stackId = `storage-no-root-${yield* crypto.randomUUIDv4}`;
+            const stackId = `storage-no-root-${yield* crypto.uuidV4()}`;
             // One storage object spans the whole case, the way an Owner keeps one per instance for
             // the stack's lifetime: its resolved identity stays in memory across the sleep below.
             const storage = yield* makeDockerDatabaseStorage({
@@ -1667,6 +1735,7 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
+              digest,
               container,
               spawner,
             });
@@ -1712,7 +1781,7 @@ describe.runIf(testEngine === "docker")(
             expect(remaining.trim()).toBe("absent");
             yield* engine(["volume", "rm", volume]);
           }),
-        ).pipe(Effect.provide(NodeServices.layer)),
+        ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("reopens managed storage and preserves snapshots after source destruction", () =>
@@ -1720,8 +1789,9 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-reopen-" });
           const stateRoot = path.join(root, "state");
           const storageRoot = path.join(stateRoot, "stack", "data");
@@ -1731,7 +1801,7 @@ describe.runIf(testEngine === "docker")(
           yield* fs.makeDirectory(sourceRoot, { recursive: true });
           yield* fs.makeDirectory(targetRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -1752,6 +1822,7 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
+              digest,
               container,
               spawner,
             });
@@ -1842,7 +1913,7 @@ describe.runIf(testEngine === "docker")(
             }),
           );
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("resumes unfinished volume data only on the identity its first start recorded", () =>
@@ -1850,8 +1921,9 @@ describe.runIf(testEngine === "docker")(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const crypto = yield* SecureRandom.SecureRandom;
+          const digest = yield* Digest.Digest;
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-line-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
@@ -1862,7 +1934,7 @@ describe.runIf(testEngine === "docker")(
           const storage = yield* makeDockerDatabaseStorage({
             runtime: "docker",
             target: dockerTarget,
-            stackId: `storage-line-${yield* crypto.randomUUIDv4}`,
+            stackId: `storage-line-${yield* crypto.uuidV4()}`,
             instanceId: "line",
             instanceRoot,
             root: storageRoot,
@@ -1870,7 +1942,8 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
-            container: yield* makeContainerRuntime({ target: dockerTarget, root }),
+            digest,
+            container: yield* containerRuntime({ target: dockerTarget, root }),
             spawner,
           });
           let volume: string | undefined;
@@ -1914,7 +1987,7 @@ describe.runIf(testEngine === "docker")(
           );
           yield* storage.prepare(oriole);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
   },
 );
@@ -1925,7 +1998,8 @@ describe("Host database storage", { timeout: 120_000 }, () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const digest = yield* Digest.Digest;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-host-line-" });
         const storageRoot = path.join(root, "state", "stack", "data");
         const cacheRoot = path.join(root, "cache");
@@ -1959,7 +2033,8 @@ describe("Host database storage", { timeout: 120_000 }, () => {
           fs,
           path,
           crypto,
-          container: yield* makeContainerRuntime({ target: containerTarget, root }),
+          digest,
+          container: yield* containerRuntime({ target: containerTarget, root }),
           spawner,
         });
         yield* Effect.addFinalizer(() =>
@@ -1989,7 +2064,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
         yield* storage.prepare(oriole);
         expect(yield* fs.readFileString(path.join(data, "PG_VERSION"))).toBe("17\n");
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("handles root-owned host data through helper operations", () =>
@@ -1997,8 +2072,9 @@ describe("Host database storage", { timeout: 120_000 }, () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const helperImage = yield* postgresImage(selection.database);
+        const crypto = yield* SecureRandom.SecureRandom;
+        const digest = yield* Digest.Digest;
+        const helperImage = yield* preparedPostgresImage(selection.database, containerTarget);
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-host-" });
         const stateRoot = path.join(root, "state");
         const storageRoot = path.join(stateRoot, "stack", "data");
@@ -2032,7 +2108,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
           path.join(instanceRoot, ".supabase-database-ready.json"),
           `{"runtime":"${testEngine}","profile":"supabase"}`,
         );
-        const container = yield* makeContainerRuntime({
+        const container = yield* containerRuntime({
           target: containerTarget,
           root,
         });
@@ -2058,6 +2134,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
           fs,
           path,
           crypto,
+          digest,
           container,
           spawner,
         });
@@ -2137,6 +2214,6 @@ describe("Host database storage", { timeout: 120_000 }, () => {
         expect(yield* fs.exists(path.join(instanceRoot, ".supabase-snapshots"))).toBe(false);
         yield* fs.remove(cacheRoot, { recursive: true });
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });

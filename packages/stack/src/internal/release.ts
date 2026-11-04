@@ -1,4 +1,5 @@
-import { Crypto, Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
+import { Digest } from "effect/crypto";
 import effectPackage from "effect/package.json" with { type: "json" };
 import { fileURLToPath } from "node:url";
 
@@ -9,7 +10,7 @@ const hex = (bytes: Uint8Array) =>
 export const sourceDigest = Effect.fn("Release.sourceDigest")(function* (sourceRoot: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const regularFile = (file: string) =>
     fs.readLink(path.join(sourceRoot, file)).pipe(
       Effect.as(false),
@@ -37,7 +38,7 @@ export const sourceDigest = Effect.fn("Release.sourceDigest")(function* (sourceR
     content.set(part, offset);
     offset += part.length;
   }
-  return hex(yield* crypto.digest("SHA-256", content)).slice(0, 16);
+  return hex(yield* crypto.digest(Digest.sha256, content)).slice(0, 16);
 });
 
 /**

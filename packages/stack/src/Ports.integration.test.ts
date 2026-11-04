@@ -1,4 +1,4 @@
-import { NodeFileSystem, NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeFileSystem, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Context,
@@ -361,8 +361,9 @@ it.live(
       }),
     ).pipe(
       Effect.provide(
-        Layer.merge(
+        Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           Layer.merge(
             NodeHttpClient.layerNodeHttp,
             PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
@@ -442,8 +443,9 @@ it.live("a destroy that cannot remove the registration keeps every reservation",
     }),
   ).pipe(
     Effect.provide(
-      Layer.merge(
+      Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         Layer.merge(
           NodeHttpClient.layerNodeHttp,
           PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),

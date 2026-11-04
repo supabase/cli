@@ -1,7 +1,6 @@
 import {
   Config,
   Context,
-  Crypto,
   Effect,
   FileSystem,
   Layer,
@@ -12,6 +11,7 @@ import {
   Schema,
   Scope,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem exposes no OS temp or home directory path for the shared roots.
 import { homedir, tmpdir, userInfo } from "node:os";
 import type { PlatformError } from "effect/PlatformError";
@@ -214,7 +214,7 @@ const make = Effect.fn("TestStack.make")(function* <
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const runtime =
     options.runtime ?? Option.getOrUndefined(yield* runtimeOverride) ?? defaultRuntime();
   // Shared roots are created owner-only, so each OS user needs its own.
@@ -265,7 +265,7 @@ const make = Effect.fn("TestStack.make")(function* <
       stateRoot,
       cacheRoot,
       runtime,
-      name: `test-${yield* crypto.randomUUIDv4}`,
+      name: `test-${yield* crypto.uuidV4()}`,
       lifetime: "session",
     }),
     (created) => created.destroy.pipe(Effect.orDie),
@@ -454,12 +454,12 @@ export const seedSavedStack = Effect.fn("TestStack.seedSavedStack")(
   function* (options: SeedSavedStackOptions) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const runtime = options.runtime ?? "native";
     const pins = defaultArtifactSelection();
     const identity = yield* resolveStackIdentity({ projectRoot: options.projectRoot });
     const stackId = yield* deriveStackId(identity);
-    const databaseId = yield* crypto.randomUUIDv4;
+    const databaseId = yield* crypto.uuidV4();
     const database: ServiceCreation = {
       service: "database",
       pin: pins.database,
@@ -472,7 +472,7 @@ export const seedSavedStack = Effect.fn("TestStack.seedSavedStack")(
     };
     const writers = yield* Effect.forEach(options.composed ?? [], (service) =>
       Effect.all({
-        id: crypto.randomUUIDv4,
+        id: crypto.uuidV4(),
         creation: Schema.decodeUnknownEffect(ServiceCreation)({
           service,
           pin: pins[service],

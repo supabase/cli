@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/cli";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
@@ -208,6 +208,7 @@ const runStatusEnv = (input: {
           explicitWorkdir: Option.isSome(workdirFlag),
           workdirEnvValue: Option.none(),
           userAgent: "SupabaseCLI/pointer-test",
+          apiMaxRetries: Option.none(),
         });
       }),
     );
@@ -231,6 +232,7 @@ const runStatusEnv = (input: {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          BunCrypto.layer,
           CliOutput.layer(textCliOutputFormatter()),
           output.layer,
           analytics.layer,
@@ -247,7 +249,7 @@ const runStatusEnv = (input: {
     return yield* Schema.decodeEffect(
       Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
     )(output.rawChunks.map(({ text }) => text).join(""));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 describe("stack start export pointer", () => {
   it.effect(

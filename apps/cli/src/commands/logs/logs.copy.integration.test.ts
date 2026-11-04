@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Option, Queue, Schema, Terminal } from "effect";
+import { Cause, Deferred, Effect, Fiber, Layer, Option, Queue, Schema, Terminal } from "effect";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import { browseLogs } from "./logs.browser.ts";
 import { LogsClipboard } from "./logs.clipboard.ts";
@@ -48,6 +48,7 @@ const setup = Effect.fnUntraced(function* (
       Terminal.make({
         columns: Effect.succeed(80),
         rows: Effect.succeed(12),
+        size: Queue.unbounded<Terminal.Size, Cause.Done>(),
         readInput: Effect.succeed(input),
         readLine: Effect.die("unused"),
         display: (text) => Queue.offer(screens, text).pipe(Effect.asVoid),

@@ -1,3 +1,4 @@
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { LogsClipboard } from "../../../logs/logs.clipboard.ts";
 import { Command } from "effect/cli";
 import { stackLogsCommand } from "./logs.command.ts";
@@ -5,7 +6,7 @@ import {
   buildTestRuntime,
   mockCommandPlatformApi,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
@@ -59,7 +60,7 @@ import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 
 type SavedInstance = SavedStack["instances"][number];
 const mail = (id: string): SavedInstance => ({
@@ -212,6 +213,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
       const terminal = Terminal.make({
         columns: Effect.succeed(100),
         rows: Effect.succeed(30),
+        size: Queue.unbounded<Terminal.Size, Cause.Done>(),
         readInput: Effect.succeed(input),
         readLine: Effect.die("unused"),
         display: (text) =>
@@ -237,6 +239,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
       });
       const telemetry = mockTelemetryStateTracked();
       const layer = Layer.mergeAll(
+        commandRuntimeLayer(["stack", "logs"]),
         output.layer,
         Layer.mock(LogsClipboard, {}),
         telemetry.layer,
@@ -667,7 +670,7 @@ describe("retained local logs", () => {
                   position: { generation: 1, byteOffset: 1_000_000 },
                 }),
               ),
-              Stream.provide(BunServices.layer),
+              Stream.provide(Layer.merge(BunServices.layer, BunCrypto.layer)),
             ),
           );
       const f = yield* fixture({

@@ -33,7 +33,7 @@ const adapter = (
   const stopped = Deferred.makeUnsafe<void>();
   const commands: Array<{
     name: string;
-    args: ReadonlyArray<string>;
+    args: ChildProcess.StandardCommand["args"];
     text: string;
     options: ChildProcess.CommandOptions;
   }> = [];

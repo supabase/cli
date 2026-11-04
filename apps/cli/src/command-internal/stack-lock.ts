@@ -29,7 +29,6 @@ import {
 import {
   Clock,
   Config,
-  Crypto,
   DateTime,
   Effect,
   FileSystem,
@@ -39,6 +38,7 @@ import {
   Result,
   Schema,
 } from "effect";
+import { Digest } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
 
 import { ensureGitignore, readProjectLink } from "../shared/config/project-link.ts";
@@ -1000,7 +1000,7 @@ export const lockedResolution = (options: {
   ): Effect.fn.Return<
     LockedResolution,
     StackConfigError | LockResolutionError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    FileSystem.FileSystem | Path.Path | Digest.Digest
   > {
     const requests = yield* requestsOf(request);
     const ci = yield* continuousIntegration;
@@ -1111,7 +1111,7 @@ export const updatedLock = <E, R>(options: {
   ): Effect.fn.Return<
     LockUpdate,
     StackConfigError | LockResolutionError | E,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | CommandSettings | R
+    FileSystem.FileSystem | Path.Path | Digest.Digest | CommandSettings | R
   > {
     const requests = yield* requestsOf(request);
     const { update, published } = yield* Effect.gen(function* () {
@@ -1266,7 +1266,7 @@ export const linkedLock = <E, R, E2, R2>(options: {
   ): Effect.fn.Return<
     LinkedLock,
     StackConfigError | LockResolutionError | E | E2,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | CommandSettings | R | R2
+    FileSystem.FileSystem | Path.Path | Digest.Digest | CommandSettings | R | R2
   > {
     const requests = yield* requestsOf(request);
     const ci = yield* continuousIntegration;
@@ -1390,7 +1390,7 @@ export const outdatedServices = Effect.fn("StackLock.outdated")(function* (reque
     const newest: Effect.Effect<
       ResolvedPin | undefined,
       StackConfigError | LockResolutionError,
-      Crypto.Crypto
+      Digest.Digest
     > =
       reason !== undefined || isExactRelease(requested)
         ? Effect.undefined

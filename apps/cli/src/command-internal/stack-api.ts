@@ -1,4 +1,5 @@
-import { Context, Crypto, Effect, FileSystem, Layer, Option, Path, Scope } from "effect";
+import { Context, Effect, FileSystem, Layer, Option, Path, Scope } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import {
@@ -39,14 +40,16 @@ export const stackApiLayer = Layer.effect(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const childProcess = yield* ChildProcessSpawner.ChildProcessSpawner;
     const http = yield* HttpClient.HttpClient;
     const provideServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
+        Effect.provideService(Digest.Digest, digest),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcess),
         Effect.provideService(HttpClient.HttpClient, http),
       );

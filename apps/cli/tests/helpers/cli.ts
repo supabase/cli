@@ -568,8 +568,8 @@ export interface SpawnSupabaseOptions {
   readonly cleanupProcessGroupOnClose?: boolean;
   /** Maximum time to wait for the process to exit before force-killing it. */
   readonly exitTimeoutMs?: number;
-  /** Close the read end of stdout at spawn, like a `| head` reader that has already exited. */
-  readonly closeStdout?: boolean;
+  /** Close the read end of this stream at spawn, like a `| head` reader that has already exited. */
+  readonly closeStream?: "stdout" | "stderr";
 }
 
 export interface SpawnedSupabase {
@@ -598,15 +598,17 @@ const isBrokenPipe = (error: { readonly cause?: unknown }) =>
   Predicate.hasProperty(error.cause, "code") && error.cause.code === "EPIPE";
 
 /*
- * The Effect spawner only hands out stdout as a stream it reads itself, so a pipe whose reader
- * has exited needs a relay: it runs the CLI on a real pipe, closes the read end at once, and
+ * The Effect spawner only hands out stdout and stderr as streams it reads itself, so a pipe whose
+ * reader has exited needs a relay: it runs the CLI on a real pipe, closes the read end at once, and
  * mirrors the CLI's exit code. It ignores group signals so the CLI's own exit wins.
  */
-const closedStdoutRelay = (argvJson: string) =>
+const closedStreamRelay = (argvJson: string, stream: "stdout" | "stderr") =>
   [
     `const { spawn } = require("node:child_process");`,
-    `const child = spawn(process.execPath, ${argvJson}, { stdio: ["inherit", "pipe", "inherit"] });`,
-    `child.stdout.destroy();`,
+    `const stdio = ["inherit", "inherit", "inherit"];`,
+    `stdio[${stream === "stdout" ? 1 : 2}] = "pipe";`,
+    `const child = spawn(process.execPath, ${argvJson}, { stdio });`,
+    `child.${stream}.destroy();`,
     `for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => {});`,
     `child.on("exit", (code) => process.exit(code ?? 1));`,
   ].join("\n");
@@ -672,8 +674,8 @@ const spawnSupabaseProgram = Effect.fnUntraced(function* (
   // build artifact without needing platform wrapper packages.
   env["SUPABASE_CLI_BINARY_OVERRIDE"] = BINARY_PATH;
   const shimArgs = [SHIM_PATH, ...args];
-  const commandArgs = options?.closeStdout
-    ? ["-e", closedStdoutRelay(yield* encodeArgv(shimArgs))]
+  const commandArgs = options?.closeStream
+    ? ["-e", closedStreamRelay(yield* encodeArgv(shimArgs), options.closeStream)]
     : shimArgs;
   const command = ChildProcess.make("node", commandArgs, {
     cwd: options?.cwd,

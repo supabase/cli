@@ -1,5 +1,4 @@
 import { OptionalSubcommand } from "../../shared/output/optional-subcommand-usage.ts";
-import { BunTerminal } from "@effect/platform-bun";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -17,6 +16,7 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { stackTargetResolverLayer, stackApiLayer } from "../../command-internal/stack-target.ts";
+import { logsTerminalLayer } from "./logs.browser.ts";
 import { logsClipboardLayer } from "./logs.clipboard.ts";
 import { logs, logsSources } from "./logs.handler.ts";
 
@@ -149,7 +149,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
         withJsonErrorHandling,
       ),
     ),
-    Command.provide(BunTerminal.layer),
+    Command.provide(logsTerminalLayer),
     Command.provide(logsClipboardLayer),
     Command.provide(stdinLayer),
     Command.provide(stackTargetResolverLayer.pipe(Layer.provideMerge(stackApiLayer))),

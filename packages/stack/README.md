@@ -138,7 +138,10 @@ stacks still relies only on the kernel refusing a second bind. A native backend'
 ports are reserved directly from 10000–19999, disjoint from the public auto range and below the OS
 ephemeral range on every supported platform; this is not configurable, and a public port pinned
 inside it is rejected. A host whose ephemeral range has been widened to overlap 10000–19999
-reintroduces the ephemeral-port race this reservation exists to avoid.
+reintroduces the ephemeral-port race this reservation exists to avoid. The registry runs in SQLite's
+WAL mode, so `<passwd home>/.supabase` must be on a local filesystem: WAL's shared memory does not
+work over network mounts, and the registry location cannot be moved. While a connection is open,
+`ports.sqlite-wal` and `ports.sqlite-shm` sit next to `ports.sqlite`.
 
 Native PostgreSQL receives the owner's `SSL_CERT_FILE` and `SSL_CERT_DIR` when they are non-empty. When `SSL_CERT_FILE` is unset or empty, it receives the first of `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`, and `/etc/ssl/cert.pem` that exists, if any. The `http` and `pg_net` extensions verify HTTPS certificates against these. On macOS, `/etc/ssl/cert.pem` does not include roots added to the Keychain; to trust those, set `SSL_CERT_FILE` to a bundle that also holds the public roots, such as a copy of `/etc/ssl/cert.pem` with those roots appended. When PostgreSQL runs as a separate user, that user must be able to read the owner's `SSL_CERT_FILE` and `SSL_CERT_DIR` paths, which are not chowned to it. The detached owner inherits the environment of the client that starts it and keeps it until it exits, through restarts and repeated starts, so set these before the owner starts, and stop the stack before starting it again after changing them.
 
@@ -253,7 +256,7 @@ const test = Effect.gen(function* () {
 The Effect entrypoint exposes the same operations as Effects and Streams. `create` and `open` return a handle that lasts until the enclosing `Scope` closes; closing the creating scope of a session stack destroys it. Database secrets use `Redacted` in the Effect configuration:
 
 ```ts
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import * as Stack from "@supabase/stack/effect";
 
@@ -268,7 +271,14 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(
   program.pipe(
     Effect.scoped,
-    Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        NodeCrypto.layerSecureRandom,
+        NodeCrypto.layerDigest,
+      ),
+    ),
   ),
 );
 ```

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted, Stream } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -520,6 +520,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
       : realLinkedProjectCache({ httpClient: recorded.httpClientLayer, cliSettings }),
     cliSettings,
     BunServices.layer,
+    BunCrypto.layer,
     cliConfigValuesTestLayer,
     projectRefLayer,
     recorded === undefined
@@ -542,7 +543,9 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     opts.commandPath === undefined
       ? Layer.empty
-      : commandRuntimeLayer(opts.commandPath).pipe(Layer.provide(BunServices.layer)),
+      : commandRuntimeLayer(opts.commandPath).pipe(
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
+        ),
     unusedStackServices,
     stackApi.layer,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),

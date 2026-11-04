@@ -953,6 +953,7 @@ const effectCliActionabilityByTag = {
   InvalidValue: () => actionability.invalidInput,
   UnknownSubcommand: () => actionability.invalidInput,
   UnrecognizedOption: () => actionability.invalidInput,
+  ValidationError: () => actionability.invalidInput,
 } satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
 
 const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {

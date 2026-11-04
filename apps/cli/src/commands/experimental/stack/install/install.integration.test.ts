@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { readLock } from "@supabase/stack/effect";
 import {
@@ -158,7 +158,7 @@ describe("experimental stack install", () => {
           downloaded: 0,
           cached: 12,
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails a frozen install naming the stale service and leaves the project untouched", () =>
@@ -188,7 +188,7 @@ describe("experimental stack install", () => {
       expect(yield* fs.exists(leasePath(root))).toBe(false);
       expect(yield* cachedFiles(root)).toEqual(cached);
       expect(archiveRequests(host)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("installs under a frozen lock without taking the lease or writing into the project", () =>
@@ -207,7 +207,7 @@ describe("experimental stack install", () => {
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       expect(yield* fs.exists(leasePath(root))).toBe(false);
       expect(yield* fs.exists(`${root}/supabase/.gitignore`)).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails a frozen install of a project without config.toml, downloading nothing", () =>
@@ -226,7 +226,7 @@ describe("experimental stack install", () => {
       });
       expect(yield* fs.readDirectory(root)).toEqual([]);
       expect(host.requests).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails an install in CI with a lock but no config.toml, downloading nothing", () =>
@@ -251,7 +251,7 @@ describe("experimental stack install", () => {
       expect(error.message).not.toContain("supabase.lock not found");
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       expect(host.requests).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails a frozen install with a lock but no config.toml on the missing config", () =>
@@ -276,7 +276,7 @@ describe("experimental stack install", () => {
       expect(error.message).not.toContain("supabase.lock not found");
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       expect(host.requests).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("ignores the lease file when it takes the lease for a lock that is already fresh", () =>
@@ -294,7 +294,7 @@ describe("experimental stack install", () => {
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       const ignored = (yield* fs.readFileString(`${root}/supabase/.gitignore`)).split("\n");
       expect(ignored).toEqual(expect.arrayContaining(["node_modules", ".supabase.lock.lease"]));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails with reason invalid-config on a malformed config.toml, writing no lock", () =>
@@ -310,7 +310,7 @@ describe("experimental stack install", () => {
       expect(error).toMatchObject({ reason: "invalid-config" });
       expect(yield* fs.exists(lockPath(root))).toBe(false);
       expect(host.requests).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live(
@@ -331,7 +331,7 @@ describe("experimental stack install", () => {
         expect(error.message).toContain("must remain within the project directory");
         expect(yield* fs.exists(lockPath(root))).toBe(false);
         expect(host.requests).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails with reason flags when the platform has no native artifacts", () =>
@@ -347,6 +347,6 @@ describe("experimental stack install", () => {
       expect(error).toMatchObject({ reason: "flags" });
       expect(host.requests).toEqual([]);
       expect(yield* fs.exists(lockPath(root))).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });

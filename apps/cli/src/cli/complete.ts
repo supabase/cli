@@ -1,5 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
-import { Cause, Clock, Crypto, DateTime, Effect, Layer, Option } from "effect";
+import { Cause, Clock, DateTime, Effect, Layer, Option } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
 import { GlobalFlag } from "effect/cli";
 import type { Command, Param, Primitive } from "effect/cli";
@@ -1107,10 +1108,10 @@ export function formatCompletionResponse(
 export function captureCompleteTelemetryEffect(
   exitCode: number,
   durationMs: number,
-): Effect.Effect<void, PlatformError, Analytics | Crypto.Crypto> {
+): Effect.Effect<void, PlatformError, Analytics | SecureRandom.SecureRandom> {
   return Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const commandRunId = yield* crypto.randomUUIDv4;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const commandRunId = yield* crypto.uuidV4();
     const analytics = yield* Analytics;
     yield* analytics
       .capture(EventCommandExecuted, {
@@ -1147,7 +1148,7 @@ const completeAnalyticsLayer = (mode: ProjectStateMode) =>
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(cliConfigProviderLayer),
     Layer.provide(BunServices.layer),
-    Layer.merge(BunCrypto.layer),
+    Layer.provideMerge(BunCrypto.layerSecureRandom),
   );
 
 /**

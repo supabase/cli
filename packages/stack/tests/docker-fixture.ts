@@ -84,15 +84,16 @@ export const engineStub = (
     Effect.gen(function* () {
       if (!ChildProcess.isStandardCommand(command))
         return yield* Effect.die("Unexpected child process command");
-      const argv = [command.command, ...command.args];
+      const commandArgs = command.args.map(String);
+      const argv = [command.command, ...commandArgs];
       commands.push(argv);
-      const args = TARGET_OPTIONS.includes(command.args[0] ?? "")
-        ? command.args.slice(2)
-        : command.args;
+      const args = TARGET_OPTIONS.includes(commandArgs[0] ?? "")
+        ? commandArgs.slice(2)
+        : commandArgs;
       const [subcommand] = args;
       const failure = failures[`${command.command} ${subcommand}`] ?? failures[command.command];
       const inventory = inventories.get(command.command) ?? [];
-      const filters = command.args.filter((_, index) => command.args[index - 1] === "--filter");
+      const filters = commandArgs.filter((_, index) => commandArgs[index - 1] === "--filter");
       const listed = inventory.filter((container) =>
         filters.every((filter) =>
           [
@@ -104,7 +105,7 @@ export const engineStub = (
         ),
       );
       const listing = Effect.gen(function* () {
-        if (!command.args.includes("--format")) return listed.map(({ id }) => id).join("\n");
+        if (!commandArgs.includes("--format")) return listed.map(({ id }) => id).join("\n");
         const labels = yield* Effect.forEach(listed, ({ stackId, root }) =>
           encodeLabels([stackId, root]).pipe(Effect.orDie),
         );
@@ -125,7 +126,7 @@ export const engineStub = (
       if (failure === undefined && subcommand === "rm")
         inventories.set(
           command.command,
-          inventory.filter(({ id }) => id !== command.args.at(-1)),
+          inventory.filter(({ id }) => id !== commandArgs.at(-1)),
         );
       yield* onCommand(argv);
       return ChildProcessSpawner.makeHandle({

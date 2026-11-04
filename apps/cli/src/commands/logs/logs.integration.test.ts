@@ -1,7 +1,7 @@
 import { LogsClipboard } from "./logs.clipboard.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stream, Schema, Queue, Terminal } from "effect";
+import { Cause, Effect, Layer, Option, Stream, Schema, Queue, Terminal } from "effect";
 import { DebugFlag, ProfileFlag, WorkdirFlag } from "../../command-internal/global-flags.ts";
 import { mockContextualAnalytics, mockTelemetryRuntime } from "../../../tests/helpers/mocks.ts";
 import { TestClock } from "effect/testing";
@@ -138,6 +138,7 @@ describe("unified logs", () => {
             Terminal.make({
               columns: Effect.succeed(80),
               rows: Effect.succeed(12),
+              size: Queue.unbounded<Terminal.Size, Cause.Done>(),
               readInput: Effect.succeed(input),
               readLine: Effect.die("unused"),
               display: (text) =>
@@ -204,6 +205,7 @@ describe("unified logs", () => {
         const terminal = Terminal.make({
           columns: Effect.succeed(100),
           rows: Effect.succeed(20),
+          size: Queue.unbounded<Terminal.Size, Cause.Done>(),
           readInput: stdinIsTty
             ? Effect.succeed(input)
             : Effect.die("piped stdin must not acquire terminal input"),

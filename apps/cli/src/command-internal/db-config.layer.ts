@@ -1,7 +1,6 @@
 import * as net from "node:net";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import {
-  Crypto,
   Duration,
   Effect,
   FileSystem,
@@ -12,6 +11,7 @@ import {
   Redacted,
   Struct,
 } from "effect";
+import { Digest } from "effect/crypto";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -198,6 +198,19 @@ const loginRoleErrorMapper = mapHttpError({
   statusMessage: (status, body) => `unexpected login role status ${status}: ${body}`,
 });
 
+// The Management API surfaces Postgres 42501 from `ALTER ROLE`, which on these projects means
+// `supabase_privileged_role` was never granted to the login-role creator.
+const isMissingPrivilegedRole = (error: Errors.DbConfigLoginRoleStatusError): boolean =>
+  error.status === 400 && /permission denied to alter role/i.test(error.body);
+
+const missingPrivilegedRoleError = (ref: string, error: Errors.DbConfigLoginRoleStatusError) =>
+  new Errors.DbConfigLoginRoleMissingPrivilegedRoleError({
+    projectRef: ref,
+    message: `failed to create a temporary login role, likely because the project database is missing supabase_privileged_role: ${error.body}`,
+    suggestion:
+      "Connect with your database password instead, which skips the temporary login role: --password where the command supports it, SUPABASE_DB_PASSWORD for the linked project, or a Postgres URL that includes the password (--db-url, or --from/--to for db diff). Contact support at https://supabase.com/dashboard/support/new to repair the project's roles.",
+  });
+
 const listBansErrorMapper = mapHttpError({
   networkError: Errors.DbConfigListBansNetworkError,
   statusError: Errors.DbConfigListBansStatusError,
@@ -264,9 +277,12 @@ const initLoginRole = Effect.fn("DbConfig.initLoginRole")(function* (
   const api = yield* (yield* CommandPlatformApiFactory).make;
   // Written to stderr unconditionally (not gated on --debug).
   yield* output.raw("Initialising login role...\n", "stderr");
-  const role = yield* api.v1
-    .createLoginRole({ ref, read_only: false })
-    .pipe(Effect.catch(loginRoleErrorMapper));
+  const role = yield* api.v1.createLoginRole({ ref, read_only: false }).pipe(
+    Effect.catch(loginRoleErrorMapper),
+    Effect.catchTag("DbConfigLoginRoleStatusError", (error) =>
+      Effect.fail(isMissingPrivilegedRole(error) ? missingPrivilegedRoleError(ref, error) : error),
+    ),
+  );
   return { ...conn, user: role.role, password: role.password };
 });
 
@@ -663,7 +679,7 @@ export const dbConfigResolverLayer = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const runtimeInfo = yield* RuntimeInfo;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const debug = yield* DebugLogger;
     const output = yield* Output;
     const dbConn = yield* DbConnection;
@@ -726,6 +742,7 @@ export const dbConfigResolverLayer = Layer.effect(
         onSome: (value) => Layer.succeed(CliArgs, value),
       }),
       BunServices.layer,
+      BunCrypto.layerSecureRandom,
     );
     // Compile-time guard: if `linkedDbResolverRuntimeLayer`'s requirements ever
     // grow a service not captured above, this assignment fails to type-check (the
@@ -759,7 +776,7 @@ export const dbConfigResolverLayer = Layer.effect(
         Effect.provideService(RuntimeInfo, runtimeInfo),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(Digest.Digest, crypto),
         Effect.catchTag("CliConfigLoadError", (error) =>
           Effect.fail(new Errors.DbConfigLoadError({ message: error.message })),
         ),

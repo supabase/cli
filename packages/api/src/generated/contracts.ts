@@ -199,6 +199,7 @@ export const BranchResponse_Output = Schema.Struct({
         "RESTARTING",
         "PAUSE_FAILED",
         "RESIZING",
+        "PROMOTING",
       ]),
       OpenString,
     ]),
@@ -309,6 +310,7 @@ export const V1ProjectWithDatabaseResponse_Output = Schema.Struct({
       "RESTARTING",
       "PAUSE_FAILED",
       "RESIZING",
+      "PROMOTING",
     ]),
     OpenString,
   ]),
@@ -1094,6 +1096,7 @@ export const V1CreateABranchOutput = Schema.Struct({
         "RESTARTING",
         "PAUSE_FAILED",
         "RESIZING",
+        "PROMOTING",
       ]),
       OpenString,
     ]),
@@ -1352,6 +1355,7 @@ export const V1CreateAProjectOutput = Schema.Struct({
       "RESTARTING",
       "PAUSE_FAILED",
       "RESIZING",
+      "PROMOTING",
     ]),
     OpenString,
   ]),
@@ -2530,6 +2534,7 @@ export const V1GetABranchOutput = Schema.Struct({
         "RESTARTING",
         "PAUSE_FAILED",
         "RESIZING",
+        "PROMOTING",
       ]),
       OpenString,
     ]),
@@ -2584,6 +2589,7 @@ export const V1GetABranchConfigOutput = Schema.Struct({
       "RESTARTING",
       "PAUSE_FAILED",
       "RESIZING",
+      "PROMOTING",
     ]),
     OpenString,
   ]),
@@ -2956,6 +2962,7 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
           "RESTARTING",
           "PAUSE_FAILED",
           "RESIZING",
+          "PROMOTING",
         ]),
         OpenString,
       ]),
@@ -4358,6 +4365,9 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
           "log_auth_error_rate_high",
           "log_storage_error_rate_high",
           "log_edge_function_error_rate_high",
+          "realtime_authorization_timeouts",
+          "realtime_postgres_changes_spike",
+          "realtime_concurrent_users_near_limit",
           "project_not_active",
           "advisor_check_unavailable",
         ]),
@@ -4781,6 +4791,7 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
         Schema.Struct({ type: Schema.Literal("ltree_reindex_required") }),
         Schema.Struct({ type: Schema.Literal("operator_estimator_gate") }),
         Schema.Struct({ type: Schema.Literal("btree_gist_nan_reindex") }),
+        Schema.Struct({ type: Schema.Literal("collation_reindex_required") }),
       ],
       { mode: "oneOf" },
     ),
@@ -4906,6 +4917,38 @@ export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  db_pool_max_lifetime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 1800.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+    Schema.Null,
+  ]),
+  db_pool_max_idletime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 30.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
+      ),
+    Schema.Null,
+  ]),
   jwt_secret: Schema.optionalKey(Schema.String),
 });
 export const V1GetProfileInput = Schema.Record(Schema.String, Schema.Never);
@@ -4969,6 +5012,7 @@ export const V1GetProjectOutput = Schema.Struct({
       "RESTARTING",
       "PAUSE_FAILED",
       "RESIZING",
+      "PROMOTING",
     ]),
     OpenString,
   ]),
@@ -5823,6 +5867,9 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
           "log_auth_error_rate_high",
           "log_storage_error_rate_high",
           "log_edge_function_error_rate_high",
+          "realtime_authorization_timeouts",
+          "realtime_postgres_changes_spike",
+          "realtime_concurrent_users_near_limit",
           "project_not_active",
           "advisor_check_unavailable",
         ]),
@@ -7643,6 +7690,7 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
         "RESTARTING",
         "PAUSE_FAILED",
         "RESIZING",
+        "PROMOTING",
       ]),
       OpenString,
     ]),
@@ -10147,6 +10195,30 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
         Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
       ),
   ),
+  db_pool_max_lifetime: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+  ),
+  db_pool_max_idletime: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
+      ),
+  ),
 });
 export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
@@ -10193,6 +10265,38 @@ export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
         Schema.isLessThanOrEqualTo(9007199254740991).annotate({
           expected: "a value less than or equal to 9007199254740991",
         }),
+      ),
+    Schema.Null,
+  ]),
+  db_pool_max_lifetime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 1800.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+    Schema.Null,
+  ]),
+  db_pool_max_idletime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 30.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
       ),
     Schema.Null,
   ]),
@@ -10713,12 +10817,12 @@ export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
   user_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
-        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
         "u",
       ),
     ).annotate({
       expected:
-        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
     }),
   ),
   data: Schema.Struct({
@@ -11596,6 +11700,7 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           "unauthorized",
           "validation_failed",
           "agentic_credential_not_found",
+          "backup_unsupported",
           "branch_admin_required",
           "compute_build_context_too_large",
           "compute_build_in_progress",
@@ -12113,6 +12218,30 @@ export const V2DeployAComputeInstanceOutput = Schema.Struct({
       ),
       instances_error: Schema.optionalKey(Schema.String),
     }),
+  }),
+});
+export const V2DownloadProjectBackupInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("project_backup_file_url").annotate({ description: "Resource type." }),
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+  }),
+});
+export const V2DownloadProjectBackupOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_backup_file_url").annotate({ description: "Resource type." }),
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    attributes: Schema.Struct({ file_url: Schema.String }),
   }),
 });
 export const V2GetAComputeInstanceInput = Schema.Struct({
@@ -12800,6 +12929,32 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           .check(
             Schema.isLessThanOrEqualTo(9007199254740991).annotate({
               expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        db_pool_max_lifetime: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(3600).annotate({
+              expected: "a value less than or equal to 3600",
+            }),
+          ),
+        db_pool_max_idletime: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(60).annotate({
+              expected: "a value less than or equal to 60",
             }),
           ),
         db_pool: Schema.Union([
@@ -13519,6 +13674,68 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
     ),
   }),
 });
+export const V2ListOrganizationMaintenanceWindowsInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+});
+export const V2ListOrganizationMaintenanceWindowsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("maintenance_window").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "AWS region." }),
+      attributes: Schema.Struct({
+        window: Schema.Struct({
+          day: Schema.Union([
+            Schema.Literals(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]).annotate({
+              description: "UTC day the window starts.",
+            }),
+            OpenString,
+          ]),
+          start_utc: Schema.String.annotate({ description: "UTC start time." }),
+          duration_minutes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+        }),
+        current_window: Schema.Union([
+          Schema.Struct({
+            start_at: Schema.String.annotate({
+              description: "Start of the occurrence, inclusive.",
+              format: "date-time",
+            }),
+            end_at: Schema.String.annotate({
+              description: "End of the occurrence, exclusive.",
+              format: "date-time",
+            }),
+          }).annotate({ description: "The open occurrence, or null when the window is closed." }),
+          Schema.Null,
+        ]),
+        next_windows: Schema.Array(
+          Schema.Struct({
+            start_at: Schema.String.annotate({
+              description: "Start of the occurrence, inclusive.",
+              format: "date-time",
+            }),
+            end_at: Schema.String.annotate({
+              description: "End of the occurrence, exclusive.",
+              format: "date-time",
+            }),
+          }),
+        ).annotate({ description: "The next five occurrences that start after now, in order." }),
+      }),
+    }),
+  ),
+});
 export const V2ListOrganizationMembersInput = Schema.Struct({
   slug: Schema.String.check(
     Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
@@ -13746,6 +13963,7 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
             "RESTARTING",
             "PAUSE_FAILED",
             "RESIZING",
+            "PROMOTING",
           ]).annotate({ description: "Project status" }),
           OpenString,
         ]),
@@ -14077,6 +14295,7 @@ export const V2OrganizationsSlugWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.project.branch.created",
             "v1.project.branch.updated",
             "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
             "v1.organization.member.invitation.created",
             "v1.organization.member.invitation.canceled",
             "v1.organization.member.added",
@@ -14086,6 +14305,7 @@ export const V2OrganizationsSlugWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
           ]).annotate({ description: "Webhook event type." }),
           OpenString,
         ]),
@@ -14219,6 +14439,7 @@ export const V2OrganizationsSlugWebhooksEndpointsDeleteOutput = Schema.Struct({
                 "v1.project.branch.created",
                 "v1.project.branch.updated",
                 "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
                 "v1.organization.member.invitation.created",
                 "v1.organization.member.invitation.canceled",
                 "v1.organization.member.added",
@@ -14228,6 +14449,7 @@ export const V2OrganizationsSlugWebhooksEndpointsDeleteOutput = Schema.Struct({
                 "v1.organization.member.role.updated",
                 "v1.organization.billing.plan.upgraded",
                 "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
                 "*",
               ]).annotate({ description: "Webhook event type." }),
               OpenString,
@@ -14354,6 +14576,7 @@ export const V2OrganizationsSlugWebhooksEndpointsGetOutput = Schema.Struct({
                 "v1.project.branch.created",
                 "v1.project.branch.updated",
                 "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
                 "v1.organization.member.invitation.created",
                 "v1.organization.member.invitation.canceled",
                 "v1.organization.member.added",
@@ -14363,6 +14586,7 @@ export const V2OrganizationsSlugWebhooksEndpointsGetOutput = Schema.Struct({
                 "v1.organization.member.role.updated",
                 "v1.organization.billing.plan.upgraded",
                 "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
                 "*",
               ]).annotate({ description: "Webhook event type." }),
               OpenString,
@@ -14503,6 +14727,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeleteOutput = Schema.Struct(
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -14512,6 +14737,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeleteOutput = Schema.Struct(
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -14702,6 +14928,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -14711,6 +14938,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
           ]),
@@ -14849,6 +15077,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdGetOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -14858,6 +15087,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdGetOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -14953,6 +15183,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchInput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -14962,6 +15193,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchInput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
           }),
@@ -15062,6 +15294,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -15071,6 +15304,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -15141,6 +15375,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdTestPostInput = Schema.Struct
           "v1.project.branch.created",
           "v1.project.branch.updated",
           "v1.project.branch.removed",
+          "v1.project.secrets.leaked",
           "v1.organization.member.invitation.created",
           "v1.organization.member.invitation.canceled",
           "v1.organization.member.added",
@@ -15150,6 +15385,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdTestPostInput = Schema.Struct
           "v1.organization.member.role.updated",
           "v1.organization.billing.plan.upgraded",
           "v1.organization.billing.plan.downgraded",
+          "v1.organization.secrets.leaked",
         ]).annotate({ description: "Webhook event type." }),
       }),
     }),
@@ -15205,6 +15441,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostInput = Schema.Struct({
             "v1.project.branch.created",
             "v1.project.branch.updated",
             "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
             "v1.organization.member.invitation.created",
             "v1.organization.member.invitation.canceled",
             "v1.organization.member.added",
@@ -15214,6 +15451,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostInput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
             "*",
           ]).annotate({ description: "Webhook event type." }),
         }),
@@ -15305,6 +15543,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -15314,6 +15553,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -15504,6 +15744,7 @@ export const V2ProjectsRefWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.project.branch.created",
             "v1.project.branch.updated",
             "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
             "v1.organization.member.invitation.created",
             "v1.organization.member.invitation.canceled",
             "v1.organization.member.added",
@@ -15513,6 +15754,7 @@ export const V2ProjectsRefWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
           ]).annotate({ description: "Webhook event type." }),
           OpenString,
         ]),
@@ -15658,6 +15900,7 @@ export const V2ProjectsRefWebhooksEndpointsDeleteOutput = Schema.Struct({
                 "v1.project.branch.created",
                 "v1.project.branch.updated",
                 "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
                 "v1.organization.member.invitation.created",
                 "v1.organization.member.invitation.canceled",
                 "v1.organization.member.added",
@@ -15667,6 +15910,7 @@ export const V2ProjectsRefWebhooksEndpointsDeleteOutput = Schema.Struct({
                 "v1.organization.member.role.updated",
                 "v1.organization.billing.plan.upgraded",
                 "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
                 "*",
               ]).annotate({ description: "Webhook event type." }),
               OpenString,
@@ -15799,6 +16043,7 @@ export const V2ProjectsRefWebhooksEndpointsGetOutput = Schema.Struct({
                 "v1.project.branch.created",
                 "v1.project.branch.updated",
                 "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
                 "v1.organization.member.invitation.created",
                 "v1.organization.member.invitation.canceled",
                 "v1.organization.member.added",
@@ -15808,6 +16053,7 @@ export const V2ProjectsRefWebhooksEndpointsGetOutput = Schema.Struct({
                 "v1.organization.member.role.updated",
                 "v1.organization.billing.plan.upgraded",
                 "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
                 "*",
               ]).annotate({ description: "Webhook event type." }),
               OpenString,
@@ -15954,6 +16200,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeleteOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -15963,6 +16210,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeleteOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -16159,6 +16407,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16168,6 +16417,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
           ]),
@@ -16312,6 +16562,7 @@ export const V2ProjectsRefWebhooksEndpointsIdGetOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16321,6 +16572,7 @@ export const V2ProjectsRefWebhooksEndpointsIdGetOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -16422,6 +16674,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchInput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16431,6 +16684,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchInput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
           }),
@@ -16531,6 +16785,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16540,6 +16795,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -16616,6 +16872,7 @@ export const V2ProjectsRefWebhooksEndpointsIdTestPostInput = Schema.Struct({
           "v1.project.branch.created",
           "v1.project.branch.updated",
           "v1.project.branch.removed",
+          "v1.project.secrets.leaked",
           "v1.organization.member.invitation.created",
           "v1.organization.member.invitation.canceled",
           "v1.organization.member.added",
@@ -16625,6 +16882,7 @@ export const V2ProjectsRefWebhooksEndpointsIdTestPostInput = Schema.Struct({
           "v1.organization.member.role.updated",
           "v1.organization.billing.plan.upgraded",
           "v1.organization.billing.plan.downgraded",
+          "v1.organization.secrets.leaked",
         ]).annotate({ description: "Webhook event type." }),
       }),
     }),
@@ -16686,6 +16944,7 @@ export const V2ProjectsRefWebhooksEndpointsPostInput = Schema.Struct({
             "v1.project.branch.created",
             "v1.project.branch.updated",
             "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
             "v1.organization.member.invitation.created",
             "v1.organization.member.invitation.canceled",
             "v1.organization.member.added",
@@ -16695,6 +16954,7 @@ export const V2ProjectsRefWebhooksEndpointsPostInput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
             "*",
           ]).annotate({ description: "Webhook event type." }),
         }),
@@ -16786,6 +17046,7 @@ export const V2ProjectsRefWebhooksEndpointsPostOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16795,6 +17056,7 @@ export const V2ProjectsRefWebhooksEndpointsPostOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -16831,6 +17093,24 @@ export const V2ProjectsRefWebhooksEndpointsPostOutput = Schema.Struct({
       }),
     }),
   }),
+});
+export const V2RemoveOrganizationMembersInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+    }),
+  ),
 });
 export const V2RunProjectAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
@@ -16891,6 +17171,9 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
               "log_auth_error_rate_high",
               "log_storage_error_rate_high",
               "log_edge_function_error_rate_high",
+              "realtime_authorization_timeouts",
+              "realtime_postgres_changes_spike",
+              "realtime_concurrent_users_near_limit",
             ]),
           }),
         )
@@ -16898,7 +17181,7 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           )
           .check(
-            Schema.isMaxLength(10).annotate({ expected: "a value with a length of at most 10" }),
+            Schema.isMaxLength(15).annotate({ expected: "a value with a length of at most 15" }),
           ),
       }),
     }),
@@ -16953,6 +17236,9 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
               "log_auth_error_rate_high",
               "log_storage_error_rate_high",
               "log_edge_function_error_rate_high",
+              "realtime_authorization_timeouts",
+              "realtime_postgres_changes_spike",
+              "realtime_concurrent_users_near_limit",
               "project_not_active",
               "advisor_check_unavailable",
             ]),
@@ -17682,6 +17968,7 @@ export const V2DeleteLogDrainOutput = Schema.Void;
 export const V2DeleteNotebookOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
+export const V2RemoveOrganizationMembersOutput = Schema.Void;
 export const V2TransferAProjectOutput = Schema.Void;
 
 export const openApiOperationIdMap = {
@@ -17869,6 +18156,7 @@ export const openApiOperationIdMap = {
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
   "v2-deploy-a-compute-instance": "v2DeployAComputeInstance",
+  "v2-download-project-backup": "v2DownloadProjectBackup",
   "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
@@ -17876,6 +18164,7 @@ export const openApiOperationIdMap = {
   "v2-list-log-drains": "v2ListLogDrains",
   "v2-list-notebooks": "v2ListNotebooks",
   "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
+  "v2-list-organization-maintenance-windows": "v2ListOrganizationMaintenanceWindows",
   "v2-list-organization-members": "v2ListOrganizationMembers",
   "v2-list-organization-projects": "v2ListOrganizationProjects",
   "v2-list-organization-roles": "v2ListOrganizationRoles",
@@ -17907,6 +18196,7 @@ export const openApiOperationIdMap = {
   "v2-projects-ref-webhooks-endpoints-id-patch": "v2ProjectsRefWebhooksEndpointsIdPatch",
   "v2-projects-ref-webhooks-endpoints-id-test-post": "v2ProjectsRefWebhooksEndpointsIdTestPost",
   "v2-projects-ref-webhooks-endpoints-post": "v2ProjectsRefWebhooksEndpointsPost",
+  "v2-remove-organization-members": "v2RemoveOrganizationMembers",
   "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
@@ -20500,6 +20790,8 @@ export const operationDefinitions = {
         "max_rows",
         "db_pool",
         "db_pool_acquisition_timeout",
+        "db_pool_max_lifetime",
+        "db_pool_max_idletime",
       ],
     },
     response: { kind: "json" },
@@ -20852,6 +21144,19 @@ export const operationDefinitions = {
     inputSchema: V2DeployAComputeInstanceInput,
     outputSchema: V2DeployAComputeInstanceOutput,
   },
+  v2DownloadProjectBackup: {
+    id: "v2DownloadProjectBackup",
+    description: "Download project backup",
+    method: "POST",
+    path: "/v2/projects/{ref}/backups/download",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2DownloadProjectBackupInput,
+    outputSchema: V2DownloadProjectBackupOutput,
+  },
   v2GetAComputeInstance: {
     id: "v2GetAComputeInstance",
     description:
@@ -20947,6 +21252,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ListOrganizationGithubConnectionsInput,
     outputSchema: V2ListOrganizationGithubConnectionsOutput,
+  },
+  v2ListOrganizationMaintenanceWindows: {
+    id: "v2ListOrganizationMaintenanceWindows",
+    description:
+      "Returns the weekly maintenance window for each region, with the open occurrence and the next five.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/maintenance/windows",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListOrganizationMaintenanceWindowsInput,
+    outputSchema: V2ListOrganizationMaintenanceWindowsOutput,
   },
   v2ListOrganizationMembers: {
     id: "v2ListOrganizationMembers",
@@ -21285,6 +21604,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ProjectsRefWebhooksEndpointsPostInput,
     outputSchema: V2ProjectsRefWebhooksEndpointsPostOutput,
+  },
+  v2RemoveOrganizationMembers: {
+    id: "v2RemoveOrganizationMembers",
+    description:
+      "Removes one or more organization members including their roles and project-scoped permissions.",
+    method: "DELETE",
+    path: "/v2/organizations/{slug}/members/{user_id}",
+    pathParams: ["slug", "user_id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2RemoveOrganizationMembersInput,
+    outputSchema: V2RemoveOrganizationMembersOutput,
   },
   v2RunProjectAdvisors: {
     id: "v2RunProjectAdvisors",

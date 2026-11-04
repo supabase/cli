@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
+import { Deferred, Effect, PlatformError, type Redacted, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
@@ -31,14 +31,14 @@ function mockSpawner(
   const spawned: Array<ReadonlyArray<string>> = [];
   const spawnedOptions: Array<{
     readonly args: ReadonlyArray<string>;
-    readonly env: Record<string, string | undefined> | undefined;
+    readonly env: Record<string, string | Redacted.Redacted<string> | undefined> | undefined;
     readonly extendEnv: boolean | undefined;
     readonly stdin: ChildProcess.CommandInput | ChildProcess.StdinConfig | undefined;
   }> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       if (command._tag === "StandardCommand") {
         spawnedOptions.push({
@@ -295,6 +295,65 @@ describe("createContainer", () => {
         expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
       }),
     );
+  });
+
+  describe("Docker's first health check", () => {
+    const steady = { test: ["CMD", "true"], intervalSeconds: 10, timeoutSeconds: 2, retries: 3 };
+    const steadyFlags = {
+      "--health-cmd": "true",
+      "--health-interval": "10s",
+      "--health-timeout": "2s",
+      "--health-retries": "3",
+    };
+    const startFlags = { "--health-start-period": "10s", "--health-start-interval": "1s" };
+
+    it.live.each([
+      {
+        name: "adds start flags where the engine takes them",
+        healthcheck: steady,
+        supported: true,
+        expected: { ...steadyFlags, ...startFlags },
+      },
+      {
+        name: "keeps a service's own start period",
+        healthcheck: { ...steady, startPeriodSeconds: 20 },
+        supported: true,
+        expected: { ...steadyFlags, ...startFlags, "--health-start-period": "20s" },
+      },
+      {
+        name: "adds none where the engine rejects them",
+        healthcheck: steady,
+        supported: false,
+        expected: steadyFlags,
+      },
+      {
+        name: "adds none for a caller that never asked",
+        healthcheck: steady,
+        expected: steadyFlags,
+      },
+      { name: "adds none without a healthcheck", supported: true, expected: {} },
+    ])("$name", ({ healthcheck, supported, expected }) => {
+      const mock = alwaysSucceed();
+      return createContainer(
+        mock.spawner,
+        { ...baseSpec, binds: [], ...(healthcheck === undefined ? {} : { healthcheck }) },
+        {
+          projectId: "proj",
+          isBitbucketPipeline: false,
+          workdir: workdir.current,
+          extraHosts: [],
+          ...(supported === undefined ? {} : { healthStartInterval: supported }),
+        },
+      ).pipe(
+        Effect.map(() => {
+          const args = mock.spawned.find((spawned) => spawned[0] === "create") ?? [];
+          const flags = args.flatMap((arg, index) =>
+            arg.startsWith("--health-") ? [[arg, args[index + 1]]] : [],
+          );
+          expect(Object.fromEntries(flags)).toEqual(expected);
+        }),
+      );
+    });
   });
 
   it.live("fails with ContainerStartError, unmodified, on a plain start failure", () => {

@@ -8,7 +8,8 @@
  * separately-resolved `--experimental` gate (needed earlier, before `cfg.isLocal` is known).
  */
 
-import { Crypto, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
+import { Digest } from "effect/crypto";
 import { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import type { GlobalFlag } from "effect/cli";
@@ -93,7 +94,7 @@ export const buildLocalDbContainerInputs = (
   | FileSystem.FileSystem
   | Path.Path
   | RuntimeInfo
-  | Crypto.Crypto
+  | Digest.Digest
   | GlobalFlag.Setting.Identifier<"experimental">
   | CliArgs
   | HttpClient.HttpClient

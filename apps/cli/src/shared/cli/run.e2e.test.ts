@@ -132,12 +132,12 @@ describe("CLI upgrade notice (#5853)", () => {
 });
 
 /** Only a real pipe whose reader has exited reproduces the broken-pipe write. */
-describe("CLI output to a closed stdout", () => {
+describe("CLI output to a closed pipe", () => {
   it.live.each(["text", "json"])("ends quietly with exit 0 in %s output", (format) =>
     Effect.gen(function* () {
       const { exitCode, stderr, timedOutAfterMs } = yield* runSupabaseEffect(
         ["gen", "signing-key", "--algorithm", "ES256", "--output-format", format],
-        { closeStdout: true },
+        { closeStream: "stdout" },
       );
       expect(timedOutAfterMs).toBeUndefined();
       expect(exitCode).toBe(0);
@@ -155,12 +155,24 @@ describe("CLI output to a closed stdout", () => {
   ])("keeps exit 1 for $name whose JSON error cannot be written", ({ args }) =>
     Effect.gen(function* () {
       const { exitCode, stderr, timedOutAfterMs } = yield* runSupabaseEffect(args, {
-        closeStdout: true,
+        closeStream: "stdout",
         env: { SUPABASE_ACCESS_TOKEN: undefined },
       });
       expect(timedOutAfterMs).toBeUndefined();
       expect(exitCode).toBe(1);
       expect(stderr).not.toContain("StdoutClosedError");
+    }),
+  );
+
+  it.live("finishes with exit 0 once a direct `--debug` write met a closed stderr", () =>
+    Effect.gen(function* () {
+      const { exitCode, stdout, timedOutAfterMs } = yield* runSupabaseEffect(
+        ["--debug", "gen", "signing-key", "--algorithm", "ES256"],
+        { closeStream: "stderr" },
+      );
+      expect(timedOutAfterMs).toBeUndefined();
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('"alg":"ES256"');
     }),
   );
 });

@@ -1,6 +1,5 @@
 import {
   Context,
-  Crypto,
   Effect,
   Exit,
   Fiber,
@@ -15,6 +14,7 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import type { Rpc, RpcGroup } from "effect/rpc";
@@ -229,13 +229,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   const services = yield* Effect.context<
     | FileSystem.FileSystem
     | Path.Path
-    | Crypto.Crypto
+    | SecureRandom.SecureRandom
+    | Digest.Digest
     | ChildProcessSpawner.ChildProcessSpawner
     | HttpClient.HttpClient
     | Scope.Scope
   >();
   const ownerScope = Context.get(services, Scope.Scope);
-  const crypto = Context.get(services, Crypto.Crypto);
+  const crypto = Context.get(services, SecureRandom.SecureRandom);
   const path = Context.get(services, Path.Path);
   const fs = Context.get(services, FileSystem.FileSystem);
   const network = yield* Network.Service;
@@ -260,7 +261,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     ),
   );
   const orchestrator = yield* Orchestrator.make<Entry>({ admit: () => rejectWhileDraining });
-  const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
+  const helpers = yield* makeDockerHelperRegistry(yield* crypto.uuidV4());
   const logStore = yield* LogStore.make({
     root: StackNamespace.stackLogsRoot(path, options.state.root, options.saved.id),
   }).pipe(Effect.provideContext(services));
@@ -685,7 +686,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   const removeSaved = (id: string) => updateState((current) => withoutInstance(current, id));
 
   const addInstance = Effect.fn("Owner.addInstance")(function* (creation: ServiceCreation) {
-    const id = yield* crypto.randomUUIDv4;
+    const id = yield* crypto.uuidV4();
     const rollback = <E>(cause: E) => removeSaved(id).pipe(Effect.andThen(Effect.fail(cause)));
     const recipe = yield* recipeFor(creation, id);
     yield* updateState((current) => ({

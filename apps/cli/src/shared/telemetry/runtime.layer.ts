@@ -1,5 +1,6 @@
 import { note } from "@clack/prompts";
-import { Config, Crypto, Effect, Layer, Option } from "effect";
+import { Config, Effect, Layer, Option } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
@@ -20,7 +21,7 @@ export const detectCi = Effect.gen(function* () {
 export const telemetryRuntimeLayer = Layer.effect(
   TelemetryRuntime,
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configDir = yield* getConfigDir;
     const tty = yield* Tty;
     const runtimeInfo = yield* RuntimeInfo;
@@ -55,8 +56,8 @@ export const telemetryRuntimeLayer = Layer.effect(
         };
       } else {
         identity = {
-          deviceId: yield* crypto.randomUUIDv4,
-          sessionId: yield* crypto.randomUUIDv4,
+          deviceId: yield* crypto.uuidV4(),
+          sessionId: yield* crypto.uuidV4(),
           distinctId: undefined,
           isFirstRun: false,
         };

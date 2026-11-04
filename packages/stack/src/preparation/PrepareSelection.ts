@@ -1,4 +1,5 @@
-import { Crypto, Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import type { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import {
@@ -36,7 +37,8 @@ type Preparer = (
   ArtifactError | ContainerError,
   | FileSystem.FileSystem
   | Path.Path
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | HttpClient.HttpClient
   | ChildProcessSpawner.ChildProcessSpawner
 >;

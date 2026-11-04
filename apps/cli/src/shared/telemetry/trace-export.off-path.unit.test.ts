@@ -1,11 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, References, Sink, Stdio } from "effect";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { withTraceExport } from "./trace-export.layer.ts";
 
-const runtime = Layer.mergeAll(mockRuntimeInfo(), BunServices.layer);
+const runtime = Layer.mergeAll(mockRuntimeInfo(), BunServices.layer, BunCrypto.layer);
 
 const sinkModule = vi.hoisted(() => ({ evaluated: false }));
 

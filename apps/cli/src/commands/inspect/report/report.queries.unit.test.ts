@@ -38,7 +38,7 @@ describe("reportIgnoreSchemas", () => {
 });
 
 describe("REPORT_QUERIES", () => {
-  it("has the 14 underscore CSV basenames", () => {
+  it("has the 15 underscore CSV basenames", () => {
     expect(REPORT_QUERIES.map((q) => q.fileName)).toEqual([
       "bloat",
       "blocking",
@@ -51,9 +51,11 @@ describe("REPORT_QUERIES", () => {
       "replication_slots",
       "role_stats",
       "table_stats",
+      "toast_sizes",
       "traffic_profile",
       "unused_indexes",
       "vacuum_stats",
+      "xid_age",
     ]);
   });
 

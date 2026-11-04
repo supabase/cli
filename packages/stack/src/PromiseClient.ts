@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import {
   Cause,
   Effect,
@@ -131,7 +131,12 @@ export interface Stack extends Omit<DerivedStack, "services" | "composition" | "
   readonly close: () => Promise<void>;
 }
 
-const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const clientLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layerSecureRandom,
+  NodeCrypto.layerDigest,
+  NodeHttpClient.layerNodeHttp,
+);
 /** Every failure and defect of a cause, so none is hidden behind the first. */
 const causeErrors = (cause: Cause.Cause<unknown>): ReadonlyArray<unknown> =>
   cause.reasons.flatMap((reason) =>

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Sink, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -55,6 +55,7 @@ it.effect.each([
             Layer.succeed(CliArgs, { args }),
             mockOutput({ format: "text" }).layer,
             BunServices.layer,
+            BunCrypto.layer,
             legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
             mockRuntimeInfo({ homeDir: home, cwd: home }),
             mockAnalytics().layer,
