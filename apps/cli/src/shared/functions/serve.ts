@@ -81,7 +81,11 @@ import {
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
+import {
+  loadFunctionsCliConfig,
+  toEdgeRuntimeSecretsEnv,
+  type FunctionsLocalConfigLoader,
+} from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
 import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
@@ -438,18 +442,7 @@ export function toPlainEdgeRuntimeConfig(
     policy: reveal(edgeRuntime.policy) ?? "",
     inspector_port: edgeRuntime.inspector_port,
     deno_version: edgeRuntime.deno_version,
-    // Secret names always reach the container env uppercased regardless of
-    // authored casing. Only resolved (non-empty) values are kept — an
-    // unresolved `env(VAR)` literal stays a plain string, not `Redacted`, so
-    // `Redacted.isRedacted` + non-empty filters it out, the same guard
-    // `secrets set` uses.
-    secrets: Object.fromEntries(
-      Object.entries(edgeRuntime.secrets ?? {}).flatMap(([name, value]) =>
-        Redacted.isRedacted(value) && Redacted.value(value).length > 0
-          ? [[name.toUpperCase(), Redacted.value(value)] as const]
-          : [],
-      ),
-    ),
+    secrets: toEdgeRuntimeSecretsEnv(edgeRuntime.secrets),
   };
 }
 

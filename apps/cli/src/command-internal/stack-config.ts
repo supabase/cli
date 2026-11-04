@@ -20,6 +20,7 @@ import type {
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { decryptSecretMap } from "../shared/config/vault-decrypt.ts";
+import { toEdgeRuntimeSecretsEnv } from "../shared/functions/functions-config.ts";
 import {
   describeConfigLoadFailure,
   loadResolvedConfigContext,
@@ -467,20 +468,22 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ),
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
+      const resolvedSecrets = yield* resolveConfigSubtree(
+        resolvedConfig,
+        validatedConfig.edge_runtime.secrets ?? {},
+        "edge_runtime.secrets",
+      ).pipe(Effect.mapError(toStackConfigError));
       const functionsEnvResult = decryptSecretMap(
-        Object.fromEntries(
-          Object.entries(validatedConfig.edge_runtime.secrets ?? {}).map(([key, value]) => [
-            key,
-            value ?? "",
-          ]),
-        ),
+        toEdgeRuntimeSecretsEnv(resolvedSecrets),
         resolvedConfig.dotenvPrivateKeys,
       );
       if (!functionsEnvResult.ok)
         return yield* new StackConfigError({
           message: `failed to parse config: ${functionsEnvResult.error}`,
         });
-      const functionsEnv = functionsEnvResult.value;
+      const functionsEnv = Object.fromEntries(
+        Object.entries(functionsEnvResult.value).filter(([name]) => !name.startsWith("SUPABASE_")),
+      );
       const storageFileSizeLimit = yield* Effect.try({
         try: () => String(parseFileSizeLimit(validatedConfig.storage.file_size_limit)),
         catch: (cause) =>
