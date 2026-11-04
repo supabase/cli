@@ -256,6 +256,9 @@ export const startReplayServer = (options: ReplayServerOptions) =>
     Effect.flatMap((context) => makeReplayServer(options).pipe(Effect.provideContext(context))),
   );
 
+/** Scenario slugs with this prefix are hand-authored and never wiped or written by recording. */
+export const HAND_AUTHORED_SCENARIO_PREFIX = "docs-";
+
 const makeReplayServer = Effect.fn("ReplayServer.start")(function* (options: ReplayServerOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -268,12 +271,19 @@ const makeReplayServer = Effect.fn("ReplayServer.start")(function* (options: Rep
     });
   }
 
-  // In record mode, wipe both fixture stores before serving any traffic, so the
-  // recording session repopulates only what the running tests exercise and any
-  // orphan from a prior session is dropped.
+  // In record mode, wipe both fixture stores (except hand-authored scenarios) before serving
+  // any traffic, so the recording session repopulates only what the running tests exercise and
+  // any orphan from a prior session is dropped.
   if (isRecord) {
     yield* fs.remove(path.join(options.fixturesDir, "recorded"), { recursive: true, force: true });
-    yield* fs.remove(path.join(options.fixturesDir, "scenarios"), { recursive: true, force: true });
+    // `docs-` scenarios are hand-authored for the docs examples, not recorded, so they survive.
+    const scenariosDir = path.join(options.fixturesDir, "scenarios");
+    if (yield* pathExists(fs, scenariosDir)) {
+      for (const name of yield* fs.readDirectory(scenariosDir)) {
+        if (name.startsWith(HAND_AUTHORED_SCENARIO_PREFIX)) continue;
+        yield* fs.remove(path.join(scenariosDir, name), { recursive: true, force: true });
+      }
+    }
   }
 
   const store: FixtureStore = isRecord ? new Map() : yield* loadFixtures(options.fixturesDir);
@@ -926,6 +936,7 @@ const writeScenarioInteractions = Effect.fn("ReplayServer.writeScenarioInteracti
   scenarioName: string,
   interactions: Array<{ request: FixtureRequest; response: FixtureResponse }>,
 ) {
+  if (scenarioName.startsWith(HAND_AUTHORED_SCENARIO_PREFIX)) return;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const scenarioDir = path.join(fixturesDir, "scenarios", scenarioName);

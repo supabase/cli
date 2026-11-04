@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { JsonSchema, Option, Schema } from "effect";
 import { stringify } from "yaml";
 import { Command, Completions, GlobalFlag, Param } from "effect/cli";
 import { DOCS_CATEGORIES, readCommandDocs } from "./command-docs.ts";
@@ -70,6 +70,8 @@ export interface DocsCommand {
   readonly subcommands: ReadonlyArray<string>;
   readonly flags: ReadonlyArray<DocsFlag>;
   readonly breaking_changes?: ReadonlyArray<DocsBreakingChange>;
+  /** Draft 2020-12 JSON Schema of the command's `--output-format json` stdout. */
+  readonly json_output_schema?: JsonSchema.JsonSchema;
 }
 
 interface DocsInfo {
@@ -415,6 +417,16 @@ function docsExperimentalFlag(rootFlags: ReadonlyArray<DocsFlag>): DocsFlag {
   };
 }
 
+/** A standalone draft 2020-12 JSON Schema for a `withDocs` `jsonOutput` schema. */
+export function docsJsonOutputSchema(schema: Schema.Constraint): JsonSchema.JsonSchema {
+  const document = Schema.toJsonSchemaDocument(schema);
+  return {
+    $schema: JsonSchema.META_SCHEMA_URI_DRAFT_2020_12,
+    ...document.schema,
+    ...(Object.keys(document.definitions).length === 0 ? {} : { $defs: document.definitions }),
+  };
+}
+
 function docsOf(command: Command.Command.Any): CommandDocs | undefined {
   return Option.getOrUndefined(readCommandDocs(command));
 }
@@ -646,6 +658,9 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
       subcommands: visibleChildren.map((child) => [...commandPath, child.name].join("-")),
       flags,
       ...(breakingChanges.length === 0 ? {} : { breaking_changes: breakingChanges }),
+      ...(docs?.jsonOutput === undefined
+        ? {}
+        : { json_output_schema: docsJsonOutputSchema(docs.jsonOutput) }),
     });
 
     const childInherited: Inherited = {

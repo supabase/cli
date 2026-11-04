@@ -1,4 +1,4 @@
-import { Context, Option } from "effect";
+import { Context, Option, type Schema } from "effect";
 import { Command } from "effect/cli";
 
 /** A docs-site sidebar category: its heading and its position among the categories. */
@@ -42,13 +42,19 @@ export const DOCS_CATEGORIES = {
 
 export type DocsCategory = keyof typeof DOCS_CATEGORIES;
 
-/** A usage example on a command's reference page. `name` defaults to `code`. */
-interface CommandDocsExample {
+/**
+ * A usage example on a command's reference page. `name` defaults to `code`. A `recorded`
+ * `response` is the command's real stdout, checked and rewritten by `docs-examples.e2e.test.ts`
+ * running `code` in the named scenario; any other `response` is illustrative prose.
+ */
+type CommandDocsExample = {
   readonly id: string;
   readonly name?: string;
   readonly code: string;
-  readonly response?: string;
-}
+} & (
+  | { readonly output?: "illustrative"; readonly response?: string }
+  | { readonly output: "recorded"; readonly scenario: string; readonly response: string }
+);
 
 /** Reference-page metadata for one command; its page title is always the command path. */
 export interface CommandDocs {
@@ -60,6 +66,11 @@ export interface CommandDocs {
   readonly experimental?: boolean;
   /** The command is kept for compatibility and left out of the published reference. */
   readonly deprecated?: { readonly replacement: string; readonly removedIn: string };
+  /**
+   * The stdout payload under `--output-format json`, published as the command's
+   * `json_output_schema` and checked against its recorded JSON examples.
+   */
+  readonly jsonOutput?: Schema.Constraint;
 }
 
 /** Context key under which a command's docs metadata is stored in `Command.annotations`. */

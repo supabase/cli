@@ -22,6 +22,7 @@ import type { DocsCommand } from "./docs-spec.ts";
 import { DOCS_CATEGORIES, withDocs } from "./command-docs.ts";
 import { BREAKING_CHANGES } from "./breaking-changes/registry.ts";
 import { DOCS_EXCLUDED } from "./docs-spec.tables.ts";
+import { JSON_OUTPUT_PENDING } from "./json-output-pending.ts";
 
 interface BuiltSpecFixture {
   readonly content: DocsContent;
@@ -424,6 +425,26 @@ describe("buildDocsSpec", () => {
       "yaml",
     ]);
     expect(spec.flags.find((flag) => flag.id === "output-format")?.default_value).toBe("text");
+  });
+});
+
+describe("json_output_schema coverage", () => {
+  beforeAll(() => Effect.runPromise(Effect.asVoid(loadDocsContent)));
+
+  it("is published for every leaf outside JSON_OUTPUT_PENDING, which only shrinks", () => {
+    const missing = builtSpec()
+      .spec.commands.filter(
+        (command) => command.usage !== undefined && command.json_output_schema === undefined,
+      )
+      .map((command) => command.id);
+
+    expect(
+      {
+        undeclared: missing.filter((id) => !JSON_OUTPUT_PENDING.has(id)),
+        stale: [...JSON_OUTPUT_PENDING].filter((id) => !missing.includes(id)),
+      },
+      "declare withDocs({ jsonOutput }) on each undeclared command; drop each stale id from json-output-pending.ts",
+    ).toEqual({ undeclared: [], stale: [] });
   });
 });
 

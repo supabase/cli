@@ -15,7 +15,7 @@ export const loadDocsBundle = Effect.fn("docs.loadBundle")(function* (options: {
   readonly major: number;
 }) {
   const path = yield* Path.Path;
-  const content = yield* readDocsContent(path.resolve(import.meta.dir, "../docs"));
+  const content = yield* readDocsContent(path.resolve(import.meta.dirname, "../docs"));
   return buildDocsBundle({
     root: rootCommand,
     version: options.version,

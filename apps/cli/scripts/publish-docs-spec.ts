@@ -89,7 +89,6 @@ const publishLocal = (docsRepo: string) =>
         path.resolve(docsRepo),
         `apps/docs/docs/ref/cli/${major}/migrating-from-v2.mdx`,
       );
-      yield* fs.makeDirectory(path.dirname(guideTarget), { recursive: true });
       yield* fs.writeFileString(guideTarget, bundle.migrationGuide);
       yield* Console.log(`Wrote the migration guide to ${guideTarget}`);
     }
