@@ -179,7 +179,7 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
     });
     return since.kind === "time"
       ? { kind: "range" as const, start: since.iso, end: iso(end) }
-      : { kind: "launch" as const, live: false, end: iso(end) };
+      : { kind: "launch" as const, end: iso(end) };
   });
   return { mode: "append", load } satisfies LogsSession<LogsInputError>;
 });

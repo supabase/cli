@@ -38,19 +38,9 @@ const requestCases: ReadonlyArray<{
     label: "Window: Dec 31 2026 23:59:59–Jan 01 2027 00:00:01 UTC",
   },
   {
-    window: { kind: "since", start: "2026-11-03T11:00:00Z", live: false },
-    label: "Window: since Nov 03 2026 11:00:00 UTC",
+    window: { kind: "launch", end: "2026-11-03T12:00:00Z" },
+    label: "Window: since each service's latest launch → Nov 03 2026 12:00:00 UTC",
   },
-  {
-    window: { kind: "since", start: "2026-11-03T11:00:00Z", live: true },
-    label: "Window: since Nov 03 2026 11:00:00 UTC → now (live)",
-  },
-  { window: { kind: "launch", live: false }, label: "Window: since each service's latest launch" },
-  {
-    window: { kind: "launch", live: true, newEntriesOnly: true },
-    label: "Window: new entries only; since each service's latest launch → now (live)",
-  },
-  { window: { kind: "all", live: false }, label: "Window: all retained history" },
   { window: undefined, label: "Window: resolving…" },
 ];
 
@@ -74,9 +64,9 @@ describe("log browser formatting", () => {
     "shows resolved request metadata regardless of row timestamps: $label",
     ({ window, label }) => {
       let state = { ...initialBrowserState, window };
-      state = appendBrowserRow(state, { count: 8 }, "query");
-      state = appendBrowserRow(state, { timestamp: "invalid" }, "query");
-      state = appendBrowserRow(state, { ts_ms: 0 }, "query");
+      state = appendBrowserRow(state, { count: 8 });
+      state = appendBrowserRow(state, { timestamp: "invalid" });
+      state = appendBrowserRow(state, { ts_ms: 0 });
       for (const columns of [80, 120]) {
         const lines = renderBrowser(state, columns, 8).split("\r\n");
         expect(lines[0]).toContain("3 retained");
@@ -96,11 +86,10 @@ describe("log browser formatting", () => {
       8,
     );
     for (let index = 0; index < 15; index++)
-      state = appendBrowserRow(
-        state,
-        { ts_ms: 1762190100000 - index * 1000, message: `range-${index}` },
-        "query",
-      );
+      state = appendBrowserRow(state, {
+        ts_ms: 1762190100000 - index * 1000,
+        message: `range-${index}`,
+      });
     const first = renderBrowser(state, 80, 8).split("\r\n");
     expect(first[1]).toBe("Window: Nov 03 10:00:00–12:00:00 UTC");
     expect(first.slice(2, 7).map((line) => line.match(/range-\d+/u)?.[0])).toEqual([
@@ -133,20 +122,6 @@ describe("log browser formatting", () => {
     );
   });
 
-  it("keeps the requested live start fixed when retention evicts rows", () => {
-    let state: typeof initialBrowserState = {
-      ...initialBrowserState,
-      window: { kind: "since", start: "2026-11-03T11:00:00Z", live: true },
-    };
-    for (let index = 0; index < 1000; index++)
-      state = appendBrowserRow(state, { ts_ms: index * 1000 });
-    const expected = "Window: since Nov 03 2026 11:00:00 UTC → now (live)";
-    expect(renderBrowser(state, 80, 8).split("\r\n")[1]).toBe(expected);
-    state = appendBrowserRow(state, { ts_ms: 1000000 });
-    expect(state.dropped).toBe(1);
-    expect(renderBrowser(state, 80, 8).split("\r\n")[1]).toBe(expected);
-  });
-
   it("keeps the window and controls visible when only headers and footer fit", () => {
     const state: typeof initialBrowserState = {
       ...appendBrowserRow(initialBrowserState, { ts_ms: 0 }),
@@ -161,7 +136,7 @@ describe("log browser formatting", () => {
   it("keeps visible rows stationary while selection moves inside a multi-screen list", () => {
     let state = initialBrowserState;
     for (let index = 0; index < 20; index++)
-      state = appendBrowserRow(state, { message: `visible-${index}` }, "query");
+      state = appendBrowserRow(state, { message: `visible-${index}` });
     const visible = () =>
       renderBrowser(state, 80, 9)
         .split("\r\n")
@@ -216,7 +191,7 @@ describe("log browser formatting", () => {
   it("preserves the viewport through details and adjusts only enough for resize", () => {
     let state = resizeBrowser(initialBrowserState, 9);
     for (let index = 0; index < 20; index++)
-      state = appendBrowserRow(state, { message: `row-${index}` }, "query");
+      state = appendBrowserRow(state, { message: `row-${index}` });
     for (let index = 0; index < 8; index++) state = browserKey(state, "down", 79, 9);
     expect(state.viewport).toBe(3);
     state = browserKey(state, "return", 79, 9);
@@ -232,22 +207,31 @@ describe("log browser formatting", () => {
     expect(state.viewport).toBe(5);
   });
 
-  it("keeps the visible live window stable across eviction while browsing older rows", () => {
-    let state = resizeBrowser(initialBrowserState, 9);
+  it("keeps the visible window stable across manual eviction while browsing older rows", () => {
+    let batch = initialBrowserState;
     for (let index = 0; index < 1000; index++)
-      state = appendBrowserRow(state, { message: `live-${index}` });
+      batch = stageBrowserRow(batch, { ts_ms: index, message: `row-${index}` });
+    let state = applyBrowserBatch(resizeBrowser(initialBrowserState, 9), batch, "append");
     expect(state.selected).toBe(999);
     expect(state.viewport).toBe(994);
     for (let index = 0; index < 3; index++) state = browserKey(state, "up", 79, 9);
     const before = state.rows.slice(state.viewport, state.viewport + 6);
-    state = appendBrowserRow(state, { message: "newest" });
+    state = applyBrowserBatch(
+      state,
+      { rows: [{ ts_ms: 1000, message: "newest" }], dropped: 0 },
+      "append",
+    );
     expect(state.rows.slice(state.viewport, state.viewport + 6)).toEqual(before);
-    expect(state.rows[state.selected]).toEqual({ message: "live-996" });
+    expect(state.rows[state.selected]).toMatchObject({ message: "row-996" });
     state = browserKey(state, "return", 79, 9);
-    state = appendBrowserRow(state, { message: "later" });
+    state = applyBrowserBatch(
+      state,
+      { rows: [{ ts_ms: 1001, message: "later" }], dropped: 0 },
+      "append",
+    );
     state = browserKey(state, "escape", 79, 9);
     expect(state.rows.slice(state.viewport, state.viewport + 6)).toEqual(before);
-    expect(state.rows[state.selected]).toEqual({ message: "live-996" });
+    expect(state.rows[state.selected]).toMatchObject({ message: "row-996" });
   });
 
   it("highlights the full selected row and dims only unselected timestamps after safe clipping", () => {
@@ -257,8 +241,8 @@ describe("log browser formatting", () => {
       service: "postgres",
       message: "你好\u001b[31m selected",
     };
-    state = appendBrowserRow(state, first, "query");
-    state = appendBrowserRow(state, { ...first, message: "normal message" }, "query");
+    state = appendBrowserRow(state, first);
+    state = appendBrowserRow(state, { ...first, message: "normal message" });
     const lines = renderBrowser(state, 61, 9, { hasColors: () => true }).split("\r\n");
     const selected = lines[2] ?? "";
     const ordinary = lines[3] ?? "";
@@ -293,7 +277,7 @@ describe("log browser formatting", () => {
   it("does not evict newer retained rows for a late older row or move selected anchors", () => {
     let state = resizeBrowser(initialBrowserState, 24);
     for (let index = 0; index < 1000; index++)
-      state = appendBrowserRow(state, { id: String(index), ts_ms: 10000 + index }, "refresh");
+      state = appendBrowserRow(state, { id: String(index), ts_ms: 10000 + index });
     state = resizeBrowser({ ...state, selected: 900, viewport: 880 }, 24);
     const selected = state.rows[900];
     const anchor = state.rows[880];
@@ -309,7 +293,7 @@ describe("log browser formatting", () => {
   });
 
   it("preserves all custom SQL rows and pins current identity across replacement", () => {
-    let state = appendBrowserRow(initialBrowserState, { id: "selected" }, "query");
+    let state = appendBrowserRow(initialBrowserState, { id: "selected" });
     state = browserKey(state, "return", 79, 24);
     const rows = Array.from({ length: 1500 }, (_, index) => ({ id: String(index) }));
     const replaced = applyBrowserBatch(
@@ -323,29 +307,28 @@ describe("log browser formatting", () => {
   });
 
   it("preserves query order and starts at the first row", () => {
-    let state = appendBrowserRow(initialBrowserState, { count: 7 }, "query");
-    state = appendBrowserRow(state, { count: 8 }, "query");
+    let state = appendBrowserRow(initialBrowserState, { count: 7 });
+    state = appendBrowserRow(state, { count: 8 });
     expect(state.rows).toEqual([{ count: 7 }, { count: 8 }]);
-    for (let index = 0; index < 1001; index++)
-      state = appendBrowserRow(state, { count: index }, "query");
+    for (let index = 0; index < 1001; index++) state = appendBrowserRow(state, { count: index });
     expect(state.rows).toHaveLength(1003);
     expect(state.rows[0]).toEqual({ count: 7 });
     expect(state.selected).toBe(0);
   });
 
-  it("keeps older selection and open details stable as retained rows are evicted", () => {
-    let state = initialBrowserState;
+  it("keeps open details pinned when a completed refresh evicts the selected row", () => {
+    let batch = initialBrowserState;
     for (let index = 0; index < 1000; index++)
-      state = appendBrowserRow(state, { message: `row-${index}` });
-    expect(state.selected).toBe(999);
+      batch = stageBrowserRow(batch, { ts_ms: index, message: `row-${index}` });
+    let state = applyBrowserBatch(initialBrowserState, batch, "append");
     state = browserKey(state, "up", 80, 24);
-    state = appendBrowserRow(state, { message: "newest" });
-    expect(state.rows[state.selected]).toEqual({ message: "row-998" });
     state = browserKey(state, "return", 80, 24);
+    batch = initialBrowserState;
     for (let index = 0; index < 1000; index++)
-      state = appendBrowserRow(state, { message: `later-${index}` });
+      batch = stageBrowserRow(batch, { ts_ms: 1000 + index, message: `later-${index}` });
+    state = applyBrowserBatch(state, batch, "append");
     expect(state.rows).toHaveLength(1000);
-    expect(state.detail).toEqual({ message: "row-998" });
+    expect(state.detail).toMatchObject({ message: "row-998" });
     expect(renderBrowser(state, 80, 24)).toContain("row-998");
     state = browserKey(state, "escape", 80, 24);
     expect(renderBrowser(state, 80, 24)).toContain("older rows discarded");
@@ -353,11 +336,11 @@ describe("log browser formatting", () => {
 
   it("bounds retained payload bytes while keeping an oversized record complete", () => {
     const text = "x".repeat(5 * 1024 * 1024);
-    let state = appendBrowserRow(initialBrowserState, { text });
-    state = appendBrowserRow(state, { text: "newer" });
+    let state = stageBrowserRow(initialBrowserState, { text });
+    state = stageBrowserRow(state, { text: "newer" });
     expect(state.rows).toEqual([{ text: "newer" }]);
     expect(state.dropped).toBe(1);
-    state = appendBrowserRow(state, { text });
+    state = stageBrowserRow(state, { text });
     expect(state.rows).toEqual([{ text }]);
     expect(renderBrowser(state, 80, 9)).toContain("oversized record");
   });

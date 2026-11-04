@@ -9,24 +9,7 @@ const browserReservedRows = browserHeaderRows + 1;
 
 export type LogsBrowserWindow =
   | { readonly kind: "range"; readonly start: string; readonly end: string }
-  | {
-      readonly kind: "since";
-      readonly start: string;
-      readonly live: boolean;
-      readonly newEntriesOnly?: boolean;
-    }
-  | {
-      readonly kind: "launch";
-      readonly end?: string;
-      readonly live: boolean;
-      readonly newEntriesOnly?: boolean;
-    }
-  | {
-      readonly kind: "all";
-      readonly end?: string;
-      readonly live: boolean;
-      readonly newEntriesOnly?: boolean;
-    };
+  | { readonly kind: "launch"; readonly end: string };
 
 export interface BrowserState {
   readonly window: LogsBrowserWindow | undefined;
@@ -70,11 +53,9 @@ export function resizeBrowser(state: BrowserState, height: number): BrowserState
 function insertBrowserRow(
   state: BrowserState,
   row: Schema.JsonObject,
-  mode: "query" | "tail" | "refresh",
+  mode: "query" | "bounded",
   index: number,
 ): BrowserState {
-  const following =
-    mode === "tail" && state.detail === undefined && state.selected >= state.rows.length - 1;
   const size = JSON.stringify(row).length * 2;
   const sizes = [...state.sizes.slice(0, index), size, ...state.sizes.slice(index)];
   const inserted = [...state.rows.slice(0, index), row, ...state.rows.slice(index)];
@@ -97,18 +78,14 @@ function insertBrowserRow(
       sizes: sizes.slice(dropped),
       bytes,
       dropped: state.dropped + dropped,
-      selected: following ? rows.length - 1 : Math.max(0, state.selected - dropped),
+      selected: Math.max(0, state.selected - dropped),
     },
     state.visibleRows + browserReservedRows,
   );
 }
 
-export function appendBrowserRow(
-  state: BrowserState,
-  row: Schema.JsonObject,
-  mode: "query" | "tail" | "refresh" = "tail",
-): BrowserState {
-  return insertBrowserRow(state, row, mode, state.rows.length);
+export function appendBrowserRow(state: BrowserState, row: Schema.JsonObject): BrowserState {
+  return insertBrowserRow(state, row, "query", state.rows.length);
 }
 
 export function stageBrowserRow(state: BrowserState, row: Schema.JsonObject): BrowserState {
@@ -125,7 +102,7 @@ export function stageBrowserRow(state: BrowserState, row: Schema.JsonObject): Br
     if (otherTime < time || (otherTime === time && otherIdentity <= identity)) low = middle + 1;
     else high = middle;
   }
-  return insertBrowserRow(state, row, "refresh", low);
+  return insertBrowserRow(state, row, "bounded", low);
 }
 
 function timestampMillis(row: Schema.JsonObject): number | undefined {
@@ -178,16 +155,8 @@ function requestedWindow(window: LogsBrowserWindow | undefined): string {
     const to = sameDay ? timeLabel(end) : `${dateLabel(end, crossYear)} ${timeLabel(end)}`;
     return `Window: ${from}–${to} UTC`;
   }
-  const prefix = window.newEntriesOnly ? "new entries only; " : "";
-  const live = window.live
-    ? " → now (live)"
-    : window.kind !== "since" && window.end !== undefined
-      ? ` → ${dateLabel(Date.parse(window.end), true)} ${timeLabel(Date.parse(window.end))} UTC`
-      : "";
-  if (window.kind === "launch") return `Window: ${prefix}since each service's latest launch${live}`;
-  if (window.kind === "all") return `Window: ${prefix}all retained history${live}`;
-  const start = Date.parse(window.start);
-  return `Window: ${prefix}since ${dateLabel(start, true)} ${timeLabel(start)} UTC${live}`;
+  const end = Date.parse(window.end);
+  return `Window: since each service's latest launch → ${dateLabel(end, true)} ${timeLabel(end)} UTC`;
 }
 
 export function applyBrowserBatch(
@@ -210,7 +179,7 @@ export function applyBrowserBatch(
         }
       : { ...state, dropped: state.dropped + batch.dropped };
   for (const row of batch.rows)
-    next = mode === "replace" ? appendBrowserRow(next, row, "query") : stageBrowserRow(next, row);
+    next = mode === "replace" ? appendBrowserRow(next, row) : stageBrowserRow(next, row);
   if (mode === "replace") {
     const identity = selected?.["id"];
     const found =

@@ -102,7 +102,7 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
             Effect.sync(() => {
               staged =
                 session.mode === "replace"
-                  ? appendBrowserRow(staged, row, "query")
+                  ? appendBrowserRow(staged, row)
                   : stageBrowserRow(staged, row);
             }),
           )
