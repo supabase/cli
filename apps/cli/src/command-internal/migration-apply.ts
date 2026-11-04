@@ -336,8 +336,8 @@ export const formatExecBatchError = (e: DbExecError, index: number, stat: string
   }
   if (e.code === "25P01") {
     msg.push("");
-    msg.push("Hint: This statement needs an explicit transaction block; the CLI adds none.");
-    msg.push("      Wrap the whole file in BEGIN; ... COMMIT; with no BEGIN/COMMIT inside.");
+    msg.push("Hint: This statement must run inside an explicit BEGIN; ... COMMIT; block;");
+    msg.push("      the CLI adds none. Review any existing transaction boundaries.");
     msg.push("      Move each non-transactional statement (e.g. VACUUM) to its own file.");
   }
   msg.push(`At statement: ${index}`, marked);

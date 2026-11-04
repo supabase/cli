@@ -805,8 +805,8 @@ layer(BunServices.layer)("migration failure rendering", (it) => {
       expect(message).toBe(
         "ERROR: LOCK TABLE can only be used in transaction blocks (SQLSTATE 25P01)\n" +
           "\n" +
-          "Hint: This statement needs an explicit transaction block; the CLI adds none.\n" +
-          "      Wrap the whole file in BEGIN; ... COMMIT; with no BEGIN/COMMIT inside.\n" +
+          "Hint: This statement must run inside an explicit BEGIN; ... COMMIT; block;\n" +
+          "      the CLI adds none. Review any existing transaction boundaries.\n" +
           "      Move each non-transactional statement (e.g. VACUUM) to its own file.\n" +
           "At statement: 0\n" +
           "LOCK TABLE public.t IN ACCESS EXCLUSIVE MODE",
