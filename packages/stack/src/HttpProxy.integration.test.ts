@@ -828,15 +828,25 @@ it.live("returns a gateway error naming the route and cause when a target cannot
           prefix: "/",
           target: Effect.fail(new ProxyError({ message: "readiness failed" })),
         },
+        {
+          id: "functions",
+          prefix: "/functions/v1",
+          upstreamCors: true,
+          target: Effect.fail(new ProxyError({ message: "readiness failed" })),
+        },
       ]);
       const client = yield* HttpClient.HttpClient;
       const response = yield* client.get(`http://127.0.0.1:${proxy.port}/`);
       expect(response.status).toBe(502);
       expect(response.headers["access-control-allow-origin"]).toBe("*");
       expect(yield* response.text).toBe("Bad Gateway");
-      expect(logs).toHaveLength(1);
+      const functions = yield* client.get(`http://127.0.0.1:${proxy.port}/functions/v1/fn`);
+      expect(functions.status).toBe(502);
+      expect(functions.headers["access-control-allow-origin"]).toBe("*");
+      expect(logs).toHaveLength(2);
       expect(logs[0]).toContain("Route rest request failed");
       expect(logs[0]).toContain("readiness failed");
+      expect(logs[1]).toContain("Route functions request failed");
     }),
   ).pipe(
     Effect.provide(

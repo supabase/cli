@@ -4791,6 +4791,7 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
         Schema.Struct({ type: Schema.Literal("ltree_reindex_required") }),
         Schema.Struct({ type: Schema.Literal("operator_estimator_gate") }),
         Schema.Struct({ type: Schema.Literal("btree_gist_nan_reindex") }),
+        Schema.Struct({ type: Schema.Literal("collation_reindex_required") }),
       ],
       { mode: "oneOf" },
     ),

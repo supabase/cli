@@ -221,6 +221,28 @@ SHARED = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhE
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("uppercases edge runtime secret names and drops unset or SUPABASE_ ones", () =>
+    Effect.gen(function* () {
+      const root = yield* createStackConfigProject(
+        `project_id = "functions-secret-names"
+[edge_runtime.secrets]
+my_lower = "lower-value"
+FROM_ENV = "env(STACK_SECRET_SOURCE)"
+MISSING = "env(STACK_SECRET_UNSET)"
+EMPTY = ""
+supabase_internal_wallclock_limit_sec = "7"
+`,
+        { rootEnv: "STACK_SECRET_SOURCE=from-env\n" },
+      );
+      const config = yield* loadStackConfig(root);
+      const services = yield* config.creations("functions-secret-names");
+      expect(services.find((service) => service.service === "functions")?.config.env).toEqual({
+        MY_LOWER: "lower-value",
+        FROM_ENV: "from-env",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("leaves empty configured secrets for the stack to normalize", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "empty-secrets"
