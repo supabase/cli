@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { BunServices } from "@effect/platform-bun";
-import { Data, Effect, FileSystem, Layer, Path, Schedule, Schema } from "effect";
+import { Cause, Data, Effect, Exit, FileSystem, Layer, Path, Schedule, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { describe, expect } from "vitest";
 
@@ -175,16 +175,26 @@ function startStack(cliEffect: LiveFixtures["cliEffect"]) {
 }
 
 function deployFunctions(cliEffect: LiveFixtures["cliEffect"], ref: string, slugs: string[]) {
-  return Effect.acquireRelease(
-    cliEffect(["functions", "deploy", "--yes", `--remote=${ref}`]).pipe(
-      Effect.flatMap((result) => requireSuccess(result, "functions deploy")),
+  const deleteAll = Effect.forEach(slugs, (slug) =>
+    cliEffect(["functions", "delete", slug, "--yes", `--remote=${ref}`]).pipe(
+      Effect.flatMap((result) =>
+        /not found|does not exist/iu.test(`${result.stdout}\n${result.stderr}`)
+          ? Effect.void
+          : requireSuccess(result, `functions delete ${slug}`),
+      ),
+      Effect.exit,
     ),
-    () =>
-      Effect.forEach(slugs, (slug) =>
-        cliEffect(["functions", "delete", slug, "--yes", `--remote=${ref}`]).pipe(
-          Effect.flatMap((result) => requireSuccess(result, `functions delete ${slug}`)),
-        ),
-      ).pipe(Effect.orDie),
+  ).pipe(
+    Effect.flatMap((exits) => {
+      const failures = exits.filter(Exit.isFailure);
+      return failures.length === 0
+        ? Effect.void
+        : Effect.die(new AggregateError(failures.map((exit) => Cause.squash(exit.cause))));
+    }),
+  );
+  return Effect.acquireRelease(Effect.void, () => deleteAll).pipe(
+    Effect.andThen(cliEffect(["functions", "deploy", "--yes", `--remote=${ref}`])),
+    Effect.flatMap((result) => requireSuccess(result, "functions deploy")),
   );
 }
 
@@ -233,20 +243,22 @@ describe("stack gateway CORS (live)", () => {
             const stagingUrl = project.functionsUrl.replace(/\/functions\/v1$/u, "");
 
             yield* deployFunctions(cliEffect, project.ref, [slug, jwtSlug]);
+            const probes = gatewayProbes(slug, jwtSlug, publishableKey);
+            const readiness = probes.filter(
+              (probe) => probe.name === "POST function, allowed origin",
+            );
             // A fresh deploy can briefly answer 404 before the edge picks it up.
-            const staging = yield* runProbes(
-              stagingUrl,
-              gatewayProbes(slug, jwtSlug, publishableKey),
-            ).pipe(
+            yield* runProbes(stagingUrl, readiness).pipe(
               Effect.filterOrFail(
-                (rows) => rows[3]?.status === 200,
+                (rows) => rows[0]?.status === 200,
                 (rows) =>
                   new GatewayCorsLiveError({
-                    message: `function not ready: ${JSON.stringify(rows[3])}`,
+                    message: `function not ready: ${JSON.stringify(rows[0])}`,
                   }),
               ),
               Effect.retry({ schedule: Schedule.spaced("5 seconds"), times: 24 }),
             );
+            const staging = yield* runProbes(stagingUrl, probes);
 
             const stack = yield* startStack(cliEffect);
             const local = yield* runProbes(

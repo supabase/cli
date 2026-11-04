@@ -305,6 +305,16 @@ const setCors = (response: ServerResponse) => {
   response.setHeader("access-control-allow-methods", corsMethods);
 };
 
+const varyOnOrigin = (response: ServerResponse) => {
+  const vary = response.getHeader("vary");
+  const values = (Array.isArray(vary) ? vary.join(",") : String(vary ?? ""))
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value !== "");
+  if (values.some((value) => value === "*" || value.toLowerCase() === "origin")) return;
+  response.setHeader("vary", [...values, "Origin"].join(", "));
+};
+
 const setPreflightCors = (response: ServerResponse, request: IncomingMessage) => {
   setCors(response);
   response.setHeader(
@@ -462,8 +472,11 @@ const forward = Effect.fn("HttpProxy.forward")(function* (
           if (header !== undefined && !hopByHop.has(name.toLowerCase()))
             response.setHeader(name, header);
         }
-        if (route.upstreamCors !== true)
-          response.setHeader("access-control-allow-origin", request.headers.origin ?? "*");
+        if (route.upstreamCors !== true) {
+          const origin = request.headers.origin;
+          response.setHeader("access-control-allow-origin", origin ?? "*");
+          if (origin !== undefined) varyOnOrigin(response);
+        }
         response.flushHeaders();
         value.pipe(response, { end: false });
         value.once("end", onUpstreamEnd);
