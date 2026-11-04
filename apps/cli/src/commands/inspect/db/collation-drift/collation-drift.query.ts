@@ -41,7 +41,12 @@ drifted AS (
       THEN 'default'
       -- Schema-qualified: the generated ALTER COLLATION must not depend on search_path.
       ELSE FORMAT('%I.%I', cn.nspname, c.collname)
-    END AS collation_name
+    END AS collation_name,
+    -- Refreshing a version needs ownership of the database or collation.
+    CASE WHEN kc.colloid = 'pg_catalog.default'::regcollation
+      THEN (SELECT pg_has_role(datdba, 'USAGE') FROM pg_database WHERE datname = current_database())
+      ELSE pg_has_role(c.collowner, 'USAGE')
+    END AS can_refresh
   FROM key_collations kc
   JOIN pg_collation c ON c.oid = kc.colloid
   JOIN pg_namespace cn ON cn.oid = c.collnamespace
@@ -60,6 +65,7 @@ SELECT
   dr.collation_name AS collation,
   dr.stored_version,
   dr.current_version,
+  dr.can_refresh,
   CASE
     WHEN dr.is_primary THEN 'PRIMARY KEY'
     WHEN dr.is_unique THEN 'UNIQUE'
@@ -96,6 +102,7 @@ interface DriftRow {
   readonly current_version: string;
   readonly key_type: string;
   readonly size: string;
+  readonly can_refresh: boolean;
 }
 
 function toDriftRow(row: Record<string, unknown>): DriftRow {
@@ -110,6 +117,7 @@ function toDriftRow(row: Record<string, unknown>): DriftRow {
     current_version: text(row["current_version"]),
     key_type: text(row["key_type"]),
     size: text(row["size"]),
+    can_refresh: row["can_refresh"] === true || row["can_refresh"] === "t",
   };
 }
 
@@ -141,14 +149,14 @@ function reindexStatements(rows: ReadonlyArray<DriftRow>): string[] {
 
 function refreshStatements(rows: ReadonlyArray<DriftRow>): string[] {
   const out: string[] = [];
-  if (rows.some((r) => r.collation === "default")) {
+  if (rows.some((r) => r.collation === "default" && r.can_refresh)) {
     const database = rows[0]?.database ?? "postgres";
     out.push(`ALTER DATABASE ${quoteIdent(database)} REFRESH COLLATION VERSION;`);
   }
   // Already quoted by the SQL's FORMAT('%I.%I', ...).
   const seen = new Set<string>();
   for (const r of rows) {
-    if (r.collation === "default" || seen.has(r.collation)) continue;
+    if (r.collation === "default" || !r.can_refresh || seen.has(r.collation)) continue;
     seen.add(r.collation);
     out.push(`ALTER COLLATION ${r.collation} REFRESH VERSION;`);
   }
@@ -184,6 +192,7 @@ export function buildCollationDriftReport(
   const severity: ReportSeverity = keyRows.length > 0 ? "critical" : "warn";
 
   const defaultDrift = rows.find((r) => r.collation === "default");
+  const ownerOnly = [...new Set(rows.filter((r) => !r.can_refresh).map((r) => r.collation))];
   const namedCollations = [...new Set(rows.map((r) => r.collation))].filter((c) => c !== "default");
 
   const environment: Array<{ key: string; value: string }> = [
@@ -260,7 +269,11 @@ export function buildCollationDriftReport(
           },
           {
             title: "Record the new collation version — only after every rebuild has finished",
-            body: "Refreshing first hides the problem without fixing it: it updates a label and silences the warning while leaving the indexes mis-ordered. The list above covers btree key columns only; also rebuild expression indexes and any other index or constraint that uses these collations before refreshing.",
+            body:
+              "Refreshing first hides the problem without fixing it: it updates a label and silences the warning while leaving the indexes mis-ordered. The list above covers btree key columns only; also rebuild expression indexes and any other index or constraint that uses these collations before refreshing." +
+              (ownerOnly.length > 0
+                ? ` The current role does not own ${ownerOnly.join(", ")}; after the rebuilds, ask its owner (on hosted projects, Supabase support) to refresh the version.`
+                : ""),
             sql: refreshStatements(rows),
           },
         ],

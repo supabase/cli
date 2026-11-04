@@ -15,6 +15,7 @@ const libcRow = {
   current_version: "2.40",
   key_type: "UNIQUE",
   size: "148 MB",
+  can_refresh: true,
 };
 
 const icuRow = {
@@ -27,6 +28,7 @@ const icuRow = {
   current_version: "153.121",
   key_type: "",
   size: "8192 bytes",
+  can_refresh: true,
 };
 
 function stepsBlock(report: ReturnType<typeof buildCollationDriftReport>): ReportStepsBlock {
@@ -72,6 +74,14 @@ describe("buildCollationDriftReport", () => {
       "Rebuild every listed index",
       "Record the new collation version — only after every rebuild has finished",
     ]);
+  });
+
+  it("routes the refresh of a collation the role does not own to its owner", () => {
+    const foreign = { ...icuRow, collation: 'pg_catalog."und-x-icu"', can_refresh: false };
+    const refresh = stepsBlock(buildCollationDriftReport([libcRow, foreign], PG17)).steps[2];
+
+    expect(refresh?.sql).toEqual(['ALTER DATABASE "postgres" REFRESH COLLATION VERSION;']);
+    expect(refresh?.body).toContain('does not own pg_catalog."und-x-icu"');
   });
 
   it("lists an index once in the workflow when several of its collations drifted", () => {

@@ -50,6 +50,7 @@ const DRIFT_ROW = {
   current_version: "2.39",
   key_type: "UNIQUE",
   size: "16 kB",
+  can_refresh: true,
 };
 
 const flags: InspectConnectionFlags = {
