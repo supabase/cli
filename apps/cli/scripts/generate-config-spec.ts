@@ -73,7 +73,7 @@ const stripNullish = (types: ReadonlyArray<AstNode>) =>
   types.filter((member) => member._tag !== "Undefined" && member._tag !== "Null");
 
 /** Doc-style default: scalars as plain strings, arrays as `["a", "b"]`. */
-export function formatDefault(value: unknown): string | undefined {
+function formatDefault(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (Array.isArray(value)) return `[${value.map((item) => JSON.stringify(item)).join(", ")}]`;
   if (typeof value === "object" && value !== null) return JSON.stringify(value);
@@ -147,7 +147,7 @@ function leafAnnotations(own: Record<string, unknown>, element: AstNode | undefi
   };
 }
 
-export function collectEntries(root: AstNode): ReadonlyArray<Entry> {
+function collectEntries(root: AstNode): ReadonlyArray<Entry> {
   const entries: Array<Entry> = [];
 
   const visit = (
@@ -236,7 +236,7 @@ const TAG_ORDER = [
   ["branching", "Branching", "Branching configurations settings."],
 ] as const;
 
-export function toConfigSpec(entries: ReadonlyArray<Entry>, version: string) {
+function toConfigSpec(entries: ReadonlyArray<Entry>, version: string) {
   return {
     configspec: "001",
     info: {

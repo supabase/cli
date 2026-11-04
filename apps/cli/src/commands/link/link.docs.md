@@ -2,4 +2,4 @@ Connects the current directory to a hosted Supabase project so commands such as 
 
 Linking records the project ref under `supabase/.temp/`, so later commands target that project without `--project-ref`. It never connects to the database, so it needs no database password.
 
-Commands that accept `--remote`, like `db dump`, `db push`, and `db pull`, target the linked project, so link it first.
+Passing a bare `--remote` to commands such as `db dump`, `db push`, and `db pull` targets the linked project, so link it first.

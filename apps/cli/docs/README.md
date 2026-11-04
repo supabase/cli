@@ -27,6 +27,9 @@ bun scripts/publish-docs-spec.ts --local ../../../supabase --version v2
 bun scripts/publish-docs-spec.ts --local ../../../supabase --version v3 --prerelease
 ```
 
+The v2 preview reuses this tree's command bodies, so it is only a layout preview; the published
+v2 reference comes from the v2 release branch.
+
 ## Release
 
 The `docs` job in `.github/workflows/release.yml` publishes the reference on every stable
