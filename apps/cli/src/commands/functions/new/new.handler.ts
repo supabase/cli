@@ -19,6 +19,7 @@ import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
+import { configDisplayPath } from "../../../command-internal/config-advice.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsNewFlags } from "./new.command.ts";
@@ -168,7 +169,7 @@ const writeJsonFunctionConfig = Effect.fn("functions.new.writeJsonConfig")(funct
 ) {
   const path = yield* Path.Path;
   const output = yield* Output;
-  const relPath = path.relative(workdir, document.path);
+  const relPath = configDisplayPath(path, workdir, document.path);
 
   if (jsonDeclaredFunctionSlugs(document).has(slug)) {
     yield* output.raw(`functions.${slug} is already declared in ${bold(relPath)}\n`, "stderr");
