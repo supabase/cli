@@ -2,7 +2,7 @@
  * Spike: emits a `configspec 001` YAML document (the shape of supabase.com's
  * `apps/docs/spec/cli_v1_config.yaml`) by walking the `CliConfigSchema` AST from
  * `@supabase/config`, and optionally diffs it against the hand-written file. Run as
- * `bun scripts/generate-config-spec.ts [version] [--diff <handwritten.yaml>] [--json]`.
+ * `bun scripts/generate-config-spec.ts [version] [--diff <handwritten.yaml>]`.
  * The generated YAML (or, with `--diff`, the Markdown diff report) goes to stdout.
  *
  * It reads only annotations already present on the schema (`description`, `default`, `tags`,
@@ -243,7 +243,7 @@ export function toConfigSpec(entries: ReadonlyArray<Entry>, version: string) {
       title: "CLI",
       source: "https://github.com/supabase/cli",
       bugs: "https://github.com/supabase/cli/issues",
-      spec: "https://github.com/supabase/supabase/spec/cli_v1_config.yaml",
+      spec: "https://github.com/supabase/supabase/blob/master/apps/docs/spec/cli_v1_config.yaml",
       // No source in code: hand-written prose.
       description: "",
       tags: TAG_ORDER.map(([id, title, description]) => ({ id, title, description })),

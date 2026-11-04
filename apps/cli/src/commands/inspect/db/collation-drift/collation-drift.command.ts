@@ -10,11 +10,9 @@ import {
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { makeCommand } from "../../../../shared/cli/cli-params.ts";
 
-export const inspectDbCollationDriftCommand = Command.make(
-  "collation-drift",
-  INSPECT_DB_FLAGS,
-).pipe(
+export const inspectDbCollationDriftCommand = makeCommand("collation-drift", INSPECT_DB_FLAGS).pipe(
   Command.withDescription(
     `Show indexes affected by collation version drift, with the fix workflow.
 
@@ -29,6 +27,16 @@ The output lists the affected indexes and the exact statements to verify
 order they must be run. This command itself is read-only.`,
   ),
   Command.withShortDescription("Show indexes affected by collation version drift"),
+  Command.withExamples([
+    {
+      command: "supabase inspect db collation-drift",
+      description: "List drifted indexes on the local database",
+    },
+    {
+      command: "supabase inspect db collation-drift --remote",
+      description: "List drifted indexes on the linked project",
+    },
+  ]),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbCollationDrift)),
   Command.provide(inspectDbRuntimeLayer("collation-drift")),

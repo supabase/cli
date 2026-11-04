@@ -19,7 +19,7 @@ export interface BreakingChange {
   readonly warnInPrevious?: boolean;
 }
 
-/** Declares a breaking change for the docs generator; see the registry in `./index.ts`. */
+/** Declares a breaking change for the docs generator; see the registry in `./registry.ts`. */
 export function defineBreakingChange(change: BreakingChange): BreakingChange {
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(change.id)) {
     throw new Error(

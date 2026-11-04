@@ -1,4 +1,4 @@
-Connects the current directory to a hosted Supabase project so commands such as `db push` and `db pull` target it. Pass the project ref, or the name of one of its branches, as the argument: `supabase link <ref>`. The `--project-ref` flag still works.
+Connects the current directory to a hosted Supabase project so commands such as `db push --remote` and `db pull --remote` target it. Pass the project ref, or the name of one of its branches, as the argument: `supabase link <ref>`. The `--project-ref` flag still works.
 
 The CLI fetches PostgREST configuration from the Supabase platform and validates it against your local configuration file.
 
