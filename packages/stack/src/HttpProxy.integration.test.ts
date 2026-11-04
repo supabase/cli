@@ -9,6 +9,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { captureLogs } from "../tests/logs.ts";
 import { ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpAccess, type HttpRoute } from "./HttpProxy.ts";
+import { sharedRoutes } from "./host/Endpoints.ts";
 
 const listen = (server: Server | NetServer, options?: { readonly beforeClose?: () => void }) =>
   Effect.acquireRelease(
@@ -746,6 +747,54 @@ it.live("adds a route's default headers only when the client sent none", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live(
+  "leaves CORS on the functions route to the function while other routes keep the gateway's",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const backend = createServer((incoming, response) => {
+          if (incoming.headers.origin === "https://app.example.com")
+            response.setHeader("access-control-allow-origin", "https://app.example.com");
+          response.statusCode = incoming.method === "OPTIONS" ? 403 : 200;
+          response.end(incoming.method);
+        });
+        const backendAddress = yield* listen(backend);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        const keys = {
+          publishableKey: "sb_publishable_example",
+          secretKey: "sb_secret_example",
+          anonKey: "anon.jwt.value",
+          serviceRoleKey: "service.role.jwt",
+        };
+        yield* proxy.setRoutes([
+          ...(
+            sharedRoutes({ service: "functions" }, "http", keys, () => Effect.die("unused")) ?? []
+          ).map((route) => ({ ...route, id: "functions", target: Effect.succeed(backendAddress) })),
+          { id: "rest", prefix: "/rest/v1", target: Effect.succeed(backendAddress) },
+        ]);
+        const client = yield* HttpClient.HttpClient;
+        const send = (method: "OPTIONS" | "POST", path: string, origin: string) =>
+          client.execute(
+            HttpClientRequest.make(method)(`http://127.0.0.1:${proxy.port}${path}`).pipe(
+              HttpClientRequest.setHeader("origin", origin),
+            ),
+          );
+
+        const preflight = yield* send("OPTIONS", "/functions/v1/fn", "https://other.example.com");
+        expect(preflight.status).toBe(403);
+        expect(preflight.headers["access-control-allow-origin"]).toBeUndefined();
+        const denied = yield* send("POST", "/functions/v1/fn", "https://other.example.com");
+        expect(yield* denied.text).toBe("POST");
+        expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
+        const allowed = yield* send("POST", "/functions/v1/fn", "https://app.example.com");
+        expect(allowed.headers["access-control-allow-origin"]).toBe("https://app.example.com");
+        const rest = yield* send("OPTIONS", "/rest/v1/todos", "https://other.example.com");
+        expect(rest.status).toBe(204);
+        expect(rest.headers["access-control-allow-origin"]).toBe("*");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer))),
+);
+
 it.live("returns a gateway error naming the route and cause when a target cannot wake", () => {
   const logs: Array<string> = [];
   return Effect.scoped(
@@ -757,15 +806,25 @@ it.live("returns a gateway error naming the route and cause when a target cannot
           prefix: "/",
           target: Effect.fail(new ProxyError({ message: "readiness failed" })),
         },
+        {
+          id: "functions",
+          prefix: "/functions/v1",
+          upstreamCors: true,
+          target: Effect.fail(new ProxyError({ message: "readiness failed" })),
+        },
       ]);
       const client = yield* HttpClient.HttpClient;
       const response = yield* client.get(`http://127.0.0.1:${proxy.port}/`);
       expect(response.status).toBe(502);
       expect(response.headers["access-control-allow-origin"]).toBe("*");
       expect(yield* response.text).toBe("Bad Gateway");
-      expect(logs).toHaveLength(1);
+      const functions = yield* client.get(`http://127.0.0.1:${proxy.port}/functions/v1/fn`);
+      expect(functions.status).toBe(502);
+      expect(functions.headers["access-control-allow-origin"]).toBe("*");
+      expect(logs).toHaveLength(2);
       expect(logs[0]).toContain("Route rest request failed");
       expect(logs[0]).toContain("readiness failed");
+      expect(logs[1]).toContain("Route functions request failed");
     }),
   ).pipe(
     Effect.provide(
