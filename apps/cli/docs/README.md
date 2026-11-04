@@ -15,7 +15,7 @@ Source content for the [CLI reference](https://supabase.com/docs/reference/cli) 
 ## Build
 
 ```bash
-bun scripts/generate-docs-spec.ts [--prerelease] [--sections common-cli-sections.json] > cli_v2_commands.yaml
+bun scripts/generate-docs-spec.ts [--prerelease] [--sections common-cli-v3-sections.json] > cli_v3_commands.yaml
 ```
 
 The spec is `clispec 002`. `--sections` also writes the docs-site sidebar, generated from the
