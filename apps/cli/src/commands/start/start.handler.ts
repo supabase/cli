@@ -42,7 +42,7 @@ import {
   dockerSupportsHealthStartInterval,
   isContainerNotFoundMessage,
 } from "../../command-internal/container-cli.ts";
-import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
+import { checkDbConfig } from "../../command-internal/db-config.read.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import {
   resolveStorageCredentials,
@@ -97,6 +97,7 @@ import {
 } from "../../command-internal/resolved-config-context.ts";
 import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
+import { configFileRefOf } from "../../command-internal/config-advice.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import {
@@ -444,8 +445,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       context.hostname,
       cliSettings.workdir,
       context.document,
+      context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
     ).pipe(Effect.mapError(startConfigError));
     const { config, projectId, projectEnvValues } = context;
+    const configFile = configFileRefOf(path, cliSettings.workdir, context.resolvedConfig);
     // Resolved here (project `.env` aware) so it can be threaded through to `startDatabase`'s
     // own `setup.experimental` below.
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
@@ -537,7 +540,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // `SUPABASE_DB_SEED_ENABLED` or an undecryptable `[db.vault]` secret would go unvalidated
     // whenever `start` reuses an existing volume instead of provisioning a fresh one.
     // `startSetupLocalDatabase` still resolves its own fresh-setup values independently when it runs.
-    const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir).pipe(
+    const dbTomlValues = yield* checkDbConfig(fs, path, cliSettings.workdir).pipe(
       Effect.withSpan("start.validateDbConfig"),
     );
 
@@ -565,6 +568,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         cliSettings.workdir,
         context.projectEnvValues,
         context.document,
+        context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
         precomputedLocal,
       ).pipe(Effect.mapError((cause) => new StatusInvalidConfigError({ message: cause.message })));
       const containerIds = statusContainerIds(projectId);
@@ -737,7 +741,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             projectId,
             cliSettings.workdir,
             `${cliSettings.workdir}/supabase`,
-            { configDeclaredFunctions, configFunctions, rawConfigFunctions },
+            {
+              configDeclaredFunctions,
+              configFunctions,
+              rawConfigFunctions,
+              configPath: context.resolvedConfig.hasConfigFile
+                ? context.resolvedConfig.loaded.path
+                : undefined,
+            },
             Option.none(),
             Option.none(),
             cliSettings.workdir,
@@ -1312,7 +1323,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // Runtime container receives plaintext. `toPlainEdgeRuntimeConfig` only interpolates
           // `env()` and unwraps `Redacted` — it never decrypts a dotenvx `encrypted:` value, so
           // without this step the literal ciphertext would reach the container's env file.
-          // `checkDbToml` already validates every secret is decryptable, but discards the
+          // `checkDbConfig` already validates every secret is decryptable, but discards the
           // decrypted plaintext there.
           const decryptedEdgeRuntimeSecrets = decryptSecretMap(
             toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets,
@@ -1338,6 +1349,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             configDeclaredFunctions,
             configFunctions,
             rawConfigFunctions,
+            configPath: context.resolvedConfig.hasConfigFile
+              ? context.resolvedConfig.loaded.path
+              : undefined,
             authArtifacts: {
               publishableKey: values.publishableKey,
               secretKey: values.secretKey,
@@ -1558,6 +1572,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                   },
                   credentials: storageCredentials,
                   projectEnvValues,
+                  configFile,
                 }).pipe(Effect.withSpan("start.seedBuckets"), Effect.result);
                 if (Result.isFailure(seedResult)) {
                   // No manual `rollbackStart` here — the outer
@@ -1610,6 +1625,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             },
             credentials: storageCredentials,
             projectEnvValues,
+            configFile,
           }).pipe(Effect.withSpan("start.seedBuckets"));
         }
 

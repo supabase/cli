@@ -2989,7 +2989,7 @@ describe("db reset", () => {
       "resolves db.migrations.schema_paths against supabase/ before applying it on an experimental PG14 reset",
       () => {
         // `recreateLocalDatabase14` must pass the normalized `toml.schemaPaths` (resolved by
-        // `checkDbToml`) into the final `migrateAndSeed` call — the raw `["schema.sql"]` pattern
+        // `checkDbConfig`) into the final `migrateAndSeed` call — the raw `["schema.sql"]` pattern
         // would glob-match against the workdir root instead of `supabase/schema.sql`.
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
@@ -3040,7 +3040,7 @@ describe("db reset", () => {
 
     it.effect("loads an env() boolean in config for a remote reset", () => {
       // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
-      // parsing (`checkDbToml`) instead of the strict @supabase/config
+      // parsing (`checkDbConfig`) instead of the strict @supabase/config
       // loader rejecting it.
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.migrations]\nenabled = "env(MIGRATIONS_ENABLED)"\n',

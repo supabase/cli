@@ -151,7 +151,7 @@ it.effect(
           requested: "v2.196.1",
         });
         expect(found[0]?.message).toContain(
-          'keep this data by pinning `[local.services.auth] version = "v2.197.0"`',
+          'keep this data by pinning `local.services.auth.version` to `"v2.197.0"`',
         );
         expect(yield* conflicts({ auth: pinned(selection.auth, "v2.197.0") })).toEqual([]);
         expect(yield* conflicts({ auth: pinned(selection.auth, "v2.198.0") })).toEqual([]);

@@ -4,6 +4,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
+import { loadConfigFileRef } from "../../../command-internal/config-file-ref.ts";
 import { loadStackConfig, StackConfigError } from "../../../command-internal/stack-config.ts";
 import {
   LockResolutionError,
@@ -232,10 +233,12 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const source = creations.find(
     (creation): creation is FunctionsCreation => creation.service === "functions",
   );
-  if (source === undefined)
+  if (source === undefined) {
+    const configFile = yield* loadConfigFileRef(settings.workdir);
     return yield* invalidConfig(
-      "Enable edge_runtime in supabase/config.toml before serving Functions.",
+      `Enable edge_runtime in ${configFile.path} before serving Functions.`,
     );
+  }
   const databaseUrl = (yield* database.credentials({ from: "runtime" })).databaseUrl;
   if (databaseUrl === undefined) return yield* invalidConfig("The database has no runtime URL.");
   const apiSource = [...members, ...instances].find(

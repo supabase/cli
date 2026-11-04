@@ -7,7 +7,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
-import { loadProjectEnvValues, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnvValues, readDbConfig } from "../../../command-internal/db-config.read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
@@ -160,7 +160,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
 
     // Read before the dry-run print so an invalid merged config fails rather than
     // silently printing a script.
-    const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const tomlValues = yield* readDbConfig(fs, path, cliSettings.workdir, linkedRef);
 
     const backend = yield* currentStackBackend;
     const managedProject =

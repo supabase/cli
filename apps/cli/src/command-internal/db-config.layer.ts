@@ -49,7 +49,7 @@ import {
   redactConnectionString,
 } from "./db-config.parse.ts";
 import { DbConfigResolver, type DbConfigError } from "./db-config.service.ts";
-import { loadProjectEnvValues, readDbToml } from "./db-config.toml-read.ts";
+import { loadProjectEnvValues, readDbConfig } from "./db-config.read.ts";
 import type { DbConnectionInput } from "./db-config.types.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
@@ -531,7 +531,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   // on the main linked branch rather than validating base config. For an ad-hoc `--project-ref`,
   // skip the saved workdir pooler URL because it belongs to the linked project, not necessarily
   // the explicit ref.
-  yield* readDbToml(fs, path, workdir, ref, {
+  yield* readDbConfig(fs, path, workdir, ref, {
     resolveVaultSecrets,
   });
   let connectionString = ignoreSavedUrl ? undefined : Option.getOrUndefined(savedPoolerUrl);
@@ -784,7 +784,7 @@ export const dbConfigResolverLayer = Layer.effect(
 
     const resolveDbUrl = (dbUrl: string, localHost: string, resolveVaultSecrets: boolean) =>
       Effect.gen(function* () {
-        const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
+        const tomlValues = yield* readDbConfig(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
         // The project `.env*` files populate the environment that the libpq `PG*` fallbacks
@@ -830,7 +830,7 @@ export const dbConfigResolverLayer = Layer.effect(
 
     const resolveLocalStack = (localHost: string, resolveVaultSecrets: boolean) =>
       Effect.gen(function* () {
-        const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
+        const tomlValues = yield* readDbConfig(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
         const backend = yield* currentStackBackend;
@@ -870,7 +870,7 @@ export const dbConfigResolverLayer = Layer.effect(
       },
     ) =>
       Effect.gen(function* () {
-        yield* readDbToml(fs, path, cliSettings.workdir, ref, {
+        yield* readDbConfig(fs, path, cliSettings.workdir, ref, {
           resolveVaultSecrets: options.resolveVaultSecrets,
         });
         return yield* resolveLinkedConn(
@@ -910,7 +910,15 @@ export const dbConfigResolverLayer = Layer.effect(
           target.kind === "local" &&
           (yield* isCheckoutLinked(fs, path, cliSettings.workdir, cliSettings.projectId));
         if (target.kind !== "linked") {
-          yield* rejectTargetPassword(target.kind, input.password, linkedCheckout);
+          yield* rejectTargetPassword(
+            target.kind,
+            input.password,
+            linkedCheckout,
+            cliSettings.workdir,
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          );
         }
         const resolveVaultSecrets = input.resolveVaultSecrets ?? true;
         if (target.kind === "linked") {

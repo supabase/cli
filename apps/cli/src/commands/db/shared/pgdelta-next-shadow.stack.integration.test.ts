@@ -22,7 +22,7 @@ import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts"
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { pgDeltaNextShadowLayer } from "./pgdelta-next-shadow.layer.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
-import type { DbTomlValues } from "../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 
 const toml = {
   projectEnv: {},
@@ -54,7 +54,8 @@ const toml = {
   seed: { enabled: false, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-} satisfies DbTomlValues;
+  configFile: { format: "toml", path: "supabase/config.toml" },
+} satisfies DbConfigValues;
 
 const fakeDocker = Layer.succeed(DockerRun, {
   run: () => Effect.die("Docker is not used by the native stack backend"),

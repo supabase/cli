@@ -375,7 +375,7 @@ describe("experimental stack update and saved stack data", () => {
         yield* run;
 
         expect(stackWarnings(output)).toEqual([
-          `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data was initialized by stock PostgreSQL build ${OLDER_BUILD}, but stock PostgreSQL build ${BUILT} was requested; keep this data by pinning \`[local.services.database] version = "${OLDER_BUILD}"\` in supabase/config.toml, or ${destroy(stackId)}`,
+          `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data was initialized by stock PostgreSQL build ${OLDER_BUILD}, but stock PostgreSQL build ${BUILT} was requested; keep this data by pinning \`local.services.database.version\` to \`"${OLDER_BUILD}"\` in your config file, or ${destroy(stackId)}`,
         ]);
         expect((yield* readServices(root)).database.resolved.upstreamVersion).toBe(BUILT);
       }).pipe(Effect.provide(BunServices.layer)),

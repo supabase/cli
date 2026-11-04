@@ -405,7 +405,7 @@ describe("createContainer", () => {
           expect(error).toBeInstanceOf(ContainerStartError);
           expect(error.message).toContain('failed to start docker container "supabase_db_proj"');
           expect(error.message).toContain("0.0.0.0:5432");
-          expect(error.message).toContain("db port in supabase/config.toml");
+          expect(error.message).toContain("db port in your config file");
         }),
       );
     },

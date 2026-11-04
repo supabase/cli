@@ -997,7 +997,7 @@ describe("start integration", () => {
 
     it.effect("fails on a bucket's invalid file_size_limit even when already running", () =>
       Effect.gen(function* () {
-        // `checkDbToml` runs unconditionally before the already-running short-circuit; later
+        // `checkDbConfig` runs unconditionally before the already-running short-circuit; later
         // checks (e.g. storage.analytics.enabled) sit after that early return and never run here.
         const { layer, child } = yield* setup({
           configContents:
@@ -2845,7 +2845,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect("fails on an undecryptable [db.vault] secret even on a non-fresh volume", () =>
-      // `checkDbToml`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
+      // `checkDbConfig`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
       // volume, but every `encrypted:` value decrypts unconditionally regardless of volume
       // state, so an undecryptable `[db.vault]` secret must still fail eagerly here.
       withEnvVar(
@@ -5725,7 +5725,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.effect(
       "fails with a typed config error, before any container is created, on an undecryptable [edge_runtime.secrets] entry",
       () =>
-        // Caught eagerly by `checkDbToml`'s `assertDecryptableSecrets` pre-check, before the
+        // Caught eagerly by `checkDbConfig`'s `assertDecryptableSecrets` pre-check, before the
         // bring-up loop's own edge-runtime-specific decrypt.
         withEnvVar(
           "DOTENV_PRIVATE_KEY",

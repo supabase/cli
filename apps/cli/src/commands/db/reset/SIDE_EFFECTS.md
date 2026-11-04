@@ -342,7 +342,7 @@ to those defaults (the usual outcome for an interactive terminal).
   still runs afterward, unconditionally, exactly as on the migrations branch. The
   local target's branch is `migrateAndSeed`, reused by both the PG14 and PG15 recreate
   branches; the remote target's copy of the same branch is `applySchemaFiles`.
-  `encrypted:` vault secrets are NOT skipped on the remote path — `checkDbToml`
+  `encrypted:` vault secrets are NOT skipped on the remote path — `checkDbConfig`
   decrypts them into `toml.vault`, and `upsertVaultSecrets` upserts the
   decrypted values unconditionally, before either branch (schema-files or migrations)
   runs.

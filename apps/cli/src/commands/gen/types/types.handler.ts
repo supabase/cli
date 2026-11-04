@@ -25,7 +25,7 @@ import {
   DbConfigResolver,
 } from "../../../command-internal/db-config.service.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
-import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { readDbConfig } from "../../../command-internal/db-config.read.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
@@ -644,7 +644,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         "typegen.source": "local",
         "stack.backend": backend.kind,
       });
-      const config = yield* readDbToml(fs, path, cliSettings.workdir);
+      const config = yield* readDbConfig(fs, path, cliSettings.workdir);
       const projectId = config.projectId;
 
       // Only forces v9 compat from the rest-version file's image tag when the database's

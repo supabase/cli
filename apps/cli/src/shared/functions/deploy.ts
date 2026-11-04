@@ -11,7 +11,7 @@ import {
   inferFunctionsManifest,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
-import { parseJsonc } from "@supabase/config/internal";
+import { cliConfigFormatForPath, parseJsonc } from "@supabase/config/internal";
 import {
   Cause,
   Config,
@@ -2082,6 +2082,8 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
     readonly noVerifyJwtOverride: Option.Option<boolean>;
     /** Skips the fallback-import-map warning, for a resolve whose result is discarded. */
     readonly quiet?: boolean;
+    /** The loaded config file; absent reads as `config.toml`. */
+    readonly configPath?: string | undefined;
   }) {
     const output = yield* Output;
     const path = yield* Path.Path;
@@ -2190,7 +2192,10 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
       const configPath = relativePath.startsWith("../") ? relativePath : `./${relativePath}`;
       return yield* new FunctionDeployError({
         message: `import_map.json in a function directory is no longer supported: ${[...unsupportedImportMaps.keys()].join(", ")}`,
-        suggestion: `Rename it to deno.json, or set functions.${slug}.import_map = "${configPath}" in config.toml to keep the file.`,
+        suggestion:
+          input.configPath !== undefined && cliConfigFormatForPath(input.configPath) === "json"
+            ? `Rename it to deno.json, or set \`functions.${slug}.import_map\` to \`"${configPath}"\` in ${path.relative(input.projectRoot, input.configPath)} to keep the file.`
+            : `Rename it to deno.json, or set functions.${slug}.import_map = "${configPath}" in config.toml to keep the file.`,
       });
     }
 
@@ -2566,6 +2571,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     rawConfigFunctions,
     importMapOverride: flags.importMap,
     noVerifyJwtOverride,
+    configPath: context.configPath,
   });
   const dashboardUrl = `${dependencies.dashboardUrl}/project/${projectRef}/functions`;
 

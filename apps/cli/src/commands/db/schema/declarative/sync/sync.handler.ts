@@ -18,12 +18,12 @@ import { DbConnection } from "../../../../../command-internal/db-connection.serv
 import { getHostname } from "../../../../../command-internal/hostname.ts";
 import {
   loadProjectEnvValues,
-  readDbToml,
+  readDbConfig,
   resolveDeclarativeDir,
-} from "../../../../../command-internal/db-config.toml-read.ts";
+} from "../../../../../command-internal/db-config.read.ts";
 import { makeDir } from "../../../../../command-internal/make-dir.ts";
 import { applyMigrationFile } from "../../../../../command-internal/migration-apply.ts";
-import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../command-internal/pg-net-guidance.ts";
+import { enableLocalWebhooksSuggestion } from "../../../../../command-internal/pg-net-guidance.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
 import { pgdeltaScratchDir } from "../../../../../command-internal/scratch-paths.ts";
@@ -98,13 +98,14 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
   const seam = yield* DeclarativeSeam;
 
   yield* Effect.gen(function* () {
-    const toml = yield* readDbToml(fs, path, cliSettings.workdir);
+    const toml = yield* readDbConfig(fs, path, cliSettings.workdir);
     // Gate before the mutex check below — order matters; see
     // requirePgDelta's doc comment for why.
     yield* requirePgDelta({
       experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
-      configPath: path.join("supabase", "config.toml"),
+      configPath: toml.configFile.path,
+      configFormat: toml.configFile.format,
     });
 
     // Mutually-exclusive apply/no-apply group, checked after the gate above. Reject the conflict
@@ -153,7 +154,13 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       "Reset local database to match migrations first? (local data will be lost)",
       false,
     );
-    yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
+    yield* warnFormerDeclarativeDefault(
+      fs,
+      path,
+      cliSettings.workdir,
+      toml.pgDelta,
+      toml.configFile,
+    );
     const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
     yield* Effect.annotateCurrentSpan({
       "declarative.bootstrap": !declarativeFilesExist,
@@ -309,7 +316,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             message: [
               "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
               "",
-              ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+              enableLocalWebhooksSuggestion(toml.configFile),
             ].join("\n"),
           });
         }
@@ -359,7 +366,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           message: [
             "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
             "",
-            ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+            enableLocalWebhooksSuggestion(toml.configFile),
           ].join("\n"),
         });
       }

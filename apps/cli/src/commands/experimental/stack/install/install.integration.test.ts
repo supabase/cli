@@ -247,7 +247,9 @@ describe("experimental stack install", () => {
         reason: "lock",
         cause: { _tag: "LockResolutionError", reason: "frozen-missing" },
       });
-      expect(error.message).toContain("supabase/config.toml not found");
+      expect(error.message).toContain(
+        "supabase/config.toml, config.json or config.jsonc not found",
+      );
       expect(error.message).not.toContain("supabase.lock not found");
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       expect(host.requests).toEqual([]);
@@ -272,7 +274,9 @@ describe("experimental stack install", () => {
         reason: "lock",
         cause: { _tag: "LockResolutionError", reason: "frozen-missing" },
       });
-      expect(error.message).toContain("supabase/config.toml not found");
+      expect(error.message).toContain(
+        "supabase/config.toml, config.json or config.jsonc not found",
+      );
       expect(error.message).not.toContain("supabase.lock not found");
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       expect(host.requests).toEqual([]);

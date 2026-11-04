@@ -10,7 +10,7 @@ import { pgDeltaNextEngineLayer } from "./pgdelta-engine.next.layer.ts";
 import { PgDeltaEngine } from "./pgdelta-engine.service.ts";
 import { PgDeltaNextAdapter } from "./pgdelta-next-adapter.service.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
-import type { DbTomlValues } from "../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 
 const common = {
   context: {
@@ -25,7 +25,7 @@ const common = {
   strictCoverage: false,
 } as const;
 
-const toml: DbTomlValues = {
+const toml: DbConfigValues = {
   projectEnv: {},
   apiSchemas: ["public", "graphql_public"],
   exposedSchemas: ["public", "graphql_public"],
@@ -55,6 +55,7 @@ const toml: DbTomlValues = {
   seed: { enabled: true, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
+  configFile: { format: "toml", path: "supabase/config.toml" },
 };
 
 function setup() {

@@ -74,6 +74,7 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
     context.hostname,
     cliSettings.workdir,
     context.resolvedConfig.loaded.document,
+    context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
   ).pipe(
     Effect.mapError((cause) =>
       cause instanceof CliConfigValueError
