@@ -59,6 +59,7 @@ interface SetupOpts {
   //   "notGated"  → entitlement says auth.saml_2 has_access=true
   //   undefined   → no extra handlers wired; project lookup 404s
   upgradeGate?: "gated" | "notGated";
+  projectStatus?: string;
 }
 
 function jsonResponse(
@@ -93,7 +94,7 @@ function setup(opts: SetupOpts = {}) {
         return Effect.succeed(jsonResponse(request, status, body));
       }
       if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        if (gate === undefined) {
+        if (gate === undefined && opts.projectStatus === undefined) {
           return Effect.succeed(jsonResponse(request, 404, {}));
         }
         return Effect.succeed(
@@ -105,7 +106,7 @@ function setup(opts: SetupOpts = {}) {
             name: "Test",
             region: "us-east-1",
             created_at: "2023-01-01T00:00:00Z",
-            status: "ACTIVE_HEALTHY",
+            status: opts.projectStatus ?? "ACTIVE_HEALTHY",
             database: {
               host: "db.example.com",
               version: "15",
@@ -369,6 +370,20 @@ describe("sso list integration", () => {
         expect(dump).toContain("SsoListUnexpectedStatusError");
         expect(dump).toContain("unexpected error listing identity providers");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("warns about the project status when listing fails on an inactive project", () => {
+    const { layer, out } = setup({ status: 500, body: {}, projectStatus: "INACTIVE" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        ssoList({ remote: Option.none(), projectRef: Option.none() }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(out.messages).toContainEqual({
+        type: "warn",
+        message: `Project ${VALID_REF} status is INACTIVE instead of ACTIVE_HEALTHY. SSO providers can only be managed on an active, healthy project.`,
+      });
     }).pipe(Effect.provide(layer));
   });
 

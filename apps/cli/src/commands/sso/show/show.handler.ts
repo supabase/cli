@@ -22,6 +22,7 @@ import {
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { SSO_READ_REQUEST_OPTIONS, warnIfProjectUnhealthy } from "../sso.project-health.ts";
 import type { SsoShowFlags } from "./show.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({
@@ -61,10 +62,13 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
     yield* Effect.gen(function* () {
       const fetching =
         output.format === "text" ? yield* output.task("Fetching SSO provider...") : undefined;
-      const response = yield* api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch((cause) => handleShowError(providerId, cause)),
-      );
+      const response = yield* api.v1
+        .getASsoProvider({ ref, provider_id: providerId }, SSO_READ_REQUEST_OPTIONS)
+        .pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.tapError((cause) => warnIfProjectUnhealthy(ref, cause)),
+          Effect.catch((cause) => handleShowError(providerId, cause)),
+        );
       yield* fetching?.clear ?? Effect.void;
 
       // `--metadata` short-circuits regardless of `--output`.

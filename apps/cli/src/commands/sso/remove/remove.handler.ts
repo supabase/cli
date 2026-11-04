@@ -23,6 +23,7 @@ import {
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { warnIfProjectUnhealthy } from "../sso.project-health.ts";
 import type { SsoRemoveFlags } from "./remove.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({
@@ -78,6 +79,7 @@ export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlag
         output.format === "text" ? yield* output.task("Removing SSO provider...") : undefined;
       const response = yield* api.v1.deleteASsoProvider({ ref, provider_id: providerId }).pipe(
         Effect.tapError(() => removing?.fail() ?? Effect.void),
+        Effect.tapError((cause) => warnIfProjectUnhealthy(ref, cause)),
         Effect.catch((cause) => handleRemoveError(ref, providerId, cause)),
       );
       yield* removing?.clear ?? Effect.void;
