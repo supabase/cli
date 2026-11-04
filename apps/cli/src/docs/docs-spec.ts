@@ -128,7 +128,7 @@ export interface DocsSpecInput {
   readonly version: string;
   /** Marks the spec as a prerelease major (`next`). */
   readonly prerelease?: boolean;
-  /** The CLI major the spec documents; defaults to 2. */
+  /** The CLI major the spec documents; defaults to 3. */
   readonly major?: number;
   /** Registry of breaking changes to report per command; defaults to none. */
   readonly breakingChanges?: ReadonlyArray<BreakingChange>;
@@ -447,7 +447,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
 /** Builds the `clispec 002` spec and the sidebar sections that index it. */
 export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
-  const major = input.major ?? 2;
+  const major = input.major ?? 3;
   const registry = input.breakingChanges ?? [];
   const rootPath = ["supabase"];
   const rootFlags = docsFlagsOf(rootPath, [
@@ -717,7 +717,7 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
       language: "sh",
       source: "https://github.com/supabase/cli",
       bugs: "https://github.com/supabase/cli/issues",
-      spec: "https://github.com/supabase/spec/cli_v1_commands.yaml",
+      spec: `https://github.com/supabase/supabase/blob/master/apps/docs/spec/cli_v${major}_commands.yaml`,
       description: DOCS_INFO_DESCRIPTION,
       tags: DOCS_INFO_TAGS,
     },

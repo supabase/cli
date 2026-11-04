@@ -38,8 +38,8 @@ Later releases add commits on top of an open `cli/ref-doc` PR instead of rewriti
 fixes committed onto the branch survive.
 
 The release PR carries only the spec, so new commands also need an entry in
-[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json);
-copy it from the `--sections` output.
+the major's sidebar file in `apps/docs/spec/` (`common-cli-sections.json` for v2,
+`common-cli-v3-sections.json` for v3); copy it from the `--sections` output.
 
 To publish by hand, run the same pipe the job runs:
 

@@ -1,9 +1,9 @@
 /**
  * Emits the `clispec 002` CLI reference document for the supabase.com docs site from the Effect
  * command tree plus the content under `apps/cli/docs/`. Run as
- * `bun scripts/generate-docs-spec.ts [version] [--prerelease] [--sections <file>] > cli_v2_commands.yaml`;
- * only the spec YAML goes to stdout, diagnostics go to stderr. `--major <n>` (default 2) picks
- * the CLI major the spec documents. `--sections` also writes the sidebar sections JSON to `<file>`.
+ * `bun scripts/generate-docs-spec.ts [version] [--prerelease] [--sections <file>] > cli_v3_commands.yaml`;
+ * only the spec YAML goes to stdout, diagnostics go to stderr. `--major <n>` picks the CLI major
+ * the spec documents; it defaults to the version's major, or 3 for `latest`. `--sections` also writes the sidebar sections JSON to `<file>`.
  *
  * The version defaults to `latest` (a leading `v` is stripped); the workspace `package.json`
  * version is a semantic-release placeholder and is never used here.
@@ -20,7 +20,7 @@ const { values, positionals } = parseArgs({
   options: {
     prerelease: { type: "boolean", default: false },
     sections: { type: "string" },
-    major: { type: "string", default: "3" },
+    major: { type: "string" },
   },
 });
 
@@ -32,9 +32,10 @@ function resolveVersion(): string {
 
 await Effect.runPromise(
   Effect.gen(function* () {
-    const major = Number(values.major);
+    const majorArgument = values.major ?? /^\d+/.exec(resolveVersion())?.[0] ?? "3";
+    const major = Number(majorArgument);
     if (!Number.isInteger(major) || major < 1) {
-      yield* Console.error(`--major must be a positive integer such as 3, got "${values.major}".`);
+      yield* Console.error(`--major must be a positive integer such as 3, got "${majorArgument}".`);
       return yield* Effect.sync(() => process.exit(1));
     }
     const bundle = yield* loadDocsBundle({

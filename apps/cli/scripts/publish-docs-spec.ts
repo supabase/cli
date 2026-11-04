@@ -33,7 +33,7 @@ const { values } = parseArgs({
   options: {
     version: { type: "string" },
     repo: { type: "string", default: "supabase/supabase" },
-    "spec-path": { type: "string", default: "apps/docs/spec/cli_v2_commands.yaml" },
+    "spec-path": { type: "string" },
     branch: { type: "string", default: "cli/ref-doc" },
     base: { type: "string", default: "master" },
     "dry-run": { type: "boolean", default: false },
@@ -119,7 +119,9 @@ const main = Effect.gen(function* () {
   const version = versionArgument.startsWith("v") ? versionArgument.slice(1) : versionArgument;
 
   const repo = values.repo!;
-  const specPath = values["spec-path"]!;
+  const releaseMajor = version.split(".")[0];
+  const specPath = values["spec-path"] ?? `apps/docs/spec/cli_v${releaseMajor}_commands.yaml`;
+  const sectionsFile = SECTIONS_FILE_BY_MAJOR[`v${releaseMajor}`] ?? "common-cli-sections.json";
   const branch = values.branch!;
   const base = values.base!;
   const dryRun = values["dry-run"]!;
@@ -193,7 +195,7 @@ const main = Effect.gen(function* () {
       "command tree or the content under `apps/cli/docs/` there rather than this",
       "file.",
       "",
-      "New commands also need an entry in `apps/docs/spec/common-cli-sections.json` —",
+      `New commands also need an entry in \`apps/docs/spec/${sectionsFile}\` —`,
       "without one a command's page is silently dropped from the docs site.",
       "Sections fixes can be committed directly onto this branch — later releases",
       "add commits on top instead of rewriting it.",
