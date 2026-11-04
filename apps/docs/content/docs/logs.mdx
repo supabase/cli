@@ -21,7 +21,7 @@ Use the up and down arrows to select a row. Enter opens its full details, and Es
 
 Press `L` to load newer logs through the current time. The browser keeps your selection and viewport. It does not poll in the background. A failed load keeps the current rows and window so you can retry with `L`.
 
-The `Window:` header shows the requested time range, including its captured end. Each successful load extends that end. The browser retains up to 1000 rows and approximately 8 MiB, with a visible notice when older rows are discarded. Open details stay pinned to their record. `NO_COLOR` preserves the selection marker without styling.
+The `Window:` header shows the requested time range, including its captured end. Each successful load extends that end. For filtered logs, the browser retains up to 1000 rows and approximately 8 MiB, with a visible notice when older rows are discarded. Open details stay pinned to their record. `NO_COLOR` preserves the selection marker without styling.
 
 Copying uses your system clipboard and reports success or failure in the footer. On Linux, install `wl-clipboard`, `xclip`, or `xsel` if no clipboard tool is available.
 
@@ -52,7 +52,7 @@ cat errors.sql | supabase logs --remote --output-format stream-json
 
 The query uses ClickHouse SQL over the hosted `logs` table. It does not query Postgres. Select `log_attributes` to keep correlation IDs and user attributes. For example, `where source = 'postgres_logs'` limits rows to Postgres.
 
-The browser preserves SQL result order. Press `L` to rerun the query over the original lower bound through the current time. A successful query replaces the previous results. The header remains visible even when rows omit timestamps.
+The browser keeps all returned SQL rows in their result order. Press `L` to rerun the query over the original lower bound through the current time. A successful query replaces the previous results. The header remains visible even when rows omit timestamps.
 
 Queries use the Management API GET endpoint. Server query limits, retention, and project access apply. A long SQL file may exceed the server URL limit. The CLI reports the HTTP error and does not split or rewrite the query. Local SQL queries are unsupported.
 
