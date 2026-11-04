@@ -711,6 +711,7 @@ describe("experimental stack start", () => {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
       yield* fs.makeDirectory(`${root}/supabase/functions/echo`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/functions/echo/index.ts`, "");
       yield* fs.writeFileString(
         `${root}/supabase/config.toml`,
         'project_id = "functions-env"\n[edge_runtime.secrets]\nshared = "secret"\nsecret_pem = "a\\r\\nb"\nSUPABASE_TOML = "x"\nUNSET_NAME = "env(STACK_START_FUNCTIONS_UNSET)"\n',
@@ -1827,6 +1828,46 @@ describe("experimental stack start", () => {
           message: expect.stringContaining("[api] port: saved"),
           suggestion: `Run \`supabase stack stop --stack-id ${fixture.stack.id}\`, then \`supabase stack start --stack-id ${fixture.stack.id}\` to apply the new ports.`,
         });
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "warns once about SUPABASE_ names when a live idle owner applies the Functions env",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-start-idle-functions-env-",
+        });
+        yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "idle-functions-env"\n[edge_runtime]\nenabled = true\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        yield* fs.writeFileString(`${root}/supabase/functions/.env`, "CUSTOM=x\nSUPABASE_SKIP=x\n");
+        // An interrupted db reset leaves the owner live with every member stopped.
+        yield* fixture.stack.composition.stop;
+
+        const warning = "Env name cannot start with SUPABASE_, skipping: SUPABASE_SKIP\n";
+        const output = mockOutput();
+        yield* stackStart(flags()).pipe(
+          Effect.provide(Layer.merge(layers(root, fixture, output), liveIdleOwner(root, fixture))),
+        );
+        expect(output.stderrText.split(warning).length - 1).toBe(1);
+        const functions = fixture.members.find(({ service }) => service === "functions");
+        if (functions?.service !== "functions") return yield* Effect.die("Functions missing");
+        const status = yield* functions.status;
+        if (status.config.service !== "functions") return yield* Effect.die("Functions missing");
+        expect(status.config.config.env).toEqual({ CUSTOM: "x" });
+
+        // An already-running stack keeps its plan, so the same env stays silent.
+        const running = mockOutput();
+        yield* stackStart(flags()).pipe(
+          Effect.provide(Layer.merge(layers(root, fixture, running), liveIdleOwner(root, fixture))),
+        );
+        expect(running.stderrText).not.toContain(warning);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 

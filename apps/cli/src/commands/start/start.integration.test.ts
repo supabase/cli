@@ -5685,6 +5685,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
           const fs = yield* FileSystem.FileSystem;
           yield* fs.makeDirectory(`${workdir}/supabase/functions/hello`, { recursive: true });
+          yield* fs.writeFileString(`${workdir}/supabase/functions/hello/index.ts`, "");
           yield* fs.writeFileString(`${workdir}/supabase/functions/.env`, "SHARED=dotenv\n");
           yield* fs.writeFileString(`${workdir}/supabase/functions/hello/.env`, "PER_FN=hello\n");
           yield* start(flags()).pipe(Effect.provide(layer));

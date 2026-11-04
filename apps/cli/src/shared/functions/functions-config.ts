@@ -101,7 +101,7 @@ export function toEdgeRuntimeSecretsEnv(
   );
 }
 
-/** A Functions env that cannot be read, parsed or decrypted. */
+/** A Functions env file that cannot be read or parsed. */
 export class FunctionsEnvError extends Data.TaggedError("FunctionsEnvError")<{
   readonly message: string;
   readonly cause?: unknown;

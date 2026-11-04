@@ -657,7 +657,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolveForReplan = (stackId: string) =>
       Effect.gen(function* () {
         const loaded = yield* startConfig;
-        /* A running owner keeps its plan, so this resolve must not warn about values it never loads. */
+        /* A running owner ignores these creations, so this resolve stays silent. A start that
+           applies the env under that owner resolves it again below and warns there. */
         return yield* resolveRequested(stackId, loaded.config, !target.hostRunning);
       });
     const requestedForReplan =
@@ -858,9 +859,13 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         suggestion: "Destroy the standalone database before starting this stack.",
       });
     const { config, keys, toml } = yield* startConfig;
-    // Reuses the creations already resolved for the re-plan above instead of reading the
-    // Functions dotenv a second time; only a new or already-running stack has none yet.
-    const requested = requestedForReplan ?? (yield* resolveRequested(stack.id, config));
+    // Reuses the creations resolved for a fresh owner's re-plan above instead of reading the
+    // Functions dotenv a second time. A new stack has none yet, and a live owner's were resolved
+    // silently, so both resolve here with warnings.
+    const requested =
+      requestedForReplan === undefined || target.hostRunning
+        ? yield* resolveRequested(stack.id, config)
+        : requestedForReplan;
     if (studioNeedsRest(requested))
       return yield* new StackCommandStartError({
         reason: "flags",

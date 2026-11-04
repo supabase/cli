@@ -1,5 +1,16 @@
 import { StackError, type ServiceCreation, type Stack } from "@supabase/stack/effect";
-import { DateTime, Effect, Equal, Fiber, Option, Path, Schema, Stream, type Scope } from "effect";
+import {
+  DateTime,
+  Effect,
+  Equal,
+  Fiber,
+  FileSystem,
+  Option,
+  Path,
+  Schema,
+  Stream,
+  type Scope,
+} from "effect";
 import { inferFunctionsManifest, type CliConfig } from "@supabase/config/effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -50,14 +61,14 @@ const invalidConfig = (message: string) =>
 /* The env file, or functions/.env, wins over secrets. Without an env file each enabled function
    also gets its own .env, under its TOML env. */
 const serveEnv = Effect.fn("functions.serve.env")(function* (
+  workdir: string,
   envFile: Option.Option<string>,
   project: CliConfig,
   base: Pick<FunctionsCreation["config"], "functionsRoot" | "functions" | "env">,
 ) {
-  const settings = yield* CommandSettings;
   const manifest = Option.isSome(envFile)
     ? {}
-    : yield* inferFunctionsManifest({ cwd: settings.workdir, config: project, search: false });
+    : yield* inferFunctionsManifest({ cwd: workdir, config: project, search: false });
   const resolved = yield* resolveFunctionsEnv({
     secrets: base.env ?? {},
     functionsDir: base.functionsRoot,
@@ -170,6 +181,9 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       suggestion: "Run supabase start first.",
     });
   const { stack, database } = opened.value;
+  /* The stack saved its paths under the real project root, so a symlinked workdir must resolve
+     to the same root. */
+  const workdir = yield* (yield* FileSystem.FileSystem).realPath(settings.workdir);
   const composition = yield* stack.composition.describe;
   const instances = yield* stack.services.list;
   const members = instances.filter(({ id }) =>
@@ -177,7 +191,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   );
   const existing = members.find((instance) => instance.service === "functions");
   const envFile = Option.map(flags.envFile, (file) => path.resolve(runtime.cwd, file));
-  const config = yield* loadStackConfig(settings.workdir, { selection: readSelectionOrBundled });
+  const config = yield* loadStackConfig(workdir, { selection: readSelectionOrBundled });
   const creations = yield* config.creations(stack.id);
   const source = creations.find(
     (creation): creation is FunctionsCreation => creation.service === "functions",
@@ -201,7 +215,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     const { functions: _savedFunctions, ...savedSettings } = saved;
     const desired = {
       ...savedSettings,
-      ...(yield* serveEnv(envFile, config.source, {
+      ...(yield* serveEnv(workdir, envFile, config.source, {
         functionsRoot: saved.functionsRoot,
         env: source.config.env,
         functions: source.config.functions,
@@ -304,7 +318,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       jwks,
       apiUrl,
       databaseUrl,
-      ...(yield* serveEnv(envFile, config.source, source.config)),
+      ...(yield* serveEnv(workdir, envFile, config.source, source.config)),
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
       ...(debug ? { debug: true } : {}),
     },

@@ -154,7 +154,17 @@ const fixture = (
       clearDistinctId: Effect.void,
     });
     let currentFunctions = { ...functionsConfig(), ...options.savedFunctions };
-    const projectRoot = options.standaloneProjectRoot ?? options.projectRoot ?? "/project";
+    const projectRoot =
+      options.standaloneProjectRoot ??
+      options.projectRoot ??
+      (yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) =>
+          fs
+            .makeTempDirectoryScoped({ prefix: "functions-serve-project-" })
+            .pipe(Effect.flatMap((root) => fs.realPath(root))),
+        ),
+        Effect.provide(BunServices.layer),
+      ));
     let restartCount = 0;
     let destroyed = false;
     const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
@@ -807,6 +817,36 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
       expect(state.currentFunctions).toEqual({ ...functionsConfig(), ...saved });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("serves composed Functions from the stack's real project root through a symlink", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "functions-real-root-" }),
+      );
+      const links = yield* fs.makeTempDirectoryScoped({ prefix: "functions-root-link-" });
+      const alias = `${links}/project`;
+      yield* fs.symlink(root, alias);
+      const functionsRoot = `${root}/supabase/functions`;
+      const entrypoint = `${functionsRoot}/echo/index.ts`;
+      yield* fs.makeDirectory(`${functionsRoot}/echo`, { recursive: true });
+      yield* fs.writeFileString(entrypoint, "");
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-root-link"\n[functions.echo]\nentrypoint = "./functions/echo/index.ts"\n',
+      );
+      const saved = { functionsRoot, functions: { echo: { entrypoint } } };
+      const state = yield* fixture({ projectRoot: alias, savedFunctions: saved });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.functions?.echo?.entrypoint).toBe(entrypoint);
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
