@@ -211,8 +211,8 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       return yield* invalidConfig("Invalid saved Functions configuration.");
     const saved = before.config.config;
     /* Fresh TOML functions replace saved ones, so a serve that never restored cannot leave stale
-       per-function env behind. */
-    const { functions: _savedFunctions, ...savedSettings } = saved;
+       per-function env behind. Debug follows this command's own flag, not the one `start` saved. */
+    const { functions: _savedFunctions, debug: _savedDebug, ...savedSettings } = saved;
     const desired = {
       ...savedSettings,
       ...(yield* serveEnv(workdir, envFile, config.source, {

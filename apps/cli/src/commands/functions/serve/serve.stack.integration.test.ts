@@ -987,6 +987,21 @@ describe("experimental Stack Functions serve", () => {
     }),
   );
 
+  it.live("serves quietly without --debug on a debug-started stack and restores it on SIGINT", () =>
+    Effect.gen(function* () {
+      const state = yield* fixture({ savedFunctions: { debug: true } });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.debug).toBeUndefined();
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.currentFunctions).toEqual({ ...functionsConfig(), debug: true });
+    }),
+  );
+
   it.live("rejects unsupported flags before reading or mutating the stack", () =>
     Effect.gen(function* () {
       const state = yield* fixture();
