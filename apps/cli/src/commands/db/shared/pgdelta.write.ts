@@ -1,4 +1,9 @@
-import { Effect, type FileSystem, type Path, Schema } from "effect";
+import {
+  applyConfigEdits,
+  parseCliConfigDocumentFile,
+  writeCliConfigDocumentText,
+} from "@supabase/config/internal";
+import { Effect, type FileSystem, Option, type Path, Schema } from "effect";
 import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -270,6 +275,27 @@ export const updateDeclarativeSchemaPathsConfig = Effect.fn(
   const relative = normalized.startsWith("supabase/")
     ? normalized.slice("supabase/".length)
     : normalized;
+  const jsonConfig = yield* parseCliConfigDocumentFile(workdir, { search: false }).pipe(
+    Effect.option,
+  );
+  if (Option.isSome(jsonConfig) && jsonConfig.value?.format === "json") {
+    const document = jsonConfig.value;
+    const outcome = applyConfigEdits(document.rawText, "json", [
+      { path: ["db", "migrations", "schema_paths"], value: [relative] },
+    ]);
+    if (outcome.kind === "refused") {
+      return yield* new DeclarativeWriteError({
+        message: `failed to update config: ${outcome.refusal.detail}`,
+      });
+    }
+    yield* writeCliConfigDocumentText(document.path, outcome.text).pipe(
+      Effect.mapError(
+        (error) =>
+          new DeclarativeWriteError({ message: `failed to save config: ${error.message}` }),
+      ),
+    );
+    return;
+  }
   const block = `\nschema_paths = [\n  "${relative}",\n]\n`;
   const configPath = path.join(workdir, "supabase", "config.toml");
   const existing = yield* fs.readFileString(configPath).pipe(
