@@ -18,7 +18,7 @@ import {
 } from "../../../tests/helpers/mocks.ts";
 
 const root = rootCommandForFeatures();
-const cases = ["query", "sources", "tail"];
+const cases = ["", "sources"];
 const formats = ["pretty", "table", "json", "csv", "env", "yaml", "toml"];
 
 describe("logs output format parsing", () => {
@@ -28,7 +28,7 @@ describe("logs output format parsing", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const home = yield* fs.makeTempDirectoryScoped({ prefix: "logs-output-" });
-          const args = ["logs", leaf, "--workdir", home, "-o", format];
+          const args = ["logs", ...(leaf === "" ? [] : [leaf]), "--workdir", home, "-o", format];
           const exit = yield* Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
             Effect.provide(
               Layer.mergeAll(
@@ -50,7 +50,7 @@ describe("logs output format parsing", () => {
           const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
           expect(error).toBeInstanceOf(LogsInputError);
           expect(error).toMatchObject({
-            message: `the -o/--output flag is not supported by logs ${leaf}; use --output-format json|stream-json instead.`,
+            message: `the -o/--output flag is not supported by ${leaf === "" ? "logs" : `logs ${leaf}`}; use --output-format json|stream-json instead.`,
           });
         }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
       );

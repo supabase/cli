@@ -154,8 +154,7 @@ const agentDefaultOutputFormatFor = (
   features: RootCommandFeatures,
   args: ReadonlyArray<string>,
 ): OutputFormat =>
-  (features.stackBackend === "stack" && isFunctionsServePath(extractCommandPath(args))) ||
-  extractCommandPath(args).join(" ") === "logs tail"
+  features.stackBackend === "stack" && isFunctionsServePath(extractCommandPath(args))
     ? "stream-json"
     : "json";
 

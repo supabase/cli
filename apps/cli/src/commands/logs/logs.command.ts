@@ -1,60 +1,36 @@
-import { logsClipboardLayer } from "./logs.clipboard.ts";
+import { OptionalSubcommand } from "../../shared/output/optional-subcommand-usage.ts";
 import { BunTerminal } from "@effect/platform-bun";
-import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { Layer } from "effect";
-import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
-import { Argument, Command, Flag } from "effect/cli";
+import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../command-internal/command-permissions/model.ts";
+import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { projectRefPicker } from "../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { branchResolution } from "../../command-internal/target/branch-resolution.ts";
-import { projectTargetFlags, targetFlags } from "../../command-internal/target/target-flags.ts";
+import { targetFlags } from "../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { stackTargetResolverLayer, stackApiLayer } from "../../command-internal/stack-target.ts";
-import { logsQuery, logsTail, logsSources } from "./logs.handler.ts";
+import { logsClipboardLayer } from "./logs.clipboard.ts";
+import { logs, logsSources } from "./logs.handler.ts";
 
-const sinceFlag = Flag.String("since").pipe(
-  Flag.withDescription("Read from a duration ago or a UTC timestamp; defaults to 1h."),
-  Flag.optional,
-);
 const stackFlags = {
   stack: Flag.String("stack").pipe(
-    Flag.withDescription("Select an existing local stack by name."),
+    Flag.withDescription("Select a local stack by name."),
     Flag.optional,
   ),
   stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Select an existing local stack by ID or unique prefix."),
+    Flag.withDescription("Select a local stack by ID."),
     Flag.optional,
   ),
 };
-const queryConfig = {
-  ...projectTargetFlags(),
-  sql: Argument.String("sql").pipe(
-    Argument.withDescription("SQL for hosted logs, not Postgres."),
-    Argument.optional,
-  ),
-  file: Flag.String("file").pipe(
-    Flag.withAlias("f"),
-    Flag.withDescription("Read SQL from a file."),
-    Flag.optional,
-  ),
-  since: sinceFlag,
-  from: Flag.String("from").pipe(
-    Flag.withDescription("Start at a UTC timestamp ending in Z."),
-    Flag.optional,
-  ),
-  to: Flag.String("to").pipe(
-    Flag.withDescription("End at a UTC timestamp ending in Z."),
-    Flag.optional,
-  ),
-};
-const tailConfig = {
+const config = {
   ...targetFlags({ subject: "log source", dbUrl: false }),
   ...stackFlags,
   service: Flag.String("service").pipe(
@@ -62,7 +38,7 @@ const tailConfig = {
     Flag.atLeast(0),
   ),
   resource: Flag.String("resource").pipe(
-    Flag.withDescription("Compute name or function ID remotely, or local service instance ID."),
+    Flag.withDescription("Compute name or function ID remotely, or a local instance ID."),
     Flag.optional,
   ),
   kind: Flag.Literals("kind", ["app", "requests", "builds"]).pipe(
@@ -79,21 +55,41 @@ const tailConfig = {
     "notice",
   ]).pipe(Flag.withDescription("Severity filter; repeat for several levels."), Flag.atLeast(0)),
   search: Flag.String("search").pipe(
-    Flag.withDescription("Case-insensitive literal message substring (hosted only)."),
+    Flag.withDescription("Case-insensitive message substring (hosted only)."),
     Flag.optional,
   ),
-  since: sinceFlag,
-  tail: Flag.Int("tail").pipe(
-    Flag.withDescription("History line count (default 100, maximum 1000); 0 skips history."),
+  since: Flag.String("since").pipe(
+    Flag.withDescription(
+      "Duration or UTC timestamp; defaults to 1h. Local stacks also accept start.",
+    ),
+    Flag.optional,
+  ),
+  from: Flag.String("from").pipe(
+    Flag.withDescription("Start at a UTC timestamp ending in Z."),
+    Flag.optional,
+  ),
+  to: Flag.String("to").pipe(
+    Flag.withDescription("Initial end at a UTC timestamp ending in Z. L advances to now."),
+    Flag.optional,
+  ),
+  limit: Flag.Int("limit").pipe(
+    Flag.withDescription(
+      "Initial filtered history count (default 100, maximum 1000). SQL controls its own LIMIT.",
+    ),
     Flag.filter(
-      (value) => value >= 0 && value <= 1000,
-      () => "--tail must be between 0 and 1000.",
+      (value) => value >= 1 && value <= 1000,
+      () => "--limit must be between 1 and 1000.",
     ),
     Flag.withDefault(100),
   ),
-  noFollow: Flag.Boolean("no-follow").pipe(
-    Flag.withDescription("Print history and exit."),
-    Flag.withDefault(false),
+  sql: Flag.String("sql").pipe(
+    Flag.withDescription("Custom hosted log SQL; requires --remote. L reruns the query."),
+    Flag.optional,
+  ),
+  file: Flag.String("file").pipe(
+    Flag.withAlias("f"),
+    Flag.withDescription("Read custom hosted log SQL from a file."),
+    Flag.optional,
   ),
 };
 const sourcesConfig = {
@@ -104,8 +100,7 @@ const sourcesConfig = {
     Flag.optional,
   ),
 };
-export type LogsQueryFlags = CliCommand.Command.Config.Infer<typeof queryConfig>;
-export type LogsTailFlags = CliCommand.Command.Config.Infer<typeof tailConfig>;
+
 export type LogsSourcesFlags = CliCommand.Command.Config.Infer<typeof sourcesConfig>;
 
 const readPermissions = (flags: ReadonlyArray<string>) =>
@@ -126,78 +121,47 @@ const readPermissions = (flags: ReadonlyArray<string>) =>
   );
 
 export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
-  Command.make("logs").pipe(
+  Command.make("logs", config).pipe(
+    Command.annotate(OptionalSubcommand, true),
     Command.withDescription(
-      "Query hosted logs, follow hosted or retained local logs, and discover supported sources.",
+      "Browse local or hosted logs. Arrows select, Enter details, C copies, L loads newer logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once.",
     ),
+    withPermissions(
+      readPermissions([
+        "stack",
+        "stack-id",
+        "service",
+        "resource",
+        "kind",
+        "level",
+        "search",
+        "since",
+        "from",
+        "to",
+        "limit",
+        "sql",
+        "file",
+      ]),
+    ),
+    Command.withHandler((flags) =>
+      logs(flags, localEnabled, computeEnabled).pipe(
+        withCommandTelemetry({ flags, config, outputFormats: GLOBAL_OUTPUT_FORMATS }),
+        withJsonErrorHandling,
+      ),
+    ),
+    Command.provide(BunTerminal.layer),
+    Command.provide(logsClipboardLayer),
+    Command.provide(stdinLayer),
+    Command.provide(stackTargetResolverLayer.pipe(Layer.provideMerge(stackApiLayer))),
+    Command.provide(
+      linkedDbResolverRuntimeLayer(["logs"]).pipe(Layer.provide(identityStitchLayer)),
+    ),
+    withTargetPolicy({
+      group: "selectable",
+      consent: "none",
+      consentExemptReason: "Reads logs without mutating the selected target.",
+    }),
     Command.withSubcommands([
-      Command.make("query", queryConfig).pipe(
-        Command.withDescription(
-          "Run hosted log SQL from one argument, --file, or stdin. Ranges are limited to 24 hours. Interactive text opens a UTC log browser: arrows select, Enter details, Esc back, C copy full record, q quit. Pipes print rows; --output-format accepts text, json, or stream-json.",
-        ),
-        withPermissions(readPermissions(["file", "since", "from", "to"])),
-        Command.withHandler((flags) =>
-          logsQuery(flags).pipe(
-            withCommandTelemetry({
-              flags,
-              config: queryConfig,
-              outputFormats: GLOBAL_OUTPUT_FORMATS,
-            }),
-            withJsonErrorHandling,
-          ),
-        ),
-        Command.provide(BunTerminal.layer),
-        Command.provide(logsClipboardLayer),
-        Command.provide(stdinLayer),
-        Command.provide(
-          linkedDbResolverRuntimeLayer(["logs", "query"]).pipe(Layer.provide(identityStitchLayer)),
-        ),
-        withTargetPolicy({
-          group: "hosted",
-          consent: "none",
-          consentExemptReason: "Runs read-only hosted log SQL through the analytics endpoint.",
-        }),
-      ),
-      Command.make("tail", tailConfig).pipe(
-        Command.withDescription(
-          "Browse recent logs and follow until interrupted. Defaults to local, the last hour, and 100 lines. Interactive text uses UTC times: arrows select, Enter details, Esc back, C copy full record, q quit. Pipes print lines. --no-follow reads history only; --output-format stream-json follows structured events.",
-        ),
-        withPermissions(
-          readPermissions([
-            "stack",
-            "stack-id",
-            "service",
-            "resource",
-            "kind",
-            "level",
-            "search",
-            "since",
-            "tail",
-            "no-follow",
-          ]),
-        ),
-        Command.withHandler((flags) =>
-          logsTail(flags, localEnabled, computeEnabled).pipe(
-            withCommandTelemetry({
-              flags,
-              config: tailConfig,
-              outputFormats: GLOBAL_OUTPUT_FORMATS,
-            }),
-            withJsonErrorHandling,
-          ),
-        ),
-        Command.provide(BunTerminal.layer),
-        Command.provide(logsClipboardLayer),
-        Command.provide(stackTargetResolverLayer.pipe(Layer.provideMerge(stackApiLayer))),
-        Command.provide(
-          linkedDbResolverRuntimeLayer(["logs", "tail"]).pipe(Layer.provide(identityStitchLayer)),
-        ),
-        withTargetPolicy({
-          group: "selectable",
-          consent: "none",
-          consentExemptReason: "Reads logs without mutating the selected target.",
-        }),
-      ),
       Command.make("sources", sourcesConfig).pipe(
         Command.withDescription(
           "List supported sources and filters. Hosted entries describe capabilities and do not imply that rows exist. Local entries list retained stack instances.",
