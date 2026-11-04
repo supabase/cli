@@ -222,6 +222,28 @@ SHARED = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhE
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("uppercases edge runtime secret names and drops unset or SUPABASE_ ones", () =>
+    Effect.gen(function* () {
+      const root = yield* createStackConfigProject(
+        `project_id = "functions-secret-names"
+[edge_runtime.secrets]
+my_lower = "lower-value"
+FROM_ENV = "env(STACK_SECRET_SOURCE)"
+MISSING = "env(STACK_SECRET_UNSET)"
+EMPTY = ""
+supabase_internal_wallclock_limit_sec = "7"
+`,
+        { rootEnv: "STACK_SECRET_SOURCE=from-env\n" },
+      );
+      const config = yield* loadStackConfig(root);
+      const services = yield* config.creations("functions-secret-names");
+      expect(services.find((service) => service.service === "functions")?.config.env).toEqual({
+        MY_LOWER: "lower-value",
+        FROM_ENV: "from-env",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("leaves empty configured secrets for the stack to normalize", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "empty-secrets"
@@ -243,7 +265,10 @@ root_key = ""
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("forwards Auth policies, providers and custom SMTP ahead of local mail", () =>
+  it.effect.each([
+    { secure_password_change: true, require_current_password: false },
+    { secure_password_change: false, require_current_password: true },
+  ])("forwards Auth policies, providers and custom SMTP ahead of local mail with %j", (policy) =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(
         `project_id = "auth-forwarding"
@@ -265,7 +290,8 @@ sign_in_sign_ups = 33
 [auth.email]
 enable_confirmations = true
 double_confirm_changes = false
-secure_password_change = true
+secure_password_change = ${policy.secure_password_change}
+require_current_password = ${policy.require_current_password}
 otp_length = 8
 otp_expiry = 120
 max_frequency = "10s"
@@ -376,7 +402,12 @@ allow_dynamic_registration = true
         GOTRUE_RATE_LIMIT_OTP: "33",
         GOTRUE_MAILER_AUTOCONFIRM: "false",
         GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "false",
-        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: "true",
+        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: String(
+          policy.secure_password_change,
+        ),
+        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: String(
+          policy.require_current_password,
+        ),
         GOTRUE_MAILER_OTP_LENGTH: "8",
         GOTRUE_MAILER_OTP_EXP: "120",
         GOTRUE_SMTP_MAX_FREQUENCY: "10s",

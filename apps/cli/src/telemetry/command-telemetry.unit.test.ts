@@ -13,6 +13,7 @@ import {
 } from "../command-internal/global-flags.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import {
+  PropConfigKey,
   PropErrorCategory,
   PropErrorFingerprint,
   PropErrorKind,
@@ -25,7 +26,9 @@ import {
 } from "../shared/telemetry/event-catalog.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
+import { CliConfigValueError } from "../config/cli-config.errors.ts";
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
+import { DbConfigLoginRoleMissingPrivilegedRoleError } from "../command-internal/db-config.errors.ts";
 import { StdoutClosedError } from "../shared/output/errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
@@ -200,6 +203,95 @@ describe("withCommandTelemetry", () => {
           expect(properties?.[PropOrioleDb]).toBe(true);
         }),
       ),
+    );
+  });
+
+  describe("config_key", () => {
+    const capturedEvent = (body: Effect.Effect<unknown, CliConfigValueError | DbDumpRunError>) => {
+      const analytics = mockContextualAnalytics();
+
+      return body.pipe(
+        withCommandTelemetry(),
+        Effect.provide(
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--local"]) }),
+            commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
+        ),
+        Effect.exit,
+        Effect.map((exit) => ({ exit, properties: analytics.captured[0]?.properties })),
+      );
+    };
+
+    it.live("emits the recorded config key on an invalid_config failure", () =>
+      Effect.gen(function* () {
+        const { exit, properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port" }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new CliConfigValueError({ path: "db.port", tier: "config", message: "invalid" }),
+              ),
+            ),
+          ),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(properties).toMatchObject({
+          exit_code: 1,
+          error_category: "invalid_config",
+          [PropConfigKey]: "db.port",
+        });
+      }),
+    );
+
+    it.live("omits a config key that a later config outcome cleared", () =>
+      Effect.gen(function* () {
+        const { properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port" }).pipe(
+            Effect.andThen(recordCommandTelemetry({ [PropConfigKey]: undefined })),
+            Effect.andThen(
+              Effect.fail(
+                new CliConfigValueError({ path: "db.port", tier: "config", message: "invalid" }),
+              ),
+            ),
+          ),
+        );
+
+        expect(properties).toMatchObject({ exit_code: 1, error_category: "invalid_config" });
+        expect(properties).not.toHaveProperty(PropConfigKey);
+      }),
+    );
+
+    it.live("omits the recorded config key from a failure in another category", () =>
+      Effect.gen(function* () {
+        const { properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port", [PropOrioleDb]: true }).pipe(
+            Effect.andThen(Effect.fail(new DbDumpRunError({ message: "dump failed" }))),
+          ),
+        );
+
+        expect(properties).toMatchObject({
+          exit_code: 1,
+          error_category: "db_connection",
+          [PropOrioleDb]: true,
+        });
+        expect(properties).not.toHaveProperty(PropConfigKey);
+      }),
+    );
+
+    it.live("omits the recorded config key from a successful run", () =>
+      Effect.gen(function* () {
+        const { exit, properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port", [PropOrioleDb]: true }),
+        );
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(properties).toMatchObject({ exit_code: 0, [PropOrioleDb]: true });
+        expect(properties).not.toHaveProperty(PropConfigKey);
+      }),
     );
   });
 
@@ -989,6 +1081,38 @@ describe("withCommandTelemetry", () => {
           expect(analytics.captured[0]?.properties).not.toHaveProperty(PropSuggestedCommand);
           expect(analytics.captured[0]?.properties).not.toHaveProperty(PropWorkflow);
           expect(yield* encodeJson(analytics.captured[0])).not.toContain(secret);
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("attributes a failure that names its project to that project group", () => {
+    const analytics = mockContextualAnalytics();
+    const failure = new DbConfigLoginRoleMissingPrivilegedRoleError({
+      message: "missing role",
+      suggestion: "use a password",
+      projectRef: "abcdefghijklmnopqrst",
+    });
+
+    return Effect.fail(failure).pipe(
+      withCommandTelemetry(),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["migration", "list"]) }),
+          commandRuntimeLayer(["migration", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
+      Effect.exit,
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            groups: { project: "abcdefghijklmnopqrst" },
+            [PropErrorFingerprint]: "tag:DbConfigLoginRoleMissingPrivilegedRoleError",
+          });
         }),
       ),
       Effect.asVoid,

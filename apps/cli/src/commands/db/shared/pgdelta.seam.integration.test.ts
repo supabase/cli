@@ -178,10 +178,10 @@ function setup(
     Layer.provide(Layer.succeed(ExperimentalFlag, false)),
     Layer.provide(Layer.succeed(DebugFlag, false)),
     Layer.provide(Layer.succeed(CliArgs, { args: [] })),
-    // The fake `ChildProcessSpawner` must be provided BEFORE the real `Layer.merge(BunServices.layer, BunCrypto.layer)`
-    // fallback below, so it wins over the real one for whatever `ChildProcessSpawner`
-    // `seam` itself resolves — `Layer.provide` fully resolves each requirement it can
-    // satisfy as it's applied, so `Layer.merge(BunServices.layer, BunCrypto.layer)` only ever fills in `FileSystem`/`Path`.
+    // The fake `ChildProcessSpawner` must be provided before the real `BunServices.layer` and
+    // `BunCrypto.layer` fallback below, so it wins for whatever `ChildProcessSpawner` `seam`
+    // resolves — `Layer.provide` resolves each requirement as it's applied, so the fallback only
+    // fills the remaining platform services (`FileSystem`, `Path`) and crypto (`Digest`, `SecureRandom`).
     Layer.provide(shadowSpawner.layer),
     Layer.provide(engine),
     Layer.provide(unusedStackServices),

@@ -15,10 +15,14 @@ import {
 } from "../command-internal/global-flags.ts";
 import { removedFlag, type RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
-import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
+import {
+  type AnalyticsContext,
+  withAnalyticsContext,
+} from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import {
+  CliErrorCategory,
   type CliErrorActionability,
   classifyCliErrorActionability,
   unknownProcessControlledFailureActionability,
@@ -27,7 +31,9 @@ import { DbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.t
 import { DbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
 import {
   EventCommandExecuted,
+  PropConfigKey,
   PropDurationMs,
+  PropErrorCategory,
   PropExitCode,
   PropOutputFormat,
   PropStackBackend,
@@ -510,7 +516,8 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           Effect.exit,
         );
         const finishedAt = yield* Clock.currentTimeMillis;
-        const recordedAttributes = yield* Ref.get(attributes);
+        // A config failure the command swallowed must not label a success or an unrelated failure.
+        const { [PropConfigKey]: configKey, ...recordedAttributes } = yield* Ref.get(attributes);
 
         // A command that resolves its own `--output` (e.g. `db query`, defaulting `table`/`json`
         // by agent mode) records it here; read optionally so commands that don't provide the
@@ -550,9 +557,15 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           const id = svc.stitchedDistinctId();
           return id === undefined ? Option.none() : Option.some(id);
         });
+        const failedProjectRef =
+          failureCause === undefined ? undefined : failureProjectRef(failureCause);
+        const contextWithProject: AnalyticsContext =
+          failedProjectRef === undefined
+            ? analyticsContext
+            : { ...analyticsContext, groups: { project: failedProjectRef } };
         const captureContext = Option.match(stitchedDistinctId, {
-          onNone: () => analyticsContext,
-          onSome: (distinct_id) => ({ ...analyticsContext, distinct_id }),
+          onNone: () => contextWithProject,
+          onSome: (distinct_id) => ({ ...contextWithProject, distinct_id }),
         });
         const failureMetadata =
           failureCause !== undefined
@@ -571,6 +584,10 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
             ...(Option.isSome(stackBackend) ? { [PropStackBackend]: stackBackend.value.kind } : {}),
             ...recordedAttributes,
             ...failureMetadata,
+            ...(configKey !== undefined &&
+            failureMetadata[PropErrorCategory] === CliErrorCategory.InvalidConfig
+              ? { [PropConfigKey]: configKey }
+              : {}),
           })
           .pipe(
             withAnalyticsContext(captureContext),
@@ -588,6 +605,16 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
         return exit.value;
       }).pipe(Effect.withSpan(getCommandRuntimeSpanName(commandRuntime)));
     });
+}
+
+/** The project a typed failure names in its `projectRef` field, for the event's project group. */
+function failureProjectRef(cause: Cause.Cause<unknown>): string | undefined {
+  const error = Cause.findErrorOption(cause);
+  if (Option.isNone(error) || typeof error.value !== "object" || error.value === null) {
+    return undefined;
+  }
+  const ref: unknown = Reflect.get(error.value, "projectRef");
+  return typeof ref === "string" && PROJECT_REF_PATTERN.test(ref) ? ref : undefined;
 }
 
 export function withCommandTelemetry(): <A, E, R>(

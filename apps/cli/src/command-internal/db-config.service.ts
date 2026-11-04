@@ -19,6 +19,7 @@ import type {
   DbConfigListBansNetworkError,
   DbConfigListBansStatusError,
   DbConfigLoadError,
+  DbConfigLoginRoleMissingPrivilegedRoleError,
   DbConfigLoginRoleNetworkError,
   DbConfigLoginRoleStatusError,
   DbConfigParseUrlError,
@@ -48,6 +49,7 @@ export type DbConfigError =
   // A hard linked-ref load surfaces a real link-state read error instead of masking it
   // as not-linked.
   | LinkedProjectRefReadError
+  | DbConfigLoginRoleMissingPrivilegedRoleError
   | DbConfigLoginRoleNetworkError
   | DbConfigLoginRoleStatusError
   | DbConfigListBansNetworkError

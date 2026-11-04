@@ -31888,7 +31888,8 @@
               "RESTORE_FAILED",
               "RESTARTING",
               "PAUSE_FAILED",
-              "RESIZING"
+              "RESIZING",
+              "PROMOTING"
             ]
           },
           "db_host": {
@@ -32059,7 +32060,8 @@
               "RESTORE_FAILED",
               "RESTARTING",
               "PAUSE_FAILED",
-              "RESIZING"
+              "RESIZING",
+              "PROMOTING"
             ]
           }
         },
@@ -32176,7 +32178,8 @@
               "RESTORE_FAILED",
               "RESTARTING",
               "PAUSE_FAILED",
-              "RESIZING"
+              "RESIZING",
+              "PROMOTING"
             ]
           },
           "database": {
@@ -32437,7 +32440,8 @@
               "RESTORE_FAILED",
               "RESTARTING",
               "PAUSE_FAILED",
-              "RESIZING"
+              "RESIZING",
+              "PROMOTING"
             ]
           }
         },
@@ -34457,6 +34461,16 @@
                     "type": {
                       "type": "string",
                       "enum": ["btree_gist_nan_reindex"]
+                    }
+                  },
+                  "required": ["type"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["collation_reindex_required"]
                     }
                   },
                   "required": ["type"]
@@ -41479,7 +41493,8 @@
                     "RESTORE_FAILED",
                     "RESTARTING",
                     "PAUSE_FAILED",
-                    "RESIZING"
+                    "RESIZING",
+                    "PROMOTING"
                   ]
                 },
                 "inserted_at": {
@@ -45877,7 +45892,8 @@
                         "RESTORE_FAILED",
                         "RESTARTING",
                         "PAUSE_FAILED",
-                        "RESIZING"
+                        "RESIZING",
+                        "PROMOTING"
                       ],
                       "description": "Project status"
                     },

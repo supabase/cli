@@ -1663,9 +1663,9 @@ describe("auth encoder key-name drift guard", () => {
     ...notificationPairs,
   ];
 
-  it("covers exactly 192 (configPath, apiKey) pairs (47 leaf + 6 smtp + 3 captcha + 18 hooks + 84 providers + 14 sms credentials + 6 template subjects + 14 notifications)", () => {
-    expect(leafPairs.length).toBe(47);
-    expect(allPairs.length).toBe(192);
+  it("covers exactly 193 (configPath, apiKey) pairs (48 leaf + 6 smtp + 3 captcha + 18 hooks + 84 providers + 14 sms credentials + 6 template subjects + 14 notifications)", () => {
+    expect(leafPairs.length).toBe(48);
+    expect(allPairs.length).toBe(193);
   });
 
   it.each(allPairs.map((pair) => [pair.configPath.join("."), pair] as const))(

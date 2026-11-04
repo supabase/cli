@@ -1,6 +1,5 @@
 import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { Console, Effect, FileSystem, Layer } from "effect";
-import { SecureRandom } from "effect/crypto";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -53,10 +52,7 @@ const fastSource: ArtifactSource = {
       yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
       yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", { mode: 0o755 });
       yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config", { mode: 0o644 });
-      const crypto = yield* SecureRandom.SecureRandom;
-      yield* verifySha256(archive, expectedSha256).pipe(
-        Effect.provideService(SecureRandom.SecureRandom, crypto),
-      );
+      yield* verifySha256(archive, expectedSha256);
     }).pipe(mapMaterializeError),
 };
 

@@ -78,8 +78,12 @@ sanitized error classification:
 - `has_suggestion`
 - `suggestion_type`
 - `suggested_command` (only when the remediation is an allowlisted command)
+- `config_key` (only on `invalid_config` failures from config resolution: the failing config key
+  path, such as `inbucket` or `auth.email.smtp.port`, comma-joined when several removed keys fail;
+  keys only, never values, file paths or user-chosen names, which collapse to their nearest known
+  parent key)
 
-These values come exclusively from the closed taxonomy in
+Apart from `config_key`, these values come exclusively from the closed taxonomy in
 `src/shared/telemetry/error-actionability.ts` — never from raw error text —
 and the KPI query semantics (strict recovery, repeat errors, internal/unknown
 bug rate) are documented there in `CliErrorActionabilityMetricDefinitions`.
@@ -101,6 +105,15 @@ Local-runtime commands also carry properties that split error rates by runtime:
 - `orioledb` (boolean) once the command resolves local database config, `true` when the project
   selects an OrioleDB image (`db.orioledb_version` on a 15/17 project). It describes local config
   only; for `--remote` targets it says nothing about the remote database
+- `serve_end_reason` on the Docker-runtime `functions serve`, set once its final outcome is known:
+  `signal` (the CLI received a shutdown signal), `container_stopped` (an external supervisor
+  stopped the Edge Runtime container, e.g. `supabase stop`), `container_exited` (the container
+  exited on its own with code 0), `container_removed` (the container disappeared), or
+  `container_crashed` (the container exited with a crash code, which also fails the command). A
+  restart records nothing; only the final end does
+- `edge_runtime_exit_code` (number) alongside `serve_end_reason` when the container's exit code is
+  known: its stop code for `container_stopped`, `0` for `container_exited`, its crash code for
+  `container_crashed`
 
 Flag capture is intentionally conservative: `flags` records only flags changed on the command
 line, and redacts each value unless it is boolean, a choice flag, or listed in the command's

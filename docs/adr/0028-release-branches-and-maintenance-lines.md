@@ -18,7 +18,7 @@ Add two release channels and the branches behind them. `develop` and `main` are 
 | `next`    | Breaking-change integration, tracks `develop` | `X.Y.Z-next.N` | `next`        | none                                    | prerelease              |
 | `v<N>.x`  | Maintenance for a past major                  | `N.Y.Z`        | `v<N>.stable` | `supabase@<N>` / `supabase-v<N>-stable` | published, never latest |
 
-- **`next`** is one long-lived branch reused for every major. Breaking PRs target it with a `type(scope)!:` title, enforced by the PR title lint. Every push runs the full test suite before publishing. The prerelease identifier is `next`, not `beta`, so versions do not collide on npm after a cut. Publishing stays OIDC-only, so the stable release does not move the `next` dist-tag; `supabase@next` catches up on the next push to `next`.
+- **`next`** is one long-lived branch reused for every major. Breaking PRs target it with a `type(scope)!:` title, enforced by the PR title lint. Every push that carries commits beyond `develop` runs the full test suite before publishing; a push without any releases nothing, because semantic-release reads channel notes per commit ([semantic-release#4073](https://github.com/semantic-release/semantic-release/issues/4073)) and cannot tell a `next` tag from a `beta` tag on the same commit. The prerelease identifier is `next`, not `beta`, so versions do not collide on npm after a cut. Publishing stays OIDC-only, so the stable release does not move the `next` dist-tag; `supabase@next` catches up on the next release from `next`.
 - **`develop` → `next`** is kept in sync on every push, and `main` → `develop` after every stable release. A clean merge is pushed directly. A conflict opens a PR from `sync/<source>-into-<target>` (at the source tip) into the target, and approving it fast-forwards the target to the PR head.
 - **Fast-forward on approval** applies to the deploy PR (`develop` → `main`), the major cut (`next` → `develop`), and sync PRs. The approver must have write access; the approved commit must be the PR head with the required checks green; the target must fast-forward (for a sync PR that is stale because the target or the source moved, a clean merge lands directly, as for a clean sync; only a new conflict or a target that keeps moving sends it back for re-approval); and a major version bump on the deploy PR needs the `release-major` label. The merge button is blocked on these PRs because the repository is squash-only and squashing destroys the ancestry.
 - **`v<N>.x`** is created by hand from the last stable `N.*` tag at the cut of the next major. It is released by dispatching `release.yml` on that ref with `channel=maintenance`; the workflow, scripts, and live e2e tests come from the frozen commit. A wildcard maintenance entry in the semantic-release config covers every such branch. Maintenance releases publish `v<N>.stable` on npm and are never marked latest.
@@ -48,8 +48,8 @@ The operational runbook, including the major-cut steps, is [`apps/cli/docs/relea
 ### Negative
 
 - Release-infrastructure fixes must be cherry-picked to each active `v<N>.x` by hand; Dependabot targets `develop` only.
-- The `next` dist-tag can lag behind `latest` until the next push to `next`.
-- Every `develop` push triggers a sync and, once `next` exists, a `next` test run and release.
+- The `next` dist-tag can lag behind `latest` until the next release from `next`.
+- Every `develop` push triggers a sync into `next`; `next` runs its tests and releases only when it carries commits beyond `develop`.
 - Rulesets for `next` and `v*.x` and the `release-major` label are manual setup.
 - `supabase@<N>` and `supabase` both install `bin/supabase`, so Homebrew can link only one.
 - Homebrew and Scoop for `next` are not published.

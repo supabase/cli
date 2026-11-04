@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
+import { DEFAULT_LOCAL_S3_ACCESS_KEY_ID, DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY } from "../Defaults.ts";
 import { makeSpec, type Creation } from "./Studio.ts";
 import { selection } from "../../tests/pins.ts";
 
@@ -40,5 +41,15 @@ it.effect("mounts the snippets folder read-write and names it per runtime", () =
     expect(yield* spec.mounts(config, { container: true })).toEqual([
       { source: "/project/supabase/snippets", target: "/__supabase_snippets", readOnly: false },
     ]);
+  }),
+);
+
+it.effect("gives Studio the local S3 protocol keys that Storage accepts", () =>
+  Effect.gen(function* () {
+    const env = yield* makeSpec().env(creation({}), new Map(), false);
+    expect(env).toMatchObject({
+      S3_PROTOCOL_ACCESS_KEY_ID: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+      S3_PROTOCOL_ACCESS_KEY_SECRET: DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+    });
   }),
 );

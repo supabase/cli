@@ -234,10 +234,10 @@ overrides:
 packageExtensionsChecksum: sha256-gAA6Mc6Jn3jUpogzVWO9hE5trVRioaB8peQBgDbyG6I=
 
 patchedDependencies:
-  '@effect/platform-node-shared@4.1.2': f3c97d0f551dbc2ecfc7bc4b87e2e4c67682a6c2faa84a2a12438cf8f52b3e24
+  '@effect/platform-node-shared@4.1.2': 66b729af95a256e50b86614a9b3363c34232990e88503e313277096512c76e7f
   '@effect/vitest@4.1.2': 6247418cdcd517fdfb3b197ba9e463a7843554e13f1ee0bfe13591181c44a3ce
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
-  effect@4.1.2: c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19
+  effect@4.1.2: faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c
 
 importers:
 
@@ -251,7 +251,7 @@ importers:
         version: 21.2.2
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       '@effect/tsgo':
         specifier: 'catalog:'
         version: 0.37.0
@@ -263,7 +263,7 @@ importers:
         version: 1.4.2
       effect:
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+        version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
       husky:
         specifier: ^9.1.7
         version: 9.1.7
@@ -318,13 +318,13 @@ importers:
         version: 1.7.0
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       '@effect/sql-pg':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=6247418cdcd517fdfb3b197ba9e463a7843554e13f1ee0bfe13591181c44a3ce)(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
+        version: 4.1.2(patch_hash=6247418cdcd517fdfb3b197ba9e463a7843554e13f1ee0bfe13591181c44a3ce)(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(supports-color@7.2.0)(zod@4.5.4)
@@ -375,7 +375,7 @@ importers:
         version: 17.4.2
       effect:
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+        version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -442,16 +442,16 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))(redis@6.2.1)
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))(redis@6.2.1)
       '@supabase/cli-test-helpers':
         specifier: workspace:*
         version: link:../../packages/cli-test-helpers
       effect:
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+        version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
@@ -507,13 +507,13 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))(redis@6.2.1)
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))(redis@6.2.1)
       effect:
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+        version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
@@ -547,10 +547,10 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       effect:
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+        version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
@@ -586,10 +586,10 @@ importers:
     devDependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))(redis@6.2.1)
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))(redis@6.2.1)
       '@semantic-release/commit-analyzer':
         specifier: ^13.0.1
         version: 13.0.1(semantic-release@25.0.9(supports-color@7.2.0)(typescript@7.0.2))(supports-color@7.2.0)
@@ -610,7 +610,7 @@ importers:
         version: 8.20.0
       effect:
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+        version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
       semantic-release:
         specifier: 'catalog:'
         version: 25.0.9(supports-color@7.2.0)(typescript@7.0.2)
@@ -628,20 +628,20 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))(redis@6.2.1)
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))(redis@6.2.1)
       '@effect/sql-pg':
         specifier: 'catalog:'
-        version: 4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
+        version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       effect:
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+        version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
       jose:
         specifier: ^6.2.10
         version: 6.2.10
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.1.2(patch_hash=6247418cdcd517fdfb3b197ba9e463a7843554e13f1ee0bfe13591181c44a3ce)(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
+        version: 4.1.2(patch_hash=6247418cdcd517fdfb3b197ba9e463a7843554e13f1ee0bfe13591181c44a3ce)(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -7087,36 +7087,36 @@ snapshots:
     dependencies:
       '@noble/ciphers': 1.3.0
 
-  '@effect/platform-bun@4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))':
+  '@effect/platform-bun@4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(patch_hash=f3c97d0f551dbc2ecfc7bc4b87e2e4c67682a6c2faa84a2a12438cf8f52b3e24)(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
-      effect: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+      '@effect/platform-node-shared': 4.1.2(patch_hash=66b729af95a256e50b86614a9b3363c34232990e88503e313277096512c76e7f)(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
+      effect: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.1.2(patch_hash=f3c97d0f551dbc2ecfc7bc4b87e2e4c67682a6c2faa84a2a12438cf8f52b3e24)(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))':
+  '@effect/platform-node-shared@4.1.2(patch_hash=66b729af95a256e50b86614a9b3363c34232990e88503e313277096512c76e7f)(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))':
     dependencies:
       '@types/ws': 8.18.2
-      effect: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+      effect: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
       ws: 8.22.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))(redis@6.2.1)':
+  '@effect/platform-node@4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))(redis@6.2.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.2(patch_hash=f3c97d0f551dbc2ecfc7bc4b87e2e4c67682a6c2faa84a2a12438cf8f52b3e24)(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))
-      effect: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+      '@effect/platform-node-shared': 4.1.2(patch_hash=66b729af95a256e50b86614a9b3363c34232990e88503e313277096512c76e7f)(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
+      effect: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
       redis: 6.2.1
       undici: 8.12.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-pg@4.1.2(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))':
+  '@effect/sql-pg@4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))':
     dependencies:
-      effect: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+      effect: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
 
   '@effect/tsgo-darwin-arm64@0.37.0':
     optional: true
@@ -7149,9 +7149,9 @@ snapshots:
       '@effect/tsgo-win32-arm64': 0.37.0
       '@effect/tsgo-win32-x64': 0.37.0
 
-  '@effect/vitest@4.1.2(patch_hash=6247418cdcd517fdfb3b197ba9e463a7843554e13f1ee0bfe13591181c44a3ce)(effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19))(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)':
+  '@effect/vitest@4.1.2(patch_hash=6247418cdcd517fdfb3b197ba9e463a7843554e13f1ee0bfe13591181c44a3ce)(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)':
     dependencies:
-      effect: 4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19)
+      effect: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
       vite: 8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
       vitest: 5.0.0(@types/node@26.4.1)(@vitest/coverage-v8@5.0.0)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
 
@@ -9632,7 +9632,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.1.2(patch_hash=c8b30ec5625c8eae6765ac893fb47b076d2cd5ad6df3ea0ab35cb8b6529bdf19): {}
+  effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c): {}
 
   emoji-regex@10.6.0: {}
 

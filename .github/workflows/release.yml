@@ -47,9 +47,36 @@ permissions:
   contents: read
 
 jobs:
+  # semantic-release reads channel notes per commit (semantic-release/semantic-release#4073), so
+  # releasing `next` on a commit develop already tagged misreads both tags.
+  next-ahead:
+    name: Check next has its own commits
+    if: github.ref_name == 'next'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      ahead: ${{ steps.compare.outputs.ahead }}
+    steps:
+      - id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ahead_by="$(gh api "repos/${REPO}/compare/develop...${SHA}" --jq .ahead_by)"
+          if [[ "$ahead_by" -gt 0 ]]; then
+            echo "ahead=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ahead=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test-next:
     name: Test next
-    if: github.event_name == 'push' && github.ref_name == 'next'
+    needs: next-ahead
+    if: github.event_name == 'push' && github.ref_name == 'next' && needs.next-ahead.outputs.ahead == 'true'
     permissions:
       contents: read
       actions: read
@@ -61,12 +88,20 @@ jobs:
 
   plan:
     name: Plan release
-    needs: test-next
-    # A skipped test-next (every non-next trigger) makes the implicit success() false, so the
-    # result is checked explicitly.
-    if: ${{ !cancelled() && contains(fromJSON('["success","skipped"]'), needs.test-next.result) }}
+    needs: [next-ahead, test-next]
+    # Skipped next-ahead and test-next jobs (every non-next trigger) make the implicit success()
+    # false, so their results are checked explicitly. A next push with no commits beyond develop
+    # plans nothing.
+    if: >-
+      ${{ !cancelled() &&
+      contains(fromJSON('["success","skipped"]'), needs.next-ahead.result) &&
+      contains(fromJSON('["success","skipped"]'), needs.test-next.result) &&
+      !(github.event_name == 'push' && github.ref_name == 'next' && needs.next-ahead.outputs.ahead != 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 135
+    permissions:
+      contents: read
+      actions: read
     outputs:
       should_release: ${{ steps.compute.outputs.should_release }}
       version: ${{ steps.compute.outputs.version }}
@@ -78,6 +113,59 @@ jobs:
       dry_run: ${{ steps.compute.outputs.dry_run }}
       channel: ${{ steps.compute.outputs.channel }}
     steps:
+      - name: Refuse a next dispatch with no commits beyond develop
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'next' && needs.next-ahead.outputs.ahead != 'true' }}
+        run: |
+          echo "::error::next has no commits beyond develop, so a next release would tag a commit develop already released"
+          exit 1
+      # The stable tag is pushed by main's publish job, so a prerelease planned before that job
+      # finishes misses it. The rest of the run (brew, scoop, smoke tests) does not affect the plan.
+      - name: Wait for an in-flight stable release
+        if: ${{ (github.ref_name == 'develop' || github.ref_name == 'next') && (github.event_name == 'push' || inputs.version == '') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 7200))
+          while true; do
+            pending=0
+            if run_ids="$(gh run list --repo "$REPO" --workflow release.yml --branch main --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId')"; then
+              for run_id in $run_ids; do
+                publish_status="$(gh api "repos/${REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[] | select(.name == "Release / publish") | .status')" || publish_status=unknown
+                if [[ "$publish_status" != completed ]]; then
+                  pending=$((pending + 1))
+                fi
+              done
+            else
+              echo "::warning::Could not list Release runs on main; retrying."
+              pending=1
+            fi
+            if [[ "$pending" -eq 0 ]]; then
+              break
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "::error::The publish job of a Release run on main is still in progress after 120 minutes. Re-run this job once it finishes."
+              exit 1
+            fi
+            echo "Waiting for the publish job of ${pending} Release run(s) on main to finish..."
+            sleep 30
+          done
+      # A major cut can fast-forward develop onto next while the tests and the wait above run.
+      - id: next-still-ahead
+        if: ${{ github.ref_name == 'next' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ahead_by="$(gh api "repos/${REPO}/compare/develop...${SHA}" --jq .ahead_by)"
+          if [[ "$ahead_by" -gt 0 ]]; then
+            echo "ahead=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ahead=false" >> "$GITHUB_OUTPUT"
+          fi
       # semantic-release runs `git push --dry-run HEAD:<branch>` as part of verifyAuth even in
       # `dry_run: true` mode, so the token needs push access to the protected develop/main
       # branches — the default GITHUB_TOKEN doesn't have it.
@@ -110,6 +198,7 @@ jobs:
           DISPATCH_CHANNEL: ${{ inputs.channel }}
           DISPATCH_VERSION: ${{ inputs.version }}
           DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
+          NEXT_AHEAD: ${{ steps.next-still-ahead.outputs.ahead }}
           SR_PUBLISHED: ${{ steps.semantic-release.outputs.new_release_published }}
           SR_VERSION: ${{ steps.semantic-release.outputs.new_release_version }}
         run: |
@@ -126,6 +215,15 @@ jobs:
             next) natural=next ;;
             *) [[ "$REF_NAME" =~ $maint_re ]] && natural=maintenance ;;
           esac
+          if [[ "$REF_NAME" == next && "$NEXT_AHEAD" != true ]]; then
+            if [[ "$EVENT" == "workflow_dispatch" ]]; then
+              echo "::error::next has no commits beyond develop, so a next release would tag a commit develop already released"
+              exit 1
+            fi
+            echo "::notice::next has no commits beyond develop, so there is nothing to release"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
             channel="$DISPATCH_CHANNEL"
             dry_run="$DISPATCH_DRY_RUN"
@@ -243,6 +341,7 @@ jobs:
     # those granted to the calling job, so this must be declared here too.
     permissions:
       actions: read
+      attestations: write
       contents: write
       id-token: write
       pull-requests: write
@@ -395,13 +494,14 @@ jobs:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
   # Reports a broken release on every channel. `failure()` evaluates against the full `needs`
-  # chain, so this fires whenever `test-next`, `plan` or `release` (including the reusable
-  # release-shared workflow) fails. Skipped jobs don't count as failures. Dry runs are excluded
-  # via the dispatch input directly, so even a plan job that dies before recording its `dry_run`
-  # output stays quiet. A failed `test-next` skips `plan`, so the channel falls back to the ref.
+  # chain, so this fires whenever `next-ahead`, `test-next`, `plan` or `release` (including the
+  # reusable release-shared workflow) fails. Skipped jobs don't count as failures. Dry runs are
+  # excluded via the dispatch input directly, so even a plan job that dies before recording its
+  # `dry_run` output stays quiet. A failed `next-ahead` or `test-next` skips `plan`, so the
+  # channel falls back to the ref.
   notify-slack-failure:
     name: Notify Slack (failure)
-    needs: [test-next, plan, release]
+    needs: [next-ahead, test-next, plan, release]
     if: ${{ failure() && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     uses: ./.github/workflows/slack-notify.yml
     with:

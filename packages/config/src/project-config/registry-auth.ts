@@ -601,6 +601,10 @@ const emailBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
     ["auth", "email", "secure_password_change"],
     "security_update_password_require_reauthentication",
   ),
+  boolRow(
+    ["auth", "email", "require_current_password"],
+    "security_update_password_require_current_password",
+  ),
   uintRow(["auth", "email", "otp_length"], "mailer_otp_length"),
   uintRow(["auth", "email", "otp_expiry"], "mailer_otp_exp"),
   secondsDurationRow(["auth", "email", "max_frequency"], "smtp_max_frequency"),
