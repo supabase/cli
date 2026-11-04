@@ -14,7 +14,8 @@ export const DEFAULT_CONFIG_FILE: ConfigFileRef = {
   path: "supabase/config.toml",
 };
 
-/** The config file at an absolute `configPath`; `undefined` reads as no file. */
+/** The config file at an absolute `configPath`, with `/` separators on every platform; `undefined`
+ * reads as no file. */
 export const configFileRefFromPath = (
   path: Path.Path,
   workdir: string,
@@ -22,7 +23,10 @@ export const configFileRefFromPath = (
 ): ConfigFileRef =>
   configPath === undefined
     ? DEFAULT_CONFIG_FILE
-    : { format: cliConfigFormatForPath(configPath), path: path.relative(workdir, configPath) };
+    : {
+        format: cliConfigFormatForPath(configPath),
+        path: path.relative(workdir, configPath).replaceAll("\\", "/"),
+      };
 
 export const configFileRefOf = (
   path: Path.Path,

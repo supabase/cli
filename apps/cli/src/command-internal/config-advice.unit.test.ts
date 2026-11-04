@@ -33,6 +33,15 @@ describe("config advice", () => {
       expect(configFileName("supabase/config.json")).toBe("config.json");
     }).pipe(Effect.provide(BunPath.layer), Effect.runSync));
 
+  it("names the config path with forward slashes on Windows", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      expect(configFileRefFromPath(path, "C:\\work", "C:\\work\\supabase\\config.toml")).toEqual({
+        format: "toml",
+        path: "supabase/config.toml",
+      });
+    }).pipe(Effect.provide(BunPath.layerWin32), Effect.runSync));
+
   it("keeps TOML guidance text and gives JSON projects a JSON snippet", () => {
     expect(enableLocalWebhooksSuggestion()).toBe(
       "Add the following to supabase/config.toml and retry:\n\n[experimental.webhooks]\nenabled = true",
