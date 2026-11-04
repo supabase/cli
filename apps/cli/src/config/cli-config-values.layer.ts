@@ -20,7 +20,6 @@ import {
   Result,
 } from "effect";
 
-import { configDisplayPath } from "../command-internal/config-advice.ts";
 import { readLinkSnapshot, readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
 import { collectDotenvPrivateKeys } from "../shared/config/vault-decrypt.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
@@ -259,9 +258,11 @@ export const cliConfigValuesLayer = Layer.effect(
         yield* printOnce(deprecatedKeyLine(deprecatedPath));
       }
       if (parsed !== null) {
-        const used = configDisplayPath(path, target.workdir, parsed.path);
+        const displayPath = (filePath: string) =>
+          path.relative(target.workdir, filePath).replaceAll("\\", "/");
+        const used = displayPath(parsed.path);
         for (const ignoredPath of parsed.ignoredPaths) {
-          const ignored = configDisplayPath(path, target.workdir, ignoredPath);
+          const ignored = displayPath(ignoredPath);
           yield* warnOnce(
             `Ignoring ${ignored} because ${used} takes precedence. Delete the file you don't use.`,
           );
