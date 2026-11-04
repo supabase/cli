@@ -58,7 +58,7 @@ const publishLocal = (docsRepo: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const major = values.version ?? "v2";
+    const major = values.version ?? "v3";
     const sectionsFile = SECTIONS_FILE_BY_MAJOR[major];
     if (sectionsFile === undefined) {
       yield* Console.error(

@@ -20,7 +20,7 @@ const { values, positionals } = parseArgs({
   options: {
     prerelease: { type: "boolean", default: false },
     sections: { type: "string" },
-    major: { type: "string", default: "2" },
+    major: { type: "string", default: "3" },
   },
 });
 
