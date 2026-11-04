@@ -177,7 +177,7 @@ describe("unified logs", () => {
   it.effect.each([
     {
       noFollow: true,
-      tail: 100,
+      tail: 1,
       header: "Window: Nov 02 11:00:00–12:00:00 UTC",
       start: "2026-11-02T11:00:00.000Z",
     },
@@ -235,6 +235,7 @@ describe("unified logs", () => {
       const ready = test.noFollow ? " | complete" : "phase-b";
       while (!frame.includes(ready)) frame = yield* Queue.take(frames);
       expect(frame.split("\r\n")[1]).toBe(test.header);
+      expect(frame).not.toContain("History reached --tail");
       expect(setup.http.requests[0]?.urlParams.iso_timestamp_start).toBe(test.start);
       expect(setup.http.requests[0]?.urlParams.iso_timestamp_end).toBe("2026-11-02T12:00:00.000Z");
       if (!test.noFollow) {
@@ -432,11 +433,12 @@ describe("unified logs", () => {
           },
         });
         yield* logsTail(
-          tailFlags({ level: ["error"], search: Option.some("can't_%\\") }),
+          tailFlags({ tail: 2, level: ["error"], search: Option.some("can't_%\\") }),
           false,
           false,
         ).pipe(Effect.provide(setup.layer));
         const lines = decodeRows(setup.out.stdoutText);
+        expect(setup.out.stderrText).toContain("History reached --tail; older rows may exist.");
         expect(lines.map((line) => line.id)).toEqual(["old", "new"]);
         expect(lines[0]?.log_attributes).toMatchObject({ trace_id: "correlation" });
         const sql = setup.http.requests[0]?.urlParams.sql;

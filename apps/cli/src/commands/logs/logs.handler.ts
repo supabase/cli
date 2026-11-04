@@ -274,15 +274,11 @@ const hostedTail = Effect.fn("logs.tail.remote")(function* (
         : [...(yield* read(window, flags.tail))].sort(
             (a, b) => a.ts_ms - b.ts_ms || a.id.localeCompare(b.id),
           );
-    if (flags.tail > 0 && history.length === flags.tail)
-      yield* sink === undefined
-        ? output.raw(
-            "History reached --tail; older rows may exist. Use logs query to read a wider result.\n",
-            "stderr",
-          )
-        : sink.notice(
-            "History reached --tail; older rows may exist. Use logs query to read a wider result.",
-          );
+    if (sink === undefined && flags.tail > 0 && history.length === flags.tail)
+      yield* output.raw(
+        "History reached --tail; older rows may exist. Use logs query to read a wider result.\n",
+        "stderr",
+      );
     if (output.format === "json")
       return yield* logsResult(
         history.map((row) => ({
