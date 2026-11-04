@@ -133,6 +133,7 @@ DbConfigLibpqEnvError
 DbConfigListBansNetworkError
 DbConfigListBansStatusError
 DbConfigLoadError
+DbConfigLoginRoleMissingPrivilegedRoleError
 DbConfigLoginRoleNetworkError
 DbConfigLoginRoleStatusError
 DbConfigParseUrlError
