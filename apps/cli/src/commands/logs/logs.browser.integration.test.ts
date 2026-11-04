@@ -1,325 +1,194 @@
-import { LogsClipboard } from "./logs.clipboard.ts";
 import process from "node:process";
 import { expect, it } from "@effect/vitest";
-import { Cause, Exit, Deferred, Effect, Fiber, Layer, Option, Queue, Terminal } from "effect";
-import type { OutputFormat } from "../../shared/output/types.ts";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Terminal } from "effect";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
-import { Tty } from "../../shared/runtime/tty.service.ts";
-import { browseLogs, useLogsBrowser } from "./logs.browser.ts";
+import { LogsClipboard } from "./logs.clipboard.ts";
+import { LogsInputError } from "./logs.errors.ts";
+import { browseLogs } from "./logs.browser.ts";
+import type { LogsSession } from "./logs.session.ts";
 
 const key = (name: string, ctrl = false): Terminal.UserInput => ({
   input: Option.none(),
-  key: { name, ctrl, shift: false, meta: false },
+  key: { name, ctrl, meta: false, shift: false },
 });
-
-it.effect("navigates full details, resizes, and interrupts the live producer on quit", () =>
-  Effect.gen(function* () {
-    const input = yield* Queue.unbounded<Terminal.UserInput>();
-    const screens = yield* Queue.unbounded<string>();
-    const stopped = yield* Deferred.make<void>();
-    let columns = 100;
-    const listeners = process.stdout.listenerCount("resize");
-    const terminal = Layer.succeed(
+const window = {
+  kind: "range",
+  start: "2026-11-04T10:00:00Z",
+  end: "2026-11-04T11:00:00Z",
+} satisfies import("./logs.browser.format.ts").LogsBrowserWindow;
+const setup = Effect.fnUntraced(function* <E>(session: LogsSession<E>) {
+  const input = yield* Queue.unbounded<Terminal.UserInput>();
+  const frames = yield* Queue.unbounded<string>();
+  const control = mockProcessControl();
+  let columns = 80;
+  let rows = 12;
+  const fiber = yield* browseLogs(session, 1762254000000).pipe(
+    Effect.provideService(
       Terminal.Terminal,
       Terminal.make({
         columns: Effect.sync(() => columns),
-        rows: Effect.succeed(8),
+        rows: Effect.sync(() => rows),
         readInput: Effect.succeed(input),
         readLine: Effect.die("unused"),
-        display: (text) => Queue.offer(screens, text).pipe(Effect.asVoid),
+        display: (text) => Queue.offer(frames, text).pipe(Effect.asVoid),
       }),
-    );
-    const output = mockOutput();
-    const browser = yield* browseLogs((sink) =>
-      Effect.gen(function* () {
-        yield* sink.entry({
-          ts_ms: 0,
-          service: "postgres",
-          event_message: "first",
-          secret: "full first detail",
-        });
-        yield* sink.entry({
-          ts_ms: 1,
-          service: "auth",
-          event_message: "second",
-          secret: "full second detail",
-          long: "line\n".repeat(30) + "final-value",
-        });
-        return yield* Effect.never;
-      }).pipe(Effect.ensuring(Deferred.succeed(stopped, undefined))),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(LogsClipboard, {}),
-          terminal,
-          output.layer,
-          mockProcessControl().layer,
-        ),
-      ),
-      Effect.forkScoped,
-    );
-    expect(yield* Queue.take(screens)).toContain("?1049h");
-    expect(yield* Queue.take(screens)).toContain("Waiting for logs");
-    expect(yield* Queue.take(screens)).toContain("first");
-    expect(yield* Queue.take(screens)).toContain("> Jan 01 - 00:00:00 UTC auth second");
-    yield* Queue.offer(input, key("up"));
-    expect(yield* Queue.take(screens)).toContain("> Jan 01 - 00:00:00 UTC postgres first");
-    yield* Queue.offer(input, key("return"));
-    expect(yield* Queue.take(screens)).toContain("full first detail");
-    yield* Queue.offer(input, key("escape"));
-    expect(yield* Queue.take(screens)).toContain("Enter details");
-    columns = 25;
-    process.stdout.emit("resize");
-    const resized = yield* Queue.take(screens);
-    expect(resized).not.toContain("Jan 01 - 00:00:00 UTC postgres first");
-    expect(
-      resized
-        .split("\r\n")
-        .slice(1)
-        .every((line) => line.length <= 24),
-    ).toBe(true);
-    yield* Queue.offer(input, key("q"));
-    yield* Fiber.join(browser);
-    yield* Deferred.await(stopped);
-    expect(yield* Queue.take(screens)).toContain("?1049l");
-    expect(process.stdout.listenerCount("resize")).toBe(listeners);
-  }),
-);
+    ),
+    Effect.provide(
+      Layer.mergeAll(mockOutput().layer, control.layer, Layer.mock(LogsClipboard, {})),
+    ),
+    Effect.forkScoped,
+  );
+  const frame = Effect.fnUntraced(function* (contains: string) {
+    let text = "";
+    while (!text.includes(contains)) text = yield* Queue.take(frames);
+    return text;
+  });
+  return {
+    input,
+    frames,
+    control,
+    fiber,
+    frame,
+    resize: (width: number, height: number) => {
+      columns = width;
+      rows = height;
+      process.stdout.emit("resize");
+    },
+  };
+});
 
-it.effect("persists a resized live viewport when more rows arrive while browsing", () =>
-  Effect.gen(function* () {
-    const input = yield* Queue.unbounded<Terminal.UserInput>();
-    const screens = yield* Queue.unbounded<string>();
-    const append = yield* Deferred.make<void>();
-    let height = 11;
-    const browser = yield* browseLogs((sink) =>
-      Effect.gen(function* () {
-        for (let index = 0; index < 20; index++) yield* sink.entry({ message: `runtime-${index}` });
-        yield* Deferred.await(append);
-        yield* sink.entry({ message: "runtime-20" });
-        return yield* Effect.never;
-      }),
-    ).pipe(
-      Effect.provideService(
-        Terminal.Terminal,
-        Terminal.make({
-          columns: Effect.succeed(80),
-          rows: Effect.sync(() => height),
-          readInput: Effect.succeed(input),
-          readLine: Effect.die("unused"),
-          display: (text) => Queue.offer(screens, text).pipe(Effect.asVoid),
-        }),
-      ),
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(LogsClipboard, {}),
-          mockOutput().layer,
-          mockProcessControl().layer,
-        ),
-      ),
-      Effect.forkScoped,
-    );
-    yield* Queue.take(screens);
-    yield* Queue.take(screens);
-    let frame = "";
-    for (let index = 0; index < 20; index++) frame = yield* Queue.take(screens);
-    expect(frame.split("\r\n")[2]).toContain("runtime-12");
-    for (let index = 0; index < 3; index++) {
-      yield* Queue.offer(input, key("up"));
-      frame = yield* Queue.take(screens);
-    }
-    expect(frame.split("\r\n")[2]).toContain("runtime-12");
-    height = 15;
-    process.stdout.emit("resize");
-    frame = yield* Queue.take(screens);
-    const before = frame.split("\r\n").slice(2, 14);
-    expect(before[0]).toContain("runtime-8");
-    yield* Deferred.succeed(append, undefined);
-    frame = yield* Queue.take(screens);
-    expect(frame.split("\r\n").slice(2, 14)).toEqual(before);
-    yield* Queue.offer(input, key("return"));
-    expect(yield* Queue.take(screens)).toContain("Log details");
-    yield* Queue.offer(input, key("escape"));
-    expect((yield* Queue.take(screens)).split("\r\n").slice(2, 14)).toEqual(before);
-    yield* Queue.offer(input, key("q"));
-    yield* Fiber.join(browser);
-  }),
-);
-
-it.effect("restores the terminal and propagates producer failures", () =>
-  Effect.gen(function* () {
-    const input = yield* Queue.unbounded<Terminal.UserInput>();
-    const displays: string[] = [];
-    const result = yield* browseLogs(() => Effect.fail("producer failed")).pipe(
-      Effect.provideService(
-        Terminal.Terminal,
-        Terminal.make({
-          columns: Effect.succeed(80),
-          rows: Effect.succeed(10),
-          readInput: Effect.succeed(input),
-          readLine: Effect.die("unused"),
-          display: (text) =>
-            Effect.sync(() => {
-              displays.push(text);
-            }),
-        }),
-      ),
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(LogsClipboard, {}),
-          mockOutput().layer,
-          mockProcessControl().layer,
-        ),
-      ),
-      Effect.result,
-    );
-    expect(result).toMatchObject({ _tag: "Failure", failure: "producer failed" });
-    expect(displays.at(-1)).toContain("?25h\u001b[?1049l");
-  }),
-);
-
-it.effect("sets exit 130 for a raw Ctrl-C key and restores terminal state", () =>
-  Effect.gen(function* () {
-    const input = yield* Queue.unbounded<Terminal.UserInput>();
-    const screens = yield* Queue.unbounded<string>();
-    const control = mockProcessControl();
-    const browser = yield* browseLogs(() => Effect.never).pipe(
-      Effect.provideService(
-        Terminal.Terminal,
-        Terminal.make({
-          columns: Effect.succeed(80),
-          rows: Effect.succeed(10),
-          readInput: Effect.succeed(input),
-          readLine: Effect.die("unused"),
-          display: (text) => Queue.offer(screens, text).pipe(Effect.asVoid),
-        }),
-      ),
-      Effect.provide(
-        Layer.mergeAll(Layer.mock(LogsClipboard, {}), mockOutput().layer, control.layer),
-      ),
-      Effect.forkScoped,
-    );
-    yield* Queue.take(screens);
-    yield* Queue.take(screens);
-    yield* Queue.offer(input, key("c", true));
-    yield* Fiber.join(browser);
-    expect(control.exitCode).toBe(130);
-    expect(yield* Queue.take(screens)).toContain("?1049l");
-  }),
-);
-
-it.effect("quits while a large producer is backpressured and finalizes it", () =>
-  Effect.gen(function* () {
-    const input = yield* Queue.unbounded<Terminal.UserInput>();
-    const stopped = yield* Deferred.make<void>();
-    const backpressured = yield* Deferred.make<void>();
-    let drewRow = false;
-    const browser = yield* browseLogs((sink) =>
-      Effect.gen(function* () {
-        yield* Effect.forEach(
-          Array.from({ length: 2000 }, (_, index) => index),
-          (index) =>
-            Effect.gen(function* () {
-              if (index === 64) yield* Deferred.succeed(backpressured, undefined);
-              yield* sink.entry({ message: `row-${index}` });
-            }),
-          { discard: true },
-        );
-        return yield* Effect.never;
-      }).pipe(Effect.ensuring(Deferred.succeed(stopped, undefined))),
-    ).pipe(
-      Effect.provideService(
-        Terminal.Terminal,
-        Terminal.make({
-          columns: Effect.succeed(80),
-          rows: Effect.succeed(10),
-          readInput: Effect.succeed(input),
-          readLine: Effect.die("unused"),
-          display: (text) =>
-            Effect.gen(function* () {
-              if (!drewRow && text.includes("row-0")) {
-                drewRow = true;
-                yield* Deferred.await(backpressured);
-                yield* Queue.offer(input, key("q"));
-              }
-            }),
-        }),
-      ),
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(LogsClipboard, {}),
-          mockOutput().layer,
-          mockProcessControl().layer,
-        ),
-      ),
-      Effect.forkScoped,
-    );
-    yield* Fiber.join(browser);
-    yield* Deferred.await(stopped);
-    expect(drewRow).toBe(true);
-  }),
-);
-
-it.effect("exits empty finite results with the normal message", () =>
-  Effect.gen(function* () {
-    const input = yield* Queue.unbounded<Terminal.UserInput>();
-    const output = mockOutput();
-    const screens: string[] = [];
-    yield* browseLogs(() => Effect.void).pipe(
-      Effect.provideService(
-        Terminal.Terminal,
-        Terminal.make({
-          columns: Effect.succeed(80),
-          rows: Effect.succeed(10),
-          readInput: Effect.succeed(input),
-          readLine: Effect.die("unused"),
-          display: (text) =>
-            Effect.sync(() => {
-              screens.push(text);
-            }),
-        }),
-      ),
-      Effect.provide(
-        Layer.mergeAll(Layer.mock(LogsClipboard, {}), output.layer, mockProcessControl().layer),
-      ),
-    );
-    expect(screens.at(-1)).toContain("?1049l");
-    expect(output.rawChunks).toEqual([{ text: "No log rows.\n", stream: "stdout" }]);
-  }),
-);
-
-const interactionCases: ReadonlyArray<readonly [OutputFormat, boolean, boolean, boolean, boolean]> =
-  [
-    ["text", true, true, true, true],
-    ["text", true, false, true, false],
-    ["text", true, true, false, false],
-    ["text", false, true, true, false],
-    ["json", true, true, true, false],
-    ["stream-json", true, true, true, false],
-  ];
-it.effect.each(interactionCases)(
-  "requires text output and two interactive terminal streams: %j",
-  ([format, interactive, stdinIsTty, stdoutIsTty, expected]) =>
+it.effect(
+  "loads newer rows once and commits against navigation and resize performed while loading",
+  () =>
     Effect.gen(function* () {
-      const output = mockOutput({ format, interactive });
-      const enabled = yield* useLogsBrowser().pipe(
-        Effect.provide(output.layer),
-        Effect.provideService(Tty, { stdinIsTty, stdoutIsTty, stdoutIsPipe: false }),
-      );
-      expect(enabled).toBe(expected);
+      const release = yield* Deferred.make<void>();
+      const pending = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<void>();
+      let calls = 0;
+      const listeners = process.stdout.listenerCount("resize");
+      const ui = yield* setup({
+        mode: "append",
+        load: (_end, emit) =>
+          Effect.gen(function* () {
+            calls++;
+            if (calls === 3)
+              return yield* Deferred.succeed(pending, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.ensuring(Deferred.succeed(stopped, undefined)),
+              );
+            for (let index = calls === 1 ? 0 : 20; index < (calls === 1 ? 20 : 30); index++)
+              yield* emit({ id: String(index), ts_ms: index, message: `row-${index}` });
+            if (calls === 2) yield* Deferred.await(release);
+            return window;
+          }),
+      });
+      expect(yield* ui.frame(" | ready")).toContain("row-19");
+      yield* Queue.offer(ui.input, key("up"));
+      yield* ui.frame("> Jan 01 - 00:00:00 UTC — row-18");
+      yield* Queue.offer(ui.input, key("L"));
+      const loading = yield* ui.frame("Loading newer logs");
+      expect(loading).not.toContain("row-29");
+      yield* Queue.offer(ui.input, key("l"));
+      yield* ui.frame("Loading newer logs");
+      expect(calls).toBe(2);
+      yield* Queue.offer(ui.input, key("up"));
+      yield* ui.frame("> Jan 01 - 00:00:00 UTC — row-17");
+      yield* Queue.offer(ui.input, key("return"));
+      yield* ui.frame("Log details");
+      ui.resize(100, 8);
+      yield* ui.frame("Log details");
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* ui.frame("Newer logs loaded.")).toContain("row-17");
+      yield* Queue.offer(ui.input, key("escape"));
+      const refreshed = yield* ui.frame("Enter details");
+      expect(refreshed).toContain("> Jan 01 - 00:00:00 UTC — row-17");
+      expect(refreshed).not.toContain("row-29");
+      yield* Queue.offer(ui.input, key("L"));
+      yield* Deferred.await(pending);
+      yield* Queue.offer(ui.input, key("q"));
+      yield* Fiber.join(ui.fiber);
+      yield* Deferred.await(stopped);
+      expect(process.stdout.listenerCount("resize")).toBe(listeners);
     }),
 );
 
-it.effect("restores the screen when entering the terminal fails after a partial write", () =>
+it.effect(
+  "replaces SQL rows by identity, keeps pinned details, and retries an atomic failed load",
+  () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const ui = yield* setup({
+        mode: "replace",
+        load: (_end, emit) =>
+          Effect.gen(function* () {
+            calls++;
+            if (calls === 1) {
+              yield* emit({ id: "a", message: "first" });
+              yield* emit({ id: "b", message: "pinned original" });
+            } else if (calls === 2) {
+              yield* emit({ id: "b", message: "replacement" });
+              yield* emit({ id: "a", message: "second" });
+            } else if (calls === 3) {
+              yield* emit({ id: "bad", message: "must not publish" });
+              return yield* new LogsInputError({
+                message: "A long recoverable failure ".repeat(10),
+              });
+            } else yield* emit({ id: "retry", message: "retried" });
+            return window;
+          }),
+      });
+      yield* ui.frame(" | ready");
+      yield* Queue.offer(ui.input, key("down"));
+      yield* ui.frame("pinned original");
+      yield* Queue.offer(ui.input, key("return"));
+      yield* ui.frame("Log details");
+      yield* Queue.offer(ui.input, key("L"));
+      expect(yield* ui.frame("Query reloaded.")).toContain("pinned original");
+      yield* Queue.offer(ui.input, key("escape"));
+      expect(yield* ui.frame("Enter details")).toContain("> — — replacement");
+      yield* Queue.offer(ui.input, key("L"));
+      const failed = yield* ui.frame("recoverable failure");
+      expect(failed).not.toContain("must not publish");
+      expect(failed.split("\r\n").at(-1)).toContain("L rerun");
+      expect(failed).toContain("replacement");
+      yield* Queue.offer(ui.input, key("L"));
+      expect(yield* ui.frame("Query reloaded.")).toContain("retried");
+      yield* Queue.offer(ui.input, key("q"));
+      yield* Fiber.join(ui.fiber);
+    }),
+);
+
+it.effect("keeps an empty result open for L and preserves raw Ctrl-C exit130", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const ui = yield* setup({
+      mode: "append",
+      load: (_end, emit) =>
+        Effect.gen(function* () {
+          calls++;
+          if (calls > 1) yield* emit({ message: "arrived" });
+          return window;
+        }),
+    });
+    expect(yield* ui.frame(" | ready")).toContain("No log rows.");
+    yield* Queue.offer(ui.input, key("L"));
+    expect(yield* ui.frame("Newer logs loaded.")).toContain("arrived");
+    yield* Queue.offer(ui.input, key("c", true));
+    yield* Fiber.join(ui.fiber);
+    expect(ui.control.exitCode).toBe(130);
+  }),
+);
+
+it.effect("restores the terminal even if entering the alternate screen fails", () =>
   Effect.gen(function* () {
     const input = yield* Queue.unbounded<Terminal.UserInput>();
     const writes: string[] = [];
-    const exit = yield* browseLogs(() => Effect.never).pipe(
+    const exit = yield* browseLogs({ mode: "append", load: () => Effect.succeed(window) }, 0).pipe(
       Effect.provideService(
         Terminal.Terminal,
         Terminal.make({
           columns: Effect.succeed(80),
-          rows: Effect.succeed(10),
+          rows: Effect.succeed(12),
           readInput: Effect.succeed(input),
           readLine: Effect.die("unused"),
           display: (text) =>
@@ -331,9 +200,9 @@ it.effect("restores the screen when entering the terminal fails after a partial 
       ),
       Effect.provide(
         Layer.mergeAll(
-          Layer.mock(LogsClipboard, {}),
           mockOutput().layer,
           mockProcessControl().layer,
+          Layer.mock(LogsClipboard, {}),
         ),
       ),
       Effect.exit,

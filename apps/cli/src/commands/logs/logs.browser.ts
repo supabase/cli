@@ -1,23 +1,21 @@
+import type { LogsSession } from "./logs.session.ts";
 import { LogsClipboard } from "./logs.clipboard.ts";
 import process from "node:process";
-import { Effect, Exit, Option, Queue, Schema, Stream, Terminal } from "effect";
+import { Clock, Effect, Exit, Option, Queue, Schema, Stream, Terminal } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import {
   appendBrowserRow,
+  applyBrowserBatch,
+  stageBrowserRow,
+  type BrowserState,
   browserKey,
   initialBrowserState,
   renderBrowser,
   resizeBrowser,
   type LogsBrowserWindow,
 } from "./logs.browser.format.ts";
-
-export interface LogsBrowserSink {
-  readonly window: (window: LogsBrowserWindow) => Effect.Effect<void>;
-  readonly entry: (row: Schema.JsonObject) => Effect.Effect<void>;
-  readonly notice: (message: string) => Effect.Effect<void>;
-}
 
 export const useLogsBrowser = Effect.fnUntraced(function* () {
   const output = yield* Output;
@@ -31,15 +29,18 @@ export const useLogsBrowser = Effect.fnUntraced(function* () {
   );
 });
 
+interface LoadedBatch {
+  readonly rows: ReadonlyArray<Schema.JsonObject>;
+  readonly dropped: number;
+  readonly window: LogsBrowserWindow;
+}
+
 type BrowserEvent<E> =
-  | { readonly kind: "window"; readonly window: LogsBrowserWindow }
-  | { readonly kind: "entry"; readonly row: Schema.JsonObject }
-  | { readonly kind: "notice"; readonly message: string }
+  | { readonly kind: "loaded"; readonly result: Exit.Exit<LoadedBatch, E> }
   | { readonly kind: "key"; readonly input: Terminal.UserInput }
   | { readonly kind: "copied"; readonly message: string }
   | { readonly kind: "resize" }
-  | { readonly kind: "closed" }
-  | { readonly kind: "complete"; readonly exit: Exit.Exit<void, E> };
+  | { readonly kind: "closed" };
 
 const isCopyKey = (key: Terminal.Key) => !key.ctrl && !key.meta && key.name.toLowerCase() === "c";
 
@@ -47,9 +48,9 @@ const encodeClipboardRecord = Schema.encodeEffect(
   Schema.fromJsonString(Schema.JsonObject, { space: 2 }),
 );
 
-export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
-  produce: (sink: LogsBrowserSink) => Effect.Effect<void, E, R>,
-  mode: "query" | "tail" = "tail",
+export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
+  session: LogsSession<E>,
+  started: number,
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -79,35 +80,81 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
         Effect.andThen(Queue.offer(events, { kind: "closed" })),
         Effect.forkScoped,
       );
-      yield* produce({
-        window: (window) => Queue.offer(events, { kind: "window", window }).pipe(Effect.asVoid),
-        entry: (row) => Queue.offer(events, { kind: "entry", row }).pipe(Effect.asVoid),
-        notice: (message) => Queue.offer(events, { kind: "notice", message }).pipe(Effect.asVoid),
-      }).pipe(
-        Effect.exit,
-        Effect.flatMap((exit) => Queue.offer(events, { kind: "complete", exit })),
-        Effect.forkScoped,
-      );
       let state = initialBrowserState;
       let copying = false;
+      let loading = false;
+      const load = Effect.fn("Logs.browser.load")(function* (end: number) {
+        if (loading) return;
+        loading = true;
+        state = {
+          ...state,
+          complete: false,
+          notice:
+            state.rows.length === 0
+              ? "Loading logs…"
+              : session.mode === "replace"
+                ? "Rerunning query…"
+                : "Loading newer logs…",
+        };
+        let staged: BrowserState = initialBrowserState;
+        yield* session
+          .load(end, (row) =>
+            Effect.sync(() => {
+              staged =
+                session.mode === "replace"
+                  ? appendBrowserRow(staged, row, "query")
+                  : stageBrowserRow(staged, row);
+            }),
+          )
+          .pipe(
+            Effect.map((window): LoadedBatch => ({
+              rows: staged.rows,
+              dropped: staged.dropped,
+              window,
+            })),
+            Effect.exit,
+            Effect.flatMap((result) => Queue.offer(events, { kind: "loaded", result })),
+            Effect.forkScoped,
+          );
+      });
+      yield* load(started);
       while (true) {
         const columns = yield* terminal.columns;
         const rows = yield* terminal.rows;
         state = resizeBrowser(state, rows);
         yield* terminal.display(
-          `\u001b[H\u001b[2J${renderBrowser(state, columns, rows, process.stdout)}`,
+          `\u001b[H\u001b[2J${renderBrowser(state, columns, rows, process.stdout, session.mode)}`,
         );
         const event = yield* Queue.take(events);
         switch (event.kind) {
-          case "window":
-            state = { ...state, window: event.window };
+          case "loaded": {
+            loading = false;
+            if (Exit.isFailure(event.result)) {
+              const error = Exit.findErrorOption(event.result);
+              if (Option.isNone(error)) return yield* Effect.failCause(event.result.cause);
+              state = {
+                ...state,
+                complete: true,
+                notice: `${error.value instanceof Error ? error.value.message : String(error.value)} Press L to retry.`,
+              };
+            } else {
+              const initial = state.window === undefined;
+              state = applyBrowserBatch(state, event.result.value, session.mode);
+              state = {
+                ...state,
+                window: event.result.value.window,
+                complete: true,
+                notice: initial
+                  ? ""
+                  : event.result.value.rows.length === 0
+                    ? "No newer logs."
+                    : session.mode === "replace"
+                      ? "Query reloaded."
+                      : "Newer logs loaded.",
+              };
+            }
             break;
-          case "entry":
-            state = appendBrowserRow(state, event.row, mode);
-            break;
-          case "notice":
-            state = { ...state, notice: event.message };
-            break;
+          }
           case "copied":
             copying = false;
             state = { ...state, notice: event.message };
@@ -116,15 +163,18 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
             break;
           case "closed":
             return;
-          case "complete":
-            if (Exit.isFailure(event.exit)) return yield* Effect.failCause(event.exit.cause);
-            if (state.rows.length === 0) return "empty";
-            state = { ...state, complete: true };
-            break;
           case "key":
             if (event.input.key.ctrl && event.input.key.name.toLowerCase() === "c") {
               yield* processControl.setExitCode(130);
               return;
+            }
+            if (
+              !event.input.key.ctrl &&
+              !event.input.key.meta &&
+              event.input.key.name.toLowerCase() === "l"
+            ) {
+              yield* load(yield* Clock.currentTimeMillis);
+              break;
             }
             if (isCopyKey(event.input.key)) {
               const row = state.detail ?? state.rows[state.selected];
@@ -152,11 +202,5 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E, R>(
         }
       }
     }),
-  ).pipe(
-    Effect.flatMap((result) =>
-      result === "empty"
-        ? Effect.flatMap(Output, (output) => output.raw("No log rows.\n"))
-        : Effect.void,
-    ),
   );
 });

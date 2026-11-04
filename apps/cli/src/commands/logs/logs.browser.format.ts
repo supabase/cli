@@ -15,8 +15,18 @@ export type LogsBrowserWindow =
       readonly live: boolean;
       readonly newEntriesOnly?: boolean;
     }
-  | { readonly kind: "launch"; readonly live: boolean; readonly newEntriesOnly?: boolean }
-  | { readonly kind: "all"; readonly live: boolean; readonly newEntriesOnly?: boolean };
+  | {
+      readonly kind: "launch";
+      readonly end?: string;
+      readonly live: boolean;
+      readonly newEntriesOnly?: boolean;
+    }
+  | {
+      readonly kind: "all";
+      readonly end?: string;
+      readonly live: boolean;
+      readonly newEntriesOnly?: boolean;
+    };
 
 export interface BrowserState {
   readonly window: LogsBrowserWindow | undefined;
@@ -57,26 +67,28 @@ export function resizeBrowser(state: BrowserState, height: number): BrowserState
   return { ...state, viewport: Math.max(0, viewport), visibleRows };
 }
 
-export function appendBrowserRow(
+function insertBrowserRow(
   state: BrowserState,
   row: Schema.JsonObject,
-  mode: "query" | "tail" = "tail",
+  mode: "query" | "tail" | "refresh",
+  index: number,
 ): BrowserState {
   const following =
     mode === "tail" && state.detail === undefined && state.selected >= state.rows.length - 1;
   const size = JSON.stringify(row).length * 2;
-  const sizes = [...state.sizes, size];
+  const sizes = [...state.sizes.slice(0, index), size, ...state.sizes.slice(index)];
+  const inserted = [...state.rows.slice(0, index), row, ...state.rows.slice(index)];
   let bytes = state.bytes + size;
   let dropped = 0;
   while (
-    mode === "tail" &&
+    mode !== "query" &&
     sizes.length - dropped > 1 &&
     (sizes.length - dropped > 1000 || bytes > 8 * 1024 * 1024)
   ) {
     bytes -= sizes[dropped] ?? 0;
     dropped++;
   }
-  const rows = [...state.rows, row].slice(dropped);
+  const rows = inserted.slice(dropped);
   return resizeBrowser(
     {
       ...state,
@@ -89,6 +101,31 @@ export function appendBrowserRow(
     },
     state.visibleRows + browserReservedRows,
   );
+}
+
+export function appendBrowserRow(
+  state: BrowserState,
+  row: Schema.JsonObject,
+  mode: "query" | "tail" | "refresh" = "tail",
+): BrowserState {
+  return insertBrowserRow(state, row, mode, state.rows.length);
+}
+
+export function stageBrowserRow(state: BrowserState, row: Schema.JsonObject): BrowserState {
+  const time = timestampMillis(row) ?? -Infinity;
+  const identity = String(row["id"] ?? row["instanceId"] ?? "");
+  let low = 0;
+  let high = state.rows.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const candidate = state.rows[middle];
+    if (candidate === undefined) break;
+    const otherTime = timestampMillis(candidate) ?? -Infinity;
+    const otherIdentity = String(candidate["id"] ?? candidate["instanceId"] ?? "");
+    if (otherTime < time || (otherTime === time && otherIdentity <= identity)) low = middle + 1;
+    else high = middle;
+  }
+  return insertBrowserRow(state, row, "refresh", low);
 }
 
 function timestampMillis(row: Schema.JsonObject): number | undefined {
@@ -142,11 +179,62 @@ function requestedWindow(window: LogsBrowserWindow | undefined): string {
     return `Window: ${from}–${to} UTC`;
   }
   const prefix = window.newEntriesOnly ? "new entries only; " : "";
-  const live = window.live ? " → now (live)" : "";
+  const live = window.live
+    ? " → now (live)"
+    : window.kind !== "since" && window.end !== undefined
+      ? ` → ${dateLabel(Date.parse(window.end), true)} ${timeLabel(Date.parse(window.end))} UTC`
+      : "";
   if (window.kind === "launch") return `Window: ${prefix}since each service's latest launch${live}`;
   if (window.kind === "all") return `Window: ${prefix}all retained history${live}`;
   const start = Date.parse(window.start);
   return `Window: ${prefix}since ${dateLabel(start, true)} ${timeLabel(start)} UTC${live}`;
+}
+
+export function applyBrowserBatch(
+  state: BrowserState,
+  batch: Pick<BrowserState, "rows" | "dropped">,
+  mode: "append" | "replace",
+): BrowserState {
+  const selected = state.rows[state.selected];
+  const anchor = state.rows[state.viewport];
+  let next =
+    mode === "replace"
+      ? {
+          ...state,
+          rows: [],
+          sizes: [],
+          bytes: 0,
+          dropped: batch.dropped,
+          selected: 0,
+          viewport: 0,
+        }
+      : { ...state, dropped: state.dropped + batch.dropped };
+  for (const row of batch.rows)
+    next = mode === "replace" ? appendBrowserRow(next, row, "query") : stageBrowserRow(next, row);
+  if (mode === "replace") {
+    const identity = selected?.["id"];
+    const found =
+      identity === undefined ? -1 : next.rows.findIndex((row) => row["id"] === identity);
+    next = {
+      ...next,
+      selected: found >= 0 ? found : Math.min(state.selected, Math.max(0, next.rows.length - 1)),
+      viewport: state.viewport,
+    };
+  } else if (state.rows.length === 0)
+    next = { ...next, selected: Math.max(0, next.rows.length - 1) };
+  else {
+    const selectedIndex = selected === undefined ? -1 : next.rows.indexOf(selected);
+    const anchorIndex = anchor === undefined ? -1 : next.rows.indexOf(anchor);
+    next = {
+      ...next,
+      selected:
+        selectedIndex >= 0
+          ? selectedIndex
+          : Math.min(next.selected, Math.max(0, next.rows.length - 1)),
+      viewport: anchorIndex >= 0 ? anchorIndex : next.viewport,
+    };
+  }
+  return resizeBrowser(next, state.visibleRows + browserReservedRows);
 }
 
 const clip = (value: string, width: number): string => {
@@ -206,6 +294,7 @@ export function renderBrowser(
   columns: number,
   rows: number,
   stream: ColorStream = {},
+  mode: "append" | "replace" = "append",
 ): string {
   state = resizeBrowser(state, rows);
   const width = Math.max(1, Math.floor(columns) - 1);
@@ -231,16 +320,18 @@ export function renderBrowser(
   }
   const heading =
     state.detail === undefined
-      ? `Logs | ${state.rows.length} retained${state.dropped > 0 ? ` | ${state.dropped} older rows discarded` : ""}${state.sizes.some((size) => size > 8 * 1024 * 1024) ? " | oversized record" : ""}${state.complete ? " | complete" : " | live"}`
+      ? `Logs | ${state.rows.length} retained${state.dropped > 0 ? ` | ${state.dropped} older rows discarded` : ""}${state.sizes.some((size) => size > 8 * 1024 * 1024) ? " | oversized record" : ""}${state.complete ? " | ready" : " | loading"}`
       : "Log details";
   const keys =
     state.detail === undefined
-      ? "↑/↓ select · Enter details · C copy · q quit"
-      : "↑/↓ scroll · Esc back · C copy · q quit";
+      ? `↑/↓ select · Enter details · ${mode === "replace" ? "L rerun" : "L newer"} · C copy · q quit`
+      : `↑/↓ scroll · Esc back · ${mode === "replace" ? "L rerun" : "L newer"} · C copy · q quit`;
   const lines = [heading, requestedWindow(state.window), ...body];
   while (lines.length < height - 1) lines.push("");
-  const notice = clip(state.notice, width);
-  const help = stringWidth(notice) + 3 + stringWidth(keys) <= width ? keys : "C copy · q quit";
+  const compact = `${mode === "replace" ? "L rerun" : "L newer"} · C copy · q quit`;
+  const fullNotice = clip(state.notice, width);
+  const help = stringWidth(fullNotice) + 3 + stringWidth(keys) <= width ? keys : compact;
+  const notice = clip(state.notice, Math.max(0, width - stringWidth(help) - 3));
   if (height > 1) lines.push(notice ? `${notice} | ${help}` : keys);
   return lines
     .slice(0, height)

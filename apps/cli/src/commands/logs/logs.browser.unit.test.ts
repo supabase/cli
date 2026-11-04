@@ -4,6 +4,8 @@ import { stringWidth } from "../../command-internal/string-width.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   appendBrowserRow,
+  applyBrowserBatch,
+  stageBrowserRow,
   browserKey,
   browserTimestamp,
   initialBrowserState,
@@ -271,6 +273,53 @@ describe("log browser formatting", () => {
     const monochrome = renderBrowser(state, 61, 9, { hasColors: () => true });
     expect(monochrome).not.toContain("\u001b");
     expect(monochrome.split("\r\n")[2]).toContain("> Nov 03 - 16:51:32 UTC postgres 你好 selected");
+  });
+
+  it("stages globally newest rows across sources rather than retaining the final source", () => {
+    let batch = initialBrowserState;
+    for (let index = 0; index < 1000; index++)
+      batch = stageBrowserRow(batch, {
+        ts_ms: 10000 + index,
+        instanceId: "newer",
+        message: String(index),
+      });
+    for (let index = 0; index < 1000; index++)
+      batch = stageBrowserRow(batch, { ts_ms: index, instanceId: "older", message: String(index) });
+    expect(batch.rows).toHaveLength(1000);
+    expect(batch.rows.every((row) => row["instanceId"] === "newer")).toBe(true);
+    expect(batch.dropped).toBe(1000);
+  });
+
+  it("does not evict newer retained rows for a late older row or move selected anchors", () => {
+    let state = resizeBrowser(initialBrowserState, 24);
+    for (let index = 0; index < 1000; index++)
+      state = appendBrowserRow(state, { id: String(index), ts_ms: 10000 + index }, "refresh");
+    state = resizeBrowser({ ...state, selected: 900, viewport: 880 }, 24);
+    const selected = state.rows[900];
+    const anchor = state.rows[880];
+    const next = applyBrowserBatch(
+      state,
+      { rows: [{ id: "late", ts_ms: 1 }], dropped: 0 },
+      "append",
+    );
+    expect(next.rows).toEqual(state.rows);
+    expect(next.rows[next.selected]).toBe(selected);
+    expect(next.rows[next.viewport]).toBe(anchor);
+    expect(next.dropped).toBe(1);
+  });
+
+  it("preserves all custom SQL rows and pins current identity across replacement", () => {
+    let state = appendBrowserRow(initialBrowserState, { id: "selected" }, "query");
+    state = browserKey(state, "return", 79, 24);
+    const rows = Array.from({ length: 1500 }, (_, index) => ({ id: String(index) }));
+    const replaced = applyBrowserBatch(
+      state,
+      { rows: [...rows, { id: "selected" }], dropped: 0 },
+      "replace",
+    );
+    expect(replaced.rows).toHaveLength(1501);
+    expect(replaced.selected).toBe(1500);
+    expect(replaced.detail).toEqual({ id: "selected" });
   });
 
   it("preserves query order and starts at the first row", () => {
