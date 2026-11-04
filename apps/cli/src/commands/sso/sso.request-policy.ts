@@ -2,12 +2,22 @@ import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 
-/** Bounds each SSO read attempt; a project whose auth service is down stalls the request. */
-export const SSO_READ_REQUEST_OPTIONS = {
-  retry: { requestTimeoutMs: 10_000 },
-} as const;
+/**
+ * Request options for SSO reads. A project whose auth service is down stalls the request, so each
+ * attempt is capped at 10s and only one retry is made unless `apiMaxRetries` is configured.
+ */
+export const ssoReadRequestOptions = Effect.gen(function* () {
+  const settings = yield* CommandSettings;
+  return {
+    retry: {
+      maxRetries: Option.getOrElse(settings.apiMaxRetries, () => 1),
+      requestTimeoutMs: 10_000,
+    },
+  };
+});
 
 // 4xx responses are SSO-specific (plan gate, missing provider); only transport failures and
 // 5xx point at the project itself.

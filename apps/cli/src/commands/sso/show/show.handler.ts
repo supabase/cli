@@ -22,7 +22,7 @@ import {
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
-import { SSO_READ_REQUEST_OPTIONS, warnIfProjectUnhealthy } from "../sso.request-policy.ts";
+import { ssoReadRequestOptions, warnIfProjectUnhealthy } from "../sso.request-policy.ts";
 import type { SsoShowFlags } from "./show.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({
@@ -63,7 +63,7 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
       const fetching =
         output.format === "text" ? yield* output.task("Fetching SSO provider...") : undefined;
       const response = yield* api.v1
-        .getASsoProvider({ ref, provider_id: providerId }, SSO_READ_REQUEST_OPTIONS)
+        .getASsoProvider({ ref, provider_id: providerId }, yield* ssoReadRequestOptions)
         .pipe(
           Effect.tapError(() => fetching?.fail() ?? Effect.void),
           Effect.tapError((cause) => warnIfProjectUnhealthy(ref, cause)),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Fiber, FileSystem, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { TestClock } from "effect/testing";
 
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -60,6 +61,8 @@ interface SetupOpts {
   //   undefined   → no extra handlers wired; project lookup 404s
   upgradeGate?: "gated" | "notGated";
   projectStatus?: string;
+  stallProviders?: boolean;
+  apiMaxRetries?: Option.Option<number>;
 }
 
 function jsonResponse(
@@ -91,6 +94,9 @@ function setup(opts: SetupOpts = {}) {
     handler: (request) => {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers")) {
+        if (opts.stallProviders === true) {
+          return Effect.never;
+        }
         return Effect.succeed(jsonResponse(request, status, body));
       }
       if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
@@ -137,6 +143,7 @@ function setup(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     projectId: opts.projectId,
+    apiMaxRetries: opts.apiMaxRetries ?? Option.some(0),
   });
   const layer = buildTestRuntime({
     out,
@@ -384,6 +391,29 @@ describe("sso list integration", () => {
         type: "warn",
         message: `Project ${VALID_REF} status is INACTIVE instead of ACTIVE_HEALTHY. SSO providers can only be managed on an active, healthy project.`,
       });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails a stalled list within two attempts and warns about the project status", () => {
+    const { layer, out, api } = setup({
+      stallProviders: true,
+      projectStatus: "INACTIVE",
+      apiMaxRetries: Option.none(),
+    });
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() })),
+      );
+      for (let second = 0; second < 25; second++) {
+        yield* TestClock.adjust("1 second");
+      }
+      const exit = yield* Fiber.join(fiber);
+
+      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain("SsoListNetworkError");
+      expect(api.requests.filter((r) => r.url.includes("/sso/providers"))).toHaveLength(2);
+      expect(out.messages.some((m) => m.type === "warn" && m.message.includes("INACTIVE"))).toBe(
+        true,
+      );
     }).pipe(Effect.provide(layer));
   });
 
