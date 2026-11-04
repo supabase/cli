@@ -245,15 +245,17 @@ describe("stack gateway CORS (live)", () => {
             yield* deployFunctions(cliEffect, project.ref, [slug, jwtSlug]);
             const probes = gatewayProbes(slug, jwtSlug, publishableKey);
             const readiness = probes.filter(
-              (probe) => probe.name === "POST function, allowed origin",
+              (probe) =>
+                probe.name === "POST function, allowed origin" ||
+                probe.name === "POST verify_jwt function, invalid Bearer",
             );
             // A fresh deploy can briefly answer 404 before the edge picks it up.
             yield* runProbes(stagingUrl, readiness).pipe(
               Effect.filterOrFail(
-                (rows) => rows[0]?.status === 200,
+                ([plain, jwt]) => plain?.status === 200 && jwt !== undefined && jwt.status !== 404,
                 (rows) =>
                   new GatewayCorsLiveError({
-                    message: `function not ready: ${JSON.stringify(rows[0])}`,
+                    message: `functions not ready: ${JSON.stringify(rows)}`,
                   }),
               ),
               Effect.retry({ schedule: Schedule.spaced("5 seconds"), times: 24 }),

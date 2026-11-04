@@ -475,7 +475,7 @@ const forward = Effect.fn("HttpProxy.forward")(function* (
         if (route.upstreamCors !== true) {
           const origin = request.headers.origin;
           response.setHeader("access-control-allow-origin", origin ?? "*");
-          if (origin !== undefined) varyOnOrigin(response);
+          varyOnOrigin(response);
         }
         response.flushHeaders();
         value.pipe(response, { end: false });

@@ -813,6 +813,11 @@ it.live(
         expect(proxied.headers["access-control-allow-origin"]).toBe("https://other.example.com");
         expect(proxied.headers["access-control-allow-methods"]).toBeUndefined();
         expect(proxied.headers["vary"]).toBe("Origin");
+        const originless = yield* client.execute(
+          HttpClientRequest.post(`http://127.0.0.1:${proxy.port}/rest/v1/todos`),
+        );
+        expect(originless.headers["access-control-allow-origin"]).toBe("*");
+        expect(originless.headers["vary"]).toBe("Origin");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer))),
 );
