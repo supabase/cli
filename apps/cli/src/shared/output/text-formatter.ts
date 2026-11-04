@@ -1,4 +1,5 @@
 import { CliOutput } from "effect/cli";
+import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
 import {
   permissionSectionForHelp,
   renderPermissionsSection,
@@ -29,7 +30,9 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
     ...base,
     formatHelpDoc: (doc) => {
       const text = base.formatHelpDoc(
-        withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+        withOptionalSubcommandUsage(
+          withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+        ),
       );
       const target = targetHelpFor(doc);
       const withTarget =
