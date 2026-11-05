@@ -14,6 +14,7 @@ import {
   KONG_LOCAL_TLS_CERT,
   KONG_LOCAL_TLS_KEY,
 } from "../commands/start/templates/kong-local-tls.ts";
+import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { SUGGEST_ENV_VAR, SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
 import type { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import { type DbSession, type PgConnInput, DbConnection } from "./db-connection.service.ts";
@@ -1116,8 +1117,9 @@ describe("a non-local plaintext-only target follows libpq sslmode semantics", ()
     server: { readonly port: number },
     sslmode: string | undefined,
     fallbacks?: PgConnInput["fallbacks"],
-  ) =>
-    Effect.gen(function* () {
+  ) => {
+    const out = mockOutput();
+    return Effect.gen(function* () {
       const pool = yield* acquirePgPool(
         {
           host: "127.0.0.1",
@@ -1131,13 +1133,20 @@ describe("a non-local plaintext-only target follows libpq sslmode semantics", ()
         { isLocal: false, dnsResolver: "native" },
       );
       yield* Effect.tryPromise(() => pool.query("select 1"));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      return out.messages.filter((message) => message.type === "warn").map((m) => m.message);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(BunServices.layer, out.layer)));
+  };
 
-  it.live("tries TLS, then connects in plaintext when sslmode is unset", () =>
+  it.live("tries TLS, then connects in plaintext with a warning when sslmode is unset", () =>
     Effect.gen(function* () {
       const server = yield* fakeStartupServer();
-      yield* connectAndQuery(server, undefined).pipe(Effect.ensuring(Effect.sync(server.close)));
+      const warnings = yield* connectAndQuery(server, undefined).pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
       expect(server.sawSslRequest()).toBe(true);
+      expect(warnings).toEqual([
+        "Connected to 127.0.0.1 without TLS: the server did not accept a TLS connection. Set PGSSLMODE=require (or verify-full) to refuse unencrypted connections.",
+      ]);
     }),
   );
 
@@ -1250,8 +1259,11 @@ describe("a non-local plaintext-only target follows libpq sslmode semantics", ()
   it.live("connects in plaintext without an SSLRequest when sslmode=disable", () =>
     Effect.gen(function* () {
       const server = yield* fakeStartupServer();
-      yield* connectAndQuery(server, "disable").pipe(Effect.ensuring(Effect.sync(server.close)));
+      const warnings = yield* connectAndQuery(server, "disable").pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
       expect(server.sawSslRequest()).toBe(false);
+      expect(warnings).toEqual([]);
     }),
   );
 });

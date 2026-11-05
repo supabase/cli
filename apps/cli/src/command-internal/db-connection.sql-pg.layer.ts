@@ -1,6 +1,6 @@
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
-import { Cause, Duration, Effect, Exit, FileSystem, Layer, Scope } from "effect";
+import { Cause, Duration, Effect, Exit, FileSystem, Layer, Option, Scope } from "effect";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import { ConnectionError, SqlError } from "effect/sql/SqlError";
 // `pg` drives the pool behind `makePoolSqlClient` and the raw COPY and extended-protocol batch
@@ -26,6 +26,7 @@ import {
   type DbSession,
   type PgConnInput,
 } from "./db-connection.service.ts";
+import { Output } from "../shared/output/output.service.ts";
 import { resolveHostsOverHttps } from "./db-dns.ts";
 
 // `@types/pg` doesn't declare `queryMode` on `QueryConfig`, `verify` on `PoolConfig` (run for
@@ -795,6 +796,7 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
         dialHost,
         clientCert,
       ).map((ssl, index, configs) => ({
+        host: servername ?? dialHost,
         pool: makePool(dialHost, port, ssl),
         // A 28000 rejection is final once the target has been tried over TLS: `allow` still
         // follows a plaintext rejection with its TLS attempt, while a `prefer` plaintext retry
@@ -821,7 +823,7 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
         const sessionScope = yield* Scope.Scope;
         const attemptScope = yield* Scope.fork(sessionScope);
         return yield* attempt.pool.pipe(
-          Effect.map((pool) => ({ pool, rawConfig: attempt.rawConfig })),
+          Effect.map((pool) => ({ pool, attempt })),
           Scope.provide(attemptScope),
           Effect.onExit((exit) =>
             Exit.isSuccess(exit) ? Effect.void : Scope.close(attemptScope, exit),
@@ -844,9 +846,20 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
           return nextIndex > lastIndex ? Effect.fail(error) : run(nextIndex);
         }),
       );
-    const { pool, rawConfig: winningRawConfig } = yield* run(0).pipe(
+    const { pool, attempt: winner } = yield* run(0).pipe(
       Effect.mapError((error) => toConnectError(cfg, isLocal, error)),
     );
+    const winningRawConfig = winner.rawConfig;
+    // libpq downgrades silently. Surfacing it tells a user who expected TLS (every hosted project
+    // offers it) that this connection is unencrypted, so a refused TLS attempt does not go unseen.
+    if (winner.isTlsDowngrade) {
+      const output = yield* Effect.serviceOption(Output);
+      if (Option.isSome(output)) {
+        yield* output.value.warn(
+          `Connected to ${winner.host} without TLS: the server did not accept a TLS connection. Set PGSSLMODE=require (or verify-full) to refuse unencrypted connections.`,
+        );
+      }
+    }
 
     // Steps down from the temp/privileged login role before any further SQL, remote
     // connections only; a local `--db-url` using `supabase_admin`/`cli_login_*` must not run it.
