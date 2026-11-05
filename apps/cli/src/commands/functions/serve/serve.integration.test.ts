@@ -71,6 +71,7 @@ import {
   actionability,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
+import { normalizeCliError } from "../../../shared/output/normalize-error.ts";
 import {
   serveFunctions,
   type FunctionsServeFlags,
@@ -829,6 +830,7 @@ describe("functions serve integration", () => {
         expect(error.message).not.toContain("secret-value");
         expect(error.message).not.toContain('near "API-KEY=secret-value"');
       }
+      expect(normalizeCliError(error).code).toBe("UnknownError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",
@@ -838,6 +840,79 @@ describe("functions serve integration", () => {
       expect(deployMockState.volumeCalls).toHaveLength(0);
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.live(
+    "skips a disabled function and sets up the runtime before a malformed functions/.env fails",
+    () => {
+      return Effect.gen(function* () {
+        yield* writeCliConfig(
+          ['project_id = "test-project"', "[functions.off]", "enabled = false", ""].join("\n"),
+        );
+        yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+        yield* writeProjectFile("supabase/functions/.env", "API-KEY=secret-value\n");
+
+        const { layer, out } = setupServe();
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error.message).toContain("failed to parse environment file:");
+        expect(out.stderrText).toContain("Skipped serving Function: off\n");
+        expect(deployMockState.volumeCalls).toHaveLength(1);
+        expect(deployMockState.networkCalls).toHaveLength(1);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.live("reports a missing entrypoint before a missing explicit env file", () => {
+    return Effect.gen(function* () {
+      yield* writeCliConfig(
+        [
+          'project_id = "test-project"',
+          "[functions.hello]",
+          'entrypoint = "./functions/hello/missing.ts"',
+          "",
+        ].join("\n"),
+      );
+      yield* writeFunctionFile("hello", "deno.json", '{"imports":{}}\n');
+
+      const { layer } = setupServe();
+      const error = yield* functionsServe(baseFlags({ envFile: Option.some("missing.env") })).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error.message).toContain("failed to read file:");
+      expect(error.message).not.toContain("missing.env");
+      expect(deployMockState.volumeCalls).toHaveLength(0);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live(
+    "reports a malformed function env file before a later function's missing entrypoint",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* writeCliConfig(
+          [
+            'project_id = "test-project"',
+            "[functions.a]",
+            "[functions.b]",
+            'entrypoint = "./functions/b/missing.ts"',
+            "",
+          ].join("\n"),
+        );
+        yield* writeFunctionFile("a", "index.ts", 'Deno.serve(() => new Response("a"))\n');
+        yield* writeFunctionFile("a", ".env", "API-KEY=secret-value\n");
+        yield* writeFunctionFile("b", "deno.json", '{"imports":{}}\n');
+
+        const { layer } = setupServe();
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error.message).toContain(
+          `failed to parse environment file: ${path.join(tempRoot.current, "supabase", "functions", "a", ".env")}`,
+        );
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 
   it.live(
     "starts the runtime from config-defined functions and wires env, binds, and telemetry",
@@ -4265,6 +4340,7 @@ describe("functions serve integration", () => {
         expect(error.message).toContain(".env");
         expect(error.message).toContain("no such file or directory");
       }
+      expect(normalizeCliError(error).code).toBe("UnknownError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",

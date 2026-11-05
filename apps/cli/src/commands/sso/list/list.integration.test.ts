@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Fiber, FileSystem, Latch, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { TestClock } from "effect/testing";
 
@@ -88,8 +88,7 @@ function setup(opts: SetupOpts = {}) {
   const status = opts.status ?? 200;
   const body = opts.body ?? { items: [PROVIDER_ITEM] };
   const gate = opts.upgradeGate;
-  const stalledAttempts = [Deferred.makeUnsafe<void>(), Deferred.makeUnsafe<void>()] as const;
-  let stalledCount = 0;
+  const providersStalled = Latch.makeUnsafe(false);
 
   const api = mockCommandPlatformApi({
     network: opts.network,
@@ -97,11 +96,7 @@ function setup(opts: SetupOpts = {}) {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers")) {
         if (opts.stallProviders === true) {
-          const arrived = stalledAttempts[stalledCount++];
-          return Effect.andThen(
-            arrived === undefined ? Effect.void : Deferred.succeed(arrived, undefined),
-            Effect.never,
-          );
+          return Effect.andThen(providersStalled.open, Effect.never);
         }
         return Effect.succeed(jsonResponse(request, status, body));
       }
@@ -161,7 +156,7 @@ function setup(opts: SetupOpts = {}) {
     outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
-  return { layer, out, api, analytics, telemetry, cache, stalledAttempts };
+  return { layer, out, api, analytics, telemetry, cache, providersStalled };
 }
 
 describe("sso list integration", () => {
@@ -401,12 +396,7 @@ describe("sso list integration", () => {
   });
 
   it.effect("fails a stalled list within two attempts and warns about the project status", () => {
-    const {
-      layer,
-      out,
-      api,
-      stalledAttempts: [firstAttempt, secondAttempt],
-    } = setup({
+    const { layer, out, api, providersStalled } = setup({
       stallProviders: true,
       projectStatus: "INACTIVE",
       apiMaxRetries: Option.none(),
@@ -415,11 +405,11 @@ describe("sso list integration", () => {
       const fiber = yield* Effect.forkChild(
         Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() })),
       );
-      yield* Deferred.await(firstAttempt);
-      // Covers the 10s attempt timeout plus the first retry's backoff, capped at 250ms.
-      yield* TestClock.adjust("11 seconds");
-      yield* Deferred.await(secondAttempt);
-      yield* TestClock.adjust("11 seconds");
+      // Request timeouts are scheduled only once the handler's real filesystem work is done.
+      yield* providersStalled.await;
+      for (let second = 0; second < 30 && fiber.pollUnsafe() === undefined; second++) {
+        yield* TestClock.adjust("1 second");
+      }
       const exit = yield* Fiber.join(fiber);
 
       expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain("SsoListNetworkError");

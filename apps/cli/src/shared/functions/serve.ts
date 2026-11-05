@@ -30,7 +30,6 @@ import {
   Exit,
   Fiber,
   Option,
-  Predicate,
   Redacted,
   Result,
   Schema,
@@ -44,7 +43,6 @@ import {
 } from "../../command-internal/container-cli.ts";
 import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
 import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
-import { parseDotEnv } from "../config/dotenv.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   resolveRemoteJwks,
@@ -83,6 +81,10 @@ import {
 } from "./functions-docker.ts";
 import {
   loadFunctionsCliConfig,
+  type FunctionsEnvError,
+  readFileUtf8,
+  resolveFunctionEnv,
+  resolveSharedFunctionsEnv,
   toEdgeRuntimeSecretsEnv,
   type FunctionsLocalConfigLoader,
 } from "./functions-config.ts";
@@ -467,6 +469,18 @@ export function toPlainFunctionRecord(
   );
 }
 
+/* Env file failures keep the plain error `start` and `serve` have always reported. */
+const legacyEnvFailure = <A, R>(effect: Effect.Effect<A, FunctionsEnvError, R>) =>
+  effect.pipe(
+    Effect.mapError((error) =>
+      nativeFailure(
+        error.cause === undefined
+          ? new Error(error.message)
+          : new Error(error.message, { cause: error.cause }),
+      ),
+    ),
+  );
+
 function normalizeEnvPath(flagCwd: string, pathname: string, path: Path.Path) {
   return path.isAbsolute(pathname) ? pathname : path.resolve(flagCwd, pathname);
 }
@@ -523,10 +537,6 @@ function generateAsymmetricJwt(signingKey: SigningKeyJwk, role: string, now: num
   }).toString("base64url");
   return `${data}.${signature}`;
 }
-
-// Native UTF-8 reads retain a leading BOM, which JSON and dotenv parsers reject.
-const readFileUtf8 = (fs: FileSystem.FileSystem, pathname: string) =>
-  fs.readFile(pathname).pipe(Effect.map((bytes) => Buffer.from(bytes).toString("utf8")));
 
 function parseSigningKeys(content: string): ReadonlyArray<SigningKeyJwk> {
   const decoded = JSON.parse(content);
@@ -777,66 +787,6 @@ export function buildFunctionsServeInspectArgs(
   ];
 }
 
-const readDotEnvFile = Effect.fnUntraced(function* (pathname: string, optional: boolean) {
-  const fs = yield* FileSystem.FileSystem;
-  const contents = yield* readFileUtf8(fs, pathname).pipe(
-    Effect.catch((error) =>
-      optional && Predicate.isTagged(error.reason, "NotFound")
-        ? Effect.void
-        : nativePlatformFailure(error, pathname),
-    ),
-    Effect.mapError((failure) =>
-      nativeFailure(
-        new Error(`failed to load environment file: ${pathname} (${failure.message})`, {
-          cause: failure.cause,
-        }),
-      ),
-    ),
-  );
-  if (contents === undefined) {
-    return {};
-  }
-  return yield* Effect.try({
-    try: () => parseDotEnv(contents),
-    catch: (cause) => nativeFailure(sanitizeDotEnvParseError(pathname, cause)),
-  });
-});
-
-const filterCustomEnv = Effect.fnUntraced(function* (env: Readonly<Record<string, string>>) {
-  const output = yield* Output;
-  const filtered: Array<[string, string]> = [];
-  for (const [name, value] of Object.entries(env)) {
-    if (name.startsWith("SUPABASE_")) {
-      yield* output.raw(`Env name cannot start with SUPABASE_, skipping: ${name}\n`, "stderr");
-      continue;
-    }
-    filtered.push([name, value]);
-  }
-  return Object.fromEntries(filtered);
-});
-
-const parseCustomEnvFile = Effect.fn("functions.serve.parseCustomEnv")(function* (
-  envFileFlag: Option.Option<string>,
-  projectRoot: string,
-  flagCwd: string,
-  configSecrets: Readonly<Record<string, string>>,
-) {
-  const path = yield* Path.Path;
-  const envFilePath = Option.match(envFileFlag, {
-    onNone: () => path.join(projectRoot, "supabase", "functions", ".env"),
-    onSome: (pathname) => normalizeEnvPath(flagCwd, pathname, path),
-  });
-  const parsed = yield* readDotEnvFile(envFilePath, Option.isNone(envFileFlag));
-  const filtered = yield* filterCustomEnv({ ...configSecrets, ...parsed });
-  return Object.entries(filtered).map(([name, value]) => `${name}=${value}`);
-});
-
-const parseFunctionEnvFile = Effect.fn("functions.serve.parseFunctionEnv")(function* (
-  pathname: string,
-) {
-  return yield* readDotEnvFile(pathname, true).pipe(Effect.flatMap(filterCustomEnv));
-});
-
 function toFunctionContainerConfig(
   workdir: string,
   config: ResolvedDeployFunctionConfig,
@@ -991,37 +941,6 @@ function validateDockerMultilineEnvNames(env: ReadonlyArray<readonly [string, st
       throw new Error(`invalid multiline environment variable name for shell export: ${name}`);
     }
   }
-}
-
-function sanitizeDotEnvParseError(path: string, cause: unknown) {
-  if (!(cause instanceof Error)) {
-    return new Error(`failed to parse environment file: ${path}`);
-  }
-  const message = cause.message;
-  if (message.startsWith('unexpected character "')) {
-    const prefix = 'unexpected character "';
-    const start = message.indexOf(prefix);
-    if (start !== -1) {
-      const charStart = start + prefix.length;
-      const charEnd = message.indexOf('"', charStart);
-      if (charEnd !== -1) {
-        const char = message.slice(charStart, charEnd);
-        return new Error(
-          `failed to parse environment file: ${path} (unexpected character '${char}' in variable name)`,
-        );
-      }
-    }
-    return new Error(
-      `failed to parse environment file: ${path} (unexpected character in variable name)`,
-    );
-  }
-  if (message.startsWith("unterminated quoted value")) {
-    return new Error(`failed to parse environment file: ${path} (unterminated quoted value)`);
-  }
-  if (message.includes("\n")) {
-    return new Error(`failed to parse environment file: ${path} (syntax error)`);
-  }
-  return new Error(`failed to load ${path}: ${message}`);
 }
 
 /**
@@ -1733,7 +1652,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       }
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
-          ? yield* parseFunctionEnvFile(path.join(functionsDir, config.slug, ".env"))
+          ? yield* resolveFunctionEnv({ functionsDir, slug: config.slug, warn: true }).pipe(
+              legacyEnvFailure,
+            )
           : {};
       functionsConfig[config.slug] = toFunctionContainerConfig(
         input.projectRoot,
@@ -1758,12 +1679,16 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     yield* ensureDockerNetwork(networkMode, projectId);
 
     const env = [
-      ...(yield* parseCustomEnvFile(
-        input.envFile,
-        input.projectRoot,
-        input.flagCwd,
-        input.config.edgeRuntimeSecrets,
-      )),
+      ...Object.entries(
+        yield* resolveSharedFunctionsEnv({
+          secrets: input.config.edgeRuntimeSecrets,
+          functionsDir,
+          envFile: Option.map(input.envFile, (pathname) =>
+            normalizeEnvPath(input.flagCwd, pathname, path),
+          ),
+          warn: true,
+        }).pipe(legacyEnvFailure),
+      ).map(([name, value]) => `${name}=${value}`),
       "SUPABASE_URL=http://kong:8000",
       `SUPABASE_ANON_KEY=${input.authArtifacts.anonKey}`,
       `SUPABASE_SERVICE_ROLE_KEY=${input.authArtifacts.serviceRoleKey}`,
