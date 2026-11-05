@@ -16,9 +16,15 @@ export class LogsInputError extends Schema.TaggedError<LogsInputError>()("LogsIn
 export class LogsApiError extends Schema.TaggedError<LogsApiError>()("LogsApiError", {
   message: Schema.String,
   status: Schema.Finite,
+  reason: Schema.optionalKey(Schema.Literals(["response", "query"])),
+  retryAfterMs: Schema.optionalKey(Schema.Finite),
 }) {
   get [ErrorActionabilityId]() {
-    return statusCodeActionability(this.status);
+    return this.reason === "query"
+      ? actionability.invalidInput
+      : this.reason === "response"
+        ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+        : statusCodeActionability(this.status);
   }
 }
 
