@@ -52,6 +52,7 @@ import {
   FunctionDeployError,
   FunctionImportMapSyntaxError,
   FunctionImportNotDirectoryError,
+  FunctionsDeployFailedError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
@@ -2303,7 +2304,7 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
   }
 
   if (deployed.length === 0) {
-    return yield* Effect.fail(new AggregateError(causes, messages.join("\n")));
+    return yield* Effect.fail(new FunctionsDeployFailedError(causes, messages.join("\n")));
   }
 
   const updated = yield* bulkUpdateRemoteFunctions(api, projectRef, deployed, apiMaxRetries).pipe(
@@ -2315,7 +2316,7 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
     causes.push(updated.error);
   }
   if (messages.length > 0) {
-    return yield* Effect.fail(new AggregateError(causes, messages.join("\n")));
+    return yield* Effect.fail(new FunctionsDeployFailedError(causes, messages.join("\n")));
   }
 });
 

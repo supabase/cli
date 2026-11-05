@@ -64,6 +64,7 @@ import { functionsLocalConfigLoader } from "../../../command-internal/functions-
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionImportMapSyntaxError,
+  FunctionsDeployFailedError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "../../../shared/functions/deploy.errors.ts";
@@ -2129,7 +2130,7 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
         expect(error).toMatchObject({
           message: 'unexpected deploy status 409: {"message":"rejected bye-world"}',
         });
@@ -2167,6 +2168,7 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(withAdvancingClock, Effect.flip);
 
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
         expect(error).toMatchObject({
           message: 'unexpected bulk update status 500: {"message":"bulk update rejected"}',
         });
@@ -2187,6 +2189,7 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
         expect(error).toMatchObject({
           message: [
             'unexpected deploy status 409: {"message":"rejected hello-world"}',
