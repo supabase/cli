@@ -1,10 +1,14 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
-import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
+import { spawnContainerCli } from "../../src/command-internal/container-cli.ts";
 import { dbConnectionLayer } from "../../src/command-internal/db-connection.sql-pg.layer.ts";
-import { cliProjectFilterValue } from "../../src/command-internal/docker-ids.ts";
+import {
+  cliProjectFilterValue,
+  serviceContainerName,
+} from "../../src/command-internal/docker-ids.ts";
 import { dockerRemoveAll } from "../../src/command-internal/docker-remove-all.ts";
 import { dockerRunLayer } from "../../src/command-internal/docker-run.layer.ts";
 import {
@@ -219,6 +223,38 @@ export const stackTarget = (runtime: "native" | "docker") =>
     }),
   ).pipe(Layer.provide(hostServices));
 
+/* Works around a legacy start readiness gap: Realtime seeds through a throwaway node on :4000 before
+   it execs the server, so its healthcheck can pass early. Wait for the line the stack treats as ready. */
+const realtimeServerListening = Effect.fn("Contract.realtimeServerListening")(function* (
+  projectId: string,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const listening = yield* spawnContainerCli(
+    spawner,
+    ["logs", "--follow", serviceContainerName("realtime", projectId)],
+    { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+  ).pipe(
+    Effect.flatMap((logs) =>
+      logs.stdout.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.dropWhile((line) => !line.includes("Starting Realtime")),
+        Stream.filter((line) => line.includes("Running RealtimeWeb.Endpoint")),
+        Stream.runHead,
+      ),
+    ),
+    Effect.scoped,
+    Effect.mapError(
+      (cause) => new ContractTargetError({ message: "reading Realtime logs failed", cause }),
+    ),
+  );
+  if (Option.isNone(listening))
+    return yield* new ContractTargetError({
+      message: "Realtime logs ended before its server listened",
+      cause: undefined,
+    });
+});
+
 /** Starts the legacy Docker stack in-process and removes everything labelled with its project id. */
 export const legacyTarget = Layer.effect(
   ContractTarget,
@@ -250,6 +286,7 @@ export const legacyTarget = Layer.effect(
     );
     yield* start({ exclude: [], ignoreHealthCheck: false, preview: false }).pipe(
       Effect.provide(layers),
+      Effect.andThen(realtimeServerListening(projectId)),
       guardStart,
     );
     return yield* startedEnv(output, ContractEnv);
