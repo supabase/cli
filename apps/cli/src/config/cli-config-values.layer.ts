@@ -1,7 +1,8 @@
-import type { CliConfigValueOrigin } from "@supabase/config";
+import { CLI_CONFIG_SCHEMA_URL, type CliConfigValueOrigin } from "@supabase/config";
 import {
   decodeMergedCliConfig,
   ENV_CAPTURE_REGEX,
+  findUnknownCliConfigKeys,
   mergeParsedCliConfig,
   parseCliConfigDocumentFile,
   type MergedCliConfigDocument,
@@ -54,6 +55,7 @@ import {
 } from "./cli-config-key.ts";
 import {
   cliConfigFamilyEnvNames,
+  cliConfigDocumentOnlyPaths,
   cliConfigFamilyKey,
   cliConfigRegistry,
   cliRemoteProjectIdEnvName,
@@ -94,6 +96,31 @@ const deprecatedKeyLine = (deprecatedPath: string): string => {
   const shown = escapeControlCharacters(deprecatedPath);
   return `WARN: ${shown} is deprecated and will be removed in v4, use ${shown.replace(/enable_signup$/, "enabled")} instead.\n`;
 };
+
+/** Unknown-key reports stop at the first unknown table, so a document-only table such as `auth.passkey` arrives whole. */
+const isDocumentOnlyKey = (key: ReadonlyArray<string>): boolean => {
+  const dotted = key.join(".");
+  return [...cliConfigDocumentOnlyPaths].some(
+    (known) => known === dotted || known.startsWith(`${dotted}.`) || dotted.startsWith(`${known}.`),
+  );
+};
+
+/** Custom `[auth.external.<name>]` providers have no schema entry, but `start` reads them from the raw document. */
+const isCustomAuthProvider = (rawDocument: unknown, key: ReadonlyArray<string>): boolean => {
+  const local = key[0] === "remotes" ? key.slice(2) : key;
+  return (
+    local.length === 3 &&
+    local[0] === "auth" &&
+    local[1] === "external" &&
+    isDocumentRecord(getDocumentValue(rawDocument, key))
+  );
+};
+
+const unrecognizedSchemaLine = (file: string, ref: string): string =>
+  `WARN: ${file} declares schema ${escapeControlCharacters(ref)}, which is not the Supabase CLI config schema, so it is read as v1. Set it to ${CLI_CONFIG_SCHEMA_URL} to remove this warning.\n`;
+
+const unknownKeysLine = (file: string, keys: ReadonlyArray<string>): string =>
+  `WARN: ${file} has keys this version of the Supabase CLI does not recognize and ignores: ${keys.map(escapeControlCharacters).join(", ")}. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n`;
 
 const registryEnvNames = cliConfigRegistry.keys.flatMap((key) => key.env);
 
@@ -261,6 +288,20 @@ export const cliConfigValuesLayer = Layer.effect(
         const displayPath = (filePath: string) =>
           path.relative(target.workdir, filePath).replaceAll("\\", "/");
         const used = displayPath(parsed.path);
+        const declaration = parsed.schemaDeclaration;
+        if (declaration !== undefined && declaration.version === undefined) {
+          yield* printOnce(unrecognizedSchemaLine(used, declaration.ref));
+        }
+        const unknownKeys = findUnknownCliConfigKeys(parsed.rawDocument)
+          .filter(
+            (key) =>
+              !isDocumentOnlyKey(key[0] === "remotes" ? key.slice(2) : key) &&
+              !isCustomAuthProvider(parsed.rawDocument, key),
+          )
+          .map((key) => key.join("."));
+        if (unknownKeys.length > 0) {
+          yield* printOnce(unknownKeysLine(used, unknownKeys));
+        }
         for (const ignoredPath of parsed.ignoredPaths) {
           const ignored = displayPath(ignoredPath);
           yield* warnOnce(
