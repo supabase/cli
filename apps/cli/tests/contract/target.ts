@@ -17,6 +17,9 @@ import {
   NetworkIdFlag,
   YesFlag,
 } from "../../src/command-internal/global-flags.ts";
+import { localDockerEngineLayer } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
+import { resetLocalDatabase } from "../../src/command-internal/db-bootstrap/reset-local-database.ts";
+import { type StackBackend, stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
 import { stackCatalogSetupLayer } from "../../src/command-internal/stack-catalog-setup.ts";
 import {
   StackApi,
@@ -56,6 +59,9 @@ ${port(ports?.db)}
 [db.pooler]
 enabled = false
 
+[db.seed]
+sql_paths = ["./seeds/zz.sql", "./seeds/*.sql"]
+
 [auth.email]
 enable_confirmations = true
 
@@ -67,6 +73,13 @@ enabled = true
 
 [storage]
 enabled = true
+
+[storage.buckets.config-public]
+public = true
+objects_path = "./buckets/public"
+
+[storage.buckets.config-private]
+public = false
 
 [edge_runtime]
 enabled = true
@@ -81,13 +94,42 @@ enabled = false
 enabled = false
 `;
 
-const migration = `create table public.contract_items (id int primary key, label text not null);
+/* Migrations and seeds log to contract_log in the order they run, and are written out of that order.
+   Byte order runs 0, 10, 2026, then 9, and skips notes.sql and nested/. zz runs once before the glob
+   that matches it again, then aa and mm in byte order. 10 creates config-public private, so aa seeing
+   public=false and a public bucket at the end prove config buckets seed after migrations and seeds. */
+const projectFiles = (projectId: string, ports: LegacyPorts | undefined) => ({
+  "config.toml": config(projectId, ports),
+  "migrations/9_after_10.sql": `insert into public.contract_log (source) values ('migration 9');
+`,
+  "migrations/20260101000000_contract.sql": `create table public.contract_items (id int primary key, label text not null);
 insert into public.contract_items values (1, 'contract');
 grant select, insert on public.contract_items to anon;
-`;
-
-const echoFunction = `Deno.serve(() => Response.json({ ok: true }));
-`;
+insert into public.contract_log (source) values ('migration 20260101000000');
+`,
+  "migrations/10_buckets.sql": `insert into storage.buckets (id, name, public) values ('config-public', 'config-public', false);
+insert into public.contract_log (source) values ('migration 10');
+`,
+  "migrations/0_log.sql": `create table public.contract_log (seq int generated always as identity primary key, source text not null);
+alter table public.contract_log enable row level security;
+grant select on public.contract_log to service_role;
+insert into public.contract_log (source) select format('migration 0 sees auth=%s storage=%s realtime=%s', (to_regclass('auth.flow_state') is not null)::text, (to_regclass('storage.s3_multipart_uploads') is not null)::text, (to_regclass('realtime.messages') is not null)::text);
+`,
+  "migrations/notes.sql": `insert into public.contract_log (source) values ('notes.sql');
+`,
+  "migrations/nested/1_nested.sql": `insert into public.contract_log (source) values ('nested/1_nested.sql');
+`,
+  "seeds/mm.sql": `insert into public.contract_log (source) values ('seed mm');
+`,
+  "seeds/aa.sql": `insert into public.contract_log (source) select 'seed aa sees public=' || public from storage.buckets where id = 'config-public';
+`,
+  "seeds/zz.sql": `insert into public.contract_log (source) values ('seed zz');
+`,
+  "buckets/public/a.txt": "seeded object\n",
+  "buckets/public/nested/b.txt": "nested object\n",
+  "functions/echo/index.ts": `Deno.serve(() => Response.json({ ok: true }));
+`,
+});
 
 /** Writes the one project every contract setup starts. */
 const writeContractProject = Effect.fn("Contract.writeProject")(function* (
@@ -97,15 +139,11 @@ const writeContractProject = Effect.fn("Contract.writeProject")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const supabase = path.join(root, "supabase");
-  yield* fs.makeDirectory(path.join(supabase, "migrations"), { recursive: true });
-  yield* fs.makeDirectory(path.join(supabase, "functions", "echo"), { recursive: true });
-  yield* fs.writeFileString(path.join(supabase, "config.toml"), config(projectId, ports));
-  yield* fs.writeFileString(
-    path.join(supabase, "migrations", "20260101000000_contract.sql"),
-    migration,
-  );
-  yield* fs.writeFileString(path.join(supabase, "functions", "echo", "index.ts"), echoFunction);
+  for (const [name, content] of Object.entries(projectFiles(projectId, ports))) {
+    const file = path.join(root, "supabase", name);
+    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+    yield* fs.writeFileString(file, content);
+  }
 });
 
 const ContractEnv = Schema.StructWithRest(
@@ -125,10 +163,23 @@ export class ContractTarget extends Context.Service<ContractTarget, typeof Contr
   "supabase/tests/ContractTarget",
 ) {}
 
-class ContractTargetError extends Data.TaggedError("ContractTargetError")<{
+export class ContractTargetError extends Data.TaggedError("ContractTargetError")<{
   readonly message: string;
   readonly cause: unknown;
 }> {}
+
+/** Resets the running setup's local database through the path `db reset` takes on its backend. */
+export class ContractReset extends Context.Service<
+  ContractReset,
+  Effect.Effect<void, ContractTargetError>
+>()("supabase/tests/ContractReset") {}
+
+const resetOn = (backend: StackBackend) =>
+  resetLocalDatabase().pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(stackBackendLayer(backend), localDockerEngineLayer)),
+    Effect.mapError((cause) => new ContractTargetError({ message: "db reset failed", cause })),
+  );
 
 const startedEnv = <A>(
   output: ReturnType<typeof mockOutput>,
@@ -168,6 +219,8 @@ const sharedLayers = (output: ReturnType<typeof mockOutput>, args: string[]) => 
     Layer.succeed(YesFlag, false),
     Layer.succeed(CliArgs, { args }),
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused by local start") }),
+    Layer.succeed(NetworkIdFlag, Option.none()),
+    dockerRunLayer.pipe(Layer.provideMerge(processControlLayer)),
     stdinLayer.pipe(Layer.provide(tty)),
     tty,
   );
@@ -175,8 +228,7 @@ const sharedLayers = (output: ReturnType<typeof mockOutput>, args: string[]) => 
 
 /** Starts one stack in-process with automatic ports and destroys it when the scope closes. */
 export const stackTarget = (runtime: "native" | "docker") =>
-  Layer.effect(
-    ContractTarget,
+  Layer.effectContext(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -204,7 +256,7 @@ export const stackTarget = (runtime: "native" | "docker") =>
         ),
         stackCatalogSetupLayer,
       );
-      const context = yield* Layer.build(layers);
+      const context = yield* Layer.build(layers.pipe(Layer.provideMerge(hostServices)));
       yield* Effect.addFinalizer(() =>
         StackApi.use((stackApi) =>
           destroyTestStacks(stackApi, path.join(root, "stacks"), cacheRoot),
@@ -219,7 +271,9 @@ export const stackTarget = (runtime: "native" | "docker") =>
         frozen: false,
         eager: false,
       }).pipe(Effect.provide(context), guardStart);
-      return (yield* startedEnv(output, Schema.Struct({ env: ContractEnv }))).env;
+      const { env } = yield* startedEnv(output, Schema.Struct({ env: ContractEnv }));
+      const reset = resetOn("stack").pipe(Effect.provide(context));
+      return Context.make(ContractTarget, env).pipe(Context.add(ContractReset, reset));
     }),
   ).pipe(Layer.provide(hostServices));
 
@@ -256,8 +310,7 @@ const realtimeServerListening = Effect.fn("Contract.realtimeServerListening")(fu
 });
 
 /** Starts the legacy Docker stack in-process and removes everything labelled with its project id. */
-export const legacyTarget = Layer.effect(
-  ContractTarget,
+export const legacyTarget = Layer.effectContext(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -274,13 +327,13 @@ export const legacyTarget = Layer.effect(
       mailpit: yield* legacyPort,
     });
     const output = mockOutput({ format: "json" });
-    const layers = Layer.mergeAll(
-      sharedLayers(output, ["start"]),
-      mockCommandSettings({ workdir: root, supabaseHome: root }),
-      stackApiLayer,
-      dockerRunLayer.pipe(Layer.provideMerge(processControlLayer)),
-      mockAnalytics().layer,
-      Layer.succeed(NetworkIdFlag, Option.none()),
+    const context = yield* Layer.build(
+      Layer.mergeAll(
+        sharedLayers(output, ["start"]),
+        mockCommandSettings({ workdir: root, supabaseHome: root }),
+        stackApiLayer,
+        mockAnalytics().layer,
+      ).pipe(Layer.provideMerge(hostServices)),
     );
     yield* Effect.addFinalizer(() =>
       ChildProcessSpawner.ChildProcessSpawner.use((spawner) =>
@@ -288,10 +341,12 @@ export const legacyTarget = Layer.effect(
       ).pipe(Effect.orDie),
     );
     yield* start({ exclude: [], ignoreHealthCheck: false, preview: false }).pipe(
-      Effect.provide(layers),
+      Effect.provide(context),
       Effect.andThen(realtimeServerListening(projectId)),
       guardStart,
     );
-    return yield* startedEnv(output, ContractEnv);
+    const env = yield* startedEnv(output, ContractEnv);
+    const reset = resetOn("legacy").pipe(Effect.provide(context));
+    return Context.make(ContractTarget, env).pipe(Context.add(ContractReset, reset));
   }),
 ).pipe(Layer.provide(hostServices));
