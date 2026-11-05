@@ -10,7 +10,7 @@
  * the walker treats nodes as loose records rather than depending on Effect's AST classes.
  */
 import { CliConfigSchema } from "@supabase/config";
-import { Effect, FileSystem } from "effect";
+import { Console, Effect, FileSystem } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import process from "node:process";
 import { parseArgs } from "node:util";
@@ -391,10 +391,16 @@ await Effect.runPromise(
       return;
     }
     const fs = yield* FileSystem.FileSystem;
-    const document = parse(yield* fs.readFileString(values.diff)) as {
-      readonly parameters: ReadonlyArray<DocEntry>;
-    };
-    process.stdout.write(renderDiff(entries, document.parameters));
+    const document: unknown = parse(yield* fs.readFileString(values.diff));
+    const parameters =
+      typeof document === "object" && document !== null && "parameters" in document
+        ? document.parameters
+        : undefined;
+    if (!Array.isArray(parameters)) {
+      yield* Console.error(`${values.diff} has no \`parameters\` array to diff against.`);
+      return yield* Effect.sync(() => process.exit(1));
+    }
+    process.stdout.write(renderDiff(entries, parameters));
   }).pipe(
     Effect.provide(BunServices.layer),
     Effect.mapError((error) => error.cause ?? error),

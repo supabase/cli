@@ -1,8 +1,6 @@
 # db-unused-indexes
 
-List indexes with fewer than 50 scans that are larger than 5 pages, ordered by size relative to the number of scans. Use it to find indexes you can drop.
-
-Indexes slow down writes and can slow down reads when they take up memory, so remove the ones you do not need.
+This command displays indexes that have < 50 scans recorded against them, and are greater than 5 pages in size, ordered by size relative to the number of index scans. This command is generally useful for discovering indexes that are unused. Indexes can impact write performance, as well as read performance should they occupy space in memory, its a good idea to remove indexes that are not needed or being used.
 
 ```
         TABLE        │                   INDEX                    │ INDEX SIZE │ INDEX SCANS

@@ -1,6 +1,6 @@
 # db-index-usage
 
-Show what percentage of scans on each table used an index. A low percentage can mean the table is under-indexed or the wrong columns are indexed.
+This command provides information on the efficiency of indexes, represented as what percentage of total scans were index scans. A low percentage can indicate under indexing, or wrong data being indexed.
 
 ```
        TABLE NAME     │ PERCENTAGE OF TIMES INDEX USED │ ROWS IN TABLE

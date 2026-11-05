@@ -1,10 +1,10 @@
 # db-cache-hit
 
-Show how often queries read from the buffer cache instead of going to disk, for both table reads (`table hit rate`) and index reads (`index hit rate`). Databases with low hit rates generally perform worse, because reading from disk is slower than reading from memory.
+This command provides information on the efficiency of the buffer cache and how often your queries have to go hit the disk rather than reading from memory. Information on both index reads (`index hit rate`) as well as table reads (`table hit rate`) are shown. In general, databases with low cache hit rates perform worse as it is slower to go to disk than retrieve data from memory. If your table hit rate is low, this can indicate that you do not have enough RAM and you may benefit from upgrading to a larger compute addon with more memory. If your index hit rate is low, this may indicate that there is scope to add more appropriate indexes.
 
-Each rate is the share of blocks fetched from the Postgres buffer cache out of all blocks read, cached or not. On smaller compute plans (free, small, medium), a ratio below 99% can indicate a problem. On larger plans the rates may be lower without affecting performance, because data can come from the OS cache.
+The hit rates are calculated as a ratio of number of table or index blocks fetched from the postgres buffer cache against the sum of cached blocks and uncached blocks read from disk.
 
-A low table hit rate can mean you need more RAM, so consider a larger compute add-on. A low index hit rate can mean you need more appropriate indexes.
+On smaller compute plans (free, small, medium), a ratio of below 99% can indicate a problem. On larger plans the hit rates may be lower but performance will remain constant as the data may use the OS cache rather than Postgres buffer cache.
 
 ```
          NAME      │  RATIO
