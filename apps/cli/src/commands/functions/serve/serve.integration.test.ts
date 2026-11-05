@@ -64,12 +64,15 @@ import {
   DockerLogsStreamError,
   EdgeRuntimeContainerCrashedError,
   EdgeRuntimeLogStreamLostError,
+  ServeEnvFileError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
 } from "../../../shared/functions/serve.errors.ts";
 import {
   actionability,
+  classifyCliErrorActionability,
   ErrorActionabilityId,
+  unwrapNativeFailure,
 } from "../../../shared/telemetry/error-actionability.ts";
 import { normalizeCliError } from "../../../shared/output/normalize-error.ts";
 import {
@@ -840,6 +843,73 @@ describe("functions serve integration", () => {
       expect(deployMockState.volumeCalls).toHaveLength(0);
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.live("fails with a typed env-file error when the --env-file path is missing", () =>
+    Effect.gen(function* () {
+      yield* writeCliConfig(['project_id = "test-project"', ""].join("\n"));
+      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+
+      const { layer } = setupServe();
+      const error = yield* functionsServe(baseFlags({ envFile: Option.some("missing.env") })).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvFileError);
+      expect(error.message).toMatch(/^failed to load environment file: .*missing\.env \(.+\)$/su);
+      expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
+        "tag:ServeEnvFileError:not_found",
+      );
+      expect(deployMockState.runCalls.some((call) => call.args[0] === "create")).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live.each([
+    ["create", "Bind for 0.0.0.0:54321 failed: port is already allocated", "port_in_use"],
+    ["cp", "unexpected copy failure", "other"],
+  ] as const)(
+    "fails a %s step with a typed Docker step error read from stderr",
+    ([step, stderr, reason]) => {
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === step) {
+          return { exitCode: 1, stdout: "", stderr };
+        }
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(['project_id = "test-project"', ""].join("\n"));
+        yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+
+        const { layer } = setupServe();
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(unwrapNativeFailure(error)).toMatchObject({
+          _tag: "EdgeRuntimeDockerStepError",
+          step,
+          reason,
+        });
+        expect(error.message).toContain(stderr);
+        expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
+          step === "create"
+            ? "tag:EdgeRuntimeDockerStepError:port_conflict"
+            : "tag:EdgeRuntimeDockerStepError:engine_command_copy",
+        );
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 
   it.live(
     "skips a disabled function and sets up the runtime before a malformed functions/.env fails",
