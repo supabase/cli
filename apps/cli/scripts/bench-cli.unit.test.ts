@@ -199,6 +199,10 @@ describe("profileYaml", () => {
     expect(yaml).toContain('dashboard_url: "http://127.0.0.1:9"');
     expect(yaml).toContain("project_host: localhost");
   });
+
+  it("names the project host a workload asks for", () => {
+    expect(profileYaml("http://127.0.0.1:9", "invalid")).toContain("project_host: invalid");
+  });
 });
 
 describe("isolatedEnv", () => {

@@ -52,7 +52,7 @@ import {
   runWithPoolerFallback,
 } from "../../../command-internal/pooler-fallback.ts";
 import type { GenTypesFlags } from "./types.command.ts";
-import { apiFallbackWarning, isDatabaseAccessError } from "./types.api-fallback.ts";
+import { apiFallbackWarning, failedBeforeIntrospection } from "./types.api-fallback.ts";
 import {
   GEN_TYPES_LANGUAGE_FLAG_NAMES,
   GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
@@ -432,78 +432,22 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     return yield* dbConfig.resolveConnection(yield* connectionInputFor(target));
   });
 
-  const runProjectTypes = (
-    target: Extract<ResolvedTarget, { readonly kind: "linked" }>,
-    includedSchemas: ReadonlyArray<string>,
-  ) => {
-    const projectRef = target.ref;
-    return Effect.gen(function* () {
-      yield* Effect.annotateCurrentSpan("project.ref", projectRef);
+  const lookupPreviewBranch = (branchRef: string) =>
+    Effect.gen(function* () {
       const api = yield* platformApi.make;
-      const extraSearchPath = yield* resolveExtraSearchPath(projectRef);
-
-      const generateDirect = Effect.gen(function* () {
-        const projectResult = yield* api.v1.getProject({ ref: projectRef }).pipe(
-          Effect.catch(mapProjectDatabaseHostError),
-          Effect.as("project" as const),
-          Effect.catchIf(isProjectNotFound, () =>
-            runPreviewBranchTypes(projectRef, includedSchemas, extraSearchPath).pipe(
-              Effect.as("branch" as const),
-            ),
-          ),
-        );
-        if (projectResult === "branch") return;
-
-        const connectionInput = yield* connectionInputFor(target);
-        const resolved = yield* dbConfig.resolveConnection(connectionInput);
-        const conn = pinSupabaseTls(resolved.conn);
-        yield* runGenerate({
-          conn,
-          isLocal: resolved.isLocal,
-          includedSchemas,
-          extraSearchPath,
-          detectOneToOneRelationships: !flags.postgrestV9Compat,
-          poolerFallback: {
-            directHost: conn.host,
-            eligible: !resolved.isLocal && isDirectDbHost(conn.host, cliSettings.projectHost),
-            resolve: dbConfig
-              .resolvePoolerFallback(connectionInput)
-              .pipe(Effect.map(Option.map(pinSupabaseTls))),
-          },
-        });
-      });
-
-      if (lang !== "typescript") return yield* generateDirect;
-
-      return yield* generateDirect.pipe(
-        Effect.catchIf(isDatabaseAccessError, (error) =>
-          Effect.gen(function* () {
-            yield* Effect.annotateCurrentSpan("typegen.api_fallback", true);
-            yield* output.raw(`${yellow(apiFallbackWarning(error))}\n`, "stderr");
-            const response = yield* api.v1
-              .generateTypescriptTypes({
-                ref: projectRef,
-                included_schemas: includedSchemas.join(","),
-              })
-              .pipe(Effect.catch(mapProjectTypesError));
-            yield* output.raw(response.types);
-          }),
-        ),
-      );
-    }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
-  };
+      yield* Effect.annotateCurrentSpan("typegen.preview_branch", true);
+      return yield* api.v1
+        .getABranchConfig({ branch_id_or_ref: branchRef })
+        .pipe(Effect.catch(mapBranchDatabaseConfigError));
+    });
 
   const runPreviewBranchTypes = (
-    branchRef: string,
+    branch: Effect.Success<ReturnType<typeof lookupPreviewBranch>>,
     includedSchemas: ReadonlyArray<string>,
     extraSearchPath: ReadonlyArray<string>,
   ) =>
     Effect.gen(function* () {
       const api = yield* platformApi.make;
-      yield* Effect.annotateCurrentSpan("typegen.preview_branch", true);
-      const branch = yield* api.v1
-        .getABranchConfig({ branch_id_or_ref: branchRef })
-        .pipe(Effect.catch(mapBranchDatabaseConfigError));
 
       if (branch.db_user === undefined || branch.db_pass === undefined) {
         return yield* new GenTypesBranchCredentialsUnavailableError({
@@ -552,6 +496,75 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         },
       });
     });
+
+  const runProjectTypes = (
+    target: Extract<ResolvedTarget, { readonly kind: "linked" }>,
+    includedSchemas: ReadonlyArray<string>,
+  ) => {
+    const projectRef = target.ref;
+    return Effect.gen(function* () {
+      yield* Effect.annotateCurrentSpan("project.ref", projectRef);
+      const api = yield* platformApi.make;
+
+      // Other languages fail on a bad config before any API call; TypeScript defers the read into
+      // the direct path so the same failure can still fall back to the API.
+      const earlyExtraSearchPath =
+        lang === "typescript" ? undefined : yield* resolveExtraSearchPath(projectRef);
+
+      // The project and branch lookups sit outside the TypeScript fallback: the Management API
+      // types endpoint takes the same token and ref, so it would fail the same way.
+      const branch = yield* api.v1.getProject({ ref: projectRef }).pipe(
+        Effect.catch(mapProjectDatabaseHostError),
+        Effect.as(Option.none<Effect.Success<ReturnType<typeof lookupPreviewBranch>>>()),
+        Effect.catchIf(isProjectNotFound, () =>
+          lookupPreviewBranch(projectRef).pipe(Effect.map(Option.some)),
+        ),
+      );
+
+      const generateDirect = Effect.gen(function* () {
+        const extraSearchPath = earlyExtraSearchPath ?? (yield* resolveExtraSearchPath(projectRef));
+        if (Option.isSome(branch)) {
+          return yield* runPreviewBranchTypes(branch.value, includedSchemas, extraSearchPath);
+        }
+
+        const connectionInput = yield* connectionInputFor(target);
+        const resolved = yield* dbConfig.resolveConnection(connectionInput);
+        const conn = pinSupabaseTls(resolved.conn);
+        yield* runGenerate({
+          conn,
+          isLocal: resolved.isLocal,
+          includedSchemas,
+          extraSearchPath,
+          detectOneToOneRelationships: !flags.postgrestV9Compat,
+          poolerFallback: {
+            directHost: conn.host,
+            eligible: !resolved.isLocal && isDirectDbHost(conn.host, cliSettings.projectHost),
+            resolve: dbConfig
+              .resolvePoolerFallback(connectionInput)
+              .pipe(Effect.map(Option.map(pinSupabaseTls))),
+          },
+        });
+      });
+
+      if (lang !== "typescript") return yield* generateDirect;
+
+      return yield* generateDirect.pipe(
+        Effect.catchIf(failedBeforeIntrospection, (error) =>
+          Effect.gen(function* () {
+            yield* Effect.annotateCurrentSpan("typegen.api_fallback", true);
+            yield* output.raw(`${yellow(apiFallbackWarning(error))}\n`, "stderr");
+            const response = yield* api.v1
+              .generateTypescriptTypes({
+                ref: projectRef,
+                included_schemas: includedSchemas.join(","),
+              })
+              .pipe(Effect.catch(mapProjectTypesError));
+            yield* output.raw(response.types);
+          }),
+        ),
+      );
+    }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
+  };
 
   const assertLocalDbRunning = (projectId: string, linkedCheckout: boolean) =>
     Effect.scoped(

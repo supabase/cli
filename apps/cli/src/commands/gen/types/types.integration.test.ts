@@ -78,8 +78,11 @@ import { toConnectError } from "../../../command-internal/db-connection.sql-pg.l
 import type { DbConfigError } from "../../../command-internal/db-config.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
+  DbConfigIpv6Error,
+  DbConfigLibpqEnvError,
   DbConfigLoadError,
   DbConfigLoginRoleStatusError,
+  LinkedDbNetworkBannedError,
 } from "../../../command-internal/db-config.errors.ts";
 import type {
   DbConnectionInput,
@@ -664,11 +667,9 @@ describe("gen types", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("uses explicit schemas for the management API path", () =>
+  it.effect("passes explicit --schema values to the generator for --project-ref", () =>
     Effect.gen(function* () {
-      const { layer, generator } = yield* setup({
-        projectTypes: "ok",
-      });
+      const { layer, generator } = yield* setup({});
       yield* genTypes(
         defaultFlags({
           remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
@@ -691,7 +692,6 @@ describe("gen types", () => {
         );
         const { layer, generator } = yield* setup({
           workdir,
-          projectTypes: "ok",
         });
         yield* genTypes(
           defaultFlags({
@@ -713,7 +713,6 @@ describe("gen types", () => {
       const { layer, generator } = yield* setup({
         workdir,
         projectId: Option.some(VALID_REF),
-        projectTypes: "ok",
       });
       yield* genTypes(defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) })).pipe(
         Effect.provide(layer),
@@ -739,7 +738,6 @@ describe("gen types", () => {
           skipConfig: true,
           explicitWorkdir: true,
           projectId: Option.some(VALID_REF),
-          projectTypes: "ok",
         });
         const exit = yield* genTypes(
           defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
@@ -774,7 +772,6 @@ describe("gen types", () => {
           skipConfig: true,
           explicitWorkdir: resolved.explicit,
           projectId: Option.some(VALID_REF),
-          projectTypes: "ok",
         });
         yield* genTypes(
           defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
@@ -857,7 +854,6 @@ describe("gen types", () => {
       const { layer, out, generator } = yield* setup({
         workdir,
         skipConfig: true,
-        projectTypes: "ok",
       });
       yield* genTypes(
         defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
@@ -875,7 +871,6 @@ describe("gen types", () => {
         workdir,
         skipConfig: true,
         projectId: Option.some(VALID_REF),
-        projectTypes: "ok",
       });
       yield* genTypes(defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) })).pipe(
         Effect.provide(layer),
@@ -890,7 +885,6 @@ describe("gen types", () => {
       const { layer, api } = yield* setup({
         args: ["unrelated", "argv"],
         projectId: Option.some(VALID_REF),
-        projectTypes: "ok",
       });
       yield* genTypes(
         defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
@@ -904,7 +898,6 @@ describe("gen types", () => {
     Effect.gen(function* () {
       const { layer, generator } = yield* setup({
         projectId: Option.some(VALID_REF),
-        projectTypes: "ok",
       });
       yield* genTypes(
         defaultFlags({ remote: Option.some({ _tag: "Linked" } as const), schema: ["auth"] }),
@@ -928,7 +921,6 @@ describe("gen types", () => {
           const { layer, generator } = yield* setup({
             workdir,
             projectId: Option.some(VALID_REF),
-            projectTypes: "ok",
           });
           yield* genTypes(defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) })).pipe(
             Effect.provide(layer),
@@ -941,7 +933,7 @@ describe("gen types", () => {
     it.effect("selects the schemas for --project-ref without a project config", () =>
       withApiSchemas(
         Effect.gen(function* () {
-          const { layer, generator } = yield* setup({ skipConfig: true, projectTypes: "ok" });
+          const { layer, generator } = yield* setup({ skipConfig: true });
           yield* genTypes(
             defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
           ).pipe(Effect.provide(layer));
@@ -1141,7 +1133,6 @@ describe("gen types", () => {
       Effect.gen(function* () {
         const { layer, out, api } = yield* setup({
           args: ["gen", "types", "--project-id", VALID_REF],
-          projectTypes: "ok",
         });
         yield* genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })).pipe(
           Effect.provide(layer),
@@ -1187,7 +1178,6 @@ describe("gen types", () => {
       Effect.gen(function* () {
         const { layer, api } = yield* setup({
           args: ["gen", "types", "--remote", BRANCH_PROJECT_REF],
-          projectTypes: "ok",
         });
         yield* genTypes(
           defaultFlags({ remote: Option.some({ _tag: "Ref", ref: BRANCH_PROJECT_REF } as const) }),
@@ -1205,7 +1195,6 @@ describe("gen types", () => {
           args: ["gen", "types", "--remote", "feature-x"],
           projectId: Option.some(VALID_REF),
           branches: [branchRow("feature-x")],
-          projectTypes: "ok",
         });
         yield* genTypes(
           defaultFlags({ remote: Option.some({ _tag: "Branch", name: "feature-x" } as const) }),
@@ -1285,7 +1274,6 @@ describe("gen types", () => {
             args: ["gen", "types", "--remote", "typescript"],
             projectId: Option.some(VALID_REF),
             branches: [branchRow("typescript")],
-            projectTypes: "ok",
           });
           yield* genTypes(
             defaultFlags({ remote: Option.some({ _tag: "Branch", name: "typescript" } as const) }),
@@ -1310,7 +1298,6 @@ describe("gen types", () => {
             args,
             projectId: Option.some(VALID_REF),
             branches: [branchRow("feature-x")],
-            projectTypes: "ok",
           }),
         ).pipe(
           Effect.map((ctx) => ({
@@ -1386,7 +1373,6 @@ describe("gen types", () => {
         const { layer, generator } = yield* setup({
           args: ["gen", "types", "--remote", "-s", "--query-timeout"],
           projectId: Option.some(VALID_REF),
-          projectTypes: "ok",
         });
         yield* genTypes(
           defaultFlags({
@@ -1645,7 +1631,6 @@ describe("gen types", () => {
       Effect.gen(function* () {
         const { layer, out, api, telemetry } = yield* setup({
           args: ["gen", "types", `--remote=${VALID_REF}`, "--query-timeout", "20s"],
-          projectTypes: "ok",
         });
         const exit = yield* genTypes(
           defaultFlags({
@@ -1692,7 +1677,6 @@ describe("gen types", () => {
         const { layer, api } = yield* setup({
           args: ["gen", "types", "typescript", "--remote"],
           projectId: Option.some(VALID_REF),
-          projectTypes: "ok",
         });
         yield* genTypes(defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) })).pipe(
           Effect.provide(layer),
@@ -1741,7 +1725,6 @@ describe("gen types", () => {
         const { layer, api } = yield* setup({
           args: ["gen", "types", "--remote", "--"],
           projectId: Option.some(VALID_REF),
-          projectTypes: "ok",
         });
         yield* genTypes(defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) })).pipe(
           Effect.provide(layer),
@@ -2242,6 +2225,12 @@ describe("gen types", () => {
     const apiTypeRequests = (api: {
       readonly requests: ReadonlyArray<{ readonly method: string }>;
     }) => api.requests.filter(({ method }) => method === "generateTypescriptTypes");
+    const fallbackWarning = (reason: string, suggestion?: string) =>
+      [
+        `Warning: Could not generate types from the project database (${reason}), so these types come from the Management API: they do not apply [api].extra_search_path or the CLI's generator.`,
+        ...(suggestion === undefined ? [] : [suggestion]),
+        "This fallback is removed in the next major version.",
+      ].join("\n");
 
     it.effect(
       "generates directly with [api].extra_search_path and never asks the API for types",
@@ -2256,7 +2245,6 @@ describe("gen types", () => {
             workdir,
             args: projectArgs,
             generatorOutput: "export type Database = {};",
-            projectTypes: "from the api",
           });
           yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
 
@@ -2312,12 +2300,12 @@ describe("gen types", () => {
               input: { ref: VALID_REF, included_schemas: "public" },
             },
           ]);
-          expect(warningsOf(out)).toEqual([
-            "Could not connect to the project database (failed to connect to postgres: failed to connect to `host=db.example.supabase.co user=postgres database=postgres`: dial error (connect ECONNREFUSED 203.0.113.7:5432)). " +
-              "Falling back to the Management API, whose types ignore [api].extra_search_path. " +
-              "To generate them with the CLI, allow this machine's IP in the project's network restrictions or set SUPABASE_DB_PASSWORD. " +
-              "This fallback will be removed in the next major version.",
-          ]);
+          expect(stripAnsi(out.stderrText)).toContain(
+            fallbackWarning(
+              "failed to connect to postgres: failed to connect to `host=db.example.supabase.co user=postgres database=postgres`: dial error (connect ECONNREFUSED 203.0.113.7:5432)",
+            ),
+          );
+          expect(warningsOf(out)).toHaveLength(1);
           expect(out.stdoutText).not.toContain("Warning");
           expect(linkedProjectCache.cached).toBe(true);
         }).pipe(Effect.provide(BunServices.layer)),
@@ -2361,7 +2349,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    for (const status of [401, 403]) {
+    for (const status of [400, 401, 403, 404, 409, 429, 500]) {
       it.effect(`falls back when the login-role endpoint answers ${status}`, () =>
         Effect.gen(function* () {
           const { layer, api, out, generator } = yield* setup({
@@ -2371,8 +2359,8 @@ describe("gen types", () => {
               Effect.fail(
                 new DbConfigLoginRoleStatusError({
                   status,
-                  body: "forbidden",
-                  message: `unexpected login role status ${status}: forbidden`,
+                  body: "refused",
+                  message: `unexpected login role status ${status}: refused`,
                 }),
               ),
           });
@@ -2380,30 +2368,180 @@ describe("gen types", () => {
 
           expect(out.stdoutText).toBe("export type FromApi = {};");
           expect(generator.calls).toHaveLength(0);
-          expect(warningsOf(out)).toHaveLength(1);
+          expect(stripAnsi(out.stderrText)).toContain(
+            fallbackWarning(`unexpected login role status ${status}: refused`),
+          );
           expect(apiTypeRequests(api)).toHaveLength(1);
         }).pipe(Effect.provide(BunServices.layer)),
       );
     }
 
-    it.effect("does not fall back when the login-role endpoint fails with a server error", () =>
+    const fallbackCauses = [
+      {
+        name: "a strict config load failure",
+        error: () =>
+          new DbConfigLoadError({
+            message: "failed to read signing keys: open supabase/signing_keys.json: no such file",
+          }),
+        reason: "failed to read signing keys: open supabase/signing_keys.json: no such file",
+        suggestion: undefined,
+      },
+      {
+        name: "an invalid libpq environment",
+        error: () => new DbConfigLibpqEnvError({ message: "invalid PGSSLMODE: nope" }),
+        reason: "invalid PGSSLMODE: nope",
+        suggestion: undefined,
+      },
+      {
+        name: "an IPv6-only direct host without a pooler",
+        error: () =>
+          new DbConfigIpv6Error({
+            message: "IPv6 is not supported on your current network",
+            suggestion: "Run supabase link --project-ref demo to setup IPv4 connection",
+          }),
+        reason: "IPv6 is not supported on your current network",
+        suggestion: "Run supabase link --project-ref demo to setup IPv4 connection",
+      },
+      {
+        name: "a network ban that was not approved for removal",
+        error: () =>
+          new LinkedDbNetworkBannedError({
+            message: "your IP is banned\nthe ban was not removed",
+            suggestion: "Re-run with --yes to remove the ban",
+          }),
+        reason: "your IP is banned",
+        suggestion: "Re-run with --yes to remove the ban",
+      },
+    ] as const;
+
+    for (const cause of fallbackCauses) {
+      it.effect(`falls back, with the error's suggestion, on ${cause.name}`, () =>
+        Effect.gen(function* () {
+          const { layer, api, out, generator, linkedProjectCache } = yield* setup({
+            args: projectArgs,
+            projectTypes: "export type FromApi = {};",
+            dbConfigResolve: () => Effect.fail(cause.error()),
+          });
+          yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toBe("export type FromApi = {};");
+          expect(generator.calls).toHaveLength(0);
+          expect(stripAnsi(out.stderrText)).toContain(
+            fallbackWarning(cause.reason, cause.suggestion),
+          );
+          expect(apiTypeRequests(api)).toHaveLength(1);
+          expect(linkedProjectCache.cached).toBe(true);
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+    }
+
+    it.effect("falls back when the preview branch has no database credentials", () =>
+      Effect.gen(function* () {
+        const { layer, api, out, generator } = yield* setup({
+          args: projectArgs,
+          getProject: missingProject,
+          getABranchConfig: ({ branch_id_or_ref }) =>
+            Effect.succeed({
+              ref: branch_id_or_ref,
+              postgres_version: "15.1",
+              postgres_engine: "15",
+              release_channel: "ga",
+              status: "ACTIVE_HEALTHY",
+              db_host: "127.0.0.1",
+              db_port: 5432,
+              jwt_secret: "secret",
+            }),
+          projectTypes: "export type FromApi = {};",
+        });
+        yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+        expect(out.stdoutText).toBe("export type FromApi = {};");
+        expect(generator.calls).toHaveLength(0);
+        expect(stripAnsi(out.stderrText)).toContain(
+          fallbackWarning("Preview branch database credentials are unavailable"),
+        );
+        expect(apiTypeRequests(api)).toHaveLength(1);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("falls back instead of failing when --schema meets an unparseable config", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-ts-malformed-");
+        yield* writeConfig(workdir, 'project_id = "unterminated\n');
+        const { layer, api, out, generator } = yield* setup({
+          workdir,
+          skipConfig: true,
+          args: [...projectArgs, "--schema", "api"],
+          projectTypes: "export type FromApi = {};",
+        });
+        yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            schema: ["api"],
+          }),
+        ).pipe(Effect.provide(layer));
+
+        expect(out.stdoutText).toBe("export type FromApi = {};");
+        expect(generator.calls).toHaveLength(0);
+        expect(warningsOf(out)).toHaveLength(1);
+        expect(apiTypeRequests(api)).toEqual([
+          {
+            method: "generateTypescriptTypes",
+            input: { ref: VALID_REF, included_schemas: "api" },
+          },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("retries through the pooler for TypeScript without calling the API", () =>
+      Effect.gen(function* () {
+        const { layer, api, out, generator } = yield* setup({
+          args: projectArgs,
+          dbConfigResolve: directHost,
+          poolerFallback: Option.some({
+            host: "127.0.0.1",
+            port: 5432,
+            user: `postgres.${VALID_REF}`,
+            password: "pooler-password",
+            database: "postgres",
+          }),
+          generator: sequentialGenerator([
+            () => Effect.fail(ipv6Failure()),
+            () => Effect.succeed("export type ViaPooler = {};"),
+          ]),
+        });
+        yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+        expect(out.stdoutText).toBe("export type ViaPooler = {};");
+        expect(generator.calls).toHaveLength(2);
+        expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
+        expect(apiTypeRequests(api)).toEqual([]);
+        expect(stripAnsi(out.stderrText)).not.toContain("Management API");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("does not fall back when the pooler retry fails during introspection", () =>
       Effect.gen(function* () {
         const { layer, api, out } = yield* setup({
           args: projectArgs,
-          dbConfigResolve: () =>
-            Effect.fail(
-              new DbConfigLoginRoleStatusError({
-                status: 500,
-                body: "boom",
-                message: "unexpected login role status 500: boom",
-              }),
-            ),
+          dbConfigResolve: directHost,
+          poolerFallback: Option.some({
+            host: "127.0.0.1",
+            port: 5432,
+            user: `postgres.${VALID_REF}`,
+            password: "pooler-password",
+            database: "postgres",
+          }),
+          generator: sequentialGenerator([
+            () => Effect.fail(ipv6Failure()),
+            () => Effect.fail(nonIpv6Failure("typescript")),
+          ]),
         });
         const exit = yield* genTypes(projectFlags()).pipe(Effect.provide(layer), Effect.exit);
 
         expect(Exit.isFailure(exit)).toBe(true);
         expect(apiTypeRequests(api)).toEqual([]);
-        expect(warningsOf(out)).toEqual([]);
+        expect(stripAnsi(out.stderrText)).not.toContain("Management API");
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2433,6 +2571,48 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(apiTypeRequests(api)).toEqual([]);
         expect(generator.calls).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("does not fall back when the preview-branch lookup fails", () =>
+      Effect.gen(function* () {
+        const { layer, api, generator } = yield* setup({
+          args: projectArgs,
+          getProject: missingProject,
+          getABranchConfig: () => Effect.fail(statusApiError(500, `{"message":"boom"}`)),
+        });
+        const exit = yield* genTypes(projectFlags()).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(apiTypeRequests(api)).toEqual([]);
+        expect(generator.calls).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("fails without calling the API when another language hits a login-role 429", () =>
+      Effect.gen(function* () {
+        const { layer, api, out, generator } = yield* setup({
+          args: ["gen", "types", "--lang", "go", `--remote=${VALID_REF}`],
+          dbConfigResolve: () =>
+            Effect.fail(
+              new DbConfigLoginRoleStatusError({
+                status: 429,
+                body: "slow down",
+                message: "unexpected login role status 429: slow down",
+              }),
+            ),
+        });
+        const exit = yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(apiTypeRequests(api)).toEqual([]);
+        expect(generator.calls).toHaveLength(0);
+        expect(warningsOf(out)).toEqual([]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
 

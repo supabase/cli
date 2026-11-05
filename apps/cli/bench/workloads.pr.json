@@ -8,7 +8,8 @@
       "id": "gen-types",
       "args": ["gen", "types", "--lang", "typescript", "--project-id", "replayfixtureprojref"],
       "cwdSetup": "none",
-      "scenario": "gen-types-generates-typescript-types-from-project"
+      "scenario": "gen-types-generates-typescript-types-from-project",
+      "projectHost": "invalid"
     },
     {
       "id": "projects-list",

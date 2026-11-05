@@ -314,12 +314,12 @@ export const runLaunch = Effect.fn("BenchCli.runLaunch")(function* (params: {
 const PROFILE_FILE = "bench-profile.yaml";
 
 /** A profile naming `apiUrl` as the Management API; the profile is the CLI's only API redirect. */
-export function profileYaml(apiUrl: string): string {
+export function profileYaml(apiUrl: string, projectHost = "localhost"): string {
   return [
     "name: bench",
     `api_url: "${apiUrl}"`,
     `dashboard_url: "${apiUrl}"`,
-    "project_host: localhost",
+    `project_host: ${projectHost}`,
     "",
   ].join("\n");
 }
@@ -377,7 +377,7 @@ const prepareUnit = (options: BenchOptions, workload: Workload, binary: string) 
     const supabaseHome = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-bench-home-" });
     const profilePath = path.join(supabaseHome, PROFILE_FILE);
     if (options.apiUrl !== undefined) {
-      yield* fs.writeFileString(profilePath, profileYaml(options.apiUrl));
+      yield* fs.writeFileString(profilePath, profileYaml(options.apiUrl, workload.projectHost));
     }
     if (options.artifactCache !== undefined) {
       yield* fs.makeDirectory(options.artifactCache, { recursive: true });

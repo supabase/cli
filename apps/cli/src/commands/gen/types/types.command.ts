@@ -149,7 +149,7 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
               kind: "required",
               when: [{ flag: "lang", oneOf: ["typescript"] }],
               context:
-                "the database cannot be reached or accessed (connection refused, timeout, TLS or authentication failure, no usable pooler, or the login role refused)",
+                "direct generation failed before introspection started (config, connection, TLS, authentication, pooler or login-role failure); a generator or project-lookup failure does not fall back",
             },
             { operationId: "v1-get-project", kind: "required" },
             {

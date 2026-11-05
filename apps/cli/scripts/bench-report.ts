@@ -155,6 +155,8 @@ const Workload = Schema.Struct({
   args: CliArgs,
   cwdSetup: Schema.Literals(["none", "init"]),
   scenario: Schema.optionalKey(Schema.String),
+  /** The replay profile's `project_host`, `localhost` when absent. A workload whose direct database host must never be dialed sets an unresolvable one, such as `invalid`. */
+  projectHost: Schema.optionalKey(Schema.String),
   /** Untimed commands run with the build under test before the measured launches. */
   setup: Schema.optionalKey(Schema.Array(CliArgs)),
   /** Untimed commands that always run after the measured launches, even after a failure or timeout. */
