@@ -1,21 +1,34 @@
 import { StackError, type ServiceCreation, type Stack } from "@supabase/stack/effect";
-import { DateTime, Effect, Equal, Fiber, Option, Path, Schema, Stream, type Scope } from "effect";
+import {
+  DateTime,
+  Effect,
+  Equal,
+  Fiber,
+  FileSystem,
+  Option,
+  Path,
+  Schema,
+  Stream,
+  type Scope,
+} from "effect";
+import { inferFunctionsManifest, type CliConfig } from "@supabase/config/effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import { loadStackConfig, StackConfigError } from "../../../command-internal/stack-config.ts";
+import { FUNCTION_SLUG_PATTERN } from "../../../command-internal/config-validate.ts";
 import {
   LockResolutionError,
   readSelectionOrBundled,
 } from "../../../command-internal/stack-lock.ts";
 import {
-  readStackFunctionsEnv,
-  StackFunctionsEnvError,
-} from "../../../command-internal/stack-functions-env.ts";
+  FunctionsEnvError,
+  resolveFunctionsEnv,
+} from "../../../shared/functions/functions-config.ts";
 import { LocalDbRunningError } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { stackOpenReadyProject } from "../../../command-internal/stack-local-database.ts";
-import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { DebugFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsServeFlags } from "../../../shared/functions/serve.ts";
 import { logEvent, markerText } from "../../../command-internal/stack-log-events.ts";
@@ -32,7 +45,7 @@ const serveReason = (cause: { readonly message: string }): FunctionsServeStackEr
   if (Schema.is(StackError)(cause)) return "stack";
   if (Schema.is(LockResolutionError)(cause))
     return cause.reason === "io" ? "runtime" : "invalid-config";
-  if (cause instanceof StackFunctionsEnvError || cause instanceof StackConfigError)
+  if (cause instanceof FunctionsEnvError || cause instanceof StackConfigError)
     return "invalid-config";
   // The session only decodes the stack's saved credentials.
   if (cause instanceof Schema.SchemaError) return "state";
@@ -45,6 +58,37 @@ const runtimeError = (cause: { readonly message: string }) =>
     : new FunctionsServeStackError({ reason: serveReason(cause), message: cause.message, cause });
 const invalidConfig = (message: string) =>
   new FunctionsServeStackError({ reason: "invalid-config", message });
+
+/* The env file, or functions/.env, wins over secrets. Without an env file each enabled function
+   also gets its own .env, under its TOML env. */
+const serveEnv = Effect.fn("functions.serve.env")(function* (
+  workdir: string,
+  envFile: Option.Option<string>,
+  project: CliConfig,
+  base: Pick<FunctionsCreation["config"], "functionsRoot" | "functions" | "env">,
+) {
+  const manifest = Option.isSome(envFile)
+    ? {}
+    : yield* inferFunctionsManifest({ cwd: workdir, config: project, search: false });
+  const resolved = yield* resolveFunctionsEnv({
+    secrets: base.env ?? {},
+    functionsDir: base.functionsRoot,
+    envFile,
+    functionSlugs: Object.entries(manifest).flatMap(([slug, { enabled }]) =>
+      enabled && FUNCTION_SLUG_PATTERN.test(slug) ? [slug] : [],
+    ),
+    warn: true,
+  });
+  const functions = { ...base.functions };
+  for (const [slug, env] of Object.entries(resolved.functions))
+    functions[slug] = { ...functions[slug], env: { ...env, ...functions[slug]?.env } };
+  return {
+    env: resolved.shared,
+    ...(base.functions === undefined && Object.keys(resolved.functions).length === 0
+      ? {}
+      : { functions }),
+  };
+});
 
 const follow = Effect.fn("functions.serve.follow")(function* (
   instance: FunctionsInstance,
@@ -112,6 +156,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const runtime = yield* RuntimeInfo;
   const path = yield* Path.Path;
   const legacyOutput = yield* OutputFlag;
+  const debug = yield* DebugFlag;
   if (output.format === "json" || Option.isSome(legacyOutput))
     return yield* new FunctionsServeStackError({
       reason: "flags",
@@ -137,15 +182,25 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       suggestion: "Run supabase start first.",
     });
   const { stack, database } = opened.value;
+  /* The stack saved its paths under the real project root, so a symlinked workdir must resolve
+     to the same root. */
+  const workdir = yield* (yield* FileSystem.FileSystem).realPath(settings.workdir);
   const composition = yield* stack.composition.describe;
   const instances = yield* stack.services.list;
   const members = instances.filter(({ id }) =>
     composition.members.some((member) => member.id === id),
   );
   const existing = members.find((instance) => instance.service === "functions");
-  const envFileOverride = Option.isSome(flags.envFile)
-    ? yield* readStackFunctionsEnv(path.resolve(runtime.cwd, flags.envFile.value), false)
-    : undefined;
+  const envFile = Option.map(flags.envFile, (file) => path.resolve(runtime.cwd, file));
+  const config = yield* loadStackConfig(workdir, { selection: readSelectionOrBundled });
+  const creations = yield* config.creations(stack.id);
+  const source = creations.find(
+    (creation): creation is FunctionsCreation => creation.service === "functions",
+  );
+  if (source === undefined)
+    return yield* invalidConfig(
+      "Enable edge_runtime in supabase/config.toml before serving Functions.",
+    );
   const cleanupWarning = (message: string, error: { readonly message: string }) =>
     output
       .raw(`${message}: ${error.message}\n`, "stderr")
@@ -156,10 +211,18 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     if (before.config.service !== "functions")
       return yield* invalidConfig("Invalid saved Functions configuration.");
     const saved = before.config.config;
+    /* Fresh TOML functions replace saved ones, so a serve that never restored cannot leave stale
+       per-function env behind. Debug follows this command's own flag, not the one `start` saved. */
+    const { functions: _savedFunctions, debug: _savedDebug, ...savedSettings } = saved;
     const desired = {
-      ...saved,
-      ...(envFileOverride === undefined ? {} : { env: { ...saved.env, ...envFileOverride } }),
+      ...savedSettings,
+      ...(yield* serveEnv(workdir, envFile, config.source, {
+        functionsRoot: saved.functionsRoot,
+        env: source.config.env,
+        functions: source.config.functions,
+      })),
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
+      ...(debug ? { debug: true } : {}),
     };
     const changed = !Equal.equals(saved, desired);
     yield* Effect.annotateCurrentSpan({
@@ -210,7 +273,6 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     return yield* invalidConfig("Invalid saved database configuration.");
   const identity = yield* stack.credentials.get;
   if (identity === undefined) return yield* invalidConfig("The stack has no saved credentials.");
-  const config = yield* loadStackConfig(settings.workdir, { selection: readSelectionOrBundled });
   yield* Effect.annotateCurrentSpan("functions.instance", "temporary");
   const refreshedJwks = yield* config.remoteJwks.pipe(
     Effect.catch((cause) =>
@@ -228,19 +290,14 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const remoteKeys =
     refreshedJwks === undefined ? [] : yield* Schema.decodeEffect(JwkArray)(refreshedJwks);
   const jwks = yield* Schema.encodeEffect(JwksDocument)({ keys: [...remoteKeys, ...localKeys] });
-  const creations = yield* config.creations(stack.id);
-  const source = creations.find(
-    (creation): creation is FunctionsCreation => creation.service === "functions",
-  );
-  if (source === undefined)
-    return yield* invalidConfig(
-      "Enable edge_runtime in supabase/config.toml before serving Functions.",
-    );
   const databaseUrl = (yield* database.credentials({ from: "runtime" })).databaseUrl;
   if (databaseUrl === undefined) return yield* invalidConfig("The database has no runtime URL.");
   const apiSource = [...members, ...instances].find(
     (instance) =>
-      instance.service === "rest" || instance.service === "auth" || instance.service === "storage",
+      instance.service === "rest" ||
+      instance.service === "auth" ||
+      instance.service === "storage" ||
+      instance.service === "realtime",
   );
   const apiStatus = apiSource === undefined ? undefined : yield* apiSource.status;
   const savedPort = apiStatus?.endpoints.find(({ name }) => name === "http")?.port;
@@ -254,8 +311,6 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ? `http://${databaseAddress.hostname}:${port}`
       : (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
-  const env =
-    envFileOverride ?? (yield* readStackFunctionsEnv(`${source.config.functionsRoot}/.env`, true));
   const { jwtSecret: _jwtSecret, ...sourceConfig } = source.config;
   const creation: FunctionsCreation = {
     ...source,
@@ -264,8 +319,9 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       jwks,
       apiUrl,
       databaseUrl,
-      env: { ...env, ...source.config.env, ...envFileOverride },
+      ...(yield* serveEnv(workdir, envFile, config.source, source.config)),
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
+      ...(debug ? { debug: true } : {}),
     },
     endpoints: { ...source.endpoints, http: { port } },
   };

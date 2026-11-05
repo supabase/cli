@@ -26,7 +26,7 @@ import { mockOutput, mockTty } from "../../tests/helpers/mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { stdinLayer } from "../shared/runtime/stdin.layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
-import { ExperimentalFlag, YesFlag } from "./global-flags.ts";
+import { DebugFlag, ExperimentalFlag, YesFlag } from "./global-flags.ts";
 import { stackStart } from "../commands/experimental/stack/start/start.handler.ts";
 import { destroyTestStacks } from "../../tests/helpers/stack-cleanup.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
@@ -93,6 +93,7 @@ const makeLayers = (root: string) => {
     stackCatalogSetupLayer,
     dbConnectionLayer,
     Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(DebugFlag, false),
     Layer.succeed(YesFlag, false),
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),

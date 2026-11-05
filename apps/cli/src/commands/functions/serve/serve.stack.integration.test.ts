@@ -24,7 +24,7 @@ import {
   type Stack,
 } from "@supabase/stack/effect";
 import { StackApi } from "../../../command-internal/stack-api.ts";
-import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { DebugFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
@@ -51,6 +51,10 @@ type DatabaseInstance = Extract<
 type FunctionsInstance = Extract<
   Effect.Success<ReturnType<Stack["services"]["get"]>>,
   { service: "functions" }
+>;
+type RealtimeInstance = Extract<
+  Effect.Success<ReturnType<Stack["services"]["get"]>>,
+  { service: "realtime" }
 >;
 
 const functionsConfig = (): Extract<ServiceCreation, { service: "functions" }>["config"] => ({
@@ -117,8 +121,12 @@ const flags = (overrides: Partial<Parameters<typeof functionsServeStack>[0]> = {
 
 const fixture = (
   options: {
+    readonly debug?: boolean;
     readonly failRestartOn?: number;
+    readonly projectRoot?: string;
     readonly standaloneProjectRoot?: string;
+    readonly realtimeApiPort?: number;
+    readonly savedFunctions?: Partial<ReturnType<typeof functionsConfig>>;
     readonly savedGotrueJwtKeys?: string;
     readonly savedJwks?: string;
     readonly savedRemoteJwks?: string;
@@ -145,7 +153,18 @@ const fixture = (
       resetIdentity: Effect.void,
       clearDistinctId: Effect.void,
     });
-    let currentFunctions = functionsConfig();
+    let currentFunctions = { ...functionsConfig(), ...options.savedFunctions };
+    const projectRoot =
+      options.standaloneProjectRoot ??
+      options.projectRoot ??
+      (yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) =>
+          fs
+            .makeTempDirectoryScoped({ prefix: "functions-serve-project-" })
+            .pipe(Effect.flatMap((root) => fs.realPath(root))),
+        ),
+        Effect.provide(BunServices.layer),
+      ));
     let restartCount = 0;
     let destroyed = false;
     const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
@@ -215,6 +234,41 @@ const fixture = (
       followStatus: Stream.never,
       readLogs: () => Stream.never,
     };
+    const realtimeApiPort = options.realtimeApiPort;
+    const realtime: ReadonlyArray<RealtimeInstance> =
+      realtimeApiPort === undefined
+        ? []
+        : [
+            {
+              id: "realtime",
+              service: "realtime",
+              status: Effect.succeed(
+                observation(
+                  "realtime",
+                  {
+                    service: "realtime",
+                    pin: selection.realtime,
+                    config: {},
+                    endpoints: { http: { port: "auto" } },
+                  },
+                  {
+                    endpoints: [
+                      { name: "http", protocol: "http", host: "127.0.0.1", port: realtimeApiPort },
+                    ],
+                  },
+                ),
+              ),
+              credentials: () => Effect.succeed({ apiUrl: `http://127.0.0.1:${realtimeApiPort}` }),
+              start: Effect.void,
+              ready: Effect.void,
+              stop: Effect.void,
+              restart: () => Effect.void,
+              destroy: Effect.void,
+              prepare: Effect.void,
+              followStatus: Stream.never,
+              readLogs: () => Stream.never,
+            },
+          ];
     const functions: FunctionsInstance = {
       id: "functions",
       service: "functions" as const,
@@ -258,7 +312,9 @@ const fixture = (
       id: "a".repeat(64),
       services: {
         list: Effect.succeed(
-          options.standaloneProjectRoot === undefined ? [database, functions] : [database],
+          options.standaloneProjectRoot === undefined
+            ? [database, functions, ...realtime]
+            : [database, ...realtime],
         ),
         get: (id: string) => Effect.succeed(id === "database" ? database : functions),
         create: <Input extends ServiceCreationInput>(
@@ -326,16 +382,14 @@ const fixture = (
       BunCrypto.layer,
       recorder.layer,
       api,
-      mockCommandSettings({
-        workdir: options.standaloneProjectRoot ?? "/project",
-        supabaseHome: "/home",
-      }),
-      mockRuntimeInfo({ cwd: options.standaloneProjectRoot ?? "/project", homeDir: "/home" }),
+      mockCommandSettings({ workdir: projectRoot, supabaseHome: "/home" }),
+      mockRuntimeInfo({ cwd: projectRoot, homeDir: "/home" }),
       output.layer,
       signalControl.layer,
       telemetry,
       stackBackendLayer("stack"),
       Layer.succeed(OutputFlag, Option.none()),
+      Layer.succeed(DebugFlag, options.debug ?? false),
     );
     return {
       layer,
@@ -461,6 +515,94 @@ describe("experimental Stack Functions serve", () => {
         yield* Deferred.succeed(state.signal, undefined);
         yield* Fiber.join(run);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("creates standalone Functions with secrets and each function's own .env", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-own-env-standalone-" });
+      for (const slug of ["echo", "_shared"]) {
+        yield* fs.makeDirectory(`${root}/supabase/functions/${slug}`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/functions/${slug}/index.ts`, "");
+      }
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-own-env"\n[edge_runtime.secrets]\nlower_name = "secret"\nSHARED = "secret"\nSUPABASE_TOML = "x"\nUNSET_NAME = "env(FUNCTIONS_SERVE_STACK_UNSET_SECRET)"\n',
+      );
+      yield* fs.writeFileString(`${root}/supabase/functions/.env`, "SHARED=dotenv\n");
+      yield* fs.writeFileString(`${root}/supabase/functions/echo/.env`, "PER_FN=echo\n");
+      yield* fs.writeFileString(`${root}/supabase/functions/_shared/.env`, "BARREL=never-read\n");
+      const state = yield* fixture({ standaloneProjectRoot: root });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+      expect(state.createdFunctions?.config.env).toEqual({
+        LOWER_NAME: "secret",
+        SHARED: "dotenv",
+      });
+      expect(state.createdFunctions?.config.functions?.echo?.env).toEqual({ PER_FN: "echo" });
+      expect(state.createdFunctions?.config.functions?._shared?.env).toBeUndefined();
+      expect(state.output.stderrText).toContain(
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_TOML\n",
+      );
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("creates standalone Functions with the explicit env file in place of .env files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-file-standalone-" });
+      yield* fs.makeDirectory(`${root}/supabase/functions/echo`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/functions/echo/index.ts`, "");
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-env-file"\n[edge_runtime.secrets]\nSHARED = "secret"\nSECRET_ONLY = "secret"\n',
+      );
+      yield* fs.writeFileString(`${root}/supabase/functions/.env`, "DOTENV_ONLY=dotenv\n");
+      yield* fs.writeFileString(`${root}/supabase/functions/echo/.env`, "PER_FN=echo\n");
+      const file = `${root}/override.env`;
+      yield* fs.writeFileString(file, 'SHARED=override\nMULTI="first\nsecond"\n');
+      const state = yield* fixture({ standaloneProjectRoot: root });
+      const run = yield* functionsServeStack(flags({ envFile: Option.some(file) })).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+      expect(state.createdFunctions?.config.env).toEqual({
+        SHARED: "override",
+        SECRET_ONLY: "secret",
+        MULTI: "first\nsecond",
+      });
+      expect(state.createdFunctions?.config.functions?.echo?.env).toBeUndefined();
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("serves standalone Functions on the API port a running Realtime holds", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-realtime-api-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-realtime-api"\n\n[edge_runtime]\nenabled = true\n',
+      );
+      const state = yield* fixture({ standaloneProjectRoot: root, realtimeApiPort: 23848 });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+      expect(state.createdFunctions?.endpoints?.http?.port).toBe(23848);
+      expect(state.createdFunctions?.config.apiUrl).toBe("http://127.0.0.1:23848");
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("refreshes remote JWKS before creating standalone Functions", () =>
@@ -643,13 +785,180 @@ describe("experimental Stack Functions serve", () => {
     }),
   );
 
-  it.live("merges an explicit env file with saved secrets and restores them on SIGINT", () =>
+  it.live("re-reads the project env files for composed Functions and restores on SIGINT", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-files-" });
+      const functionsRoot = `${root}/supabase/functions`;
+      for (const slug of ["echo", "off"]) {
+        yield* fs.makeDirectory(`${functionsRoot}/${slug}`, { recursive: true });
+        yield* fs.writeFileString(`${functionsRoot}/${slug}/index.ts`, "");
+      }
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-env-files"\n[edge_runtime.secrets]\nSHARED = "secret"\nSECRET_ONLY = "secret"\n[functions.echo.env]\nTOML_WINS = "env(FUNCTIONS_SERVE_STACK_TOML_WINS)"\n[functions.off]\nenabled = false\n',
+      );
+      yield* fs.writeFileString(`${root}/.env`, "FUNCTIONS_SERVE_STACK_TOML_WINS=toml\n");
+      yield* fs.writeFileString(`${functionsRoot}/.env`, "SHARED=edited\nSUPABASE_SKIP=x\n");
+      yield* fs.writeFileString(`${functionsRoot}/echo/.env`, "PER_FN=echo\nTOML_WINS=dotenv\n");
+      yield* fs.writeFileString(`${functionsRoot}/off/.env`, "INVALID-KEY=never-read\n");
+      const saved = { functionsRoot };
+      const state = yield* fixture({ projectRoot: root, savedFunctions: saved });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.env).toEqual({ SHARED: "edited", SECRET_ONLY: "secret" });
+      expect(state.currentFunctions.functions?.echo?.env).toEqual({
+        PER_FN: "echo",
+        TOML_WINS: "toml",
+      });
+      expect(state.currentFunctions.functions?.off?.env).toEqual({});
+      expect(state.output.stderrText).toContain(
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_SKIP\n",
+      );
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.currentFunctions).toEqual({ ...functionsConfig(), ...saved });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("serves composed Functions from the stack's real project root through a symlink", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "functions-real-root-" }),
+      );
+      const links = yield* fs.makeTempDirectoryScoped({ prefix: "functions-root-link-" });
+      const alias = `${links}/project`;
+      yield* fs.symlink(root, alias);
+      const functionsRoot = `${root}/supabase/functions`;
+      const entrypoint = `${functionsRoot}/echo/index.ts`;
+      yield* fs.makeDirectory(`${functionsRoot}/echo`, { recursive: true });
+      yield* fs.writeFileString(entrypoint, "");
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-root-link"\n[functions.echo]\nentrypoint = "./functions/echo/index.ts"\n',
+      );
+      const saved = { functionsRoot, functions: { echo: { entrypoint } } };
+      const state = yield* fixture({ projectRoot: alias, savedFunctions: saved });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.functions?.echo?.entrypoint).toBe(entrypoint);
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("keeps composed Functions running when the project env files are unchanged", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-same-" });
+      const functionsRoot = `${root}/supabase/functions`;
+      yield* fs.makeDirectory(`${functionsRoot}/echo`, { recursive: true });
+      yield* fs.writeFileString(`${functionsRoot}/echo/index.ts`, "");
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-env-same"\n[edge_runtime.secrets]\nSHARED = "secret"\n',
+      );
+      yield* fs.writeFileString(`${functionsRoot}/.env`, "DOTENV=x\n");
+      yield* fs.writeFileString(`${functionsRoot}/echo/.env`, "PER_FN=echo\n");
+      const saved = {
+        functionsRoot,
+        env: { SHARED: "secret", DOTENV: "x" },
+        functions: { echo: { env: { PER_FN: "echo" } } },
+      };
+      const state = yield* fixture({ projectRoot: root, savedFunctions: saved });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.restartCount).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("replaces stale per-function env a previous serve left on composed Functions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-stale-" });
+      const functionsRoot = `${root}/supabase/functions`;
+      for (const slug of ["echo", "gone"]) {
+        yield* fs.makeDirectory(`${functionsRoot}/${slug}`, { recursive: true });
+        yield* fs.writeFileString(`${functionsRoot}/${slug}/index.ts`, "");
+      }
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-env-stale"\n[edge_runtime.secrets]\nSHARED = "secret"\n',
+      );
+      yield* fs.writeFileString(`${functionsRoot}/echo/.env`, "PER_FN=fresh\n");
+      const saved = {
+        functionsRoot,
+        env: { SHARED: "secret" },
+        functions: { echo: { env: { PER_FN: "stale" } }, gone: { env: { OLD: "deleted" } } },
+      };
+      const state = yield* fixture({ projectRoot: root, savedFunctions: saved });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.functions).toEqual({ echo: { env: { PER_FN: "fresh" } } });
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.currentFunctions).toEqual({ ...functionsConfig(), ...saved });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("rejects serving composed Functions once edge_runtime is disabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-disabled-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-disabled"\n[edge_runtime]\nenabled = false\n',
+      );
+      const state = yield* fixture({ projectRoot: root });
+      const exit = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure))
+          expect(failure.value.message).toBe(
+            "Enable edge_runtime in supabase/config.toml before serving Functions.",
+          );
+      }
+      expect(state.restartCount).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("replaces the project env files with an explicit env file and restores on SIGINT", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-merge-" });
+      const functionsRoot = `${root}/supabase/functions`;
+      yield* fs.makeDirectory(`${functionsRoot}/echo`, { recursive: true });
+      yield* fs.writeFileString(`${functionsRoot}/echo/index.ts`, "");
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-env-merge"\n[edge_runtime.secrets]\nSHARED = "secret"\nSECRET_ONLY = "secret"\n',
+      );
+      yield* fs.writeFileString(`${functionsRoot}/.env`, "DOTENV_ONLY=dotenv\n");
+      yield* fs.writeFileString(`${functionsRoot}/echo/.env`, "PER_FN=echo\n");
       const file = `${root}/override.env`;
       yield* fs.writeFileString(file, "SHARED=override\nADDED=new\n");
-      const state = yield* fixture();
+      const state = yield* fixture({ projectRoot: root, savedFunctions: { functionsRoot } });
       const run = yield* functionsServeStack(flags({ envFile: Option.some(file) })).pipe(
         Effect.provide(state.layer),
         Effect.forkChild,
@@ -657,13 +966,44 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.await(state.started);
       expect(state.currentFunctions.env).toEqual({
         SHARED: "override",
-        RETAINED: "retained",
+        SECRET_ONLY: "secret",
         ADDED: "new",
       });
+      expect(state.currentFunctions.functions).toEqual({});
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-      expect(state.currentFunctions.env).toEqual(functionsConfig().env);
+      expect(state.currentFunctions).toEqual({ ...functionsConfig(), functionsRoot });
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("runs composed Functions in debug mode for --debug and restores it on SIGINT", () =>
+    Effect.gen(function* () {
+      const state = yield* fixture({ debug: true });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.debug).toBe(true);
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.currentFunctions).toEqual(functionsConfig());
+    }),
+  );
+
+  it.live("serves quietly without --debug on a debug-started stack and restores it on SIGINT", () =>
+    Effect.gen(function* () {
+      const state = yield* fixture({ savedFunctions: { debug: true } });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.debug).toBeUndefined();
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.currentFunctions).toEqual({ ...functionsConfig(), debug: true });
+    }),
   );
 
   it.live("rejects unsupported flags before reading or mutating the stack", () =>
@@ -721,36 +1061,43 @@ describe("experimental Stack Functions serve", () => {
       ).toBe(true);
     }),
   );
-  it.live("rejects multiline environment values before restarting Functions", () =>
+  it.live("passes multiline values and legacy names from an env file to Functions", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-" });
       const file = `${root}/override.env`;
-      yield* fs.writeFileString(file, 'CUSTOM_VALUE="first\nsecond"\n');
+      yield* fs.writeFileString(file, 'CUSTOM_VALUE="first\nsecond"\nLEGACY.NAME=value\n');
+      const state = yield* fixture();
+      const run = yield* functionsServeStack(flags({ envFile: Option.some(file) })).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(state.started);
+      expect(state.currentFunctions.env).toEqual({
+        CUSTOM_VALUE: "first\nsecond",
+        "LEGACY.NAME": "value",
+      });
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+      expect(state.currentFunctions).toEqual(functionsConfig());
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("rejects a malformed env file before restarting Functions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-key-" });
+      const file = `${root}/override.env`;
+      yield* fs.writeFileString(file, "API-KEY=secret-value\n");
       const state = yield* fixture();
       const error = yield* functionsServeStack(flags({ envFile: Option.some(file) })).pipe(
         Effect.provide(state.layer),
         Effect.flip,
       );
       expect(error.reason).toBe("invalid-config");
-      expect(error.message).toContain("Multiline");
-      expect(state.currentFunctions).toEqual(functionsConfig());
-      expect(state.restartCount).toBe(0);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
-  );
-
-  it.live("rejects an invalid environment key before restarting Functions", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-env-key-" });
-      const file = `${root}/override.env`;
-      yield* fs.writeFileString(file, "INVALID.KEY=value\n");
-      const state = yield* fixture();
-      const error = yield* functionsServeStack(flags({ envFile: Option.some(file) })).pipe(
-        Effect.provide(state.layer),
-        Effect.flip,
+      expect(error.message).toBe(
+        `failed to parse environment file: ${file} (unexpected character '-' in variable name)`,
       );
-      expect(error.message).toContain("Environment names");
       expect(state.currentFunctions).toEqual(functionsConfig());
       expect(state.restartCount).toBe(0);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
