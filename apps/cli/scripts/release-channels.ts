@@ -1,3 +1,5 @@
+import { semver } from "bun";
+
 const MAINTENANCE_TAG = /^v[1-9]\d*\.stable$/;
 const PUBLISHABLE_TAGS = new Set(["latest", "alpha", "beta", "next"]);
 
@@ -37,4 +39,32 @@ export function channelForTag(tag: string): "beta" | "next" | "alpha" | "latest"
   if (tag.includes("-next.")) return "next";
   if (tag.includes("-alpha.")) return "alpha";
   return "latest";
+}
+
+/** Whether `tag` is a CLI release tag in `channel`'s history: stable tags always, prereleases only on their own channel. */
+export function isInChannelHistory(
+  tag: string,
+  channel: ReturnType<typeof channelForTag>,
+): boolean {
+  return /^v\d/.test(tag) && (!tag.includes("-") || channelForTag(tag) === channel);
+}
+
+function versionBase(version: string): readonly [number, number, number] | undefined {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
+}
+
+/** The smallest release type that takes `lastVersion` to `version`, or null unless `version` is later by SemVer precedence. */
+export function releaseTypeBetween(
+  lastVersion: string | undefined,
+  version: string,
+): "major" | "minor" | "patch" | null {
+  if (lastVersion === undefined || semver.order(version, lastVersion) !== 1) return null;
+  const last = versionBase(lastVersion);
+  const next = versionBase(version);
+  if (!last || !next) return null;
+
+  if (next[0] !== last[0]) return "major";
+  if (next[1] !== last[1]) return "minor";
+  return "patch";
 }

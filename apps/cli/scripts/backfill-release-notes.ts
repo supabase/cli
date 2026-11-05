@@ -24,8 +24,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import semanticRelease from "semantic-release";
-import { channelForTag, releaseBranchForTag } from "./release-channels.ts";
+import semanticRelease, { type AnalyzeCommitsContext } from "semantic-release";
+import {
+  channelForTag,
+  isInChannelHistory,
+  releaseBranchForTag,
+  releaseTypeBetween,
+} from "./release-channels.ts";
 
 const { values } = parseArgs({
   options: {
@@ -103,7 +108,7 @@ try {
   console.error(`==> Cloning ${repoRoot} -> ${clone}`);
   await $`git clone --quiet --no-local ${repoRoot} ${clone}`;
 
-  // `git notes add` (used below to seed channel notes) requires a committer
+  // `git notes add` (used below to rebuild channel notes) requires a committer
   // identity, which CI runners don't ship in ~/.gitconfig.
   await $`git -C ${clone} config --local user.email backfill-release-notes@supabase.local`;
   await $`git -C ${clone} config --local user.name backfill-release-notes`;
@@ -114,15 +119,6 @@ try {
 
   const originUrl = (await $`git -C ${repoRoot} remote get-url origin`.text()).trim();
 
-  // Notes refs aren't fetched by `git clone`. Pull from the source repo first
-  // (network-free), then from origin so even tags whose notes haven't been
-  // sync'd locally yet are available.
-  await $`git -C ${clone} fetch --no-tags --quiet ${repoRoot} +refs/notes/*:refs/notes/*`
-    .nothrow()
-    .quiet();
-  await $`git -C ${clone} fetch --no-tags --quiet ${originUrl} +refs/notes/*:refs/notes/*`
-    .nothrow()
-    .quiet();
   // One fetch per branch: git aborts a multi-ref fetch when any named ref is missing, and `next`
   // may not exist. The `v*.x` glob matches zero or more branches without failing.
   for (const branchSpec of ["main", "develop", "next", "v*.x"]) {
@@ -161,6 +157,13 @@ try {
   for (const ct of coincidentTags) {
     await $`git -C ${clone} tag -d ${ct}`.quiet().nothrow();
   }
+  const targetChannel = channelForTag(tag);
+  const tagsOutsideChannel = (await $`git -C ${clone} tag --list`.text())
+    .split("\n")
+    .filter((t) => t && !isInChannelHistory(t, targetChannel));
+  if (tagsOutsideChannel.length > 0) {
+    await $`git -C ${clone} tag -d ${tagsOutsideChannel}`.quiet();
+  }
   await $`git -C ${clone} checkout -B ${branch} ${sha} --quiet`;
 
   // The clone only carries refs/heads/$BRANCH locally; seed the other
@@ -176,20 +179,32 @@ try {
     }
   }
 
-  // semantic-release's notes reader returns channels=[null] for any tag
-  // missing an annotation, and the prerelease filter drops those tags
-  // entirely — walking lastRelease back far enough to drag unrelated commits
-  // into the changelog. Seed a channel note for every reachable tag that
-  // lacks one, inferring the channel from the tag name.
+  // semantic-release reads one channel note per commit (semantic-release/semantic-release#4073),
+  // so the clone keeps only this channel's prereleases and rebuilds one note per tagged
+  // commit from tag names.
   const mergedTagsOut = await $`git -C ${clone} tag --merged HEAD --sort=v:refname`.text();
   const mergedTags = mergedTagsOut.split("\n").filter((t) => t && t !== tag);
-  for (const prevTag of mergedTags) {
-    const noteCheck = await $`git -C ${clone} notes --ref semantic-release show ${prevTag}`
-      .nothrow()
-      .quiet();
-    if (noteCheck.exitCode === 0) continue;
-    const payload = JSON.stringify({ channels: [channelForTag(prevTag)] });
-    await $`git -C ${clone} notes --ref semantic-release add -f -m ${payload} ${prevTag}^{commit}`.quiet();
+  const taggedCommits = (
+    await $`git -C ${clone} rev-parse ${mergedTags.map((t) => `refs/tags/${t}^{commit}`)}`.text()
+  )
+    .split("\n")
+    .filter(Boolean);
+  if (taggedCommits.length !== mergedTags.length) {
+    console.error(
+      `Resolved ${taggedCommits.length} commits for ${mergedTags.length} tags merged into ${tag}`,
+    );
+    process.exit(1);
+  }
+  const channelByCommit = new Map<string, ReturnType<typeof channelForTag>>();
+  for (const [i, prevTag] of mergedTags.entries()) {
+    const commit = taggedCommits[i]!;
+    if (prevTag.includes("-") || !channelByCommit.has(commit)) {
+      channelByCommit.set(commit, channelForTag(prevTag));
+    }
+  }
+  for (const [commit, channel] of channelByCommit) {
+    const payload = JSON.stringify({ channels: [channel] });
+    await $`git -C ${clone} notes --ref semantic-release add -f -m ${payload} ${commit}`.quiet();
   }
 
   // Apply the current release config to the historical checkout, so the notes
@@ -226,8 +241,21 @@ try {
     delete childEnv[key];
   }
 
+  const expected = tag.replace(/^v/, "");
+  // A dispatch `version` can force a release its commits do not imply (e.g. only `ci:` commits).
+  const releaseFloor = {
+    analyzeCommits: (_config: unknown, context: AnalyzeCommitsContext) =>
+      releaseTypeBetween(context.lastRelease.version, expected),
+  };
+  const configuredPlugins = Array.isArray(rootPkg.release?.plugins) ? rootPkg.release.plugins : [];
+
   const result = await semanticRelease(
-    { dryRun: true, noCi: true, repositoryUrl: repoUrl },
+    {
+      dryRun: true,
+      noCi: true,
+      repositoryUrl: repoUrl,
+      plugins: [...configuredPlugins, releaseFloor],
+    },
     {
       cwd: path.join(clone, "apps/cli"),
       env: childEnv,
@@ -241,7 +269,6 @@ try {
     process.exit(1);
   }
 
-  const expected = tag.replace(/^v/, "");
   if (result.nextRelease.version !== expected) {
     console.error(
       `semantic-release computed v${result.nextRelease.version} but expected ${tag}; ` +
