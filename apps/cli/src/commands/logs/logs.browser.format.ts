@@ -24,6 +24,7 @@ export interface BrowserState {
   readonly dropped: number;
   readonly complete: boolean;
   readonly notice: string;
+  readonly error: { readonly message: string; readonly scroll: number } | undefined;
 }
 
 export const initialBrowserState: BrowserState = {
@@ -39,6 +40,7 @@ export const initialBrowserState: BrowserState = {
   dropped: 0,
   complete: false,
   notice: "",
+  error: undefined,
 };
 
 export function resizeBrowser(state: BrowserState, height: number): BrowserState {
@@ -230,6 +232,21 @@ export function browserKey(
   height: number,
 ): BrowserState {
   state = resizeBrowser(state, height);
+  if (state.error !== undefined) {
+    if (key === "escape") return { ...state, error: undefined };
+    const delta = key === "up" ? -1 : key === "down" ? 1 : 0;
+    const lines = wrapLogsText(state.error.message, width).split("\n");
+    return {
+      ...state,
+      error: {
+        ...state.error,
+        scroll: Math.max(
+          0,
+          Math.min(Math.max(0, lines.length - state.visibleRows), state.error.scroll + delta),
+        ),
+      },
+    };
+  }
   if (key === "escape") return { ...state, detail: undefined, scroll: 0 };
   if ((key === "return" || key === "enter") && state.detail === undefined)
     return { ...state, detail: state.rows[state.selected], scroll: 0 };
@@ -270,9 +287,17 @@ export function renderBrowser(
   const height = Math.max(1, Math.floor(rows));
   const bodyHeight = Math.max(0, height - browserReservedRows);
   let body: ReadonlyArray<string>;
-  if (state.detail !== undefined) {
-    const lines = browserDetailLines(state.detail, width);
-    const scroll = Math.min(state.scroll, Math.max(0, lines.length - bodyHeight));
+  if (state.error !== undefined || state.detail !== undefined) {
+    const lines =
+      state.error !== undefined
+        ? wrapLogsText(state.error.message, width).split("\n")
+        : state.detail === undefined
+          ? []
+          : browserDetailLines(state.detail, width);
+    const scroll = Math.min(
+      state.error?.scroll ?? state.scroll,
+      Math.max(0, lines.length - bodyHeight),
+    );
     body = lines.slice(scroll, scroll + bodyHeight);
   } else {
     const start = state.viewport;
@@ -288,16 +313,23 @@ export function renderBrowser(
       body = [state.complete ? "No log rows." : "Waiting for logs…"];
   }
   const heading =
-    state.detail === undefined
-      ? `Logs | ${state.rows.length} retained${state.dropped > 0 ? ` | ${state.dropped} older rows discarded` : ""}${state.sizes.some((size) => size > 8 * 1024 * 1024) ? " | oversized record" : ""}${state.complete ? " | ready" : " | loading"}`
-      : "Log details";
+    state.error !== undefined
+      ? "Load failed"
+      : state.detail === undefined
+        ? `Logs | ${state.rows.length} retained${state.dropped > 0 ? ` | ${state.dropped} older rows discarded` : ""}${state.sizes.some((size) => size > 8 * 1024 * 1024) ? " | oversized record" : ""}${state.complete ? " | ready" : " | loading"}`
+        : "Log details";
   const keys =
-    state.detail === undefined
-      ? `↑/↓ select · Enter details · ${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`
-      : `↑/↓ scroll · Esc back · ${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`;
+    state.error !== undefined
+      ? "↑/↓ scroll · Esc back · L retry · q quit"
+      : state.detail === undefined
+        ? `↑/↓ select · Enter details · ${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`
+        : `↑/↓ scroll · Esc back · ${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`;
   const lines = [heading, requestedWindow(state.window), ...body];
   while (lines.length < height - 1) lines.push("");
-  const compact = `${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`;
+  const compact =
+    state.error !== undefined
+      ? "Esc back · L retry · q quit"
+      : `${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`;
   const fullNotice = clip(state.notice, width);
   const help = stringWidth(fullNotice) + 3 + stringWidth(keys) <= width ? keys : compact;
   const notice = clip(state.notice, Math.max(0, width - stringWidth(help) - 3));
@@ -310,7 +342,8 @@ export function renderBrowser(
       const row =
         index >= browserHeaderRows &&
         index < body.length + browserHeaderRows &&
-        state.detail === undefined
+        state.detail === undefined &&
+        state.error === undefined
           ? state.rows[rowIndex]
           : undefined;
       if (row === undefined) return plain;

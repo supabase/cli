@@ -150,8 +150,10 @@ it.effect(
       yield* Queue.offer(ui.input, key("L"));
       const failed = yield* ui.frame("recoverable failure");
       expect(failed).not.toContain("must not publish");
-      expect(failed.split("\r\n").at(-1)).toContain("L rerun");
-      expect(failed).toContain("replacement");
+      expect(failed.split("\r\n").at(-1)).toContain("L retry");
+      expect(failed).toContain("Load failed");
+      yield* Queue.offer(ui.input, key("escape"));
+      expect(yield* Queue.take(ui.frames)).toContain("> — — replacement");
       yield* Queue.offer(ui.input, key("L"));
       expect(yield* ui.frame("Query reloaded.")).toContain("retried");
       yield* Queue.offer(ui.input, key("q"));
@@ -213,5 +215,100 @@ it.effect("restores the terminal even if entering the alternate screen fails", (
     );
     expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain("partial display failure");
     expect(writes).toEqual(["\u001b[?1049h\u001b[?25l", "\u001b[?25h\u001b[?1049l"]);
+  }),
+);
+
+for (const columns of [80, 120])
+  it.effect(`shows complete errors at ${columns} columns and restores pinned details`, () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const message = `query failed: \u001b[31m${"invalid SQL reason ".repeat(180)}\u001b[0m\nunique-error-end`;
+      const ui = yield* setup({
+        mode: "replace",
+        load: (_end, emit) =>
+          Effect.gen(function* () {
+            calls++;
+            if (calls === 2) return yield* new LogsInputError({ message });
+            if (calls === 3) return yield* new LogsInputError({ message: "retry failure changed" });
+            yield* emit({ id: "a", message: "first" });
+            yield* emit({
+              id: "b",
+              message: Array.from({ length: 30 }, (_, index) => `detail-line-${index}`).join("\n"),
+            });
+            return window;
+          }),
+      });
+      yield* ui.frame(" | ready");
+      ui.resize(columns, 12);
+      yield* ui.frame(" | ready");
+      yield* Queue.offer(ui.input, key("down"));
+      const selected = yield* ui.frame("> — — detail-line-0");
+      yield* Queue.offer(ui.input, key("return"));
+      yield* ui.frame("Log details");
+      let details = "";
+      for (let index = 0; index < 4; index++) {
+        yield* Queue.offer(ui.input, key("down"));
+        details = yield* ui.frame("Log details");
+      }
+      yield* Queue.offer(ui.input, key("L"));
+      yield* ui.frame("Rerunning query");
+      const failed = yield* Queue.take(ui.frames);
+      expect(failed).toContain("Load failed");
+      expect(failed).toContain("query failed:");
+      expect(failed).not.toContain("\u001b[31m");
+      expect(failed).not.toContain("unique-error-end");
+      let last = failed;
+      for (let index = 0; index < 80 && !last.includes("unique-error-end"); index++) {
+        yield* Queue.offer(ui.input, key("down"));
+        last = yield* Queue.take(ui.frames);
+      }
+      expect(last).toContain("unique-error-end");
+      yield* Queue.offer(ui.input, key("c"));
+      expect(yield* Queue.take(ui.frames)).toContain("Load failed");
+      yield* Queue.offer(ui.input, key("escape"));
+      const restored = yield* Queue.take(ui.frames);
+      expect(restored.split("\r\n").slice(0, -1)).toEqual(details.split("\r\n").slice(0, -1));
+      yield* Queue.offer(ui.input, key("escape"));
+      const list = yield* Queue.take(ui.frames);
+      expect(list.split("\r\n").slice(0, -1)).toEqual(selected.split("\r\n").slice(0, -1));
+      yield* Queue.offer(ui.input, key("return"));
+      yield* ui.frame("Log details");
+      for (let index = 0; index < 4; index++) {
+        yield* Queue.offer(ui.input, key("down"));
+        yield* ui.frame("Log details");
+      }
+      yield* Queue.offer(ui.input, key("L"));
+      yield* ui.frame("retry failure changed");
+      yield* Queue.offer(ui.input, key("L"));
+      const retried = yield* ui.frame("Query reloaded.");
+      expect(retried).not.toContain("Load failed");
+      expect(retried.split("\r\n").slice(0, -1)).toEqual(details.split("\r\n").slice(0, -1));
+      yield* Queue.offer(ui.input, key("q"));
+      yield* Fiber.join(ui.fiber);
+    }),
+  );
+
+it.effect("opens initial load errors and allows a successful retry", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const ui = yield* setup({
+      mode: "replace",
+      load: (_end, emit) =>
+        Effect.gen(function* () {
+          if (++calls === 1) return yield* new LogsInputError({ message: "initial SQL reason" });
+          yield* emit({ message: "recovered row" });
+          return window;
+        }),
+    });
+    yield* ui.frame("Loading logs");
+    const failed = yield* Queue.take(ui.frames);
+    expect(failed).toContain("Load failed");
+    expect(failed).toContain("initial SQL reason");
+    yield* Queue.offer(ui.input, key("L"));
+    const recovered = yield* ui.frame(" | ready");
+    expect(recovered).toContain("recovered row");
+    expect(recovered).not.toContain("Load failed");
+    yield* Queue.offer(ui.input, key("q"));
+    yield* Fiber.join(ui.fiber);
   }),
 );

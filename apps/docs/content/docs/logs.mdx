@@ -19,7 +19,7 @@ An interactive terminal opens a log browser. The first load reads the latest 100
 
 Use the up and down arrows to select a row. Enter opens its full details, and Escape returns to the list. `C` copies the full selected record as indented JSON, including metadata and the original timestamp. `q` exits.
 
-Press `L` to load newer logs through the current time. The browser keeps your selection and viewport. It does not poll in the background. A failed load keeps the current rows and window so you can retry with `L`.
+Press `L` to load newer logs through the current time. The browser keeps your selection and viewport. It does not poll in the background. A failed load opens the full error in a scrollable panel. Use the arrows to scroll, Escape to return to the previous list or details, or `L` to retry. The browser preserves your rows, selection, window, and detail scroll. `C` is inactive while the error panel is open.
 
 The `Window:` header shows the requested time range, including its captured end. Each successful load extends that end. For filtered logs, the browser retains up to 1000 rows and approximately 8 MiB, with a visible notice when older rows are discarded. Open details stay pinned to their record. `NO_COLOR` preserves the selection marker without styling.
 

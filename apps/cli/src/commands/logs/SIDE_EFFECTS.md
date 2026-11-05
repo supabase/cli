@@ -40,7 +40,7 @@ Shared settings use `SUPABASE_HOME`, `SUPABASE_WORKDIR`, `SUPABASE_PROJECT_ID`, 
 | 1    | Input, feature gate, credential, transport, query, response decode, retained log, or truncation failure. |
 | 130  | Browser interrupted with Ctrl-C.                                                                         |
 
-A failed interactive reload shows a notice and leaves the browser usable.
+A failed interactive load opens a wrapped, scrollable error panel. Up/down scrolls the full error, Escape restores the previous list or details, and L retries. Copy is disabled in the error panel. Failed loads preserve rows, selection, window, and pinned detail scroll.
 
 ## Telemetry
 

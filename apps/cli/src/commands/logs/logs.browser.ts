@@ -141,7 +141,11 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
               state = {
                 ...state,
                 complete: true,
-                notice: `${error.value instanceof Error ? error.value.message : String(error.value)} Press L to retry.`,
+                notice: "Load failed. Press L to retry.",
+                error: {
+                  message: error.value instanceof Error ? error.value.message : String(error.value),
+                  scroll: 0,
+                },
               };
             } else {
               const initial = state.window === undefined;
@@ -150,6 +154,7 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
               state = {
                 ...state,
                 window: event.result.value.window,
+                error: undefined,
                 complete: true,
                 notice: initial
                   ? ""
@@ -183,7 +188,7 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
             }
             if (isCopyKey(event.input.key)) {
               const row = state.detail ?? state.rows[state.selected];
-              if (row === undefined || copying) break;
+              if (state.error !== undefined || row === undefined || copying) break;
               const clipboard = yield* LogsClipboard;
               copying = true;
               state = { ...state, notice: "Copying log…" };
