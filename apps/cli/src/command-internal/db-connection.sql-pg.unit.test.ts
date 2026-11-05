@@ -226,9 +226,15 @@ describe("sslConfigsFor (fallback list)", () => {
     expect(sslConfigsFor("allow", true, undefined)).toEqual([false, { rejectUnauthorized: false }]);
   });
 
-  it("prefer and unset are TLS only (ConnectByUrl strips the plaintext fallback)", () => {
-    expect(sslConfigsFor("prefer", false, undefined)).toEqual([{ rejectUnauthorized: false }]);
-    expect(sslConfigsFor(undefined, false, undefined)).toEqual([{ rejectUnauthorized: false }]);
+  it("prefer and unset try TLS first, then plaintext (libpq)", () => {
+    expect(sslConfigsFor("prefer", false, undefined)).toEqual([
+      { rejectUnauthorized: false },
+      false,
+    ]);
+    expect(sslConfigsFor(undefined, false, undefined)).toEqual([
+      { rejectUnauthorized: false },
+      false,
+    ]);
   });
 
   it("require / verify-* are TLS only (no fallback)", () => {
@@ -254,7 +260,10 @@ describe("sslConfigsFor (fallback list)", () => {
 
   it("does not attach a CA to non-verifying modes", () => {
     const ca = "ca-bundle";
-    expect(sslConfigsFor("prefer", false, undefined, ca)).toEqual([{ rejectUnauthorized: false }]);
+    expect(sslConfigsFor("prefer", false, undefined, ca)).toEqual([
+      { rejectUnauthorized: false },
+      false,
+    ]);
   });
 
   it("forces a single plaintext attempt for a unix-socket host regardless of sslmode", () => {

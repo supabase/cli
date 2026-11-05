@@ -233,6 +233,35 @@ const SERVER_REFUSED_SSL = "The server does not support SSL connections";
 // post-handshake `read ECONNRESET` is not phase-specific and stays verbatim.
 const TLS_DISCONNECT_MESSAGE =
   "Client network socket disconnected before secure TLS connection was established";
+// node-postgres' message when the server answers the SSLRequest with anything but `S`/`N`.
+const SSL_NEGOTIATION_ERROR = "There was an error establishing an SSL connection";
+// Handshake failures that carry no TLS-specific code: Node's `EPROTO` for a malformed TLS record,
+// and Bun's `ERR_SOCKET_CLOSED` when the server hangs up after accepting the SSLRequest.
+const TLS_HANDSHAKE_ERRNOS = new Set(["EPROTO", "ERR_SOCKET_CLOSED"]);
+
+const isTlsStageCause = (text: unknown, code: unknown): boolean =>
+  text === SERVER_REFUSED_SSL ||
+  text === TLS_DISCONNECT_MESSAGE ||
+  (typeof code === "string" &&
+    (TLS_ERROR_CODES.has(code) || code.startsWith("ERR_TLS") || code.startsWith("ERR_SSL")));
+
+/**
+ * Whether a connect failure came from negotiating TLS (the server declined or botched the
+ * SSLRequest, or the handshake failed) rather than from dialing, authenticating, or a server
+ * error. The `sslmode=prefer` plaintext fallback retries on these.
+ */
+export function isTlsNegotiationFailure(error: unknown): boolean {
+  const cause = deepestConnectCause(error);
+  if (typeof cause !== "object" || cause === null) return false;
+  const message = Reflect.get(cause, "message");
+  const code = Reflect.get(cause, "code");
+  return (
+    isTlsStageCause(message, code) ||
+    message === SSL_NEGOTIATION_ERROR ||
+    (typeof code === "string" && TLS_HANDSHAKE_ERRNOS.has(code))
+  );
+}
+
 // A Postgres SQLSTATE is exactly five uppercase alphanumerics. Combined with the
 // `severity` field this identifies a node-postgres `DatabaseError` (a server
 // ErrorResponse), never a node system error (whose codes are longer `E…` names).
@@ -281,12 +310,7 @@ function connectCauseDetail(cause: unknown): string {
   if (syscall === "connect" || (typeof code === "string" && DIAL_ERROR_CODES.has(code))) {
     return `dial error (${text})`;
   }
-  if (
-    text === SERVER_REFUSED_SSL ||
-    text === TLS_DISCONNECT_MESSAGE ||
-    (typeof code === "string" &&
-      (TLS_ERROR_CODES.has(code) || code.startsWith("ERR_TLS") || code.startsWith("ERR_SSL")))
-  ) {
+  if (isTlsStageCause(text, code)) {
     return `tls error (${text})`;
   }
   return text;
@@ -370,8 +394,8 @@ export function connectSuggestion(
   ) {
     return SUGGEST_ENV_VAR;
   }
-  // An unset `sslmode` negotiates TLS and fails rather than downgrading, so a server without
-  // TLS needs the caller to opt into plaintext explicitly.
+  // Reached when plaintext is not an allowed fallback (`sslmode=require` or stricter), so the
+  // caller must opt into plaintext explicitly.
   if (text.includes(SERVER_REFUSED_SSL) || text.includes("server refused TLS connection")) {
     return "This server does not accept TLS. Set `sslmode=disable` on the connection string to connect in plaintext.";
   }

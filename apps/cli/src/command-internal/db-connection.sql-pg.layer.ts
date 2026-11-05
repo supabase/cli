@@ -13,6 +13,7 @@ import {
   isDialFailure,
   isIPv6ConnectivityErrorCause,
   isSqlState,
+  isTlsNegotiationFailure,
   localStackSuggestion,
 } from "./connect-errors.ts";
 import { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
@@ -103,6 +104,9 @@ export function isTerminalConnectError(error: unknown, usedTls: boolean): boolea
   if (TERMINAL_SQLSTATES.has(code)) return true;
   return code === TLS_GATED_SQLSTATE && usedTls;
 }
+
+const permitsPlaintextDowngrade = (error: unknown): boolean =>
+  isTlsNegotiationFailure(error) || extractSqlState(error) === TLS_GATED_SQLSTATE;
 
 /**
  * Extracts the Postgres SQLSTATE from a driver error. The `pg` driver attaches the
@@ -396,9 +400,9 @@ export interface ClientCert {
 }
 
 /**
- * `sslmode` values that demand TLS. `prefer` and `allow` describe a fallback libpq would perform
- * and {@link sslConfigsFor} does not, so neither counts as a demand; treating them as one would
- * turn a plaintext-capable target into a handshake failure.
+ * `sslmode` values that demand TLS. `prefer` and `allow` fall back across plaintext and TLS in
+ * {@link sslConfigsFor}, so neither counts as a demand; treating them as one would turn a
+ * plaintext-capable target into a handshake failure.
  */
 const TLS_DEMANDING_SSLMODES = new Set(["require", "verify-ca", "verify-full"]);
 
@@ -459,11 +463,12 @@ export function sslOptionFor(
 }
 
 /**
- * The ordered list of `ssl` configs to try for a connection: `disable` → plaintext only;
- * `allow` → plaintext then TLS; `prefer`/unset/`require`/`verify-ca`/`verify-full` → TLS only,
- * so a failed handshake on the default `prefer` mode fails loudly rather than silently
- * downgrading to plaintext. `servername` targets the original hostname per dial host when a
- * DoH-resolved IP was substituted; `caCert` promotes `require` to `verify-ca` when set.
+ * The ordered list of `ssl` configs to try for a connection, following libpq: `disable` →
+ * plaintext only; `allow` → plaintext then TLS; `prefer`/unset → TLS then plaintext (the
+ * plaintext retry runs only after a TLS negotiation failure or a `28000` rejection, see
+ * {@link permitsPlaintextDowngrade}); `require`/`verify-ca`/`verify-full` → TLS only.
+ * `servername` targets the original hostname per dial host when a DoH-resolved IP was
+ * substituted; `caCert` promotes `require` to `verify-ca` when set.
  * `isLocal` is the caller's TLS-exemption decision, not the raw target classification: a local
  * target that explicitly set `sslmode`/`sslrootcert` (see {@link tlsExplicitlyRequested}) is not
  * exempt, so the caller passes `false` for it in that case. `allow`'s fallback bypasses that
@@ -495,10 +500,11 @@ export function sslConfigsFor(
   ) {
     return [sslOptionFor(effectiveMode, false, servername, caCert, clientCert)];
   }
-  // prefer (and the unset default) is TLS-only: a failed handshake must error, never downgrade
-  // to plaintext.
-  return [sslOptionFor(sslmode, false, servername, caCert, clientCert)];
+  return [sslOptionFor(sslmode, false, servername, caCert, clientCert), false];
 }
+
+const isTlsConfig = (ssl: boolean | ConnectionOptions | undefined): boolean =>
+  ssl !== undefined && ssl !== false;
 
 /**
  * The raw `pg.ClientConfig` for a dial target: the connection-string form when a libpq
@@ -776,9 +782,10 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
           }
         : undefined;
 
-    // Builds the ordered attempt list: each TLS config from {@link sslConfigsFor} tried against
+    // Builds the ordered attempt list: each `ssl` config from {@link sslConfigsFor} tried against
     // each dial target (host × resolved IPs), with `servername` per target set to the original
-    // hostname when dialing a DoH-resolved IP.
+    // hostname when dialing a DoH-resolved IP. `isTlsDowngrade` marks the plaintext retry that
+    // follows a TLS attempt on the same target.
     const attempts = dialTargets.flatMap(({ dialHost, port, servername }) =>
       sslConfigsFor(
         cfg.sslmode,
@@ -787,11 +794,12 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
         caCert,
         dialHost,
         clientCert,
-      ).map((ssl) => ({
+      ).map((ssl, index, configs) => ({
         pool: makePool(dialHost, port, ssl),
         // The fallback chain only short-circuits on an auth error when the failed attempt used
         // TLS; a TLS config is any non-plaintext `ssl` value.
-        usedTls: ssl !== undefined && ssl !== false,
+        usedTls: isTlsConfig(ssl),
+        isTlsDowngrade: index > 0 && !isTlsConfig(ssl) && isTlsConfig(configs[index - 1]),
         rawConfig: buildRawPgConfig(cfg, dialHost, port, ssl, connectTimeoutSeconds),
       })),
     );
@@ -820,18 +828,24 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
         );
       });
     const lastIndex = attempts.length - 1;
-    const { pool, rawConfig: winningRawConfig } = yield* attempts
-      .slice(0, lastIndex)
-      .reduceRight(
-        (next, attempt) =>
-          probe(attempt).pipe(
-            Effect.catch((error) =>
-              isTerminalConnectError(error, attempt.usedTls) ? Effect.fail(error) : next,
-            ),
-          ),
-        probe(attempts[lastIndex]!),
-      )
-      .pipe(Effect.mapError((error) => toConnectError(cfg, isLocal, error)));
+    // A failed attempt falls through to the next one unless its error is terminal. The plaintext
+    // retry after a TLS attempt (libpq's `prefer`) runs only when the server could not do TLS:
+    // negotiation failed or `pg_hba` has no TLS entry for the client (28000). Otherwise it is
+    // skipped, so an unreachable host or a wrong password is not retried in plaintext.
+    const run = (index: number): ReturnType<typeof probe> =>
+      probe(attempts[index]!).pipe(
+        Effect.catch((error) => {
+          if (index === lastIndex) return Effect.fail(error);
+          const next = attempts[index + 1]!;
+          if (next.isTlsDowngrade && permitsPlaintextDowngrade(error)) return run(index + 1);
+          if (isTerminalConnectError(error, attempts[index]!.usedTls)) return Effect.fail(error);
+          const nextIndex = next.isTlsDowngrade ? index + 2 : index + 1;
+          return nextIndex > lastIndex ? Effect.fail(error) : run(nextIndex);
+        }),
+      );
+    const { pool, rawConfig: winningRawConfig } = yield* run(0).pipe(
+      Effect.mapError((error) => toConnectError(cfg, isLocal, error)),
+    );
 
     // Steps down from the temp/privileged login role before any further SQL, remote
     // connections only; a local `--db-url` using `supabase_admin`/`cli_login_*` must not run it.

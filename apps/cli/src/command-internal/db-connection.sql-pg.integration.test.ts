@@ -5,10 +5,15 @@
  * structure, and the connect suggestion must classify real node-postgres error shapes.
  */
 import * as net from "node:net";
+import * as tls from "node:tls";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Duration, Effect, FileSystem, Layer, Path } from "effect";
 
+import {
+  KONG_LOCAL_TLS_CERT,
+  KONG_LOCAL_TLS_KEY,
+} from "../commands/start/templates/kong-local-tls.ts";
 import { SUGGEST_ENV_VAR, SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
 import type { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import { type DbSession, type PgConnInput, DbConnection } from "./db-connection.service.ts";
@@ -146,16 +151,24 @@ const EMPTY_QUERY = wireMessage("I", Buffer.alloc(0));
  * A fake Postgres server that completes an auth-less startup handshake, answers every
  * simple-protocol query with `SELECT 1`'s result (satisfying `acquireProbedPool`'s own probe),
  * and records whether the client sent an SSLRequest first — so a test can prove whether TLS was
- * attempted independent of how the attempt is resolved.
+ * attempted independent of how the attempt is resolved. `sslReply` picks how an SSLRequest is
+ * answered: `N` (default, plaintext only), `S` then hang up (a failed handshake), an
+ * immediate hang-up (a failure that is not about TLS negotiation), or `S` with a real handshake
+ * followed by a 28000 rejection (`pg_hba` with only `hostnossl` entries).
  */
-const fakeStartupServer = (): Effect.Effect<{
+const fakeStartupServer = (
+  sslReply: "N" | "S-then-hangup" | "hangup" | "S-then-28000" = "N",
+): Effect.Effect<{
   readonly port: number;
   readonly close: () => void;
   readonly sawSslRequest: () => boolean;
+  readonly connectionCount: () => number;
 }> =>
   Effect.callback((resume) => {
     let sawSslRequest = false;
+    let connectionCount = 0;
     const server = net.createServer((socket) => {
+      connectionCount += 1;
       let sawStartup = false;
       let pending = Buffer.alloc(0);
       socket.on("data", (data: Buffer) => {
@@ -167,7 +180,28 @@ const fakeStartupServer = (): Effect.Effect<{
             if (pending.length < length) return;
             if (pending.readInt32BE(4) === 80877103) {
               sawSslRequest = true;
-              socket.write("N");
+              if (sslReply === "N") socket.write("N");
+              else if (sslReply === "S-then-hangup") socket.end("S");
+              else if (sslReply === "S-then-28000") {
+                socket.write("S");
+                const secure = new tls.TLSSocket(socket, {
+                  isServer: true,
+                  key: KONG_LOCAL_TLS_KEY,
+                  cert: KONG_LOCAL_TLS_CERT,
+                });
+                secure.once("data", () =>
+                  secure.end(
+                    errorResponse({
+                      S: "FATAL",
+                      V: "FATAL",
+                      C: "28000",
+                      M: 'no pg_hba.conf entry for host "127.0.0.1", user "postgres", database "postgres", SSL encryption',
+                    }),
+                  ),
+                );
+                secure.on("error", () => {});
+              } else socket.destroy();
+              return;
             } else {
               sawStartup = true;
               socket.write(Buffer.concat([AUTHENTICATION_OK, READY_FOR_QUERY]));
@@ -197,6 +231,7 @@ const fakeStartupServer = (): Effect.Effect<{
           port: address.port,
           close: () => server.close(),
           sawSslRequest: () => sawSslRequest,
+          connectionCount: () => connectionCount,
         }),
       );
     });
@@ -925,7 +960,7 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
 
   it.live(
     "stays plaintext for a local target with sslmode=prefer (CLI-2366 regression guard: " +
-      "libpq's TLS-then-plaintext fallback is not implemented by sslConfigsFor)",
+      "the loopback stack never gets a wasted TLS attempt)",
     () =>
       Effect.gen(function* () {
         const server = yield* fakeStartupServer();
@@ -1059,6 +1094,126 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
         Effect.provide(BunServices.layer),
         Effect.ensuring(Effect.sync(server.close)),
       );
+      expect(server.sawSslRequest()).toBe(false);
+    }),
+  );
+});
+
+describe("a non-local plaintext-only target follows libpq sslmode semantics", () => {
+  const connectAndQuery = (
+    server: { readonly port: number },
+    sslmode: string | undefined,
+    fallbacks?: PgConnInput["fallbacks"],
+  ) =>
+    Effect.gen(function* () {
+      const pool = yield* acquirePgPool(
+        {
+          host: "127.0.0.1",
+          port: server.port,
+          user: "postgres",
+          password: "postgres",
+          database: "postgres",
+          ...(sslmode !== undefined ? { sslmode } : {}),
+          ...(fallbacks !== undefined ? { fallbacks } : {}),
+        },
+        { isLocal: false, dnsResolver: "native" },
+      );
+      yield* Effect.tryPromise(() => pool.query("select 1"));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+
+  it.live("tries TLS, then connects in plaintext when sslmode is unset", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      yield* connectAndQuery(server, undefined).pipe(Effect.ensuring(Effect.sync(server.close)));
+      expect(server.sawSslRequest()).toBe(true);
+    }),
+  );
+
+  it.live("tries TLS, then connects in plaintext when sslmode=prefer", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      yield* connectAndQuery(server, "prefer").pipe(Effect.ensuring(Effect.sync(server.close)));
+      expect(server.sawSslRequest()).toBe(true);
+    }),
+  );
+
+  it.live("falls back to plaintext when the TLS handshake fails under sslmode=prefer", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer("S-then-hangup");
+      yield* connectAndQuery(server, "prefer").pipe(Effect.ensuring(Effect.sync(server.close)));
+      expect(server.sawSslRequest()).toBe(true);
+    }),
+  );
+
+  it.live("does not retry in plaintext when the TLS attempt fails for a non-TLS reason", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer("hangup");
+      const error = yield* connectFailure({ port: server.port, sslmode: "prefer" }, false).pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.connectionCount()).toBe(1);
+      expect(error.message).not.toContain("SSL");
+    }),
+  );
+
+  it.live("skips the plaintext retry on a target that failed for a non-TLS reason", () =>
+    Effect.gen(function* () {
+      const hangup = yield* fakeStartupServer("hangup");
+      const plaintextOnly = yield* fakeStartupServer();
+      yield* connectAndQuery(hangup, "prefer", [
+        { host: "127.0.0.1", port: plaintextOnly.port },
+      ]).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            hangup.close();
+            plaintextOnly.close();
+          }),
+        ),
+      );
+      expect(hangup.connectionCount()).toBe(1);
+      expect(plaintextOnly.sawSslRequest()).toBe(true);
+      expect(plaintextOnly.connectionCount()).toBe(2);
+    }),
+  );
+
+  it.live("retries in plaintext when pg_hba rejects the TLS attempt with 28000 under prefer", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer("S-then-28000");
+      yield* connectAndQuery(server, "prefer").pipe(Effect.ensuring(Effect.sync(server.close)));
+      expect(server.sawSslRequest()).toBe(true);
+      expect(server.connectionCount()).toBe(2);
+    }),
+  );
+
+  it.live("does not retry a 28000 rejection in plaintext when sslmode=require", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer("S-then-28000");
+      const error = yield* connectFailure({ port: server.port, sslmode: "require" }, false).pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.connectionCount()).toBe(1);
+      expect(error.message).toContain("SQLSTATE 28000");
+    }),
+  );
+
+  it.live("fails with the plaintext hint when sslmode=require", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      const error = yield* connectFailure({ port: server.port, sslmode: "require" }, false).pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.connectionCount()).toBe(1);
+      expect(error.message).toContain("tls error (The server does not support SSL connections)");
+      expect(error.suggestion).toBe(
+        "This server does not accept TLS. Set `sslmode=disable` on the connection string to connect in plaintext.",
+      );
+    }),
+  );
+
+  it.live("connects in plaintext without an SSLRequest when sslmode=disable", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      yield* connectAndQuery(server, "disable").pipe(Effect.ensuring(Effect.sync(server.close)));
       expect(server.sawSslRequest()).toBe(false);
     }),
   );

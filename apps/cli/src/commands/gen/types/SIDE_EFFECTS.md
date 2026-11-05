@@ -204,7 +204,9 @@ Not applicable.
     against a target classified local (e.g. a TLS tunnel on the loopback stack);
     otherwise, a known Supabase host gets the Supabase CA pinned the same way, and any
     other host — including a loopback target where the DSN sets neither — uses the
-    connection resolver's default, which is plaintext for a local target.
+    connection resolver's default: plaintext for a local target, otherwise libpq `prefer` (TLS
+    first, then plaintext when the server declines TLS, the handshake fails, or `pg_hba` rejects
+    the TLS connection).
   - The local target uses no TLS.
 - **Remote project language generation.** `--lang` accepts `typescript` (default), `go`, `swift`, or
   `python`. A remote project uses the Management API for TypeScript, and connects directly to the
