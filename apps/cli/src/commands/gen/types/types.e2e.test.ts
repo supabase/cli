@@ -286,7 +286,8 @@ function expectNoRemoteAuthPath(result: { stdout: string; stderr: string }) {
   const output = combinedOutput(result);
   expect(output).not.toContain("Access token not provided");
   expect(output).not.toContain("api.supabase.com");
-  expect(output).not.toContain("127.0.0.1:1");
+  // The local stack's random port can start with 1, so match port 1 exactly.
+  expect(output).not.toMatch(/127\.0\.0\.1:1(?!\d)/);
 }
 
 function expectLanguageShape(lang: TypegenLang, stdout: string) {
