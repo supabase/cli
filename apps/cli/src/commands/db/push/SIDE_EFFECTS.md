@@ -155,7 +155,9 @@ project ref and its environment.
   `sslmode=require` with the bundled Supabase root CA, which the driver verifies as `verify-ca`
   (chain checked, hostname not). This covers the temp-role probe through the pooler and the
   container pooler fallback. A server certificate that fails verification ends the temp-role probe
-  at once, without its retries, and suggests setting `PGSSLROOTCERT` or `PGSSLMODE=require`. Any
+  at once, without its retries, and suggests setting `PGSSLROOTCERT` or `PGSSLMODE=require`. So
+  does a pooler rejection of the caller's IP (`Address not in tenant allow_list`), which suggests
+  checking Network Restrictions and Network Bans. Any
   explicit setting, `disable` and `verify-full` with the user's own root cert included, is passed
   through unchanged. `supabase-local` and YAML profiles are
   never pinned.

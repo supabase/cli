@@ -37,6 +37,7 @@ import {
   type ConnectSuggestionContext,
   SUGGEST_CA_VERIFICATION,
   SUGGEST_ENV_VAR,
+  SUGGEST_NETWORK_RESTRICTIONS,
 } from "./connect-errors.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
@@ -322,9 +323,10 @@ const NO_BANS: BanState = { listed: [], failure: Option.none() };
 // Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look
 // for network bans on the project: with approval they are removed and a failed removal is what the
 // run reports if the retries run out; without it the last listing is reported instead. A rejected
-// server certificate ends the loop at once: it cannot change between attempts, and bans do not
-// cause it. Every other failure keeps retrying, dial failures included, because a ban surfaces as
-// a dial failure and only the retry path lists bans.
+// server certificate or an IP rejected by the project's network restrictions ends the loop at
+// once: neither changes between attempts, and bans do not cause them. Every other failure keeps
+// retrying, dial failures included, because a ban surfaces as a dial failure and only the retry
+// path lists bans.
 const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   ref: string,
   conn: PgConnInput,
@@ -347,6 +349,14 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
             new Errors.DbConfigConnectTempRoleError({
               message: `failed to connect as temp role: ${cause.message}`,
               suggestion: SUGGEST_CA_VERIFICATION,
+            }),
+          );
+        }
+        if (cause.networkRestricted === true) {
+          return Effect.fail(
+            new Errors.DbConfigConnectTempRoleError({
+              message: `failed to connect as temp role: ${cause.message}`,
+              suggestion: SUGGEST_NETWORK_RESTRICTIONS,
             }),
           );
         }

@@ -10,6 +10,7 @@ import {
   connectSuggestion,
   ipv6Suggestion,
   isCertificateVerificationFailure,
+  isNetworkRestrictionFailure,
   isDialFailure,
   isIPv6ConnectivityError,
   isIPv6ConnectivityErrorCause,
@@ -439,6 +440,20 @@ describe("isCertificateVerificationFailure", () => {
     expect(isCertificateVerificationFailure(withCode("ECONNREFUSED"))).toBe(false);
     expect(isCertificateVerificationFailure(withCode("ECONNRESET"))).toBe(false);
     expect(isCertificateVerificationFailure(authFailedError())).toBe(false);
+  });
+});
+
+describe("isNetworkRestrictionFailure", () => {
+  it("matches the pooler's allow-list rejection but not other failures", () => {
+    expect(
+      isNetworkRestrictionFailure(
+        realSqlConnectError(new Error("Address not in tenant allow_list: 1.2.3.4")),
+      ),
+    ).toBe(true);
+    expect(isNetworkRestrictionFailure(authFailedError())).toBe(false);
+    expect(isNetworkRestrictionFailure(realSqlConnectError(new Error("some other failure")))).toBe(
+      false,
+    );
   });
 });
 

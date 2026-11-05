@@ -85,7 +85,11 @@ import type { DbConnectionInput } from "./db-config.types.ts";
 import { hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
 import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
-import { SUGGEST_CA_VERIFICATION, SUGGEST_ENV_VAR } from "./connect-errors.ts";
+import {
+  SUGGEST_CA_VERIFICATION,
+  SUGGEST_ENV_VAR,
+  SUGGEST_NETWORK_RESTRICTIONS,
+} from "./connect-errors.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
 import { toConnectError } from "./db-connection.sql-pg.layer.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
@@ -2821,6 +2825,55 @@ describe("dbConfigResolver.resolveConnection", () => {
         const exit = yield* Fiber.await(fiber);
         expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
         expect(connection.attempts.count).toBe(3);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("fails at once on an IP rejected by network restrictions and lists no bans", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(
+        Number.POSITIVE_INFINITY,
+        () =>
+          new DbConnectError({
+            message: "failed to connect to postgres: Address not in tenant allow_list",
+            networkRestricted: true,
+          }),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        const exit = yield* Fiber.await(fiber);
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(error).toEqual(
+          Option.some(
+            expect.objectContaining({
+              _tag: "DbConfigConnectTempRoleError",
+              message: expect.stringContaining("Address not in tenant allow_list"),
+              suggestion: SUGGEST_NETWORK_RESTRICTIONS,
+            }),
+          ),
+        );
+        expect(connection.attempts.count).toBe(1);
+        expect(requests.some((request) => request.path.includes("network-bans"))).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("retries a plain authentication failure to the end and lists no ban", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY);
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, []);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(8);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
+        expect(connection.attempts.count).toBe(9);
+        expect(requests.some((request) => request.method === "DELETE")).toBe(false);
       }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
