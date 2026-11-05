@@ -318,30 +318,63 @@ describe("EdgeRuntimeDockerStepError actionability", () => {
       "daemon_down",
       "docker_not_running",
       "tag:EdgeRuntimeDockerStepError:docker_not_running",
+      SUGGEST_DOCKER_START_RERUN,
     ],
-    ["create", "port_in_use", "invalid_config", "tag:EdgeRuntimeDockerStepError:port_conflict"],
-    ["start", "name_conflict", "invalid_input", "tag:EdgeRuntimeDockerStepError:conflict"],
+    [
+      "create",
+      "port_in_use",
+      "invalid_config",
+      "tag:EdgeRuntimeDockerStepError:port_conflict",
+      undefined,
+    ],
+    [
+      "start",
+      "name_conflict",
+      "invalid_input",
+      "tag:EdgeRuntimeDockerStepError:conflict",
+      undefined,
+    ],
     [
       "cp",
       "mount_denied",
       "invalid_config",
       "tag:EdgeRuntimeDockerStepError:container_configuration",
+      undefined,
     ],
-    ["cp", "disk_full", "resource_limit", "tag:EdgeRuntimeDockerStepError:disk_full"],
-    ["create", "other", "runtime_crash", "tag:EdgeRuntimeDockerStepError:engine_command_create"],
-    ["cp", "other", "runtime_crash", "tag:EdgeRuntimeDockerStepError:engine_command_copy"],
-    ["start", "other", "runtime_crash", "tag:EdgeRuntimeDockerStepError:engine_command_start"],
-  ] as const)("classifies %s step failing with %s", (step, reason, category, fingerprint) => {
-    const error = new EdgeRuntimeDockerStepError({ message: "m", step, reason });
+    ["cp", "disk_full", "resource_limit", "tag:EdgeRuntimeDockerStepError:disk_full", undefined],
+    [
+      "create",
+      "other",
+      "runtime_crash",
+      "tag:EdgeRuntimeDockerStepError:engine_command_create",
+      undefined,
+    ],
+    [
+      "cp",
+      "other",
+      "runtime_crash",
+      "tag:EdgeRuntimeDockerStepError:engine_command_copy",
+      undefined,
+    ],
+    [
+      "start",
+      "other",
+      "runtime_crash",
+      "tag:EdgeRuntimeDockerStepError:engine_command_start",
+      undefined,
+    ],
+  ] as const)(
+    "classifies %s step failing with %s",
+    (step, reason, category, fingerprint, suggestion) => {
+      const error = new EdgeRuntimeDockerStepError({ message: "m", step, reason });
 
-    const result = classifyCliErrorActionability(error);
+      const result = classifyCliErrorActionability(error);
 
-    expect(result.error_category).toBe(category);
-    expect(result.error_fingerprint).toBe(fingerprint);
-    expect(error.suggestion).toBe(
-      reason === "daemon_down" ? SUGGEST_DOCKER_START_RERUN : undefined,
-    );
-  });
+      expect(result.error_category).toBe(category);
+      expect(result.error_fingerprint).toBe(fingerprint);
+      expect(error.suggestion).toBe(suggestion);
+    },
+  );
 });
 
 describe("DockerResourceCreateError actionability", () => {
@@ -351,26 +384,32 @@ describe("DockerResourceCreateError actionability", () => {
       "daemon_down",
       "docker_not_running",
       "tag:DockerResourceCreateError:docker_not_running",
+      SUGGEST_DOCKER_START_RERUN,
     ],
     [
       "network",
       "address_pool",
       "invalid_config",
       "tag:DockerResourceCreateError:container_configuration",
+      undefined,
     ],
-    ["volume", "other", "runtime_crash", "tag:DockerResourceCreateError:engine_command_create"],
+    [
+      "volume",
+      "other",
+      "runtime_crash",
+      "tag:DockerResourceCreateError:engine_command_create",
+      undefined,
+    ],
   ] as const)(
     "classifies a %s create failing with %s",
-    (resource, reason, category, fingerprint) => {
+    (resource, reason, category, fingerprint, suggestion) => {
       const error = new DockerResourceCreateError({ message: "m", resource, reason });
 
       const result = classifyCliErrorActionability(error);
 
       expect(result.error_category).toBe(category);
       expect(result.error_fingerprint).toBe(fingerprint);
-      expect(error.suggestion).toBe(
-        reason === "daemon_down" ? SUGGEST_DOCKER_START_RERUN : undefined,
-      );
+      expect(error.suggestion).toBe(suggestion);
     },
   );
 });

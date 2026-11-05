@@ -84,7 +84,7 @@ back to local keys. No scheme/host validation is performed on the discovered URL
 | ---------------------- | ------------------------------------------ | --------------------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags`, `serve_end_reason`, `edge_runtime_exit_code` |
 
-Bring-up failures carry per-step `error_fingerprint` values naming the failing step and, for the Docker steps, a reason read from Docker's output at the failure site (for example `tag:EdgeRuntimeDockerStepError:port_conflict` or `tag:ServeEnvFileError:not_found`), instead of a shared `error:unknown`.
+Bring-up failures carry a specific `error_fingerprint` instead of a shared `error:unknown`: the Edge Runtime `docker create`, `docker cp` and `docker start` steps each have their own fingerprint plus a reason read from Docker's output at the failure site (for example `tag:EdgeRuntimeDockerStepError:port_conflict`), env-file failures name the reason (for example `tag:ServeEnvFileError:not_found`), and host filesystem failures are classified from the underlying filesystem error.
 
 ## Output
 
