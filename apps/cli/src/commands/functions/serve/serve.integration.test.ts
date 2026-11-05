@@ -44,7 +44,10 @@ import {
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
-import { SUGGEST_CONTAINER_MEMORY_LIMIT } from "../../../command-internal/docker-suggest.ts";
+import {
+  SUGGEST_CONTAINER_MEMORY_LIMIT,
+  SUGGEST_DOCKER_START_RERUN,
+} from "../../../command-internal/docker-suggest.ts";
 import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { FileWatcher, type FileWatchEvent } from "../../../shared/runtime/file-watcher.service.ts";
 import {
@@ -64,12 +67,15 @@ import {
   DockerLogsStreamError,
   EdgeRuntimeContainerCrashedError,
   EdgeRuntimeLogStreamLostError,
+  ServeEnvError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
 } from "../../../shared/functions/serve.errors.ts";
 import {
   actionability,
+  classifyCliErrorActionability,
   ErrorActionabilityId,
+  unwrapNativeFailure,
 } from "../../../shared/telemetry/error-actionability.ts";
 import { normalizeCliError } from "../../../shared/output/normalize-error.ts";
 import {
@@ -823,14 +829,12 @@ describe("functions serve integration", () => {
       const { layer } = setupServe();
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain(`failed to parse environment file: ${functionEnvPath}`);
-        expect(error.message).toContain("unexpected character '-' in variable name");
-        expect(error.message).not.toContain("secret-value");
-        expect(error.message).not.toContain('near "API-KEY=secret-value"');
-      }
-      expect(normalizeCliError(error).code).toBe("UnknownError");
+      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvError);
+      expect(error.message).toContain(`failed to parse environment file: ${functionEnvPath}`);
+      expect(error.message).toContain("unexpected character '-' in variable name");
+      expect(error.message).not.toContain("secret-value");
+      expect(error.message).not.toContain('near "API-KEY=secret-value"');
+      expect(normalizeCliError(error).code).toBe("ServeEnvError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",
@@ -840,6 +844,98 @@ describe("functions serve integration", () => {
       expect(deployMockState.volumeCalls).toHaveLength(0);
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.live("fails with a read env-file error when the --env-file path is a directory", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      yield* writeCliConfig(['project_id = "test-project"', ""].join("\n"));
+      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+      yield* writeProjectFile(path.join("envdir", "keep"), "");
+
+      const { layer } = setupServe();
+      const error = yield* functionsServe(baseFlags({ envFile: Option.some("envdir") })).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error.message).toContain("failed to load environment file:");
+      expect(normalizeCliError(error).code).toBe("ServeEnvError");
+      expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
+        "tag:ServeEnvError:filesystem_io",
+      );
+      expect(deployMockState.runCalls.some((call) => call.args[0] === "create")).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live.each([
+    [
+      "create",
+      "Bind for 0.0.0.0:54321 failed: port is already allocated",
+      "port_in_use",
+      "tag:EdgeRuntimeDockerStepError:port_conflict",
+      undefined,
+    ],
+    [
+      "create",
+      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      "daemon_down",
+      "tag:EdgeRuntimeDockerStepError:docker_not_running",
+      SUGGEST_DOCKER_START_RERUN,
+    ],
+    [
+      "cp",
+      "unexpected copy failure",
+      "other",
+      "tag:EdgeRuntimeDockerStepError:engine_command_copy",
+      undefined,
+    ],
+    [
+      "start",
+      "unexpected start failure",
+      "other",
+      "tag:EdgeRuntimeDockerStepError:engine_command_start",
+      undefined,
+    ],
+  ] as const)(
+    "fails a %s step with a typed Docker step error read from stderr",
+    ([step, stderr, reason, fingerprint, suggestion]) => {
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === step) {
+          return { exitCode: 1, stdout: "", stderr };
+        }
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(['project_id = "test-project"', ""].join("\n"));
+        yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+
+        const { layer } = setupServe();
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(unwrapNativeFailure(error)).toMatchObject({
+          _tag: "EdgeRuntimeDockerStepError",
+          step,
+          reason,
+        });
+        expect(error.message).toContain(stderr);
+        expect(classifyCliErrorActionability(error).error_fingerprint).toBe(fingerprint);
+        expect(normalizeCliError(error).suggestion).toBe(suggestion);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 
   it.live(
     "skips a disabled function and sets up the runtime before a malformed functions/.env fails",
@@ -1312,6 +1408,7 @@ describe("functions serve integration", () => {
         expect(error.message).toContain("invalid multiline environment variable name");
         expect(error.message).toContain("FOO.BAR");
       }
+      expect(normalizeCliError(error).code).toBe("ServeEnvError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",
@@ -3854,6 +3951,7 @@ describe("functions serve integration", () => {
           "if any flags in the group [inspect inspect-mode] are set none of the others can be; [inspect inspect-mode] were all set",
         );
       }
+      expect(normalizeCliError(error).code).toBe("ServeConfigError");
       expect(deployMockState.runCalls).toHaveLength(0);
       expect(deployMockState.volumeCalls).toHaveLength(0);
       expect(deployMockState.networkCalls).toHaveLength(0);
@@ -4335,12 +4433,13 @@ describe("functions serve integration", () => {
         }),
       ).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain(".env");
-        expect(error.message).toContain("no such file or directory");
-      }
-      expect(normalizeCliError(error).code).toBe("UnknownError");
+      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvError);
+      expect(error.message).toContain(".env");
+      expect(error.message).toContain("no such file or directory");
+      expect(normalizeCliError(error).code).toBe("ServeEnvError");
+      expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
+        "tag:ServeEnvError:not_found",
+      );
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",

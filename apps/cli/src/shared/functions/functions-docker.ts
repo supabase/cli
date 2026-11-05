@@ -16,6 +16,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
+import { DockerResourceCreateError, classifyDockerResourceCreateStderr } from "./serve.errors.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import { sanitizeProjectId } from "../config/project-id.ts";
 
@@ -276,7 +277,13 @@ export const ensureDockerNetwork = Effect.fn("FunctionsDocker.ensureNetwork")(fu
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* nativeFailure(new Error(`failed to create docker network: ${networkMode}`));
+    return yield* nativeFailure(
+      new DockerResourceCreateError({
+        resource: "network",
+        reason: classifyDockerResourceCreateStderr(create.stderr),
+        message: `failed to create docker network: ${networkMode}`,
+      }),
+    );
   }
 });
 
@@ -307,7 +314,13 @@ export const ensureDockerNamedVolume = Effect.fn("FunctionsDocker.ensureVolume")
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* nativeFailure(new Error(`failed to create docker volume: ${volumeName}`));
+    return yield* nativeFailure(
+      new DockerResourceCreateError({
+        resource: "volume",
+        reason: classifyDockerResourceCreateStderr(create.stderr),
+        message: `failed to create docker volume: ${volumeName}`,
+      }),
+    );
   }
 });
 
