@@ -16,6 +16,7 @@ import {
   Path,
   Predicate,
   PubSub,
+  Random,
   Schema,
   Scope,
   Stream,
@@ -290,47 +291,53 @@ export const withTempCliProject = <A, E, R>(
 
 const portError = (error: Error) => new E2ePortError({ message: error.message, cause: error });
 
-const pickReleasedPort = Effect.callback<number, E2ePortError>((resume) => {
-  const server = createServer();
-  let settled = false;
-  const settle = (result: Effect.Effect<number, E2ePortError>) => {
-    if (settled) return;
-    settled = true;
-    resume(result);
-  };
-  /* Stays attached after cancellation so a late listen error is never an unhandled event. */
-  server.on("error", (error) => settle(Effect.fail(portError(error))));
-  server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
-    if (address == null || typeof address === "string") {
-      server.close(() =>
-        settle(Effect.fail(new E2ePortError({ message: "Failed to allocate a free port" }))),
-      );
-      return;
-    }
-    server.close((error) => {
-      settle(error ? Effect.fail(portError(error)) : Effect.succeed(address.port));
+const isPortTaken = (error: NodeJS.ErrnoException) =>
+  error.code === "EADDRINUSE" || error.code === "EACCES";
+
+/** Succeeds with whether `port` could be bound on every interface, as Docker publishes it. */
+const probePort = (port: number) =>
+  Effect.callback<boolean, E2ePortError>((resume) => {
+    const server = createServer();
+    let settled = false;
+    const settle = (result: Effect.Effect<boolean, E2ePortError>) => {
+      if (settled) return;
+      settled = true;
+      resume(result);
+    };
+    /* Stays attached after cancellation so a late listen error is never an unhandled event. */
+    server.on("error", (error: NodeJS.ErrnoException) =>
+      settle(isPortTaken(error) ? Effect.succeed(false) : Effect.fail(portError(error))),
+    );
+    server.listen(port, "0.0.0.0", () => {
+      server.close((error) => {
+        settle(error ? Effect.fail(portError(error)) : Effect.succeed(true));
+      });
+    });
+    return Effect.sync(() => {
+      settled = true;
+      server.close();
     });
   });
-  return Effect.sync(() => {
-    settled = true;
-    server.close();
-  });
-});
 
-/**
- * Concurrent e2e workers each keep only ports in their own slot, so a port one worker picked and
- * released before Docker binds it is never handed to another worker. Slots skip the low bit
- * because Linux hands out mostly odd ports for `listen(0)`.
+/*
+ * Ports come from below the Linux (32768+) and macOS (49152+) ephemeral ranges, so an outbound
+ * connection cannot take a probed port before Docker binds it. Concurrent e2e workers each keep
+ * only ports in their own slot, so one worker never hands out a port another worker picked.
  */
+const FIXED_PORT_RANGE_START = 20_000;
+const FIXED_PORT_RANGE_END = 32_768;
+
 const envOrEmpty = (name: string) => Config.String(name).pipe(Config.withDefault(""));
 
 const pickFreePort = Effect.gen(function* () {
   const e2eWorkers = Number((yield* envOrEmpty("SUPABASE_E2E_WORKERS")) || "1");
   const e2eWorkerSlot = Number((yield* envOrEmpty("VITEST_POOL_ID")) || "1") % e2eWorkers;
-  for (let attempt = 0; attempt < 1000; attempt++) {
-    const port = yield* pickReleasedPort;
-    if (Math.floor(port / 2) % e2eWorkers === e2eWorkerSlot) return port;
+  const span = FIXED_PORT_RANGE_END - FIXED_PORT_RANGE_START;
+  const offset = yield* Random.nextIntBetween(0, span, { halfOpen: true });
+  for (let step = 0; step < span; step++) {
+    const port = FIXED_PORT_RANGE_START + ((offset + step) % span);
+    if (port % e2eWorkers !== e2eWorkerSlot) continue;
+    if (yield* probePort(port)) return port;
   }
   return yield* new E2ePortError({
     message: `No free port for e2e worker slot ${e2eWorkerSlot} of ${e2eWorkers}`,
