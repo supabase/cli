@@ -159,23 +159,12 @@ export class ServeLocalDbInspectError extends Data.TaggedError("ServeLocalDbInsp
 /** A `functions serve` input or project setting is invalid or missing before the container starts. */
 export class ServeConfigError extends Data.TaggedError("ServeConfigError")<{
   readonly message: string;
-  readonly reason:
-    | "inspect_flags"
-    | "signing_keys_invalid"
-    | "jwt_secret"
-    | "deno_version"
-    | "missing_import";
+  readonly reason: "inspect_flags" | "missing_import";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "inspect_flags":
         return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
-      case "signing_keys_invalid":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_content" };
-      case "jwt_secret":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
-      case "deno_version":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "project_config" };
       case "missing_import":
         return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
       default:
@@ -209,10 +198,9 @@ export class ServeEnvFileError extends Data.TaggedError("ServeEnvFileError")<{
   }
 }
 
-/** Reading the signing-keys file or staging env files on the host failed during `functions serve`. */
+/** Staging env files on the host failed during `functions serve`. */
 export class ServeFilesystemError extends Data.TaggedError("ServeFilesystemError")<{
   readonly message: string;
-  readonly step: "signing_keys_read" | "env_staging";
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

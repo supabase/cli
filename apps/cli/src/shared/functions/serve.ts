@@ -592,34 +592,27 @@ const resolveLocalAuthArtifacts = Effect.fn("functions.serve.resolveLocalAuthArt
           );
 
   const fs = yield* FileSystem.FileSystem;
-  const signingKeys = yield* signingKeysPath.length === 0
-    ? Effect.succeed<ReadonlyArray<SigningKeyJwk>>([])
-    : readFileUtf8(fs, signingKeysPath).pipe(
-        Effect.mapError((error) =>
-          nativeFailure(
-            new ServeFilesystemError({
-              step: "signing_keys_read",
-              message: `failed to read signing keys: ${nativePlatformFailure(error, signingKeysPath).message}`,
-              cause: error,
-            }),
+  const signingKeys = yield* (
+    signingKeysPath.length === 0
+      ? Effect.succeed<ReadonlyArray<SigningKeyJwk>>([])
+      : readFileUtf8(fs, signingKeysPath).pipe(
+          Effect.mapError((error) => nativePlatformFailure(error, signingKeysPath)),
+          Effect.flatMap((content) =>
+            Effect.try({ try: () => parseSigningKeys(content), catch: nativeFailure }),
           ),
-        ),
-        Effect.flatMap((content) =>
-          Effect.try({
-            try: () => parseSigningKeys(content),
-            catch: (cause) =>
-              nativeFailure(
-                new ServeConfigError({
-                  reason: "signing_keys_invalid",
-                  message:
-                    cause instanceof SyntaxError
-                      ? `failed to decode signing keys: ${cause.message}`
-                      : `failed to read signing keys: ${cause instanceof Error ? cause.message : String(cause)}`,
-                }),
-              ),
-          }),
+        )
+  ).pipe(
+    Effect.mapError((failure) => {
+      const cause = failure.cause;
+      return nativeFailure(
+        new Error(
+          cause instanceof SyntaxError
+            ? `failed to decode signing keys: ${cause.message}`
+            : `failed to read signing keys: ${cause.message}`,
         ),
       );
+    }),
+  );
 
   const jwtSecret =
     auth.jwt_secret === undefined || auth.jwt_secret.length === 0
@@ -627,10 +620,7 @@ const resolveLocalAuthArtifacts = Effect.fn("functions.serve.resolveLocalAuthArt
       : auth.jwt_secret;
   if (jwtSecret.length < 16) {
     return yield* nativeFailure(
-      new ServeConfigError({
-        reason: "jwt_secret",
-        message: "Invalid config for auth.jwt_secret. Must be at least 16 characters",
-      }),
+      new Error("Invalid config for auth.jwt_secret. Must be at least 16 characters"),
     );
   }
 
@@ -841,7 +831,6 @@ function splitEnvEntry(entry: string) {
 const envStagingFailure = (error: PlatformError, pathname: string) =>
   nativeFailure(
     new ServeFilesystemError({
-      step: "env_staging",
       message: nativePlatformFailure(error, pathname).message,
       cause: error,
     }),
@@ -1911,10 +1900,6 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
       resolved.edgeRuntime.deno_version,
       edgeRuntimeVersionOverride,
-    ).pipe(
-      Effect.mapError((error) =>
-        nativeFailure(new ServeConfigError({ reason: "deno_version", message: error.message })),
-      ),
     );
 
     yield* assertLocalDbRunning(projectId);

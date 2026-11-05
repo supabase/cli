@@ -256,14 +256,6 @@ const platformCause = (tag: "NotFound" | "PermissionDenied") =>
 describe("ServeConfigError actionability", () => {
   it.each([
     ["inspect_flags", "user_actionable", "invalid_input", "tag:ServeConfigError:flags"],
-    [
-      "signing_keys_invalid",
-      "user_actionable",
-      "invalid_config",
-      "tag:ServeConfigError:invalid_content",
-    ],
-    ["jwt_secret", "user_actionable", "invalid_config", "tag:ServeConfigError:invalid_config"],
-    ["deno_version", "user_actionable", "invalid_config", "tag:ServeConfigError:project_config"],
     ["missing_import", "user_actionable", "invalid_input", "tag:ServeConfigError:not_found"],
   ] as const)("classifies %s", (reason, kind, category, fingerprint) => {
     const result = classifyCliErrorActionability(new ServeConfigError({ message: "m", reason }));
@@ -302,9 +294,7 @@ describe("ServeFilesystemError actionability", () => {
     [platformCause("PermissionDenied"), "permission", "tag:ServeFilesystemError:filesystem"],
     [undefined, "unknown", "tag:ServeFilesystemError:filesystem_io"],
   ] as const)("classifies cause %#", (cause, category, fingerprint) => {
-    const result = classifyCliErrorActionability(
-      new ServeFilesystemError({ message: "m", step: "env_staging", cause }),
-    );
+    const result = classifyCliErrorActionability(new ServeFilesystemError({ message: "m", cause }));
 
     expect(result.error_category).toBe(category);
     expect(result.error_fingerprint).toBe(fingerprint);
