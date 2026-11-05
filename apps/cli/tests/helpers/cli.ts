@@ -329,14 +329,20 @@ const FIXED_PORT_RANGE_END = 32_768;
 
 const envOrEmpty = (name: string) => Config.String(name).pipe(Config.withDefault(""));
 
+const FIXED_PORT_SPAN = FIXED_PORT_RANGE_END - FIXED_PORT_RANGE_START;
+/* Walks the range from a random start, so one worker never hands out the same port twice. */
+let nextPortOffset: number | undefined;
+
 const pickFreePort = Effect.gen(function* () {
   const e2eWorkers = Number((yield* envOrEmpty("SUPABASE_E2E_WORKERS")) || "1");
   const e2eWorkerSlot = Number((yield* envOrEmpty("VITEST_POOL_ID")) || "1") % e2eWorkers;
-  const span = FIXED_PORT_RANGE_END - FIXED_PORT_RANGE_START;
-  const offset = yield* Random.nextIntBetween(0, span, { halfOpen: true });
-  for (let step = 0; step < span; step++) {
-    const port = FIXED_PORT_RANGE_START + ((offset + step) % span);
+  const start =
+    nextPortOffset ?? (yield* Random.nextIntBetween(0, FIXED_PORT_SPAN, { halfOpen: true }));
+  for (let step = 0; step < FIXED_PORT_SPAN; step++) {
+    const offset = (start + step) % FIXED_PORT_SPAN;
+    const port = FIXED_PORT_RANGE_START + offset;
     if (port % e2eWorkers !== e2eWorkerSlot) continue;
+    nextPortOffset = offset + 1;
     if (yield* probePort(port)) return port;
   }
   return yield* new E2ePortError({
