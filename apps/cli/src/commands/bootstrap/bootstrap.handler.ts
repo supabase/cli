@@ -372,6 +372,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       const resolvedConn = yield* resolveLinkedConn(
         projectRef,
         workdir,
+        cliSettings.profile,
         cliSettings.projectHost,
         cliSettings.poolerHost,
         dnsResolver,

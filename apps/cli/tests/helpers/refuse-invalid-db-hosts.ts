@@ -6,10 +6,12 @@ export interface DirectHostToggle {
   directHostReachable: boolean;
 }
 
+const FIXTURE_DB_HOST_SUFFIXES = [".invalid", ".supabase.co", ".supabase.red", ".snapcloud.dev"];
+
 /**
- * Wraps `node:net` so a connection to a `db.<ref>.invalid` fixture host fails at once instead of
- * waiting on ambient DNS or TCP timing. Use it from a test file's `vi.mock("node:net", ...)`
- * factory; other hosts connect normally. While the toggle passed in is on, the same hosts report a
+ * Wraps `node:net` so a connection to a `db.<ref>` fixture host on one of
+ * `FIXTURE_DB_HOST_SUFFIXES` fails at once instead of waiting on ambient DNS or TCP timing. Use it
+ * from a test file's `vi.mock("node:net", ...)` factory; other hosts connect normally. While the toggle passed in is on, the same hosts report a
  * successful connect instead, which fakes the TCP reachability probe only (nothing is dialed).
  */
 export function refuseInvalidDbHosts(
@@ -20,7 +22,11 @@ export function refuseInvalidDbHosts(
     ...net,
     connect: (connectOptions: NodeNet.NetConnectOpts) => {
       const host = "host" in connectOptions ? connectOptions.host : undefined;
-      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
+      if (
+        typeof host !== "string" ||
+        !host.startsWith("db.") ||
+        !FIXTURE_DB_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))
+      ) {
         return net.connect(connectOptions);
       }
       const socket = new net.Socket();

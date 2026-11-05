@@ -57,6 +57,7 @@ import { mapHttpError } from "./http-errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
+import { pinSupabaseTls } from "./supabase-tls.ts";
 import { block, type OperationEntry } from "./command-permissions/model.ts";
 import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.ts";
 import { isCheckoutLinked } from "../shared/config/link-snapshot.ts";
@@ -512,6 +513,7 @@ const fetchApiPoolerUrl = Effect.fn("DbConfig.fetchApiPoolerUrl")(
 const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   ref: string,
   workdir: string,
+  profile: string,
   poolerHost: string,
   dnsResolver: "native" | "https",
   password: string,
@@ -551,7 +553,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
     }
   }
   if (Option.isNone(pooler)) return Option.none<PgConnInput>();
-  const poolerConn = pooler.value;
+  const poolerConn = pinSupabaseTls(pooler.value, profile);
   if (password.length > 0) return Option.some({ ...poolerConn, password });
   // Mint a temp role; preserve Supavisor's `<user>.<ref>` tenant suffix.
   const originalUser = poolerConn.user;
@@ -578,6 +580,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
 export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(function* (
   ref: string,
   workdir: string,
+  profile: string,
   projectHost: string,
   poolerHost: string,
   dnsResolver: "native" | "https",
@@ -621,24 +624,28 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   yield* Effect.annotateCurrentSpan("db.direct_reachable", reachable);
   if (reachable) {
     /* Same libpq TLS and timeout precedence as the pooler URL; host, port, role and database stay
-       pinned. The empty `passfile=` skips a `.pgpass` read for a password that is discarded. */
+       pinned. The empty `passfile=` skips a `.pgpass` read for a password that is discarded. Absent an
+       explicit `sslmode`/`sslrootcert`, the Supabase CA is pinned, as on the pooler path. */
     const parsed = yield* parseConnectionString(
       `postgresql://postgres@${host}:${DIRECT_PORT}/postgres?passfile=`,
     );
     if (parsed === undefined) {
       return yield* new Errors.DbConfigLibpqEnvError({ message: LIBPQ_ENV_MESSAGE });
     }
-    const direct = {
-      ...base,
-      ...Struct.pick(parsed, [
-        "sslmode",
-        "sslrootcert",
-        "sslcert",
-        "sslkey",
-        "sslpassword",
-        "connectTimeoutSeconds",
-      ]),
-    };
+    const direct = pinSupabaseTls(
+      {
+        ...base,
+        ...Struct.pick(parsed, [
+          "sslmode",
+          "sslrootcert",
+          "sslcert",
+          "sslkey",
+          "sslpassword",
+          "connectTimeoutSeconds",
+        ]),
+      },
+      profile,
+    );
     if (direct.password.length > 0) return direct;
     return yield* initLoginRole(ref, direct);
   }
@@ -649,6 +656,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   const poolerConn = yield* resolvePoolerConn(
     ref,
     workdir,
+    profile,
     poolerHost,
     dnsResolver,
     base.password,
@@ -877,6 +885,7 @@ export const dbConfigResolverLayer = Layer.effect(
         return yield* resolveLinkedConn(
           ref,
           cliSettings.workdir,
+          cliSettings.profile,
           cliSettings.projectHost,
           cliSettings.poolerHost,
           options.dnsResolver,
@@ -977,6 +986,7 @@ export const dbConfigResolverLayer = Layer.effect(
           return yield* resolvePoolerConn(
             target.ref,
             cliSettings.workdir,
+            cliSettings.profile,
             cliSettings.poolerHost,
             input.dnsResolver,
             password,

@@ -86,7 +86,8 @@ import type {
 import type { GenTypesFlags } from "./types.command.ts";
 import { GenTypesLocalDbInspectError, GenTypesLocalDbNotRunningError } from "./types.errors.ts";
 import { genTypes } from "./types.handler.ts";
-import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
+import { localDbContainerId, parseQueryTimeoutMillis } from "./types.shared.ts";
+import { rootCaBundle } from "../../../command-internal/supabase-tls.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
 import {
@@ -1800,9 +1801,6 @@ describe("gen types", () => {
           expect(call?.lang).toBe(scenario.lang);
           expect(call?.includedSchemas).toEqual(["public"]);
           expect(call?.isLocal).toBe(false);
-          // project-ref generation always pins the Supabase CA, promoting sslmode to verify-ca.
-          expect(call?.conn.sslmode).toBe("require");
-          expect(call?.conn.sslrootcertInline).toBe(rootCaBundle());
           expect(linkedProjectCache.cached).toBe(true);
         }).pipe(Effect.provide(BunServices.layer)),
       );
@@ -1971,56 +1969,65 @@ describe("gen types", () => {
   });
 
   describe("Preview-branch fallback", () => {
-    it.effect("falls back to preview branch config for non-TypeScript project refs", () =>
-      Effect.gen(function* () {
-        const { layer, api, dbConfig, generator } = yield* setup({
-          args: ["gen", "types", "--lang", "python", `--remote=${VALID_REF}`],
-          generatorOutput: "class PublicMovies(BaseModel):",
-          getProject: () =>
-            Effect.fail(statusApiError(404, `{"message":"Preview branch not found"}`)),
-          getABranchConfig: ({ branch_id_or_ref }) =>
-            Effect.succeed({
-              ref: branch_id_or_ref,
-              postgres_version: "15.1",
-              postgres_engine: "15",
-              release_channel: "ga",
-              status: "ACTIVE_HEALTHY",
-              db_host: "127.0.0.1",
-              db_port: 5432,
-              db_user: "branch_user",
-              db_pass: "branch-password",
-              jwt_secret: "secret",
-            }),
-          createLoginRole: ({ ref }) =>
-            Effect.fail(
-              new ApiCallFailure({ message: `unexpected login role creation for ${ref}` }),
-            ),
-        });
-        yield* genTypes(
-          defaultFlags({
-            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
-            lang: "python",
-          }),
-        ).pipe(Effect.provide(layer));
+    for (const { dbHost, pinned } of [
+      { dbHost: `db.${VALID_REF}.supabase.co`, pinned: true },
+      { dbHost: "127.0.0.1", pinned: false },
+    ]) {
+      it.effect(
+        `falls back to preview branch config for non-TypeScript project refs (${pinned ? "Supabase" : "other"} host)`,
+        () =>
+          Effect.gen(function* () {
+            const { layer, api, dbConfig, generator } = yield* setup({
+              args: ["gen", "types", "--lang", "python", `--remote=${VALID_REF}`],
+              generatorOutput: "class PublicMovies(BaseModel):",
+              getProject: () =>
+                Effect.fail(statusApiError(404, `{"message":"Preview branch not found"}`)),
+              getABranchConfig: ({ branch_id_or_ref }) =>
+                Effect.succeed({
+                  ref: branch_id_or_ref,
+                  postgres_version: "15.1",
+                  postgres_engine: "15",
+                  release_channel: "ga",
+                  status: "ACTIVE_HEALTHY",
+                  db_host: dbHost,
+                  db_port: 5432,
+                  db_user: "branch_user",
+                  db_pass: "branch-password",
+                  jwt_secret: "secret",
+                }),
+              createLoginRole: ({ ref }) =>
+                Effect.fail(
+                  new ApiCallFailure({ message: `unexpected login role creation for ${ref}` }),
+                ),
+            });
+            yield* genTypes(
+              defaultFlags({
+                remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+                lang: "python",
+              }),
+            ).pipe(Effect.provide(layer));
 
-        expect(api.requests).toContainEqual({ method: "getProject", input: { ref: VALID_REF } });
-        expect(api.requests).toContainEqual({
-          method: "getABranchConfig",
-          input: { branch_id_or_ref: VALID_REF },
-        });
-        expect(api.requests).not.toContainEqual(
-          expect.objectContaining({ method: "createLoginRole" }),
-        );
-        expect(dbConfig.resolves).toHaveLength(0);
-        const call = generator.calls[0];
-        expect(call?.conn.host).toBe("127.0.0.1");
-        expect(call?.conn.user).toBe("branch_user");
-        expect(call?.conn.password).toBe("branch-password");
-        // Preview-branch generation pins the Supabase CA the same as any other remote target.
-        expect(call?.conn.sslmode).toBe("require");
-        expect(call?.conn.sslrootcertInline).toBe(rootCaBundle());
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
+            expect(api.requests).toContainEqual({
+              method: "getProject",
+              input: { ref: VALID_REF },
+            });
+            expect(api.requests).toContainEqual({
+              method: "getABranchConfig",
+              input: { branch_id_or_ref: VALID_REF },
+            });
+            expect(api.requests).not.toContainEqual(
+              expect.objectContaining({ method: "createLoginRole" }),
+            );
+            expect(dbConfig.resolves).toHaveLength(0);
+            const call = generator.calls[0];
+            expect(call?.conn.host).toBe(dbHost);
+            expect(call?.conn.user).toBe("branch_user");
+            expect(call?.conn.password).toBe("branch-password");
+            expect(call?.conn.sslmode).toBe(pinned ? "require" : undefined);
+            expect(call?.conn.sslrootcertInline).toBe(pinned ? rootCaBundle() : undefined);
+          }).pipe(Effect.provide(BunServices.layer)),
+      );
+    }
 
     it.effect("falls back to preview branch config for any project 404 body", () =>
       Effect.gen(function* () {
@@ -2439,6 +2446,10 @@ describe("gen types", () => {
         expect(generator.calls).toHaveLength(2);
         expect(generator.calls[1]?.conn.host).toBe(poolerHost);
         expect(generator.calls[1]?.conn.password).toBe("branch-password");
+        for (const call of generator.calls) {
+          expect(call.conn.sslmode).toBe("require");
+          expect(call.conn.sslrootcertInline).toBe(rootCaBundle());
+        }
       }).pipe(Effect.provide(BunServices.layer)),
     );
 

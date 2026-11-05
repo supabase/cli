@@ -1,6 +1,5 @@
 import { ChildProcessSpawner } from "effect/process";
 import { Effect, FileSystem, Match, Option, Path, Predicate, Result, Stdio, Stream } from "effect";
-import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { announceTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -50,6 +49,7 @@ import {
   isDirectDbHost,
   runWithPoolerFallback,
 } from "../../../command-internal/pooler-fallback.ts";
+import { pinSupabaseTls } from "../../../command-internal/supabase-tls.ts";
 import type { GenTypesFlags } from "./types.command.ts";
 import {
   GEN_TYPES_LANGUAGE_FLAG_NAMES,
@@ -72,12 +72,7 @@ import {
 import { type GenTypesGenerateError, GenTypesGenerator } from "./types.generator.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
-import {
-  defaultSchemas,
-  localDbContainerId,
-  parseQueryTimeoutMillis,
-  rootCaBundle,
-} from "./types.shared.ts";
+import { defaultSchemas, localDbContainerId, parseQueryTimeoutMillis } from "./types.shared.ts";
 
 const mapProjectTypesError = mapHttpError({
   networkError: GenTypesNetworkError,
@@ -105,18 +100,6 @@ const mapBranchDatabaseConfigError = mapHttpError({
 // back to the branch config endpoint. Don't narrow on the response body; its wording isn't guaranteed.
 function isProjectNotFound(cause: unknown) {
   return cause instanceof GenTypesUnexpectedStatusError && cause.status === 404;
-}
-
-/** Pins the Supabase CA on a known-Supabase target, promoting `require` to `verify-ca`. */
-function pinSupabaseTls(conn: PgConnInput): PgConnInput {
-  return { ...conn, sslmode: "require", sslrootcertInline: rootCaBundle() };
-}
-
-/** Whether `host`'s registrable domain matches the active profile's pooler domain. */
-function isPoolerHost(host: string, poolerHost: string): boolean {
-  if (poolerHost.length === 0) return false;
-  const domain = getDomain(host);
-  return domain !== null && domain.toLowerCase() === poolerHost.toLowerCase();
 }
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
@@ -437,18 +420,16 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
         const connectionInput = yield* connectionInputFor(target);
         const resolved = yield* dbConfig.resolveConnection(connectionInput);
-        const conn = pinSupabaseTls(resolved.conn);
         yield* runGenerate({
-          conn,
+          conn: resolved.conn,
           isLocal: resolved.isLocal,
           includedSchemas,
           detectOneToOneRelationships: !flags.postgrestV9Compat,
           poolerFallback: {
-            directHost: conn.host,
-            eligible: !resolved.isLocal && isDirectDbHost(conn.host, cliSettings.projectHost),
-            resolve: dbConfig
-              .resolvePoolerFallback(connectionInput)
-              .pipe(Effect.map(Option.map(pinSupabaseTls))),
+            directHost: resolved.conn.host,
+            eligible:
+              !resolved.isLocal && isDirectDbHost(resolved.conn.host, cliSettings.projectHost),
+            resolve: dbConfig.resolvePoolerFallback(connectionInput),
           },
         });
         return;
@@ -492,7 +473,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               cliSettings.poolerHost,
             );
             return Predicate.isTagged(parsed, "ok")
-              ? Option.some(pinSupabaseTls({ ...parsed.conn, password: branchPassword }))
+              ? Option.some(
+                  pinSupabaseTls({ ...parsed.conn, password: branchPassword }, cliSettings.profile),
+                )
               : Option.none<PgConnInput>();
           }),
         ),
@@ -502,13 +485,16 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       );
 
       yield* runGenerate({
-        conn: pinSupabaseTls({
-          host: branch.db_host,
-          port: branch.db_port,
-          user: branchUser,
-          password: branchPassword,
-          database: "postgres",
-        }),
+        conn: pinSupabaseTls(
+          {
+            host: branch.db_host,
+            port: branch.db_port,
+            user: branchUser,
+            password: branchPassword,
+            database: "postgres",
+          },
+          cliSettings.profile,
+        ),
         isLocal: false,
         includedSchemas,
         detectOneToOneRelationships: !flags.postgrestV9Compat,
@@ -706,16 +692,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const includedSchemas = yield* resolveIncludedSchemas();
       const resolved = yield* connectTo(target);
 
-      // A DSN's own `sslmode`/`sslrootcert` is honored as-is; only a known Supabase host with
-      // neither set gets the CA pinned, matching the project-ref/branch paths.
-      const conn =
-        !resolved.isLocal &&
-        resolved.conn.sslmode === undefined &&
-        resolved.conn.sslrootcert === undefined &&
-        (isDirectDbHost(resolved.conn.host, cliSettings.projectHost) ||
-          isPoolerHost(resolved.conn.host, cliSettings.poolerHost))
-          ? pinSupabaseTls(resolved.conn)
-          : resolved.conn;
+      const conn = resolved.isLocal
+        ? resolved.conn
+        : pinSupabaseTls(resolved.conn, cliSettings.profile);
 
       yield* runGenerate({
         conn,
