@@ -2214,6 +2214,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    reviewNetworkRestrictions: (
+      input: typeof operationDefinitions.v1ReviewNetworkRestrictions.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1ReviewNetworkRestrictions.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1ReviewNetworkRestrictions">(
+          operationDefinitions.v1ReviewNetworkRestrictions,
+          input,
+          options,
+        );
+      }),
     revokeToken: (
       input: typeof operationDefinitions.v1RevokeToken.inputSchema.Type,
       options?: SupabaseApiRequestOptions,

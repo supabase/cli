@@ -125,6 +125,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["database_network_restrictions_write"]],
     oauthScope: "projects:write",
   },
+  "v1-review-network-restrictions": {
+    fga: [["database_network_restrictions_write"]],
+    oauthScope: "projects:write",
+  },
   "v1-get-pgsodium-config": { fga: [["project_admin_write"]], oauthScope: "secrets:read" },
   "v1-update-pgsodium-config": { fga: [["project_admin_write"]], oauthScope: "secrets:write" },
   "v1-get-postgrest-service-config": {
