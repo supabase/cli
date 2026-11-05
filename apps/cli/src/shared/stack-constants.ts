@@ -48,5 +48,8 @@ export const edgeRuntimeNofileUlimit = (
 };
 
 export const isDockerDaemonDownMessage = (message: string): boolean =>
-  /docker|container engine|daemon/i.test(message) &&
-  /not running|unavailable|cannot connect|down/i.test(message);
+  (/docker|container engine|daemon/i.test(message) &&
+    /not running|unavailable|cannot connect|down/i.test(message)) ||
+  /failed to connect to the docker api|error during connect|is the docker daemon running|permission denied while trying to connect/iu.test(
+    message,
+  );

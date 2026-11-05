@@ -94,6 +94,7 @@ import {
   EdgeRuntimeLogStreamLostError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
+  externalTerminationExitCodes,
 } from "./serve.errors.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
@@ -130,16 +131,6 @@ const dockerLogDiagnosticTailLength = 4_096;
 // On Windows, `CTRL_C_EVENT` reaches every console-attached process, so the CLI's own shutdown
 // signal and a child spawn/stream failure can land microseconds apart — this is their tie-break.
 const shutdownSignalGracePeriod = Duration.millis(50);
-// Exit codes a supervisor uses to tear a container down (`supabase stop`, CI cancellation),
-// not a self-raised crash signal; 137 is excluded because it needs `OOMKilled` to tell a
-// memory-limit kill from a kill the CLI cannot attribute.
-const externalTerminationExitCodes = new Set([
-  15, // SIGTERM as edge-runtime reports it: the raw signal number, not 128 + 15
-  129, // SIGHUP
-  130, // SIGINT
-  131, // SIGQUIT
-  143, // SIGTERM
-]);
 // Consecutive re-attaches to `docker logs -f` without forwarding a new line before giving up on
 // the stream and failing loudly instead of flooding replayed history forever.
 const containerLogReattachCap = 5;

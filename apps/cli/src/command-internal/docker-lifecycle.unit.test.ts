@@ -343,6 +343,20 @@ describe("inspectContainerState", () => {
     );
   });
 
+  it.live.each([
+    "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory",
+    "error during connect: Get http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.51/containers/supabase_db_my-app/json: open //./pipe/docker_engine: The system cannot find the file specified.",
+  ])("flags the daemon as down for the newer Docker message: %s", (stderr) => {
+    const mock = mockSpawner({ exitCode: 1, stderr: `${stderr}\n` });
+    return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error.daemonDown).toBe(true);
+        expect(classifyCliErrorActionability(error).error_category).toBe("docker_not_running");
+      }),
+    );
+  });
+
   it.live(
     "fails with DockerLifecycleInspectError with a generic message when stderr is empty",
     () => {

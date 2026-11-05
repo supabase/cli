@@ -14,14 +14,15 @@ export const SUGGEST_CONTAINER_MEMORY_LIMIT =
 
 /**
  * Whether a container-CLI stderr indicates the daemon is unreachable. Matches the docker/podman
- * "cannot connect"/"is the docker daemon running" messages, a socket permission-denied message,
+ * "cannot connect"/"is the docker daemon running" messages, the Docker 27+ "failed to connect to the
+ * docker API" message, a socket permission-denied message,
  * the generic "error during connect" wrapper (which also covers Windows npipe daemon-down text),
  * and {@link containerRuntimeNotFoundMessage} — a missing CLI binary gets the same install hint
  * as a missing daemon.
  */
 export function isDockerDaemonUnreachable(stderr: string): boolean {
   return (
-    /cannot connect to the docker daemon|cannot connect to podman|is the docker daemon running|permission denied while trying to connect|error during connect/iu.test(
+    /cannot connect to the docker daemon|cannot connect to podman|is the docker daemon running|permission denied while trying to connect|error during connect|failed to connect to the docker api/iu.test(
       stderr,
     ) || stderr.includes(containerRuntimeNotFoundMessage)
   );
