@@ -58,6 +58,7 @@ import { logs, logsSources } from "../../../logs/logs.handler.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { OutputFlag, OutputFormatFlag } from "../../../../command-internal/global-flags.ts";
+import { projectStateModeLayer } from "../../../../shared/config/project-state-mode.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
@@ -248,6 +249,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         ConfigProvider.layer(ConfigProvider.fromUnknown({})),
         Layer.mock(LogsClipboard, {}),
         telemetry.layer,
+        projectStateModeLayer("stack"),
         Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
       );
       const legacyArgs = ["logs", "--stack-id", stack.id];
@@ -270,29 +272,25 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
             ),
           );
         if (mode === "unified" || mode === "browser")
-          return yield* logs(
-            {
-              remote: Option.none(),
-              projectRef: Option.none(),
-              local: false,
-              linked: false,
-              stack: Option.none(),
-              stackId: Option.some(stack.id),
-              service: flags.service ?? ["postgres"],
-              resource: Option.none(),
-              kind: Option.none(),
-              level: [],
-              search: Option.none(),
-              since: flags.since ?? Option.some("start"),
-              limit: flags.tail ?? 100,
-              from: Option.none(),
-              to: Option.none(),
-              sql: Option.none(),
-              file: Option.none(),
-            },
-            true,
-            false,
-          ).pipe(
+          return yield* logs({
+            remote: Option.none(),
+            projectRef: Option.none(),
+            local: false,
+            linked: false,
+            stack: Option.none(),
+            stackId: Option.some(stack.id),
+            service: flags.service ?? ["postgres"],
+            resource: Option.none(),
+            kind: Option.none(),
+            level: [],
+            search: Option.none(),
+            since: flags.since ?? Option.some("start"),
+            limit: flags.tail ?? 100,
+            from: Option.none(),
+            to: Option.none(),
+            sql: Option.none(),
+            file: Option.none(),
+          }).pipe(
             Effect.provide(
               Layer.mergeAll(
                 Layer.succeed(OutputFlag, Option.none()),
@@ -336,6 +334,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         commandRuntimeLayer(["logs", "sources"]),
         output.layer,
         telemetry.layer,
+        projectStateModeLayer("stack"),
         Layer.succeed(OutputFlag, Option.none()),
         Layer.mock(ProjectRefResolver, {}),
         Layer.succeed(TargetPolicy, {
@@ -345,19 +344,15 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         }),
         Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
       );
-      yield* logsSources(
-        {
-          remote: Option.none(),
-          projectRef: Option.none(),
-          local: false,
-          linked: false,
-          stack: Option.none(),
-          stackId: Option.some(stack.id),
-          service: Option.none(),
-        },
-        true,
-        false,
-      ).pipe(Effect.provide(layer));
+      yield* logsSources({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        local: false,
+        linked: false,
+        stack: Option.none(),
+        stackId: Option.some(stack.id),
+        service: Option.none(),
+      }).pipe(Effect.provide(layer));
       return output.stdoutText;
     });
   return { stackId: stack.id, stateRoot, opened, writeSegment, run, sources };
