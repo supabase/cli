@@ -19,6 +19,7 @@
         "DB_PORT": "5432",
         "DB_SCHEMA": "_analytics",
         "DB_USERNAME": "supabase_admin",
+        "ERL_MAX_PORTS": "65536",
         "LOGFLARE_FEATURE_FLAG_OVERRIDE": "'multibackend=true'",
         "LOGFLARE_LOG_LEVEL": "warn",
         "LOGFLARE_MIN_CLUSTER_SIZE": "1",
