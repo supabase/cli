@@ -101,8 +101,6 @@ const commandConfig = {
 export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof flagsConfig> &
   Readonly<Record<string, unknown>>;
 
-const NON_TYPESCRIPT = GEN_TYPES_LANGUAGES.filter((lang) => lang !== "typescript");
-const nonTypescript = { flag: "lang", oneOf: NON_TYPESCRIPT } as const;
 const notBranch = "the ref names a project, not a preview branch";
 // A run without a linked target uses a local or `--remote=<url>` database, or fails before the API.
 const remoteTarget: ReadonlyArray<EntryCondition> = [
@@ -150,32 +148,31 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
               operationId: "v1-generate-typescript-types",
               kind: "required",
               when: [{ flag: "lang", oneOf: ["typescript"] }],
+              context:
+                "the database cannot be reached or accessed (connection refused, timeout, TLS or authentication failure, no usable pooler, or the login role refused)",
             },
-            { operationId: "v1-get-project", kind: "required", when: [nonTypescript] },
+            { operationId: "v1-get-project", kind: "required" },
             {
               operationId: "v1-get-a-branch-config",
               kind: "required",
-              when: [nonTypescript],
               context: "the project lookup returns 404, so the ref names a preview branch",
             },
             {
               operationId: "v1-get-pooler-config",
               kind: "required",
-              when: [nonTypescript],
               context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--remote=<ref>, --project-ref and --project-id ignore the saved file)`,
             },
             {
               operationId: "v1-get-pooler-config",
               kind: "required",
-              when: [nonTypescript],
               context:
                 "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
             },
           ],
           noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
         },
-        withCondition(withContext(dbConfigLinked, notBranch), nonTypescript),
-        withCondition(withContext(dbConfigPoolerFallbackLinked, notBranch), nonTypescript),
+        withContext(dbConfigLinked, notBranch),
+        withContext(dbConfigPoolerFallbackLinked, notBranch),
         projectRefPicker,
         linkedProjectCache,
         branchResolution,

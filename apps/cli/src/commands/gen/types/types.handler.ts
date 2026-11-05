@@ -19,6 +19,7 @@ import {
   SUGGEST_LINKED_PROJECT,
 } from "../../../command-internal/connect-errors.ts";
 import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
+import { yellow } from "../../../command-internal/colors.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   type DbConfigError,
@@ -51,6 +52,7 @@ import {
   runWithPoolerFallback,
 } from "../../../command-internal/pooler-fallback.ts";
 import type { GenTypesFlags } from "./types.command.ts";
+import { apiFallbackWarning, isDatabaseAccessError } from "./types.api-fallback.ts";
 import {
   GEN_TYPES_LANGUAGE_FLAG_NAMES,
   GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
@@ -438,9 +440,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     return Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan("project.ref", projectRef);
       const api = yield* platformApi.make;
+      const extraSearchPath = yield* resolveExtraSearchPath(projectRef);
 
-      if (lang !== "typescript") {
-        const extraSearchPath = yield* resolveExtraSearchPath(projectRef);
+      const generateDirect = Effect.gen(function* () {
         const projectResult = yield* api.v1.getProject({ ref: projectRef }).pipe(
           Effect.catch(mapProjectDatabaseHostError),
           Effect.as("project" as const),
@@ -469,17 +471,25 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               .pipe(Effect.map(Option.map(pinSupabaseTls))),
           },
         });
-        return;
-      }
+      });
 
-      const response = yield* api.v1
-        .generateTypescriptTypes({
-          ref: projectRef,
-          included_schemas: includedSchemas.join(","),
-        })
-        .pipe(Effect.catch(mapProjectTypesError));
+      if (lang !== "typescript") return yield* generateDirect;
 
-      yield* output.raw(response.types);
+      return yield* generateDirect.pipe(
+        Effect.catchIf(isDatabaseAccessError, (error) =>
+          Effect.gen(function* () {
+            yield* Effect.annotateCurrentSpan("typegen.api_fallback", true);
+            yield* output.raw(`${yellow(apiFallbackWarning(error))}\n`, "stderr");
+            const response = yield* api.v1
+              .generateTypescriptTypes({
+                ref: projectRef,
+                included_schemas: includedSchemas.join(","),
+              })
+              .pipe(Effect.catch(mapProjectTypesError));
+            yield* output.raw(response.types);
+          }),
+        ),
+      );
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
   };
 

@@ -23,6 +23,8 @@ describe("gen", () => {
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("export type Json");
             expect(result.stdout).toContain("export type Database");
+            expect(result.stdout).not.toContain("Warning");
+            expect(result.stderr).toContain("Falling back to the Management API");
             expect(result.stdout).not.toMatch(/claude-code-hint/);
             expect(result.stderr).not.toMatch(/claude-code-hint/);
           }),

@@ -77,7 +77,10 @@ import { DbConnection } from "../../../command-internal/db-connection.service.ts
 import { toConnectError } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import type { DbConfigError } from "../../../command-internal/db-config.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import {
+  DbConfigLoadError,
+  DbConfigLoginRoleStatusError,
+} from "../../../command-internal/db-config.errors.ts";
 import type {
   DbConnectionInput,
   ResolvedDbConfig,
@@ -312,6 +315,18 @@ function enotfoundFailure(): DbConnectError {
     false,
     Object.assign(new Error("getaddrinfo ENOTFOUND db.example.supabase.co"), {
       code: "ENOTFOUND",
+    }),
+  );
+}
+
+function refusedFailure(): DbConnectError {
+  return toConnectError(
+    DIAL_FAILURE_CONN,
+    false,
+    Object.assign(new Error("connect ECONNREFUSED 203.0.113.7:5432"), {
+      code: "ECONNREFUSED",
+      address: "203.0.113.7",
+      port: 5432,
     }),
   );
 }
@@ -608,8 +623,8 @@ describe("gen types", () => {
 
   it.effect("generates typescript types from --project-ref", () =>
     Effect.gen(function* () {
-      const { layer, out, api, linkedProjectCache, telemetry } = yield* setup({
-        projectTypes: "export type Database = {};",
+      const { layer, out, api, generator, linkedProjectCache, telemetry } = yield* setup({
+        generatorOutput: "export type Database = {};",
       });
       yield* genTypes(
         defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
@@ -617,12 +632,11 @@ describe("gen types", () => {
 
       expect(out.stdoutText).toBe("export type Database = {};");
       expect(out.stderrText).toContain(unverifiedTargetBanner());
-      expect(api.requests).toEqual([
-        {
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "public" },
-        },
-      ]);
+      expect(out.stderrText).toContain("Generated TypeScript is unformatted");
+      expect(api.requests).toEqual([{ method: "getProject", input: { ref: VALID_REF } }]);
+      expect(generator.calls).toHaveLength(1);
+      expect(generator.calls[0]?.lang).toBe("typescript");
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public"]);
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -630,9 +644,9 @@ describe("gen types", () => {
 
   it.effect("generates types from the explicit --linked flag", () =>
     Effect.gen(function* () {
-      const { layer, out, api, linkedProjectCache, telemetry } = yield* setup({
+      const { layer, out, api, generator, linkedProjectCache, telemetry } = yield* setup({
         projectId: Option.some(VALID_REF),
-        projectTypes: "export type Database = {};",
+        generatorOutput: "export type Database = {};",
       });
       yield* genTypes(defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) })).pipe(
         Effect.provide(layer),
@@ -640,12 +654,11 @@ describe("gen types", () => {
 
       expect(out.stdoutText).toBe("export type Database = {};");
       expect(out.stderrText).toContain(unverifiedTargetBanner());
-      expect(api.requests).toEqual([
-        {
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "public" },
-        },
-      ]);
+      expect(out.stderrText).toContain("Generated TypeScript is unformatted");
+      expect(api.requests).toEqual([{ method: "getProject", input: { ref: VALID_REF } }]);
+      expect(generator.calls).toHaveLength(1);
+      expect(generator.calls[0]?.lang).toBe("typescript");
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public"]);
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -653,7 +666,7 @@ describe("gen types", () => {
 
   it.effect("uses explicit schemas for the management API path", () =>
     Effect.gen(function* () {
-      const { layer, api } = yield* setup({
+      const { layer, generator } = yield* setup({
         projectTypes: "ok",
       });
       yield* genTypes(
@@ -663,10 +676,7 @@ describe("gen types", () => {
         }),
       ).pipe(Effect.provide(layer));
 
-      expect(api.requests[0]).toEqual({
-        method: "generateTypescriptTypes",
-        input: { ref: VALID_REF, included_schemas: "auth,storage" },
-      });
+      expect(generator.calls[0]?.includedSchemas).toEqual(["auth", "storage"]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -679,7 +689,7 @@ describe("gen types", () => {
           workdir,
           ['project_id = "demo"', "", "[api]", 'schemas = ["auth", "storage"]'].join("\n"),
         );
-        const { layer, api } = yield* setup({
+        const { layer, generator } = yield* setup({
           workdir,
           projectTypes: "ok",
         });
@@ -689,10 +699,7 @@ describe("gen types", () => {
           }),
         ).pipe(Effect.provide(layer));
 
-        expect(api.requests[0]).toEqual({
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
-        });
+        expect(generator.calls[0]?.includedSchemas).toEqual(["public", "auth", "storage"]);
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -703,7 +710,7 @@ describe("gen types", () => {
         workdir,
         ['project_id = "demo"', "", "[api]", 'schemas = ["auth", "storage"]'].join("\n"),
       );
-      const { layer, api } = yield* setup({
+      const { layer, generator } = yield* setup({
         workdir,
         projectId: Option.some(VALID_REF),
         projectTypes: "ok",
@@ -712,10 +719,7 @@ describe("gen types", () => {
         Effect.provide(layer),
       );
 
-      expect(api.requests[0]).toEqual({
-        method: "generateTypescriptTypes",
-        input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
-      });
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public", "auth", "storage"]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -765,7 +769,7 @@ describe("gen types", () => {
         const sub = path.join(root, "apps", "web");
         yield* makeDirectory(sub);
         const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
-        const { layer, api } = yield* setup({
+        const { layer, generator } = yield* setup({
           workdir: resolved.workdir,
           skipConfig: true,
           explicitWorkdir: resolved.explicit,
@@ -776,10 +780,7 @@ describe("gen types", () => {
           defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
         ).pipe(Effect.provide(layer));
 
-        expect(api.requests[0]).toEqual({
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "public,ancestor_only" },
-        });
+        expect(generator.calls[0]?.includedSchemas).toEqual(["public", "ancestor_only"]);
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -853,23 +854,24 @@ describe("gen types", () => {
   it.effect("generates from --project-ref without a local project config", () =>
     Effect.gen(function* () {
       const workdir = yield* makeWorkdir("supabase-gen-types-pid-no-config-");
-      const { layer, out, api } = yield* setup({ workdir, skipConfig: true, projectTypes: "ok" });
+      const { layer, out, generator } = yield* setup({
+        workdir,
+        skipConfig: true,
+        projectTypes: "ok",
+      });
       yield* genTypes(
         defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
       ).pipe(Effect.provide(layer));
 
-      expect(api.requests[0]).toEqual({
-        method: "generateTypescriptTypes",
-        input: { ref: VALID_REF, included_schemas: "public" },
-      });
-      expect(out.stderrText).not.toContain("unformatted");
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public"]);
+      expect(out.stderrText).toContain("Generated TypeScript is unformatted");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("resolves --linked without a local project config", () =>
     Effect.gen(function* () {
       const workdir = yield* makeWorkdir("supabase-gen-types-linked-no-config-");
-      const { layer, api } = yield* setup({
+      const { layer, generator } = yield* setup({
         workdir,
         skipConfig: true,
         projectId: Option.some(VALID_REF),
@@ -879,10 +881,7 @@ describe("gen types", () => {
         Effect.provide(layer),
       );
 
-      expect(api.requests[0]).toEqual({
-        method: "generateTypescriptTypes",
-        input: { ref: VALID_REF, included_schemas: "public" },
-      });
+      expect(generator.calls[0]?.includedSchemas).toEqual(["public"]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -903,17 +902,14 @@ describe("gen types", () => {
 
   it.effect("prefers explicit --schema on the linked path", () =>
     Effect.gen(function* () {
-      const { layer, api } = yield* setup({
+      const { layer, generator } = yield* setup({
         projectId: Option.some(VALID_REF),
         projectTypes: "ok",
       });
       yield* genTypes(
         defaultFlags({ remote: Option.some({ _tag: "Linked" } as const), schema: ["auth"] }),
       ).pipe(Effect.provide(layer));
-      expect(api.requests[0]).toEqual({
-        method: "generateTypescriptTypes",
-        input: { ref: VALID_REF, included_schemas: "auth" },
-      });
+      expect(generator.calls[0]?.includedSchemas).toEqual(["auth"]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -929,7 +925,7 @@ describe("gen types", () => {
             workdir,
             ['project_id = "demo"', "[api]", 'schemas = ["other"]'].join("\n"),
           );
-          const { layer, api } = yield* setup({
+          const { layer, generator } = yield* setup({
             workdir,
             projectId: Option.some(VALID_REF),
             projectTypes: "ok",
@@ -937,10 +933,7 @@ describe("gen types", () => {
           yield* genTypes(defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) })).pipe(
             Effect.provide(layer),
           );
-          expect(api.requests[0]).toEqual({
-            method: "generateTypescriptTypes",
-            input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
-          });
+          expect(generator.calls[0]?.includedSchemas).toEqual(["public", "auth", "storage"]);
         }),
       ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -948,14 +941,11 @@ describe("gen types", () => {
     it.effect("selects the schemas for --project-ref without a project config", () =>
       withApiSchemas(
         Effect.gen(function* () {
-          const { layer, api } = yield* setup({ skipConfig: true, projectTypes: "ok" });
+          const { layer, generator } = yield* setup({ skipConfig: true, projectTypes: "ok" });
           yield* genTypes(
             defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
           ).pipe(Effect.provide(layer));
-          expect(api.requests[0]).toEqual({
-            method: "generateTypescriptTypes",
-            input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
-          });
+          expect(generator.calls[0]?.includedSchemas).toEqual(["public", "auth", "storage"]);
         }),
       ).pipe(Effect.provide(BunServices.layer)),
     );
@@ -1159,10 +1149,7 @@ describe("gen types", () => {
 
         expect(stripAnsi(out.stderrText)).toContain("--project-id is deprecated");
         expect(out.stderrText).toContain(unverifiedTargetBanner());
-        expect(api.requests).toContainEqual({
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "public" },
-        });
+        expect(api.requests).toEqual([{ method: "getProject", input: { ref: VALID_REF } }]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1173,7 +1160,7 @@ describe("gen types", () => {
           const alias = yield* setup({
             format,
             args: ["gen", "types", "--project-id", VALID_REF],
-            projectTypes: "export type Database = {}\n",
+            generatorOutput: "export type Database = {}\n",
           });
           yield* genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })).pipe(
             Effect.provide(alias.layer),
@@ -1181,7 +1168,7 @@ describe("gen types", () => {
           const canonical = yield* setup({
             format,
             args: ["gen", "types", `--remote=${VALID_REF}`],
-            projectTypes: "export type Database = {}\n",
+            generatorOutput: "export type Database = {}\n",
           });
           yield* genTypes(
             defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
@@ -1207,10 +1194,7 @@ describe("gen types", () => {
         ).pipe(Effect.provide(layer));
 
         expect(api.requests).toEqual([
-          {
-            method: "generateTypescriptTypes",
-            input: { ref: BRANCH_PROJECT_REF, included_schemas: "public" },
-          },
+          { method: "getProject", input: { ref: BRANCH_PROJECT_REF } },
         ]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -1229,10 +1213,7 @@ describe("gen types", () => {
 
         expect(api.requests).toEqual([
           { method: "listAllBranches", input: { ref: VALID_REF } },
-          {
-            method: "generateTypescriptTypes",
-            input: { ref: BRANCH_PROJECT_REF, included_schemas: "public" },
-          },
+          { method: "getProject", input: { ref: BRANCH_PROJECT_REF } },
         ]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -1311,8 +1292,8 @@ describe("gen types", () => {
           ).pipe(Effect.provide(layer));
 
           expect(api.requests).toContainEqual({
-            method: "generateTypescriptTypes",
-            input: { ref: BRANCH_PROJECT_REF, included_schemas: "public" },
+            method: "getProject",
+            input: { ref: BRANCH_PROJECT_REF },
           });
         }).pipe(Effect.provide(BunServices.layer)),
       );
@@ -1337,13 +1318,11 @@ describe("gen types", () => {
             out: ctx.out,
             run: genTypes(defaultFlags({ ...target })),
             target: () => {
-              const generated = ctx.api.requests.find(
-                ({ method }) => method === "generateTypescriptTypes",
-              )?.input;
-              if (Predicate.hasProperty(generated, "ref") && Predicate.isString(generated.ref)) {
-                return { kind: "linked" as const, ref: generated.ref };
+              const resolvedTarget = ctx.dbConfig.resolves[0]?.target;
+              if (resolvedTarget?.kind === "linked") {
+                return { kind: "linked" as const, ref: resolvedTarget.ref };
               }
-              if (ctx.dbConfig.resolves[0]?.target.kind === "db-url") {
+              if (resolvedTarget?.kind === "db-url") {
                 return { kind: "db-url" as const };
               }
               return ctx.generator.calls[0]?.isLocal === true
@@ -1370,9 +1349,10 @@ describe("gen types", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("maps project type generation network failures", () =>
+  it.effect("maps Management API failures on the typescript fallback", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
+        generator: sequentialGenerator([() => Effect.fail(refusedFailure())]),
         generateTypescriptTypes: () =>
           Effect.fail(new ApiCallFailure({ message: "network error" })),
       });
@@ -1403,7 +1383,7 @@ describe("gen types", () => {
   describe("Flag mutex groups and argv-scan precedence", () => {
     it.effect("does not misdetect a mutex flag consumed as -s's value", () =>
       Effect.gen(function* () {
-        const { layer, api } = yield* setup({
+        const { layer, generator } = yield* setup({
           args: ["gen", "types", "--remote", "-s", "--query-timeout"],
           projectId: Option.some(VALID_REF),
           projectTypes: "ok",
@@ -1415,10 +1395,7 @@ describe("gen types", () => {
           }),
         ).pipe(Effect.provide(layer));
 
-        expect(api.requests[0]).toEqual({
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "--query-timeout" },
-        });
+        expect(generator.calls[0]?.includedSchemas).toEqual(["--query-timeout"]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1528,19 +1505,14 @@ describe("gen types", () => {
       Effect.gen(function* () {
         const { layer, api, out } = yield* setup({
           args: ["gen", "types", "--linked", "--project-ref", VALID_REF],
-          projectTypes: "export type Database = {};",
+          generatorOutput: "export type Database = {};",
         });
         yield* genTypes(defaultFlags({ linked: true, projectRef: Option.some(VALID_REF) })).pipe(
           Effect.provide(layer),
         );
 
         expect(out.stdoutText).toBe("export type Database = {};");
-        expect(api.requests).toEqual([
-          {
-            method: "generateTypescriptTypes",
-            input: { ref: VALID_REF, included_schemas: "public" },
-          },
-        ]);
+        expect(api.requests).toEqual([{ method: "getProject", input: { ref: VALID_REF } }]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1608,16 +1580,13 @@ describe("gen types", () => {
       Effect.gen(function* () {
         const { layer, api } = yield* setup({
           args: ["gen", "types", "--linked=false", "--project-ref", VALID_REF],
-          projectTypes: "ok",
+          generatorOutput: "ok",
         });
         yield* genTypes(defaultFlags({ linked: false, projectRef: Option.some(VALID_REF) })).pipe(
           Effect.provide(layer),
         );
 
-        expect(api.requests).toContainEqual({
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "public" },
-        });
+        expect(api.requests).toContainEqual({ method: "getProject", input: { ref: VALID_REF } });
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1729,12 +1698,7 @@ describe("gen types", () => {
           Effect.provide(layer),
         );
 
-        expect(api.requests).toEqual([
-          {
-            method: "generateTypescriptTypes",
-            input: { ref: VALID_REF, included_schemas: "public" },
-          },
-        ]);
+        expect(api.requests).toEqual([{ method: "getProject", input: { ref: VALID_REF } }]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2242,6 +2206,253 @@ describe("gen types", () => {
             ),
           ).toBe(true);
         }
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
+
+  describe("TypeScript generation for a project", () => {
+    const projectArgs = ["gen", "types", `--remote=${VALID_REF}`];
+    const projectFlags = () =>
+      defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) });
+    const directHost = () =>
+      Effect.succeed(
+        remoteResolvedConfig({
+          host: `db.${VALID_REF}.supabase.co`,
+          port: 5432,
+          user: "postgres",
+          password: "direct-password",
+          database: "postgres",
+        }),
+      );
+    const branchConfig = ({ branch_id_or_ref }: { readonly branch_id_or_ref: string }) =>
+      Effect.succeed({
+        ref: branch_id_or_ref,
+        postgres_version: "15.1",
+        postgres_engine: "15",
+        release_channel: "ga",
+        status: "ACTIVE_HEALTHY",
+        db_host: "127.0.0.1",
+        db_port: 5432,
+        db_user: "branch_user",
+        db_pass: "branch-password",
+        jwt_secret: "secret",
+      });
+    const missingProject = () =>
+      Effect.fail(statusApiError(404, `{"message":"Preview branch not found"}`));
+    const apiTypeRequests = (api: {
+      readonly requests: ReadonlyArray<{ readonly method: string }>;
+    }) => api.requests.filter(({ method }) => method === "generateTypescriptTypes");
+
+    it.effect(
+      "generates directly with [api].extra_search_path and never asks the API for types",
+      () =>
+        Effect.gen(function* () {
+          const workdir = yield* makeWorkdir("supabase-gen-types-ts-direct-");
+          yield* writeConfig(
+            workdir,
+            ['project_id = "demo"', "[api]", 'extra_search_path = ["extra"]'].join("\n"),
+          );
+          const { layer, api, out, generator, linkedProjectCache } = yield* setup({
+            workdir,
+            args: projectArgs,
+            generatorOutput: "export type Database = {};",
+            projectTypes: "from the api",
+          });
+          yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toBe("export type Database = {};");
+          expect(out.stderrText).toContain("Generated TypeScript is unformatted");
+          expect(warningsOf(out)).toEqual([]);
+          expect(apiTypeRequests(api)).toEqual([]);
+          expect(generator.calls).toHaveLength(1);
+          expect(generator.calls[0]?.lang).toBe("typescript");
+          expect(generator.calls[0]?.extraSearchPath).toEqual(["extra"]);
+          expect(linkedProjectCache.cached).toBe(true);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("generates directly through the preview branch when the project lookup 404s", () =>
+      Effect.gen(function* () {
+        const { layer, api, out, generator } = yield* setup({
+          args: projectArgs,
+          getProject: missingProject,
+          getABranchConfig: branchConfig,
+          generatorOutput: "export type Database = {};",
+        });
+        yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+        expect(out.stdoutText).toBe("export type Database = {};");
+        expect(api.requests).toContainEqual({
+          method: "getABranchConfig",
+          input: { branch_id_or_ref: VALID_REF },
+        });
+        expect(apiTypeRequests(api)).toEqual([]);
+        expect(generator.calls[0]?.conn.user).toBe("branch_user");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "falls back to the Management API with one warning when the database refuses the connection",
+      () =>
+        Effect.gen(function* () {
+          const { layer, api, out, generator, linkedProjectCache } = yield* setup({
+            args: projectArgs,
+            projectTypes: "export type FromApi = {};",
+            dbConfigResolve: directHost,
+            generator: sequentialGenerator([() => Effect.fail(refusedFailure())]),
+          });
+          yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toBe("export type FromApi = {};");
+          expect(out.stderrText).not.toContain("unformatted");
+          expect(generator.calls).toHaveLength(1);
+          expect(apiTypeRequests(api)).toEqual([
+            {
+              method: "generateTypescriptTypes",
+              input: { ref: VALID_REF, included_schemas: "public" },
+            },
+          ]);
+          expect(warningsOf(out)).toEqual([
+            "Could not connect to the project database (failed to connect to postgres: failed to connect to `host=db.example.supabase.co user=postgres database=postgres`: dial error (connect ECONNREFUSED 203.0.113.7:5432)). " +
+              "Falling back to the Management API, whose types ignore [api].extra_search_path. " +
+              "To generate them with the CLI, allow this machine's IP in the project's network restrictions or set SUPABASE_DB_PASSWORD. " +
+              "This fallback will be removed in the next major version.",
+          ]);
+          expect(out.stdoutText).not.toContain("Warning");
+          expect(linkedProjectCache.cached).toBe(true);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "falls back to the Management API when the preview-branch database is unreachable",
+      () =>
+        Effect.gen(function* () {
+          const { layer, api, out } = yield* setup({
+            args: projectArgs,
+            getProject: missingProject,
+            getABranchConfig: branchConfig,
+            projectTypes: "export type FromApi = {};",
+            generator: sequentialGenerator([() => Effect.fail(refusedFailure())]),
+          });
+          yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toBe("export type FromApi = {};");
+          expect(warningsOf(out)).toHaveLength(1);
+          expect(apiTypeRequests(api)).toHaveLength(1);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("falls back when the pooler cannot be used after an IPv6 failure", () =>
+      Effect.gen(function* () {
+        const { layer, api, out, generator, dbConfig } = yield* setup({
+          args: projectArgs,
+          projectTypes: "export type FromApi = {};",
+          dbConfigResolve: directHost,
+          poolerFallback: Option.none(),
+          generator: sequentialGenerator([() => Effect.fail(ipv6Failure())]),
+        });
+        yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+        expect(out.stdoutText).toBe("export type FromApi = {};");
+        expect(dbConfig.poolerFallbacks).toHaveLength(1);
+        expect(generator.calls).toHaveLength(1);
+        expect(warningsOf(out)).toHaveLength(1);
+        expect(apiTypeRequests(api)).toHaveLength(1);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    for (const status of [401, 403]) {
+      it.effect(`falls back when the login-role endpoint answers ${status}`, () =>
+        Effect.gen(function* () {
+          const { layer, api, out, generator } = yield* setup({
+            args: projectArgs,
+            projectTypes: "export type FromApi = {};",
+            dbConfigResolve: () =>
+              Effect.fail(
+                new DbConfigLoginRoleStatusError({
+                  status,
+                  body: "forbidden",
+                  message: `unexpected login role status ${status}: forbidden`,
+                }),
+              ),
+          });
+          yield* genTypes(projectFlags()).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toBe("export type FromApi = {};");
+          expect(generator.calls).toHaveLength(0);
+          expect(warningsOf(out)).toHaveLength(1);
+          expect(apiTypeRequests(api)).toHaveLength(1);
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+    }
+
+    it.effect("does not fall back when the login-role endpoint fails with a server error", () =>
+      Effect.gen(function* () {
+        const { layer, api, out } = yield* setup({
+          args: projectArgs,
+          dbConfigResolve: () =>
+            Effect.fail(
+              new DbConfigLoginRoleStatusError({
+                status: 500,
+                body: "boom",
+                message: "unexpected login role status 500: boom",
+              }),
+            ),
+        });
+        const exit = yield* genTypes(projectFlags()).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(apiTypeRequests(api)).toEqual([]);
+        expect(warningsOf(out)).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("does not fall back on an introspection failure", () =>
+      Effect.gen(function* () {
+        const { layer, api, out } = yield* setup({
+          args: projectArgs,
+          dbConfigResolve: directHost,
+          generator: sequentialGenerator([() => Effect.fail(nonIpv6Failure("typescript"))]),
+        });
+        const exit = yield* genTypes(projectFlags()).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(apiTypeRequests(api)).toEqual([]);
+        expect(warningsOf(out)).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("does not fall back when the project lookup itself fails", () =>
+      Effect.gen(function* () {
+        const { layer, api, generator } = yield* setup({
+          args: projectArgs,
+          getProject: () => Effect.fail(statusApiError(500, `{"message":"boom"}`)),
+        });
+        const exit = yield* genTypes(projectFlags()).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(apiTypeRequests(api)).toEqual([]);
+        expect(generator.calls).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("fails without calling the API when another language cannot connect", () =>
+      Effect.gen(function* () {
+        const { layer, api, out } = yield* setup({
+          args: ["gen", "types", "--lang", "go", `--remote=${VALID_REF}`],
+          dbConfigResolve: directHost,
+          generator: sequentialGenerator([() => Effect.fail(refusedFailure())]),
+        });
+        const exit = yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(apiTypeRequests(api)).toEqual([]);
+        expect(warningsOf(out)).toEqual([]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -3847,37 +4058,41 @@ const methodPaths = (requests: ReadonlyArray<{ readonly method: string; readonly
   requests.map(({ method, url }) => `${method} ${new URL(url).pathname}`);
 
 describe("gen types permissions through the real layers", () => {
-  it.effect("generates typescript for --remote=<ref> with one types call and the cache fill", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const ctx = yield* setupRecorded({
-        args: ["gen", "types", `--remote=${VALID_REF}`],
-      });
-      yield* ctx.run(
-        genTypes(defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) })),
-      );
+  it.effect(
+    "generates typescript for --remote=<ref> directly through the pooler and fills the cache",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const ctx = yield* setupRecorded({
+          args: ["gen", "types", `--remote=${VALID_REF}`],
+        });
+        yield* ctx.run(
+          genTypes(defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) })),
+        );
 
-      expect(ctx.out.stdoutText).toBe("export type Database = {};");
-      expect(methodPaths(ctx.api.requests)).toEqual([
-        `GET /v1/projects/${VALID_REF}/types/typescript`,
-      ]);
-      expect(ctx.stubbed).toEqual([]);
-      expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${VALID_REF}`]);
-      // The cache fill also calls the project lookup; without it, no TypeScript entry may require one.
-      assertPermissionDrift({
-        command: "gen types",
-        activeFlags: { ...DEFAULT_SWITCHES, remote: VALID_REF, lang: "typescript" },
-        requests: ctx.api.requests,
-        exact: true,
-      });
-      expect(yield* fs.exists(`${ctx.workdir}/supabase/.temp/linked-project.json`)).toBe(true);
-      assertPermissionDrift({
-        command: "gen types",
-        activeFlags: { ...DEFAULT_SWITCHES, remote: VALID_REF, lang: "typescript" },
-        requests: ctx.recordedRequests(),
-        exact: true,
-      });
-    }).pipe(Effect.provide(BunServices.layer)),
+        expect(ctx.out.stdoutText).toBe("generated");
+        expect(methodPaths(ctx.api.requests)).toEqual([`GET /v1/projects/${VALID_REF}`]);
+        expect(ctx.stubbed.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `POST /v1/projects/${VALID_REF}/cli/login-role`,
+        ]);
+        expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${VALID_REF}`]);
+        expect(ctx.generator.calls[0]?.lang).toBe("typescript");
+        expect(ctx.generator.calls[0]?.conn.host).toBe("aws-0-us-east-1.pooler.supabase.com");
+        assertPermissionDrift({
+          command: "gen types",
+          activeFlags: { ...DEFAULT_SWITCHES, remote: VALID_REF, lang: "typescript" },
+          requests: ctx.api.requests,
+          exact: true,
+        });
+        expect(yield* fs.exists(`${ctx.workdir}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "gen types",
+          activeFlags: { ...DEFAULT_SWITCHES, remote: VALID_REF, lang: "typescript" },
+          requests: ctx.recordedRequests(),
+          exact: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("still generates typescript through the deprecated --project-id alias", () =>
@@ -3887,9 +4102,7 @@ describe("gen types permissions through the real layers", () => {
       });
       yield* ctx.run(genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })));
 
-      expect(methodPaths(ctx.api.requests)).toEqual([
-        `GET /v1/projects/${VALID_REF}/types/typescript`,
-      ]);
+      expect(methodPaths(ctx.api.requests)).toEqual([`GET /v1/projects/${VALID_REF}`]);
       expect(warningsOf(ctx.out)).toEqual([expect.stringContaining("--project-id is deprecated")]);
       assertPermissionDrift({
         command: "gen types",
@@ -3922,12 +4135,16 @@ describe("gen types permissions through the real layers", () => {
 
         expect(methodPaths(ctx.api.requests)).toEqual([
           `GET /v1/projects/${VALID_REF}/branches`,
-          `GET /v1/projects/${BRANCH_PROJECT_REF}/types/typescript`,
+          `GET /v1/projects/${BRANCH_PROJECT_REF}`,
+        ]);
+        expect(ctx.stubbed.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${BRANCH_PROJECT_REF}/config/database/pooler`,
+          `POST /v1/projects/${BRANCH_PROJECT_REF}/cli/login-role`,
         ]);
         assertPermissionDrift({
           command: "gen types",
           activeFlags: { ...DEFAULT_SWITCHES, remote: "feature-x", lang: "typescript" },
-          requests: ctx.api.requests,
+          requests: ctx.recordedRequests(),
           exact: true,
         });
       }).pipe(Effect.provide(BunServices.layer)),
@@ -4055,7 +4272,7 @@ describe("gen types permissions through the real layers", () => {
 
       expect(methodPaths(ctx.api.requests)).toEqual([
         "GET /v1/projects",
-        `GET /v1/projects/${VALID_REF}/types/typescript`,
+        `GET /v1/projects/${VALID_REF}`,
       ]);
       expect(methodPaths(ctx.http.calls)).toEqual([`GET /v1/projects/${VALID_REF}`]);
       assertPermissionDrift({
