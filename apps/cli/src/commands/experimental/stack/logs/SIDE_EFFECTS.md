@@ -65,7 +65,10 @@ Stream JSON emits a `log-entry` event per output line with `timestamp`,
 `service`, `instance_id`, `stream` (`stdout` or `stderr`), `line`, and `source`
 (`history` or `live`), and a `log-marker` event per marker with `timestamp`,
 `service`, `instance_id`, `kind` (`launch` or `lost`), `source`, and, for chunks
-lost before they were written, `count` and, when known, `stream`. A `lost` marker without
+lost before they were written, `count` and, when known, `stream`. Each stream-json event also includes a `data` object with the original retained record,
+including its `instanceId`, `service`, `timestamp`, `kind`, and any `text`,
+`launchId`, `position`, `resumeAt`, `count`, or `stream` fields present. The JSON
+array keeps its existing event shape without `data`. A `lost` marker without
 `count` reports segments removed by retention. `--output-format json` prints
 one array of the same objects; it cannot be combined with `--follow`. Lines
 preserve their content in machine output. Legacy `-o/--output` is rejected.
@@ -82,4 +85,4 @@ contents are not custom telemetry properties. Telemetry flushes on every exit to
 
 ## Deprecation
 
-The command prints a warning on stderr before reading logs. It names `supabase logs` as the replacement and v4 as the removal version. Existing flags, history defaults, follow defaults, and output remain unchanged.
+The command prints a warning on stderr before reading logs. It names `supabase logs` as the replacement and v4 as the removal version. Existing flags, history defaults, follow defaults, and JSON array output remain unchanged. Stream JSON adds the `data` field described above.

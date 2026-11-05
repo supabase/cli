@@ -108,7 +108,7 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       yield* (yield* Output).raw(
-        "Warning: compute logs is deprecated and will be removed in v4. Use supabase logs --remote --service compute --resource <name> instead; press L in the interactive browser to load newer logs.\n",
+        "Warning: compute logs is deprecated and will be removed in v4. Use supabase logs --remote --service compute --resource <name> instead.\n",
         "stderr",
       );
       yield* computeLogs(flags);

@@ -11,6 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
   Clock,
+  ConfigProvider,
   Cause,
   DateTime,
   Deferred,
@@ -51,12 +52,12 @@ import {
   stackApiLayer,
   stackTargetResolverLayer,
 } from "../../../../command-internal/stack-target.ts";
-import type { RetainedLogsFlags as StackLogsFlags } from "../../../../command-internal/stack-logs/retained-logs.ts";
-import { stackLogs } from "../../../../command-internal/stack-logs/retained-logs.ts";
+import type { StackLogsFlags } from "./logs.handler.ts";
+import { stackLogs } from "./logs.handler.ts";
 import { logs, logsSources } from "../../../logs/logs.handler.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { OutputFlag, OutputFormatFlag } from "../../../../command-internal/global-flags.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
@@ -204,6 +205,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
     flags: Partial<StackLogsFlags>,
     format: "text" | "stream-json" | "json" = "text",
     mode: "reader" | "unified" | "legacy" | "browser" = "reader",
+    legacyOutput?: "json",
   ) =>
     Effect.gen(function* () {
       const output = mockOutput({ format, interactive: mode === "browser" });
@@ -241,6 +243,9 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
       const layer = Layer.mergeAll(
         commandRuntimeLayer(["stack", "logs"]),
         output.layer,
+        Layer.succeed(OutputFlag, Option.fromUndefinedOr(legacyOutput)),
+        Layer.succeed(OutputFormatFlag, Option.none()),
+        ConfigProvider.layer(ConfigProvider.fromUnknown({})),
         Layer.mock(LogsClipboard, {}),
         telemetry.layer,
         Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
@@ -675,17 +680,32 @@ describe("retained local logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
+  it.effect("preserves the legacy output rejection and format suggestion", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      const { exit, output } = yield* f.run({}, "text", "reader", "json");
+      expect(failure(exit)).toMatchObject({
+        reason: "flags",
+        message: "The legacy -o/--output flag is not supported here; use --output-format json.",
+        suggestion:
+          "Use --output-format json, --output-format text, or --output-format stream-json.",
+      });
+      expect(output.stdoutText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
   it.effect("fails --follow without a running owner before printing anything", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
-      yield* f.writeSegment("database", "db-a", [launch(t0), line(t0 + 1, "stdout", "retained")]);
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "retained")]);
 
       const followed = yield* f.run({ follow: true });
       const finite = yield* f.run({ follow: true }, "json");
 
       expect(failure(followed.exit)).toMatchObject({
         reason: "lifecycle",
-        suggestion: "Run supabase logs to read retained logs, or supabase stack start first.",
+        suggestion:
+          "Run supabase stack logs without --follow to read retained logs, or supabase stack start first.",
       });
       expect(followed.output.stdoutText).toBe("");
       expect(followed.output.stderrText).toBe("");
@@ -940,6 +960,7 @@ describe("retained local logs", () => {
         reason: "lifecycle",
         message:
           "The running stack serves none of the selected services, so there are no new lines to follow.",
+        suggestion: "Run supabase stack logs without --follow to read retained logs.",
       });
     }).pipe(Effect.scoped, Effect.provide(live)),
   );

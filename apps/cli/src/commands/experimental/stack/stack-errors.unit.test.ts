@@ -9,7 +9,7 @@ import { DeclarativeApplyError } from "../../db/schema/declarative/declarative.e
 import { FunctionsServeStackError } from "../../functions/serve/serve.errors.ts";
 import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { StackCommandDestroyError } from "./destroy/destroy.errors.ts";
-import { StackCommandLogsError } from "../../../command-internal/stack-logs/retained-logs.errors.ts";
+import { StackCommandLogsError } from "./logs/logs.errors.ts";
 import { mapTargetError, StackTargetError } from "../../../command-internal/stack-target.ts";
 import { StackCommandStartError } from "./start/start.errors.ts";
 import { StackCommandStatusError } from "./status/status.errors.ts";

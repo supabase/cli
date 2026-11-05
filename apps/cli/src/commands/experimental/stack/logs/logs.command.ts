@@ -4,7 +4,7 @@ import { Command, Flag } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
-import { stackLogs } from "../../../../command-internal/stack-logs/retained-logs.ts";
+import { stackLogs } from "./logs.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
@@ -75,7 +75,7 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       yield* (yield* Output).raw(
-        "Warning: stack logs is deprecated and will be removed in v4. Use supabase logs instead; press L in the interactive browser to load newer logs.\n",
+        "Warning: stack logs is deprecated and will be removed in v4. Use supabase logs instead.\n",
         "stderr",
       );
       yield* stackLogs(flags);

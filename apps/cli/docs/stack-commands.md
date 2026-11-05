@@ -23,6 +23,7 @@ default `max_worker_processes` to 17 to leave room for those workers; `postgresq
 | `supabase stack outdated` | Report which locked service versions `stack update` would change.                 |
 | `supabase stack start`    | Create or resume the project's stack.                                             |
 | `supabase stack status`   | Show identity, readiness, and drift, or export connection variables with `--env`. |
+| `supabase stack logs`     | Print retained stack logs; `-f` streams new lines.                                |
 | `supabase stack restart`  | Restart an existing stack using its saved effective configuration.                |
 | `supabase stack stop`     | Stop a stack while retaining its data.                                            |
 
@@ -296,6 +297,32 @@ unmatched services fail with status 1. Browser interruption exits 130.
 
 The deprecated `supabase stack logs` keeps its existing `--tail` and `--follow`
 behavior until removal in v4.
+
+### Legacy stack logs
+
+`supabase stack logs` prints the retained stdout/stderr of composition members, plus
+the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
+streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
+repeatable `--service <kind-or-instance-id>` can include standalone services too, and
+`--service gateway` reads only the request lines. History is read from the persisted
+log files, so it works while the stack is stopped; `--follow` requires a running owner
+and fails before printing anything without one. Neither mode starts an owner or
+service, and Ctrl-C leaves services running.
+
+`--tail N` (default 200) keeps the newest lines across the selected services and
+`--since` takes a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each
+service's latest launch. Text uses `<service> | <HH:MM:SS.mmm> <line>` with aligned
+labels, shows launches and lost output as dim separators, strips terminal control
+sequences, and notes on stderr when the tail hides older lines. For automation use
+`--output-format stream-json`: each `log-entry` contains `timestamp`, `service`,
+`instance_id`, `stream`, `line`, and `source` (`history` or `live`), and markers are
+`log-marker` events with `kind` and, for lost output, `count`. `--output-format json`
+prints the history as one array and does not accept `--follow`. Missing stacks,
+unmatched services, and `--follow` without an owner fail with status 1; interruption
+exits 130.
+
+The command emits a deprecation warning on stderr and remains available until v4.
+Stream JSON also includes a `data` object containing the original retained record.
 
 ## Data and configuration
 

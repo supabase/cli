@@ -5,8 +5,11 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
   unclassifiedStackFailureActionability,
-} from "../../shared/telemetry/error-actionability.ts";
-import { type StackTargetIssue, stackTargetInvalidConfigActionability } from "../stack-target.ts";
+} from "../../../../shared/telemetry/error-actionability.ts";
+import {
+  type StackTargetIssue,
+  stackTargetInvalidConfigActionability,
+} from "../../../../command-internal/stack-target.ts";
 
 export class StackCommandLogsError extends Data.TaggedError("ExperimentalStackLogsError")<{
   readonly reason: "flags" | "invalid-config" | "lifecycle" | "stack";

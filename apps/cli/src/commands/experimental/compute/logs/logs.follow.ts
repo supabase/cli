@@ -1,5 +1,5 @@
 import { Effect, Schedule } from "effect";
-import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
+import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
 
 export const followLogs = Effect.fn("Logs.follow")(function* <A, E, R>(
   poll: Effect.Effect<A, E, R>,

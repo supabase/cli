@@ -1,4 +1,4 @@
-import { requestLogs } from "../../command-internal/logs/request.ts";
+import { requestLogs } from "../logs/request.ts";
 import { type ApiClient } from "@supabase/api/effect";
 import { Effect, Option, Predicate, Schema } from "effect";
 import {
