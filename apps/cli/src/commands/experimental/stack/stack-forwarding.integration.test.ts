@@ -222,7 +222,7 @@ SHARED = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhE
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("uppercases edge runtime secret names and drops unset or SUPABASE_ ones", () =>
+  it.effect("uppercases edge runtime secret names and drops unset ones", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(
         `project_id = "functions-secret-names"
@@ -240,6 +240,7 @@ supabase_internal_wallclock_limit_sec = "7"
       expect(services.find((service) => service.service === "functions")?.config.env).toEqual({
         MY_LOWER: "lower-value",
         FROM_ENV: "from-env",
+        SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC: "7",
       });
     }).pipe(Effect.provide(layer)),
   );

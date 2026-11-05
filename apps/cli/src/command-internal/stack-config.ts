@@ -482,9 +482,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         return yield* new StackConfigError({
           message: `failed to parse config: ${functionsEnvResult.error}`,
         });
-      const functionsEnv = Object.fromEntries(
-        Object.entries(functionsEnvResult.value).filter(([name]) => !name.startsWith("SUPABASE_")),
-      );
+      const functionsEnv = functionsEnvResult.value;
       const storageFileSizeLimit = yield* Effect.try({
         try: () => String(parseFileSizeLimit(validatedConfig.storage.file_size_limit)),
         catch: (cause) =>

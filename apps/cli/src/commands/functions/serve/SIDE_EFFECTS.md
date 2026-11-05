@@ -127,17 +127,25 @@ When `SUPABASE_EXPERIMENTAL_STACK=1` selects the Stack backend, the command open
 project stack and serves its Functions service. A composed Functions service is started or woken
 and readied in place; the stack composition and its other services remain available on shutdown.
 If Functions is excluded from the composition, a temporary standalone Functions instance is
-created under the same stack owner and destroyed with the command scope. `--env-file` and
-`--no-verify-jwt` apply only for the command lifetime and restore the saved composed configuration
-when the owner remains reachable. Import-map and inspector flags are rejected before any stack
-mutation. Stack mode writes no project files and does not stop or restart the whole composition.
-It reads the shared Functions `.env` when creating a temporary service, or the explicit `--env-file`;
-per-function `.env` files are not read, and reserved `SUPABASE_*` entries are ignored.
-For Stack mode, TOML `edge_runtime.secrets` names are uppercased, empty or unresolved `env()`
-values and `SUPABASE_`-prefixed names are dropped, encrypted values are decrypted, and the result
-overrides the shared `.env`; an explicit `--env-file` overrides matching shared secrets while
-retaining other saved values.
-Per-function TOML `env` remains the final override for that function.
+created under the same stack owner and destroyed with the command scope. On a running stack,
+any difference between the configuration serve resolves (env files, per-function `.env`,
+`[functions.<name>]` settings, `--env-file`, `--debug`, `--no-verify-jwt`) and the saved one
+restarts Functions for the serving session, and the saved composed configuration is restored on
+exit when the owner remains reachable. Edits made while serving apply on the next
+`functions serve`, because the stack backend does not watch files. Import-map and inspector flags
+are rejected before any stack mutation. Stack mode writes no project files and does not stop or
+restart the whole composition.
+Stack mode resolves the env like legacy serve on every invocation, for a composed or temporary
+service: the shared Functions `.env`, or the explicit `--env-file` instead, overrides the TOML
+`edge_runtime.secrets`, and without `--env-file` each enabled `<function-name>/.env` overrides
+the shared values for that Function only; reserved `SUPABASE_*` entries are skipped with a warning.
+TOML `edge_runtime.secrets` names are uppercased, empty or unresolved `env()` values and
+`SUPABASE_`-prefixed names are dropped, and encrypted values are decrypted; an undecryptable value
+fails the command.
+Per-function TOML `env` remains the final override for that function. Multiline values and names
+the process environment cannot carry reach the runtime through its Functions config. `--debug`
+runs the runtime verbose for the command lifetime. A temporary service uses the API port of a
+running REST, Auth, Storage or Realtime service, else the configured `api.port`.
 Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
 per-function `import_map.json` is not read and does not fail the command.
 

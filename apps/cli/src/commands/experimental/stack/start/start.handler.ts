@@ -14,7 +14,7 @@ import {
 } from "../stack-summary.ts";
 import { gray } from "../../../../command-internal/colors.ts";
 import { currentShellPlatform } from "../../../../command-internal/shell-quote.ts";
-import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
+import { withProjectFunctionsConfig } from "../../../../command-internal/stack-functions-env.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
 import {
   automaticRuntimeNotice,
@@ -39,6 +39,7 @@ import {
 import { Output } from "../../../../shared/output/output.service.ts";
 import { MachineErrorContext } from "../../../../shared/output/machine-error-context.service.ts";
 import {
+  DebugFlag,
   OutputFlag,
   resolveExperimentalWithProjectEnv,
 } from "../../../../command-internal/global-flags.ts";
@@ -577,6 +578,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolver = yield* StackTargetResolver;
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
+    const debug = yield* DebugFlag;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* rejectStackOutput(outputFlag).pipe(
@@ -636,6 +638,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolveRequested = (
       stackId: string,
       config: Effect.Success<ReturnType<typeof loadStartConfig>>["config"],
+      warn = true,
     ) =>
       Effect.gen(function* () {
         const creations = yield* config.creations(stackId).pipe(
@@ -649,9 +652,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               }),
           ),
         );
-        return yield* Effect.forEach(
-          selectedCreations(creations, exclusions),
-          withProjectFunctionsEnv,
+        return yield* Effect.forEach(selectedCreations(creations, exclusions), (creation) =>
+          withProjectFunctionsConfig(creation, { warn, debug }),
         ).pipe(
           Effect.mapError(
             (cause) =>
@@ -674,7 +676,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolveForReplan = (stackId: string) =>
       Effect.gen(function* () {
         const loaded = yield* startConfig;
-        return yield* resolveRequested(stackId, loaded.config);
+        /* A running owner ignores these creations, so this resolve stays silent. A start that
+           applies the env under that owner resolves it again below and warns there. */
+        return yield* resolveRequested(stackId, loaded.config, !target.hostRunning);
       });
     const requestedForReplan =
       target.id === undefined
@@ -875,9 +879,13 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         suggestion: "Destroy the standalone database before starting this stack.",
       });
     const { config, keys, toml } = yield* startConfig;
-    // Reuses the creations already resolved for the re-plan above instead of reading the
-    // Functions dotenv a second time; only a new or already-running stack has none yet.
-    const requested = requestedForReplan ?? (yield* resolveRequested(stack.id, config));
+    // Reuses the creations resolved for a fresh owner's re-plan above instead of reading the
+    // Functions dotenv a second time. A new stack has none yet, and a live owner's were resolved
+    // silently, so both resolve here with warnings.
+    const requested =
+      requestedForReplan === undefined || target.hostRunning
+        ? yield* resolveRequested(stack.id, config)
+        : requestedForReplan;
     if (studioNeedsRest(requested))
       return yield* new StackCommandStartError({
         reason: "flags",
