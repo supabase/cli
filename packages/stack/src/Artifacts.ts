@@ -541,23 +541,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   functions: definition(
     "edge-runtime",
     {
-      upstreamVersion: "v1.77.9",
+      upstreamVersion: "v1.78.0",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/edge-runtime:v1.77.9-r0@sha256:1d2d920e96fe72bdff308f855a30a60a51baf4d9c3b396c16b36eb193daf6f61",
-      upstreamImage: "supabase/edge-runtime:v1.77.9",
+        "ghcr.io/supabase/cli/edge-runtime:v1.78.0-r0@sha256:6b3ed25e95a04a6e5b4530cc7783497d00a208dd91a41984812d25fb358f6681",
+      upstreamImage: "supabase/edge-runtime:v1.78.0",
       natives: {
         "darwin-arm64": {
-          archive: "d2d14cadc53254416c1ecc89dd0575efd4733cb72025ff97495d3a87980acf39",
-          manifest: "1d4ae4b525a5b6f5729e811664dbfdf60bb9bc453a5e71abf6947253c20563b0",
+          archive: "249f6852e06c5121f2a8697fcb9748273200b3392e3d884c0e9bb91f18101934",
+          manifest: "96bee225e1bcecc4ba3e0aeecf198753e9aa70ea38b6d040e5c7730e28071024",
         },
         "linux-amd64": {
-          archive: "d61748740756c192d83b2d5e6960bc20e2eb748fd7aee7620bfd4bf5854013b6",
-          manifest: "a25c0f4e9bfaa1583314906e1cb0ce06b5ac0a78f349e2db5f08a1ed669ce85e",
+          archive: "57d46f134ef3c47f1d6052dbd24d11a59df40f29581843525bd235f37b95c26d",
+          manifest: "036dda29fda1dc331a4fca5587fad85e6048f416eeed3859bb9b04c4eec98b6a",
         },
         "linux-arm64": {
-          archive: "5e247316b1965f84d8748de0da92e4c8d2af20d6d5e6dccdf5da35e7e0dfbff4",
-          manifest: "8e259a40d00950f311082b89517ebc04323d3c8106432c88f64e59f61c5c860e",
+          archive: "1b58ddc6d9eda6d6094f381386e0eff668391a757c2741019400a1c82ec66445",
+          manifest: "80e3bf9c2a0c93956ab4747adcc85f02316682d74bf02bfca37c3e5a571d5ed0",
         },
       },
     },
