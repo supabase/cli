@@ -48,6 +48,7 @@ interface RecordedRequest {
 }
 
 interface StubResponse {
+  readonly headers?: Readonly<Record<string, string>>;
   readonly status: number;
   readonly body?: unknown;
 }
@@ -88,7 +89,7 @@ function respond(
     request,
     new Response(hasBody ? encodedBody : "", {
       status: stub.status,
-      headers: hasBody ? { "content-type": "application/json" } : { "content-type": "text/plain" },
+      headers: { "content-type": hasBody ? "application/json" : "text/plain", ...stub.headers },
     }),
   );
 }

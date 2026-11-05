@@ -8,7 +8,12 @@ const browserHeaderRows = 2;
 const browserReservedRows = browserHeaderRows + 1;
 
 export type LogsBrowserWindow =
-  | { readonly kind: "range"; readonly start: string; readonly end: string }
+  | {
+      readonly kind: "range";
+      readonly start: string;
+      readonly end: string;
+      readonly pending?: boolean;
+    }
   | { readonly kind: "launch"; readonly end: string };
 
 export interface BrowserState {
@@ -155,7 +160,7 @@ function requestedWindow(window: LogsBrowserWindow | undefined): string {
     const sameDay = !crossYear && first.month === last.month && first.day === last.day;
     const from = `${dateLabel(start, crossYear)} ${timeLabel(start)}`;
     const to = sameDay ? timeLabel(end) : `${dateLabel(end, crossYear)} ${timeLabel(end)}`;
-    return `Window: ${from}–${to} UTC`;
+    return `Window: ${from}–${to} UTC${window.pending ? " | more pending" : ""}`;
   }
   const end = Date.parse(window.end);
   return `Window: since each service's latest launch → ${dateLabel(end, true)} ${timeLabel(end)} UTC`;

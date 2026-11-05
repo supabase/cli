@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Schema } from "effect";
+import { DateTime, Duration, Effect, Option, Schedule, Schema } from "effect";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { queryLogs } from "./logs.api.ts";
 import {
@@ -20,7 +20,11 @@ const filteredSql = Effect.fnUntraced(function* (flags: LogsFlags, computeEnable
   );
   const selected =
     flags.service.length === 0
-      ? enabledSources
+      ? flags.level.length > 0
+        ? enabledSources.filter(
+            ({ service }) => service !== "compute" && severityServices.includes(service),
+          )
+        : enabledSources
       : enabledSources.filter((entry) => flags.service.includes(entry.service));
   const unknown = flags.service.find(
     (service) => !enabledSources.some((entry) => entry.service === service),
@@ -109,21 +113,50 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
   const window = yield* logsWindow(flags, started);
   const api = yield* (yield* CommandPlatformApiFactory).make;
   const base = customSql === undefined ? yield* filteredSql(flags, computeEnabled) : customSql;
+  let attempted = false;
   let committedEnd: number | undefined;
   let seen = new Map<string, number>();
   let initialFloor: Cursor | undefined;
+  let pending:
+    | { readonly start: number; readonly end: number; readonly cursor: Cursor }
+    | undefined;
+  const queryPage = Effect.fn("Logs.remote.page")(function* (
+    sql: string,
+    requested: { readonly start: string; readonly end: string },
+  ) {
+    return yield* queryLogs(api, ref, sql, requested).pipe(
+      Effect.retry({
+        while: (error) => error._tag === "LogsApiError" && error.status === 429,
+        schedule: Schedule.spaced("60 seconds").pipe(
+          Schedule.upTo({ times: 1 }),
+          Schedule.setInputType<Effect.Error<ReturnType<typeof queryLogs>>>(),
+          Schedule.modifyDelay(({ input, duration }) =>
+            Effect.succeed(
+              Duration.max(
+                duration,
+                Duration.millis(input._tag === "LogsApiError" ? (input.retryAfterMs ?? 0) : 0),
+              ),
+            ),
+          ),
+        ),
+      }),
+    );
+  });
   const load = Effect.fn("Logs.remote.load")(function* (
     capturedEnd: number,
     emit: (row: Schema.JsonObject) => Effect.Effect<void>,
   ) {
     const initial = committedEnd === undefined;
-    const end = initial
-      ? Date.parse(window.end)
-      : Math.max(committedEnd ?? capturedEnd, capturedEnd);
+    const firstAttempt = !attempted;
+    attempted = true;
+    const end =
+      pending?.end ??
+      (firstAttempt ? Date.parse(window.end) : Math.max(committedEnd ?? capturedEnd, capturedEnd));
     const start =
-      initial || customSql !== undefined
+      pending?.start ??
+      (initial || customSql !== undefined
         ? Date.parse(window.start)
-        : Math.max(Date.parse(window.start), (committedEnd ?? end) - 60_000);
+        : Math.max(Date.parse(window.start), (committedEnd ?? end) - 60_000));
     if (end - start > 86_400_000)
       return yield* new LogsInputError({
         message:
@@ -140,10 +173,12 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
         end: requested.end,
       } satisfies import("./logs.browser.format.ts").LogsBrowserWindow;
     }
-    const nextSeen = new Map<string, number>();
+    const nextSeen = new Map(seen);
     const retentionFloor = Math.max(Date.parse(window.start), end - 60_000);
-    for (const [id, time] of seen) if (time >= retentionFloor) nextSeen.set(id, time);
-    let cursor: Cursor | undefined;
+    let cursor: Cursor | undefined = pending?.cursor;
+    let nextPending: typeof pending;
+    let pages = 0;
+    let overlapCount = [...nextSeen.values()].filter((time) => time >= retentionFloor).length;
     let floor = initialFloor;
     while (true) {
       const condition =
@@ -151,13 +186,15 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
           ? ""
           : ` and (toUnixTimestamp64Milli(timestamp) > ${cursor.ts_ms} or (toUnixTimestamp64Milli(timestamp) = ${cursor.ts_ms} and id > ${quoteLogValue(cursor.id)}))`;
       const sql = `${base}${condition} order by ts_ms ${initial ? "desc" : "asc"}, id ${initial ? "desc" : "asc"} limit ${initial ? flags.limit : 1000}`;
-      const raw = yield* queryLogs(api, ref, sql, requested);
+      const raw = yield* queryPage(sql, requested);
+      pages += 1;
       const rows = yield* Schema.decodeUnknownEffect(Schema.Array(logRow))(raw).pipe(
         Effect.mapError(
           () =>
             new LogsApiError({
               message: "The logs API returned an unreadable log row.",
-              status: 502,
+              status: 200,
+              reason: "response",
             }),
         ),
       );
@@ -165,20 +202,31 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
       if (!initial && pageCursor !== undefined && rows.some((row) => !after(row, pageCursor)))
         return yield* new LogsApiError({
           message: "The logs API did not advance its page cursor.",
-          status: 502,
+          status: 200,
+          reason: "response",
         });
       const ordered = [...rows].sort(
         (a, b) => a.ts_ms - b.ts_ms || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
       );
       for (const row of ordered) {
         if (!initial && (seen.has(row.id) || (floor !== undefined && !after(row, floor)))) continue;
-        if (row.ts_ms >= retentionFloor) nextSeen.set(row.id, row.ts_ms);
-        if (nextSeen.size > 10_000)
+        if (row.ts_ms >= retentionFloor) {
+          if (!nextSeen.has(row.id)) overlapCount += 1;
+          nextSeen.set(row.id, row.ts_ms);
+        }
+        if (overlapCount > 10_000)
           return yield* new LogsInputError({
             message:
               "More than 10000 logs occupy the refresh overlap. Narrow the filters and restart logs.",
           });
-        yield* emit({ ...row, timestamp: iso(row.ts_ms) });
+        const service =
+          hostedSources.find(({ source }) => source === row.source && source !== "")?.service ??
+          (Object.values(COMPUTE_LOG_STREAMS).some(
+            (stream) => stream === row.log_attributes["subservice"],
+          )
+            ? "compute"
+            : row.source);
+        yield* emit({ ...row, service, timestamp: iso(row.ts_ms) });
       }
       if (initial) {
         floor = rows.length === flags.limit ? ordered[0] : undefined;
@@ -188,14 +236,26 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
       const last = ordered.at(-1);
       if (last === undefined) break;
       cursor = { id: last.id, ts_ms: last.ts_ms };
+      if (pages >= 5) {
+        nextPending = { start, end, cursor };
+        break;
+      }
     }
+    if (nextPending === undefined)
+      for (const [id, time] of nextSeen) if (time < retentionFloor) nextSeen.delete(id);
     seen = nextSeen;
+    pending = nextPending;
     initialFloor = floor;
-    committedEnd = end;
+    if (pending === undefined) committedEnd = end;
+    yield* Effect.annotateCurrentSpan({
+      "logs.page_count": pages,
+      "logs.pending": pending !== undefined,
+    });
     return {
       kind: "range",
       start: window.start,
       end: requested.end,
+      ...(pending === undefined ? {} : { pending: true }),
     } satisfies import("./logs.browser.format.ts").LogsBrowserWindow;
   });
   const session: LogsSession<Effect.Error<ReturnType<typeof load>>> = {
