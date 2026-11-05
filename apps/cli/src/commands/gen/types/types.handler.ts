@@ -440,11 +440,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const api = yield* platformApi.make;
 
       if (lang !== "typescript") {
+        const extraSearchPath = yield* resolveExtraSearchPath(projectRef);
         const projectResult = yield* api.v1.getProject({ ref: projectRef }).pipe(
           Effect.catch(mapProjectDatabaseHostError),
           Effect.as("project" as const),
           Effect.catchIf(isProjectNotFound, () =>
-            runPreviewBranchTypes(projectRef, includedSchemas).pipe(Effect.as("branch" as const)),
+            runPreviewBranchTypes(projectRef, includedSchemas, extraSearchPath).pipe(
+              Effect.as("branch" as const),
+            ),
           ),
         );
         if (projectResult === "branch") return;
@@ -456,7 +459,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           conn,
           isLocal: resolved.isLocal,
           includedSchemas,
-          extraSearchPath: yield* resolveExtraSearchPath(projectRef),
+          extraSearchPath,
           detectOneToOneRelationships: !flags.postgrestV9Compat,
           poolerFallback: {
             directHost: conn.host,
@@ -480,7 +483,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
   };
 
-  const runPreviewBranchTypes = (branchRef: string, includedSchemas: ReadonlyArray<string>) =>
+  const runPreviewBranchTypes = (
+    branchRef: string,
+    includedSchemas: ReadonlyArray<string>,
+    extraSearchPath: ReadonlyArray<string>,
+  ) =>
     Effect.gen(function* () {
       const api = yield* platformApi.make;
       yield* Effect.annotateCurrentSpan("typegen.preview_branch", true);
@@ -526,7 +533,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         }),
         isLocal: false,
         includedSchemas,
-        extraSearchPath: yield* resolveExtraSearchPath(branchRef),
+        extraSearchPath,
         detectOneToOneRelationships: !flags.postgrestV9Compat,
         poolerFallback: {
           directHost: branch.db_host,
@@ -688,9 +695,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         return;
       }
 
-      const host = yield* getHostname(
-        yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
-      );
+      const host = yield* getHostname(yield* loadProjectConfig());
       yield* announceTarget(renderLocalTarget(host, config.port));
       const linkedCheckout = yield* isCheckoutLinked(
         fs,
@@ -723,6 +728,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     if (target.kind === "db-url") {
       yield* Effect.annotateCurrentSpan("typegen.source", "db_url");
       const includedSchemas = yield* resolveIncludedSchemas();
+      const extraSearchPath = yield* resolveExtraSearchPath();
       const resolved = yield* connectTo(target);
 
       // A DSN's own `sslmode`/`sslrootcert` is honored as-is; only a known Supabase host with
@@ -740,7 +746,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         conn,
         isLocal: resolved.isLocal,
         includedSchemas,
-        extraSearchPath: yield* resolveExtraSearchPath(),
+        extraSearchPath,
         detectOneToOneRelationships: !flags.postgrestV9Compat,
       });
       return;

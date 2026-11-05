@@ -1019,7 +1019,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("is read for --db-url even when --schema selects the schemas", () =>
+    it.effect("is read for --remote=<db-url> even when --schema selects the schemas", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-esp-dburl-");
         yield* writeConfig(
@@ -1036,7 +1036,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("defaults to public and extensions for --db-url without a project config", () =>
+    it.effect("defaults to public and extensions without a project config", () =>
       Effect.gen(function* () {
         const { layer, generator } = yield* setup({ skipConfig: true, args: dbUrlArgs });
         yield* genTypes(dbUrlFlags()).pipe(Effect.provide(layer));
@@ -1073,6 +1073,46 @@ describe("gen types", () => {
             lang: "go",
           }),
         ).pipe(Effect.provide(layer));
+        expect(generator.calls[0]?.extraSearchPath).toEqual(["extra"]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("is passed to the generator for a preview branch", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-esp-branch-");
+        yield* writeConfig(
+          workdir,
+          ['project_id = "demo"', "[api]", 'extra_search_path = ["extra"]'].join("\n"),
+        );
+        const { layer, api, generator } = yield* setup({
+          workdir,
+          args: ["gen", "types", "--lang", "go", `--remote=${VALID_REF}`],
+          getProject: () =>
+            Effect.fail(statusApiError(404, `{"message":"Preview branch not found"}`)),
+          getABranchConfig: ({ branch_id_or_ref }) =>
+            Effect.succeed({
+              ref: branch_id_or_ref,
+              postgres_version: "15.1",
+              postgres_engine: "15",
+              release_channel: "ga",
+              status: "ACTIVE_HEALTHY",
+              db_host: "127.0.0.1",
+              db_port: 5432,
+              db_user: "branch_user",
+              db_pass: "branch-password",
+              jwt_secret: "secret",
+            }),
+        });
+        yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer));
+        expect(api.requests).toContainEqual({
+          method: "getABranchConfig",
+          input: { branch_id_or_ref: VALID_REF },
+        });
         expect(generator.calls[0]?.extraSearchPath).toEqual(["extra"]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
