@@ -126,13 +126,17 @@ Finished supabase db pull.
         id: "local-studio",
         name: "Local studio",
         code: "supabase db pull",
+        output: "recorded",
+        scenario: "docker-schema-drift",
         response: `Target: local stack (127.0.0.1:54322)
 Creating shadow database...
+Initialising schema...
 Seeding globals from roles.sql...
-Applying migration 20240414044403_remote_schema.sql...
+Applying migration 20240101000000_create_employees.sql...
 Diffing schemas...
-No schema changes found
-The remote database is already in sync with your local migrations — nothing to pull.
+Schema written to supabase/migrations/20261104184701_remote_schema.sql
+Repaired migration history: [20261104184701] => applied
+Finished supabase db pull.
 `,
       },
       {

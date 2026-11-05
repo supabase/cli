@@ -1,9 +1,23 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Data, Effect, FileSystem, type JsonSchema, Path, Result } from "effect";
+import {
+  Data,
+  Effect,
+  FileSystem,
+  type JsonSchema,
+  Option,
+  Path,
+  Result,
+  type Schema,
+} from "effect";
+import { isMap, isSeq, parseDocument, Scalar } from "yaml";
 
 import { loadDocsBundle } from "../../scripts/docs-bundle.ts";
+import { rootCommand } from "../../src/cli/root.ts";
+import { readCommandDocs } from "../../src/docs/command-docs.ts";
+import { readDocsContent } from "../../src/docs/docs-spec.content.ts";
 import type { DocsExample } from "../../src/docs/docs-spec.ts";
 import { stripAnsi } from "./ansi.ts";
+import { walkCommandTree } from "./command-tree.ts";
 
 export interface PublishedDocsExample {
   /** The command path as published, e.g. `supabase migration list`. */
@@ -181,14 +195,28 @@ export function recordableOutput(output: string): string {
     .join("\n");
 }
 
-/** Masks values that legitimately differ between runs, so they never fail a comparison. */
-export function comparableOutput(output: string): string {
-  return recordableOutput(output)
-    .replaceAll(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<uuid>")
-    .replaceAll(
-      /\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g,
-      "<timestamp>",
-    );
+/**
+ * Masks values that legitimately differ between runs, so they never fail a comparison: UUIDs,
+ * timestamps, `prove` timings and the versions of migrations the run generated, which are the
+ * `<version>_<name>.sql` versions that are not in `fixedVersions`.
+ */
+export function comparableOutput(output: string, fixedVersions: ReadonlySet<string>): string {
+  const text = recordableOutput(output);
+  const generated = new Set(
+    [...text.matchAll(/(?<!\d)(\d{14})_\w+\.sql/g)].flatMap(([, version]) =>
+      version === undefined || fixedVersions.has(version) ? [] : [version],
+    ),
+  );
+  return substitute(
+    text
+      .replaceAll(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<uuid>")
+      .replaceAll(
+        /\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g,
+        "<timestamp>",
+      )
+      .replaceAll(/\d+ wallclock secs \([^)]*\)/g, "<duration>"),
+    [...generated].map((version) => [version, "<version>"] as const),
+  );
 }
 
 export class DocsExampleSourceError extends Data.TaggedError("DocsExampleSourceError")<{
@@ -247,5 +275,90 @@ export const rewriteRecordedResponse = Effect.fn("docsExamples.rewriteRecordedRe
       file,
       `${source.slice(0, bodyStart)}${escapeTemplateLiteral(options.response)}${source.slice(bodyEnd)}`,
     );
+  },
+);
+
+/** `examples.yaml`, the source of every example whose command has no `withDocs` examples. */
+const EXAMPLES_YAML = new URL("../../docs/templates/examples.yaml", import.meta.url).pathname;
+
+/** A docs example with a `response`, read from where it is authored. */
+export interface AuthoredDocsExample {
+  /** The command path without `supabase`. */
+  readonly commandPath: ReadonlyArray<string>;
+  readonly source: "withDocs" | "examples.yaml";
+  readonly id: string;
+  readonly code: string;
+  readonly output: "recorded" | "illustrative";
+  readonly scenario?: string;
+  readonly response: string;
+  readonly jsonOutput?: Schema.Constraint;
+}
+
+/** Every docs example that carries a `response`, from `withDocs` and from `examples.yaml`. */
+export const authoredDocsExamples = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const content = yield* readDocsContent(path.dirname(path.dirname(EXAMPLES_YAML)));
+  return walkCommandTree(rootCommand).flatMap(({ path: commandPath, command }) => {
+    const docs = Option.getOrUndefined(readCommandDocs(command));
+    const jsonOutput = docs?.jsonOutput === undefined ? {} : { jsonOutput: docs.jsonOutput };
+    const inline = (docs?.examples ?? []).flatMap((example): Array<AuthoredDocsExample> =>
+      example.response === undefined
+        ? []
+        : [
+            {
+              commandPath,
+              source: "withDocs",
+              id: example.id,
+              code: example.code,
+              output: example.output ?? "illustrative",
+              ...(example.output === "recorded" ? { scenario: example.scenario } : {}),
+              response: example.response,
+              ...jsonOutput,
+            },
+          ],
+    );
+    const fromYaml = (content.examples[["supabase", ...commandPath].join("-")] ?? []).flatMap(
+      (example): Array<AuthoredDocsExample> =>
+        example.response === undefined
+          ? []
+          : [
+              {
+                commandPath,
+                source: "examples.yaml",
+                id: example.id ?? "",
+                code: example.code ?? "",
+                output: example.output ?? "illustrative",
+                ...(example.scenario === undefined ? {} : { scenario: example.scenario }),
+                response: example.response,
+                ...jsonOutput,
+              },
+            ],
+    );
+    return [...inline, ...fromYaml];
+  });
+});
+
+/** Rewrites the `response` of example `exampleId` under `docId` in `examples.yaml`. */
+export const rewriteYamlResponse = Effect.fn("docsExamples.rewriteYamlResponse")(
+  function* (options: {
+    readonly docId: string;
+    readonly exampleId: string;
+    readonly response: string;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const document = parseDocument(yield* fs.readFileString(EXAMPLES_YAML));
+    const entries = document.get(options.docId);
+    const entry = isSeq(entries)
+      ? entries.items.find((item) => isMap(item) && item.get("id") === options.exampleId)
+      : undefined;
+    if (!isMap(entry)) {
+      return yield* new DocsExampleSourceError({
+        message: `${EXAMPLES_YAML}: no example "${options.exampleId}" under "${options.docId}"`,
+      });
+    }
+    const response = new Scalar(options.response);
+    if (options.response.includes("\n")) response.type = Scalar.BLOCK_LITERAL;
+    entry.set("response", response);
+    yield* fs.writeFileString(EXAMPLES_YAML, document.toString({ lineWidth: 0 }));
   },
 );

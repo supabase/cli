@@ -1,8 +1,9 @@
-import { JsonSchema, Option, Schema } from "effect";
+import { JsonSchema, Option, Schema, Struct } from "effect";
 import { stringify } from "yaml";
 import { Command, Completions, GlobalFlag, Param } from "effect/cli";
 import { DOCS_CATEGORIES, readCommandDocs } from "./command-docs.ts";
 import type { CommandDocs, DocsCategory } from "./command-docs.ts";
+import type { DocsExampleSource } from "./docs-spec.content.ts";
 import type { BreakingChange } from "./breaking-changes/define.ts";
 import { commandIdOf, docsBreakingChangesFor, migrationGuideMdx } from "./breaking-changes/emit.ts";
 import type { DocsBreakingChange } from "./breaking-changes/emit.ts";
@@ -137,7 +138,7 @@ export interface DocsSpecInput {
   /** Overlay markdown keyed by docs-relative POSIX path, e.g. `supabase/db/push.md`. */
   readonly overlays: ReadonlyMap<string, string>;
   /** Examples keyed by doc id, from `docs/templates/examples.yaml`. */
-  readonly examples: Readonly<Record<string, ReadonlyArray<DocsExample>>>;
+  readonly examples: Readonly<Record<string, ReadonlyArray<DocsExampleSource>>>;
 }
 
 /** Hand-written pages the docs site serves ahead of the command categories. */
@@ -633,7 +634,7 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
             ...(example.response === undefined ? {} : { response: example.response }),
           }))
         : fromYaml !== undefined && fromYaml.length > 0
-          ? fromYaml
+          ? fromYaml.map((example) => Struct.omit(example, ["output", "scenario"]))
           : command.examples.length > 0
             ? command.examples.map((example, index) => ({
                 id: `example-${index + 1}`,

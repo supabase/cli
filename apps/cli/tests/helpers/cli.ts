@@ -570,6 +570,8 @@ export interface SpawnSupabaseOptions {
   readonly exitTimeoutMs?: number;
   /** Close the read end of stdout at spawn, like a `| head` reader that has already exited. */
   readonly closeStdout?: boolean;
+  /** Point stderr at the stdout pipe, so `stdout` is the terminal transcript in write order. */
+  readonly mergeStderr?: boolean;
 }
 
 export interface SpawnedSupabase {
@@ -675,7 +677,10 @@ const spawnSupabaseProgram = Effect.fnUntraced(function* (
   const commandArgs = options?.closeStdout
     ? ["-e", closedStdoutRelay(yield* encodeArgv(shimArgs))]
     : shimArgs;
-  const command = ChildProcess.make("node", commandArgs, {
+  const [file, fileArgs] = options?.mergeStderr
+    ? ["/bin/sh", ["-c", 'exec node "$@" 2>&1', "sh", ...commandArgs]]
+    : ["node", commandArgs];
+  const command = ChildProcess.make(file, fileArgs, {
     cwd: options?.cwd,
     env,
     extendEnv: false,

@@ -16,8 +16,22 @@ import type { DocsExample } from "./docs-spec.ts";
  */
 export interface DocsContent {
   readonly overlays: ReadonlyMap<string, string>;
-  readonly examples: Readonly<Record<string, ReadonlyArray<DocsExample>>>;
+  readonly examples: Readonly<Record<string, ReadonlyArray<DocsExampleSource>>>;
 }
+
+/**
+ * An `examples.yaml` entry: the published example plus whether its `response` is `recorded`
+ * from a run in `scenario`, as `CommandDocs` examples declare it. Only the published fields ship.
+ */
+export interface DocsExampleSource extends DocsExample {
+  readonly output?: "recorded" | "illustrative";
+  readonly scenario?: string;
+}
+
+const EXAMPLE_FIELDS = ["id", "name", "code", "response", "output", "scenario"] as const;
+type ExampleField = (typeof EXAMPLE_FIELDS)[number];
+const isExampleField = (key: string): key is ExampleField =>
+  EXAMPLE_FIELDS.some((field) => field === key);
 
 /** Fails `readDocsContent` when `templates/examples.yaml` is not valid YAML or not the expected shape. */
 export class DocsExamplesError extends Schema.TaggedError<DocsExamplesError>()(
@@ -88,11 +102,13 @@ export const readDocsContent = Effect.fn("docs.readDocsContent")(function* (
  * example entries with optional string fields — failing with the offending doc id instead of
  * letting a malformed file flow into the published spec.
  */
-function parseExamples(parsed: unknown): Readonly<Record<string, ReadonlyArray<DocsExample>>> {
+function parseExamples(
+  parsed: unknown,
+): Readonly<Record<string, ReadonlyArray<DocsExampleSource>>> {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("docs-spec.content.ts: examples.yaml must be a mapping of doc ids.");
   }
-  const examples: Record<string, ReadonlyArray<DocsExample>> = {};
+  const examples: Record<string, ReadonlyArray<DocsExampleSource>> = {};
   for (const [docId, entries] of Object.entries(parsed)) {
     if (!Array.isArray(entries)) {
       throw new Error(
@@ -107,17 +123,30 @@ function parseExamples(parsed: unknown): Readonly<Record<string, ReadonlyArray<D
       }
       const fields = new Map<string, unknown>(Object.entries(entry));
       for (const key of fields.keys()) {
-        if (key !== "id" && key !== "name" && key !== "code" && key !== "response") {
+        if (!isExampleField(key)) {
           throw new Error(
-            `docs-spec.content.ts: examples.yaml "${docId}"[${index}] has unknown field "${key}" — allowed fields are id, name, code, response.`,
+            `docs-spec.content.ts: examples.yaml "${docId}"[${index}] has unknown field "${key}" — allowed fields are ${EXAMPLE_FIELDS.join(", ")}.`,
           );
         }
+      }
+      const output = fields.get("output");
+      if (output !== undefined && output !== "recorded" && output !== "illustrative") {
+        throw new Error(
+          `docs-spec.content.ts: examples.yaml "${docId}"[${index}].output must be recorded or illustrative.`,
+        );
+      }
+      if (output === "recorded" && (!fields.has("scenario") || !fields.has("response"))) {
+        throw new Error(
+          `docs-spec.content.ts: examples.yaml "${docId}"[${index}] is recorded, so it needs a scenario and a response.`,
+        );
       }
       return {
         ...optionalString(docId, index, fields, "id"),
         ...optionalString(docId, index, fields, "name"),
         ...optionalString(docId, index, fields, "code"),
         ...optionalString(docId, index, fields, "response"),
+        ...(output === undefined ? {} : { output }),
+        ...optionalString(docId, index, fields, "scenario"),
       };
     });
   }
@@ -128,8 +157,8 @@ function optionalString(
   docId: string,
   index: number,
   fields: ReadonlyMap<string, unknown>,
-  field: "id" | "name" | "code" | "response",
-): Partial<Record<"id" | "name" | "code" | "response", string>> {
+  field: Exclude<ExampleField, "output">,
+): Partial<Record<Exclude<ExampleField, "output">, string>> {
   if (!fields.has(field)) return {};
   const value = fields.get(field);
   if (typeof value !== "string") {
