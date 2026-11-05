@@ -90,6 +90,7 @@ describe("buildLogflareContainerSpec", () => {
         LOGFLARE_NODE_HOST: "127.0.0.1",
         LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
         RELEASE_COOKIE: "cookie",
+        ERL_MAX_PORTS: "65536",
       });
     }).pipe(Effect.provide(BunPath.layer));
   });
