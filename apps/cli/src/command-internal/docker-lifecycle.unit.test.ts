@@ -346,6 +346,8 @@ describe("inspectContainerState", () => {
   it.live.each([
     "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory",
     "error during connect: Get http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.51/containers/supabase_db_my-app/json: open //./pipe/docker_engine: The system cannot find the file specified.",
+    "Is the docker daemon running?",
+    "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Get http://%2Fvar%2Frun%2Fdocker.sock/v1.51/containers/supabase_db_my-app/json: dial unix /var/run/docker.sock: connect: permission denied",
   ])("flags the daemon as down for the newer Docker message: %s", (stderr) => {
     const mock = mockSpawner({ exitCode: 1, stderr: `${stderr}\n` });
     return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
