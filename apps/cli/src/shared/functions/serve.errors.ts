@@ -173,7 +173,7 @@ export class ServeConfigError extends Data.TaggedError("ServeConfigError")<{
   }
 }
 
-/** The `--env-file` / functions env input is missing, can't be read, doesn't parse, or has an invalid name. */
+/** The functions env input, an env file or a configured secret, is missing, can't be read, doesn't parse, or has an invalid name. */
 export class ServeEnvFileError extends Data.TaggedError("ServeEnvFileError")<{
   readonly message: string;
   readonly reason: "not_found" | "read" | "syntax" | "env_name";
