@@ -997,6 +997,153 @@ describe("gen types", () => {
     );
   });
 
+  describe("[api].extra_search_path", () => {
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+    const dbUrlArgs = ["gen", "types", `--remote=${dbUrl}`];
+    const dbUrlFlags = (overrides: Parameters<typeof defaultFlags>[0] = {}) =>
+      defaultFlags({
+        remote: Option.some({ _tag: "DbUrl", url: dbUrl } as const),
+        ...overrides,
+      });
+
+    it.effect("is passed to the generator for --local", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-esp-local-");
+        yield* writeConfig(
+          workdir,
+          ['project_id = "demo"', "[api]", 'extra_search_path = ["extra"]'].join("\n"),
+        );
+        const { layer, generator } = yield* setup({ workdir });
+        yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
+        expect(generator.calls[0]?.extraSearchPath).toEqual(["extra"]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("is read for --remote=<db-url> even when --schema selects the schemas", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-esp-dburl-");
+        yield* writeConfig(
+          workdir,
+          ['project_id = "demo"', "[api]", 'extra_search_path = ["extra"]'].join("\n"),
+        );
+        const { layer, generator } = yield* setup({
+          workdir,
+          args: [...dbUrlArgs, "--schema", "api"],
+        });
+        yield* genTypes(dbUrlFlags({ schema: ["api"] })).pipe(Effect.provide(layer));
+        expect(generator.calls[0]?.includedSchemas).toEqual(["api"]);
+        expect(generator.calls[0]?.extraSearchPath).toEqual(["extra"]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("defaults to public and extensions without a project config", () =>
+      Effect.gen(function* () {
+        const { layer, generator } = yield* setup({ skipConfig: true, args: dbUrlArgs });
+        yield* genTypes(dbUrlFlags()).pipe(Effect.provide(layer));
+        expect(generator.calls[0]?.extraSearchPath).toEqual(["public", "extensions"]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("uses the matching [remotes] block for a project ref", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-esp-remote-");
+        yield* writeConfig(
+          workdir,
+          [
+            'project_id = "base"',
+            "",
+            "[api]",
+            'extra_search_path = ["public"]',
+            "",
+            "[remotes.staging]",
+            `project_id = "${VALID_REF}"`,
+            "",
+            "[remotes.staging.api]",
+            'extra_search_path = ["extra"]',
+            "",
+          ].join("\n"),
+        );
+        const { layer, generator } = yield* setup({
+          workdir,
+          args: ["gen", "types", "--lang", "go", `--remote=${VALID_REF}`],
+        });
+        yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer));
+        expect(generator.calls[0]?.extraSearchPath).toEqual(["extra"]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("fails on a malformed config before any API call even with --schema", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-esp-malformed-");
+        yield* writeConfig(workdir, 'project_id = "unterminated\n');
+        const { layer, api, generator } = yield* setup({
+          workdir,
+          skipConfig: true,
+          args: ["gen", "types", "--lang", "go", `--remote=${VALID_REF}`, "--schema", "api"],
+        });
+        const exit = yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            lang: "go",
+            schema: ["api"],
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain("GenTypesParseConfigError");
+        }
+        expect(api.requests).toHaveLength(0);
+        expect(generator.calls).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("is passed to the generator for a preview branch", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-esp-branch-");
+        yield* writeConfig(
+          workdir,
+          ['project_id = "demo"', "[api]", 'extra_search_path = ["extra"]'].join("\n"),
+        );
+        const { layer, api, generator } = yield* setup({
+          workdir,
+          args: ["gen", "types", "--lang", "go", `--remote=${VALID_REF}`],
+          getProject: () =>
+            Effect.fail(statusApiError(404, `{"message":"Preview branch not found"}`)),
+          getABranchConfig: ({ branch_id_or_ref }) =>
+            Effect.succeed({
+              ref: branch_id_or_ref,
+              postgres_version: "15.1",
+              postgres_engine: "15",
+              release_channel: "ga",
+              status: "ACTIVE_HEALTHY",
+              db_host: "127.0.0.1",
+              db_port: 5432,
+              db_user: "branch_user",
+              db_pass: "branch-password",
+              jwt_secret: "secret",
+            }),
+        });
+        yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer));
+        expect(api.requests).toContainEqual({
+          method: "getABranchConfig",
+          input: { branch_id_or_ref: VALID_REF },
+        });
+        expect(generator.calls[0]?.extraSearchPath).toEqual(["extra"]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
+
   describe("target selection", () => {
     const tempRoot = useTempWorkdir("supabase-gen-types-target-");
 
