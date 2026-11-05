@@ -201,11 +201,14 @@ Not applicable.
     is. The connection resolver applies the pin for a project ref, its direct host and pooler
     alike, including the pooler temp-role probe (see `db push`); this command applies it itself
     only to a preview branch. On a project ref the `PG*` env (see `db push`) is validated and
-    supplies the client-cert pair, and the 15s query timeout sets the connect timeout; a preview
-    branch's direct host takes no `PG*` setting.
+    supplies the client-cert pair, and the 15s query timeout sets the connect timeout. A preview
+    branch's direct host takes no `PG*` setting and is always pinned; its pooler fallback parses
+    the pooler URL with the shell `PG*` env, so `PGSSLMODE`, `PGSSLROOTCERT`, the client-cert pair
+    and `PGCONNECT_TIMEOUT` apply there, and a set `PGSSLMODE` or `PGSSLROOTCERT` replaces the pin.
   - `--remote=<db-url>` honors the DSN's own `sslmode`/`sslrootcert` when either is set, even
     against a target classified local (e.g. a TLS tunnel on the loopback stack);
-    otherwise, a known Supabase host gets the Supabase CA pinned the same way, and any
+    otherwise, a known Supabase host on a `supabase`, `supabase-staging` or `snap` profile gets
+    the Supabase CA pinned the same way, and any
     other host — including a loopback target where the DSN sets neither — uses the
     connection resolver's default, which is plaintext for a local target.
   - The local target uses no TLS.

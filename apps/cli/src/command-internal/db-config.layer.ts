@@ -33,7 +33,11 @@ import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
-import { type ConnectSuggestionContext, SUGGEST_ENV_VAR } from "./connect-errors.ts";
+import {
+  type ConnectSuggestionContext,
+  SUGGEST_CA_VERIFICATION,
+  SUGGEST_ENV_VAR,
+} from "./connect-errors.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
 import {
@@ -317,7 +321,10 @@ const NO_BANS: BanState = { listed: [], failure: Option.none() };
 
 // Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look
 // for network bans on the project: with approval they are removed and a failed removal is what the
-// run reports if the retries run out; without it the last listing is reported instead.
+// run reports if the retries run out; without it the last listing is reported instead. A rejected
+// server certificate ends the loop at once: it cannot change between attempts, and bans do not
+// cause it. Every other failure keeps retrying, dial failures included, because a ban surfaces as
+// a dial failure and only the retry path lists bans.
 const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   ref: string,
   conn: PgConnInput,
@@ -335,6 +342,14 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
     Effect.scoped(dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid)).pipe(
       Effect.ensuring(Effect.annotateCurrentSpan("retry.attempt_count", n)),
       Effect.catch((cause) => {
+        if (cause.certificateRejected === true) {
+          return Effect.fail(
+            new Errors.DbConfigConnectTempRoleError({
+              message: `failed to connect as temp role: ${cause.message}`,
+              suggestion: SUGGEST_CA_VERIFICATION,
+            }),
+          );
+        }
         // 8 retries after the initial attempt allows 9 total attempts. `n` is 1-based, so give
         // up only after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
         if (n > MAX_RETRIES) {

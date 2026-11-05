@@ -56,6 +56,13 @@ export const SUGGEST_ENV_VAR =
   "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD";
 
 /**
+ * Hint shown when the server certificate does not verify against the CA the connection trusts,
+ * which on a hosted project is the bundled Supabase CA unless the user chose a trust setting.
+ */
+export const SUGGEST_CA_VERIFICATION =
+  "The server certificate did not verify against the trusted CA (the bundled Supabase CA on a hosted project). Behind a TLS-inspecting proxy, set PGSSLROOTCERT to a CA bundle that trusts it, or set PGSSLMODE=require to skip certificate verification.";
+
+/**
  * Shown instead of the remote-only "Network Restrictions" hint when `ctx.isLocal` is true — a
  * refused `--local` connection (Docker/Postgres not running) needs a different fix than an
  * actual network-restricted remote connection. See `connectSuggestion`.
@@ -221,6 +228,16 @@ const TLS_ERROR_CODES = new Set([
   "CERT_REJECTED",
   "HOSTNAME_MISMATCH",
 ]);
+
+/**
+ * Whether a connect failure is an X509 certificate-verification rejection. It is deterministic:
+ * the same server certificate fails the same way on every attempt. Sets
+ * `DbConnectError.certificateRejected`, which the temp-role probe keys off to stop retrying.
+ */
+export function isCertificateVerificationFailure(error: unknown): boolean {
+  const cause = deepestConnectCause(error);
+  return hasStringCode(cause) && TLS_ERROR_CODES.has(cause.code);
+}
 // node-postgres' own message when the server answers `N` to SSLRequest
 // (`pg/lib/connection.js`); rendered as `tls error (server refused TLS connection)`.
 const SERVER_REFUSED_SSL = "The server does not support SSL connections";
@@ -363,6 +380,7 @@ export function connectSuggestion(
       ? localStackSuggestion(ctx.linkedCheckout)
       : suggestNetworkRestrictions(ctx.dashboardUrl);
   }
+  if (isCertificateVerificationFailure(error)) return SUGGEST_CA_VERIFICATION;
   if (
     text.includes("SCRAM exchange: Wrong password") ||
     text.includes("failed SASL auth") ||

@@ -10,6 +10,7 @@ import { to as pgCopyTo } from "pg-copy-streams";
 import {
   connectFailureMessage,
   connectSuggestion,
+  isCertificateVerificationFailure,
   isDialFailure,
   isIPv6ConnectivityErrorCause,
   isSqlState,
@@ -650,6 +651,7 @@ export const toConnectError = (
     message: `failed to connect to postgres: ${connectFailureMessage(cfg, error)}`,
     ...(suggestion === undefined ? {} : { suggestion }),
     ...(isDialFailure(error) ? { retryable: true } : {}),
+    ...(isCertificateVerificationFailure(error) ? { certificateRejected: true } : {}),
     ...(isIPv6ConnectivityErrorCause(error) ? { ipv6Unreachable: true } : {}),
   });
 };

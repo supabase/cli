@@ -154,8 +154,10 @@ project ref and its environment.
   pooler host of the `supabase`, `supabase-staging` or `snap` built-in profile, the connection uses
   `sslmode=require` with the bundled Supabase root CA, which the driver verifies as `verify-ca`
   (chain checked, hostname not). This covers the temp-role probe through the pooler and the
-  container pooler fallback. Any explicit setting, `disable` and `verify-full` with the user's own
-  root cert included, is passed through unchanged. `supabase-local` and YAML profiles are
+  container pooler fallback. A server certificate that fails verification ends the temp-role probe
+  at once, without its retries, and suggests setting `PGSSLROOTCERT` or `PGSSLMODE=require`. Any
+  explicit setting, `disable` and `verify-full` with the user's own root cert included, is passed
+  through unchanged. `supabase-local` and YAML profiles are
   never pinned.
   `sslmode=disable` dials plaintext and reads no CA or client-cert file; otherwise those PEM files
   are read when set and a missing one fails the connection, and a `pg_service.conf` is read

@@ -30,9 +30,10 @@ export function pinSupabaseTls(conn: PgConnInput, profile: string): PgConnInput 
   ) {
     return conn;
   }
-  const domain = getDomain(conn.host);
+  const host = conn.host.toLowerCase().replace(/\.$/, "");
+  const domain = getDomain(host);
   const hosted =
-    isDirectDbHost(conn.host, projectHost(profile)) ||
+    isDirectDbHost(host, projectHost(profile)) ||
     (domain !== null && domain.toLowerCase() === poolerHost(profile));
   return hosted ? { ...conn, sslmode: "require", sslrootcertInline: rootCaBundle() } : conn;
 }

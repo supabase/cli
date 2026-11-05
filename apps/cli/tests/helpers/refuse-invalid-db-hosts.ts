@@ -11,8 +11,9 @@ const FIXTURE_DB_HOST_SUFFIXES = [".invalid", ".supabase.co", ".supabase.red", "
 /**
  * Wraps `node:net` so a connection to a `db.<ref>` fixture host on one of
  * `FIXTURE_DB_HOST_SUFFIXES` fails at once instead of waiting on ambient DNS or TCP timing. Use it
- * from a test file's `vi.mock("node:net", ...)` factory; other hosts connect normally. While the toggle passed in is on, the same hosts report a
- * successful connect instead, which fakes the TCP reachability probe only (nothing is dialed).
+ * from a test file's `vi.mock("node:net", ...)` factory; other hosts connect normally. While the
+ * toggle passed in is on, the same hosts report a successful connect instead, which fakes the TCP
+ * reachability probe only (nothing is dialed).
  */
 export function refuseInvalidDbHosts(
   net: typeof NodeNet,

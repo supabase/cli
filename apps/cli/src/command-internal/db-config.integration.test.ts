@@ -85,7 +85,9 @@ import type { DbConnectionInput } from "./db-config.types.ts";
 import { hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
 import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
+import { SUGGEST_CA_VERIFICATION, SUGGEST_ENV_VAR } from "./connect-errors.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
+import { toConnectError } from "./db-connection.sql-pg.layer.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { rootCaBundle } from "./supabase-tls.ts";
 import { StackApi } from "./stack-api.ts";
@@ -2675,19 +2677,23 @@ describe("dbConfigResolver.resolveConnection", () => {
         }
         return undefined;
       });
-    const failingConnect = (failures: number) => {
+    const failingConnect = (
+      failures: number,
+      failure: (cfg: PgConnInput) => DbConnectError = () =>
+        new DbConnectError({ message: "password authentication failed" }),
+    ) => {
       const attempts = { count: 0 };
       const layer = Layer.succeed(DbConnection, {
-        connect: () =>
+        connect: (cfg) =>
           Effect.suspend(() => {
             attempts.count += 1;
-            return attempts.count <= failures
-              ? Effect.fail(new DbConnectError({ message: "password authentication failed" }))
-              : Effect.succeed(session);
+            return attempts.count <= failures ? Effect.fail(failure(cfg)) : Effect.succeed(session);
           }),
       });
       return { attempts, layer };
     };
+    const driverFailure = (code: string, message: string) => (cfg: PgConnInput) =>
+      toConnectError(cfg, false, Object.assign(new Error(message), { code }));
     const forkResolve = (
       input: DbConnectionInput,
       connection: Layer.Layer<DbConnection>,
@@ -2746,6 +2752,77 @@ describe("dbConfigResolver.resolveConnection", () => {
         }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
       },
     );
+
+    it.effect(
+      "keeps looking for bans when the dial fails, as a ban surfaces as a dial failure",
+      () => {
+        const requests: Array<{ readonly method: string; readonly path: string }> = [];
+        const connection = failingConnect(
+          Number.POSITIVE_INFINITY,
+          driverFailure("ETIMEDOUT", "connect ETIMEDOUT 203.0.113.9:6543"),
+        );
+        return Effect.gen(function* () {
+          yield* bannedRequests(requests, ["203.0.113.7"]);
+          const { fiber, advance } = yield* forkResolve(
+            inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+            connection.layer,
+          );
+          yield* advance(8);
+          const exit = yield* Fiber.await(fiber);
+          expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
+          expect(connection.attempts.count).toBe(9);
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+      },
+    );
+
+    it.effect("fails at once on a rejected server certificate and names the CA setting", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(
+        Number.POSITIVE_INFINITY,
+        driverFailure("SELF_SIGNED_CERT_IN_CHAIN", "self-signed certificate in certificate chain"),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        const exit = yield* Fiber.await(fiber);
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(error).toEqual(
+          Option.some(
+            expect.objectContaining({
+              _tag: "DbConfigConnectTempRoleError",
+              message: expect.stringContaining("tls error (self-signed certificate"),
+              suggestion: SUGGEST_CA_VERIFICATION,
+            }),
+          ),
+        );
+        expect(SUGGEST_CA_VERIFICATION).not.toBe(SUGGEST_ENV_VAR);
+        expect(connection.attempts.count).toBe(1);
+        expect(requests.some((request) => request.path.includes("network-bans"))).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("stops retrying authentication failures once the certificate is rejected", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY, (cfg) =>
+        connection.attempts.count <= 2
+          ? new DbConnectError({ message: "password authentication failed" })
+          : driverFailure("CERT_HAS_EXPIRED", "certificate has expired")(cfg),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, []);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(2);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
+        expect(connection.attempts.count).toBe(3);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
 
     it.effect("connects without removing bans that are not blocking the caller", () => {
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
