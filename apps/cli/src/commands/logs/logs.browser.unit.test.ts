@@ -26,6 +26,15 @@ const requestCases: ReadonlyArray<{
   readonly label: string;
 }> = [
   {
+    window: {
+      kind: "range",
+      start: "2026-11-03T17:13:35Z",
+      end: "2026-11-03T17:14:55Z",
+      pending: true,
+    },
+    label: "Window: Nov 03 17:13:35–17:14:55 UTC | more pending",
+  },
+  {
     window: { kind: "range", start: "2026-11-03T17:13:35Z", end: "2026-11-03T17:14:55Z" },
     label: "Window: Nov 03 17:13:35–17:14:55 UTC",
   },
