@@ -361,6 +361,16 @@ function renderDiff(generated: ReadonlyArray<Entry>, docs: ReadonlyArray<DocEntr
   );
   out.push(`## Tags differ (${tagsDiffer.length})\n\n${list(tagsDiffer, 40)}`);
   out.push(`## Required differs (${requiredDiffer.length})\n\n${list(requiredDiffer, 40)}`);
+  out.push(
+    `## Hand-written links with no code links (${linksOnlyInDocs.length})\n\n${list(linksOnlyInDocs, 40)}`,
+  );
+  out.push(`## Links differ (${linksDiffer.length})\n\n${list(linksDiffer, 40)}`);
+  out.push(
+    `## Hand-written usage blocks (${usageOnlyInDocs.length})\n\n${list(
+      usageOnlyInDocs.map((d) => d.title),
+      40,
+    )}`,
+  );
   return out.join("\n");
 }
 

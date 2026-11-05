@@ -72,6 +72,11 @@ const publishLocal = (docsRepo: string) =>
       return yield* Effect.sync(() => process.exit(1));
     }
 
+    if (major === "v2") {
+      yield* Console.error(
+        `--version v2 is a layout preview: it overwrites ${sectionsFile} with the current command tree, not the v2 commands.`,
+      );
+    }
     const bundle = yield* loadDocsBundle({
       version: "latest",
       prerelease: values.prerelease!,
