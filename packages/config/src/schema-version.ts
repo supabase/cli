@@ -13,7 +13,8 @@ const VERSIONED_SCHEMA_URL = /^https:\/\/supabase\.com\/schemas\/config\/v([1-9]
 const LEGACY_SCHEMA_URL = "https://supabase.com/docs/cli/config.schema.json";
 const PACKAGE_SCHEMA_PATH = /node_modules[\\/]@supabase[\\/]config[\\/](?:dist[\\/])?schema\.json$/;
 
-function versionOfSchemaRef(ref: string): bigint | undefined {
+/** Returns the config schema version a `$schema`/`#:schema` reference declares, if any. */
+export function versionOfSchemaRef(ref: string): bigint | undefined {
   if (ref === LEGACY_SCHEMA_URL || PACKAGE_SCHEMA_PATH.test(ref)) {
     return 1n;
   }

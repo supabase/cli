@@ -574,6 +574,11 @@ describe("CliConfigValues schema declaration", () => {
   const load = (root: string) =>
     CliConfigValues.use((values) => values.load({ workdir: root, projectRef: Option.none() }));
 
+  const loadLinked = (root: string) =>
+    CliConfigValues.use((values) =>
+      values.load({ workdir: root, projectRef: Option.some(LINKED) }),
+    );
+
   const writeConfig = (root: string, name: string, content: string) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -603,7 +608,7 @@ describe("CliConfigValues schema declaration", () => {
 
       const loaded = yield* Effect.gen(function* () {
         const first = yield* load(root);
-        yield* load(root);
+        yield* loadLinked(root);
         return first;
       }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
 
@@ -653,7 +658,7 @@ describe("CliConfigValues schema declaration", () => {
 
       yield* Effect.gen(function* () {
         yield* load(root);
-        yield* load(root);
+        yield* loadLinked(root);
       }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
 
       expect(output.stderrText).toBe(
@@ -728,6 +733,36 @@ describe("CliConfigValues schema declaration", () => {
 
         expect(warnings).toEqual({ messages: [], stderr: "", stdout: "" });
       }).pipe(Effect.scoped),
+  );
+
+  it.live("never lists a custom auth.external provider table, at the root or in a remote", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.toml",
+        [
+          "[auth.external.my_oidc]",
+          "enabled = true",
+          'client_id = "id"',
+          "[remotes.staging]",
+          'project_id = "stagingrefstagingref"',
+          "[remotes.staging.auth.external.my_oidc]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+
+      expect(warnings).toEqual({ messages: [], stderr: "", stdout: "" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("still lists a non-table value under auth.external", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor("config.toml", '[auth.external]\nmy_oidc = "x"\n');
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: auth.external.my_oidc. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("still lists an unknown key written beside the document-only auth tables", () =>

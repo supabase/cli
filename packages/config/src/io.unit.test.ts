@@ -3682,6 +3682,22 @@ describe("config io schema version", () => {
       }),
     ));
 
+  test("saveCliConfig with a newer explicit schemaRef fails and writes nothing", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+
+        const error = yield* failureOf(
+          saveCliConfig({ cwd, config: sampleConfig, schemaRef: v("2") }),
+        );
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.exists(join(cwd, "supabase", "config.json"))).toBe(false);
+      }),
+    ));
+
   test("saveCliConfig fails and keeps a shadowed config.toml that declares a newer schema", () =>
     runConfigEffect(
       Effect.gen(function* () {

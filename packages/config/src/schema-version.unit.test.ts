@@ -40,6 +40,12 @@ describe("readCliConfigSchemaDeclaration", () => {
       expected: { ref: versioned("2"), version: 2n },
     },
     {
+      name: "strips a BOM directly before the directive",
+      text: `\uFEFF#:schema ${versioned("2")}\r\n[db]\r\n`,
+      format: "toml",
+      expected: { ref: versioned("2"), version: 2n },
+    },
+    {
       name: "reads a directive with trailing spaces",
       text: `#:schema ${versioned("2")}  \n[db]\n`,
       format: "toml",

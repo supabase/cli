@@ -31,6 +31,7 @@ import { SUPPORTED_CLI_CONFIG_SCHEMA_VERSION } from "./schema-metadata.ts";
 import {
   readCliConfigSchemaDeclaration,
   SCHEMA_DIRECTIVE_LINE,
+  versionOfSchemaRef,
   type CliConfigSchemaDeclaration,
 } from "./schema-version.ts";
 import { setOwnProperty } from "./sparse.ts";
@@ -884,6 +885,12 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
   const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
   const { format, filePath, allPaths } = yield* resolveSaveTarget(baseCwd, options.format);
+  if (options.schemaRef !== undefined) {
+    yield* failIfSchemaTooNew(filePath, cliConfigFormatForPath(filePath), {
+      ref: options.schemaRef,
+      version: versionOfSchemaRef(options.schemaRef),
+    });
+  }
   if (project !== null) {
     yield* rejectNewerExistingSchema(allPaths);
   }

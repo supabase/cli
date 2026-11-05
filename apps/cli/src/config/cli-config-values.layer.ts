@@ -105,6 +105,17 @@ const isDocumentOnlyKey = (key: ReadonlyArray<string>): boolean => {
   );
 };
 
+/** Custom `[auth.external.<name>]` providers have no schema entry, but `start` reads them from the raw document. */
+const isCustomAuthProvider = (rawDocument: unknown, key: ReadonlyArray<string>): boolean => {
+  const local = key[0] === "remotes" ? key.slice(2) : key;
+  return (
+    local.length === 3 &&
+    local[0] === "auth" &&
+    local[1] === "external" &&
+    isDocumentRecord(getDocumentValue(rawDocument, key))
+  );
+};
+
 const unrecognizedSchemaLine = (file: string, ref: string): string =>
   `WARN: ${file} declares schema ${escapeControlCharacters(ref)}, which is not the Supabase CLI config schema, so it is read as v1. Set it to ${CLI_CONFIG_SCHEMA_URL} to remove this warning.\n`;
 
@@ -282,7 +293,11 @@ export const cliConfigValuesLayer = Layer.effect(
           yield* printOnce(unrecognizedSchemaLine(used, declaration.ref));
         }
         const unknownKeys = findUnknownCliConfigKeys(parsed.rawDocument)
-          .filter((key) => !isDocumentOnlyKey(key[0] === "remotes" ? key.slice(2) : key))
+          .filter(
+            (key) =>
+              !isDocumentOnlyKey(key[0] === "remotes" ? key.slice(2) : key) &&
+              !isCustomAuthProvider(parsed.rawDocument, key),
+          )
           .map((key) => key.join("."));
         if (unknownKeys.length > 0) {
           yield* printOnce(unknownKeysLine(used, unknownKeys));

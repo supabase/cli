@@ -170,7 +170,8 @@ these rules:
 
 The saved file may also preserve a top-level `"$schema"` key as editor metadata: when a caller
 doesn't pass an explicit `schemaRef`, saving reuses whatever `$schema` the project's existing
-config file already had. That key does not participate in runtime config semantics.
+config file already had. Beyond the schema version it declares (see [Schema version](#schema-version)),
+the key has no runtime meaning.
 
 ## Env Loading and Precedence
 
@@ -511,9 +512,11 @@ may precede it, and surrounding spaces or tabs are ignored. A file with no decla
   the current schema URL.
 - A file declaring a version newer than the package supports fails with
   `CliConfigSchemaVersionError` and an upgrade message, in `loadCliConfig`, `loadCliConfigFile`,
-  `parseCliConfigDocumentFile` and `saveCliConfig` alike. A save checks every existing config
-  file, including a shadowed sibling it would remove, and still overwrites a file that does not
-  parse unless that file declares a newer version. For TOML the directive is checked before
+  `parseCliConfigDocumentFile` and `saveCliConfig` alike. A save also fails on an explicit
+  `schemaRef` newer than the package supports, and checks every existing config file, including a
+  shadowed sibling it would remove. With an explicit `schemaRef`, a save overwrites an existing
+  file that does not parse unless that file declares a newer version; without one, the save reads
+  the existing `$schema` and fails with `CliConfigParseError` on a file that does not parse. For TOML the directive is checked before
   parsing, so a newer file this version cannot parse still reports the upgrade error.
 
 ## Unknown keys
