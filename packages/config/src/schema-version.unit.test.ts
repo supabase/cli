@@ -40,6 +40,37 @@ describe("readCliConfigSchemaDeclaration", () => {
       expected: { ref: versioned("2"), version: 2n },
     },
     {
+      name: "reads a directive with trailing spaces",
+      text: `#:schema ${versioned("2")}  \n[db]\n`,
+      format: "toml",
+      expected: { ref: versioned("2"), version: 2n },
+    },
+    {
+      name: "reads a directive with a trailing tab and CRLF",
+      text: `#:schema ${versioned("2")}\t\r\n[db]\r\n`,
+      format: "toml",
+      expected: { ref: versioned("2"), version: 2n },
+    },
+    {
+      name: "reads an indented directive",
+      text: `  \t#:schema ${versioned("2")}\n[db]\n`,
+      format: "toml",
+      expected: { ref: versioned("2"), version: 2n },
+    },
+    {
+      name: "reads a directive after an indented ordinary comment",
+      text: `  # note\n#:schema ${versioned("2")}\n[db]\n`,
+      format: "toml",
+      expected: { ref: versioned("2"), version: 2n },
+    },
+    {
+      name: "ignores an indented table header before a directive",
+      text: `  [db]\n#:schema ${versioned("2")}\n`,
+      format: "toml",
+      document: { db: {} },
+      expected: undefined,
+    },
+    {
       name: "ignores a directive that follows a non-comment line",
       text: `project_id = "x"\n#:schema ${versioned("2")}\n`,
       format: "toml",
@@ -116,6 +147,23 @@ describe("readCliConfigSchemaDeclaration", () => {
       document: { $schema: "..\\node_modules\\@supabase\\config\\schema.json" },
       expected: { ref: "..\\node_modules\\@supabase\\config\\schema.json", version: 1n },
     },
+    {
+      name: "reads the built dist/schema.json path with forward slashes as v1",
+      text: "",
+      format: "json",
+      document: { $schema: "../node_modules/@supabase/config/dist/schema.json" },
+      expected: { ref: "../node_modules/@supabase/config/dist/schema.json", version: 1n },
+    },
+    {
+      name: "reads the built dist/schema.json path with backslashes as v1",
+      text: "",
+      format: "json",
+      document: { $schema: "..\\node_modules\\@supabase\\config\\dist\\schema.json" },
+      expected: {
+        ref: "..\\node_modules\\@supabase\\config\\dist\\schema.json",
+        version: 1n,
+      },
+    },
     ...[
       versioned("0"),
       versioned("01"),
@@ -127,6 +175,7 @@ describe("readCliConfigSchemaDeclaration", () => {
       `${versioned("2")}#top`,
       "https://example.com/x.json",
       "./node_modules/@supabase/config/schema.json.bak",
+      "./node_modules/@supabase/config/dist/other/schema.json",
     ].map((ref) => ({
       name: `treats ${ref} as unrecognized`,
       text: "",

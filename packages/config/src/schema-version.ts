@@ -7,11 +7,11 @@ export interface CliConfigSchemaDeclaration {
   readonly version: bigint | undefined;
 }
 
-export const SCHEMA_DIRECTIVE_LINE = /^#:schema[ \t]+(\S+)(?=\r?\n|$)/;
+export const SCHEMA_DIRECTIVE_LINE = /^[ \t]*#:schema[ \t]+(\S+)[ \t]*(?=\r?\n|$)/;
 
 const VERSIONED_SCHEMA_URL = /^https:\/\/supabase\.com\/schemas\/config\/v([1-9]\d*)\.json$/;
 const LEGACY_SCHEMA_URL = "https://supabase.com/docs/cli/config.schema.json";
-const PACKAGE_SCHEMA_PATH = /node_modules[\\/]@supabase[\\/]config[\\/]schema\.json$/;
+const PACKAGE_SCHEMA_PATH = /node_modules[\\/]@supabase[\\/]config[\\/](?:dist[\\/])?schema\.json$/;
 
 function versionOfSchemaRef(ref: string): bigint | undefined {
   if (ref === LEGACY_SCHEMA_URL || PACKAGE_SCHEMA_PATH.test(ref)) {
@@ -27,7 +27,7 @@ function leadingTomlDirective(text: string): string | undefined {
     if (trimmed.trim() === "") {
       continue;
     }
-    if (!trimmed.startsWith("#")) {
+    if (!trimmed.trimStart().startsWith("#")) {
       return undefined;
     }
     const match = SCHEMA_DIRECTIVE_LINE.exec(trimmed);

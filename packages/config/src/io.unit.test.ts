@@ -3550,6 +3550,41 @@ describe("config io schema version", () => {
     },
   ];
 
+  test("a version past the safe integer range serializes to JSON with every digit", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const { cwd } = yield* writeConfig(
+          "config.toml",
+          `#:schema ${v("99999999999999999999")}\n`,
+        );
+
+        const error = yield* failureOf(loadCliConfig(cwd));
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- the contract under test is plain JSON.stringify
+        expect(JSON.stringify(error)).toContain('"declaredVersion":"99999999999999999999"');
+      }),
+    ));
+
+  const whitespaceTolerantDirectives: ReadonlyArray<readonly [string, string]> = [
+    ["trailing spaces", `#:schema ${v("2")}  \nproject_id = "x"\n`],
+    ["a trailing tab", `#:schema ${v("2")}\t\nproject_id = "x"\n`],
+    ["an indented directive", `  #:schema ${v("2")}\nproject_id = "x"\n`],
+    ["an indented comment before it", `  # note\n\t#:schema ${v("2")}\nproject_id = "x"\n`],
+  ];
+
+  test.each(whitespaceTolerantDirectives)(
+    "loadCliConfig fails on a v2 directive with %s",
+    (_name, content) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const { cwd } = yield* writeConfig("config.toml", content);
+
+          expect(yield* failureOf(loadCliConfig(cwd))).toBeInstanceOf(CliConfigSchemaVersionError);
+        }),
+      ),
+  );
+
   test.each(tooNew)(
     "loadCliConfig fails on a newer schema in $name",
     ({ file, content, version }) =>
@@ -3563,7 +3598,7 @@ describe("config io schema version", () => {
           expect(error).toMatchObject({
             _tag: "CliConfigSchemaVersionError",
             path,
-            declaredVersion: version,
+            declaredVersion: String(version),
             supportedVersion: 1,
           });
           expect(error instanceof CliConfigSchemaVersionError ? error.message : "").toBe(
@@ -3595,6 +3630,52 @@ describe("config io schema version", () => {
         const { cwd, path } = yield* writeConfig("config.jsonc", content);
 
         const error = yield* failureOf(saveCliConfig({ cwd, config: sampleConfig }));
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(path)).toBe(content);
+      }),
+    ));
+
+  test("saveCliConfig with an explicit schemaRef over a newer-schema file fails and leaves the bytes unchanged", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const content = `// keep me\n{"$schema": "${v("2")}", "project_id": "x"}`;
+        const { cwd, path } = yield* writeConfig("config.jsonc", content);
+
+        const error = yield* failureOf(
+          saveCliConfig({ cwd, config: sampleConfig, schemaRef: CLI_CONFIG_SCHEMA_URL }),
+        );
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(path)).toBe(content);
+      }),
+    ));
+
+  test("saveCliConfig with an explicit schemaRef overwrites an existing file that does not parse", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, path } = yield* writeConfig("config.toml", `[db\nbroken = = 1\n`);
+
+        yield* saveCliConfig({ cwd, config: sampleConfig, schemaRef: CLI_CONFIG_SCHEMA_URL });
+
+        const written = yield* fs.readFileString(path);
+        expect(written).toContain('project_id = "ref_123"');
+        expect(written).not.toContain("broken");
+      }),
+    ));
+
+  test("saveCliConfig with an explicit schemaRef over an unparseable TOML with a v2 directive fails and leaves the bytes unchanged", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const content = `#:schema ${v("2")}\n[db\nbroken = = 1\n`;
+        const { cwd, path } = yield* writeConfig("config.toml", content);
+
+        const error = yield* failureOf(
+          saveCliConfig({ cwd, config: sampleConfig, schemaRef: CLI_CONFIG_SCHEMA_URL }),
+        );
 
         expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
         expect(yield* fs.readFileString(path)).toBe(content);

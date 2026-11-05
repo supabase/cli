@@ -501,30 +501,34 @@ came from.
 A config file declares its schema version with `$schema` in `config.json`/`config.jsonc`, or with a
 leading `#:schema <url>` directive in `config.toml` (a top-level `"$schema"` key is the fallback;
 the directive wins). The directive must come before any other content; blank lines and comments
-may precede it. A file with no declaration is v1.
+may precede it, and surrounding spaces or tabs are ignored. A file with no declaration is v1.
 
 - `https://supabase.com/schemas/config/v<N>.json` declares version `N`.
 - The legacy `https://supabase.com/docs/cli/config.schema.json` and paths ending in
-  `node_modules/@supabase/config/schema.json` read as v1.
-- Any other reference is unrecognized: the file is read as v1 and the CLI warns that the value is
-  not a Supabase config schema URL.
+  `node_modules/@supabase/config/schema.json` or `node_modules/@supabase/config/dist/schema.json`
+  read as v1.
+- Any other reference is unrecognized: the file is read as v1 and the CLI warns on stderr, naming
+  the current schema URL.
 - A file declaring a version newer than the package supports fails with
   `CliConfigSchemaVersionError` and an upgrade message, in `loadCliConfig`, `loadCliConfigFile`,
-  `parseCliConfigDocumentFile` and `saveCliConfig` alike. For TOML the directive is checked before
+  `parseCliConfigDocumentFile` and `saveCliConfig` alike. A save with an explicit `schemaRef` still
+  overwrites an existing file that does not parse, unless that file declares a newer version. For TOML the directive is checked before
   parsing, so a newer file this version cannot parse still reports the upgrade error.
 
 ## Unknown keys
 
-`findUnknownCliConfigKeys(document)` (`@supabase/config/internal`) returns the sorted dotted paths
-of keys in a raw config document that `CliConfigSchema` does not accept, derived from the schema
+`findUnknownCliConfigKeys(document)` (`@supabase/config/internal`) returns the sorted key paths
+(segment arrays) of keys in a raw config document that `CliConfigSchema` does not accept, derived from the schema
 itself: the document is decoded with excess-property errors enabled and the unexpected-key issues
 are collected. A key a union member accepts is not reported. The top-level `$schema` key is
-ignored, and `[remotes.<name>]` blocks report as `remotes.<name>.<key>`. Pass the document after
+ignored, and `[remotes.<name>]` blocks report under `["remotes", <name>, ...]`. An unknown table
+reports as the table, not its leaves. Pass the document after
 deprecated spellings are folded, as `parseCliConfigDocumentFile` exposes it in `rawDocument`.
 
-The loader still ignores unknown keys. The CLI warns once per file, listing them, because they may
-need a newer CLI or be misspelled. It does not warn for the document-only `db.password` and
-`db.root_key`.
+The loader still ignores unknown keys. The CLI prints one `WARN:` line on stderr per file listing
+them, so they can be checked for typos, removed, or read by a newer CLI. Key names and schema refs
+are printed with control characters escaped. The CLI's document-only keys (`db.password`,
+`db.root_key`, `auth.external_url`, `[auth.passkey]`, `[auth.webauthn]`) are never listed.
 
 ## CLI-owned Repo State
 

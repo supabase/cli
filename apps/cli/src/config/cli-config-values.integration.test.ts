@@ -588,7 +588,7 @@ describe("CliConfigValues schema declaration", () => {
       yield* writeConfig(root, file, content);
       const output = mockOutput();
       yield* load(root).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
-      return output.messages;
+      return { messages: output.messages, stderr: output.stderrText, stdout: output.stdoutText };
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect));
 
   it.live("warns once that an unrecognized schema URL is read as v1", () =>
@@ -608,13 +608,11 @@ describe("CliConfigValues schema declaration", () => {
       }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
 
       expect(loaded.materialized.config.db.port).toBe(54777);
-      expect(output.messages).toEqual([
-        {
-          type: "warn",
-          message:
-            "supabase/config.json declares schema https://example.com/x.json, which is not a Supabase config schema URL (https://supabase.com/schemas/config/v<N>.json). Reading it as v1.",
-        },
-      ]);
+      expect(output.stderrText).toBe(
+        "WARN: supabase/config.json declares schema https://example.com/x.json, which is not the Supabase CLI config schema, so it is read as v1. Set it to https://supabase.com/schemas/config/v1.json to remove this warning.\n",
+      );
+      expect(output.stdoutText).toBe("");
+      expect(output.messages).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
@@ -629,6 +627,11 @@ describe("CliConfigValues schema declaration", () => {
       '{"$schema": "https://supabase.com/docs/cli/config.schema.json"}',
     ],
     [
+      "the built dist/schema.json path",
+      "config.json",
+      '{"$schema": "../node_modules/@supabase/config/dist/schema.json"}',
+    ],
+    [
       "the legacy node_modules path",
       "config.jsonc",
       '{"$schema": "./node_modules/@supabase/config/schema.json"}',
@@ -638,7 +641,7 @@ describe("CliConfigValues schema declaration", () => {
   for (const [name, file, content] of silent) {
     it.live(`prints no warning for ${name}`, () =>
       Effect.gen(function* () {
-        expect(yield* warningsFor(file, content)).toEqual([]);
+        expect(yield* warningsFor(file, content)).toEqual({ messages: [], stderr: "", stdout: "" });
       }).pipe(Effect.scoped),
     );
   }
@@ -653,13 +656,11 @@ describe("CliConfigValues schema declaration", () => {
         yield* load(root);
       }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
 
-      expect(output.messages).toEqual([
-        {
-          type: "warn",
-          message:
-            "supabase/config.toml has keys this version of the Supabase CLI does not recognize: api.foo, bogus. They may need a newer Supabase CLI, or they may be misspelled.",
-        },
-      ]);
+      expect(output.stderrText).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: api.foo, bogus. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+      expect(output.stdoutText).toBe("");
+      expect(output.messages).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
@@ -670,13 +671,10 @@ describe("CliConfigValues schema declaration", () => {
         '[remotes.staging]\nproject_id = "stagingrefstagingref"\n[remotes.staging.api]\nfoo = 1\n',
       );
 
-      expect(messages).toEqual([
-        {
-          type: "warn",
-          message:
-            "supabase/config.toml has keys this version of the Supabase CLI does not recognize: remotes.staging.api.foo. They may need a newer Supabase CLI, or they may be misspelled.",
-        },
-      ]);
+      expect(messages.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: remotes.staging.api.foo. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+      expect(messages.messages).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
@@ -700,20 +698,84 @@ describe("CliConfigValues schema declaration", () => {
           ].join("\n"),
         );
 
-        expect(messages).toEqual([
-          {
-            type: "warn",
-            message:
-              "supabase/config.toml has keys this version of the Supabase CLI does not recognize: db.oops. They may need a newer Supabase CLI, or they may be misspelled.",
-          },
-        ]);
+        expect(messages.stderr).toBe(
+          "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: db.oops. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+        );
+        expect(messages.messages).toEqual([]);
       }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "never lists the document-only auth.passkey and auth.webauthn tables, at the root or in a remote",
+    () =>
+      Effect.gen(function* () {
+        const warnings = yield* warningsFor(
+          "config.toml",
+          [
+            "[auth.passkey]",
+            "enabled = true",
+            "[auth.webauthn]",
+            'rp_id = "x"',
+            "[remotes.staging]",
+            'project_id = "stagingrefstagingref"',
+            "[remotes.staging.auth.passkey]",
+            "enabled = true",
+            "[remotes.staging.auth.webauthn]",
+            'rp_id = "x"',
+            "",
+          ].join("\n"),
+        );
+
+        expect(warnings).toEqual({ messages: [], stderr: "", stdout: "" });
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("still lists an unknown key written beside the document-only auth tables", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.toml",
+        "[auth.passkey]\nenabled = true\n[auth.passkeys]\nenabled = true\n",
+      );
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: auth.passkeys. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "prints an unknown key containing an escape sequence with the control characters escaped",
+    () =>
+      Effect.gen(function* () {
+        const warnings = yield* warningsFor("config.toml", '"bad\\u001b[31m" = 1\n');
+
+        expect(warnings.stderr).toBe(
+          "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: bad\\u001b[31m. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+        );
+        expect(warnings.stderr.includes("\u001b")).toBe(false);
+        expect(warnings.stdout).toBe("");
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("prints an unrecognized $schema containing an escape sequence escaped", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.json",
+        '{"$schema": "https://example.com/\\u001b[31mx.json"}',
+      );
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.json declares schema https://example.com/\\u001b[31mx.json, which is not the Supabase CLI config schema, so it is read as v1. Set it to https://supabase.com/schemas/config/v1.json to remove this warning.\n",
+      );
+      expect(warnings.stderr.includes("\u001b")).toBe(false);
+    }).pipe(Effect.scoped),
   );
 
   const tooNew: ReadonlyArray<readonly [string, string, string]> = [
     ["config.json", `{"$schema": "${V2}"}`, "supabase/config.json"],
     ["config.jsonc", `{\n// c\n"$schema": "${V2}",\n}`, "supabase/config.jsonc"],
     ["config.toml", `#:schema ${V2}\n[db\nbroken = = 1\n`, "supabase/config.toml"],
+    ["config.toml", `  # note\n\t#:schema ${V2} \t\n[db]\n`, "supabase/config.toml"],
   ];
 
   for (const [file, content, shown] of tooNew) {

@@ -1,4 +1,4 @@
-import type { CliConfigValueOrigin } from "@supabase/config";
+import { CLI_CONFIG_SCHEMA_URL, type CliConfigValueOrigin } from "@supabase/config";
 import {
   decodeMergedCliConfig,
   ENV_CAPTURE_REGEX,
@@ -96,6 +96,20 @@ const deprecatedKeyLine = (deprecatedPath: string): string => {
   const shown = escapeControlCharacters(deprecatedPath);
   return `WARN: ${shown} is deprecated and will be removed in v4, use ${shown.replace(/enable_signup$/, "enabled")} instead.\n`;
 };
+
+/** Unknown-key reports stop at the first unknown table, so a document-only table such as `auth.passkey` arrives whole. */
+const isDocumentOnlyKey = (key: ReadonlyArray<string>): boolean => {
+  const dotted = key.join(".");
+  return [...cliConfigDocumentOnlyPaths].some(
+    (known) => known === dotted || known.startsWith(`${dotted}.`) || dotted.startsWith(`${known}.`),
+  );
+};
+
+const unrecognizedSchemaLine = (file: string, ref: string): string =>
+  `WARN: ${file} declares schema ${escapeControlCharacters(ref)}, which is not the Supabase CLI config schema, so it is read as v1. Set it to ${CLI_CONFIG_SCHEMA_URL} to remove this warning.\n`;
+
+const unknownKeysLine = (file: string, keys: ReadonlyArray<string>): string =>
+  `WARN: ${file} has keys this version of the Supabase CLI does not recognize and ignores: ${keys.map(escapeControlCharacters).join(", ")}. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n`;
 
 const registryEnvNames = cliConfigRegistry.keys.flatMap((key) => key.env);
 
@@ -265,20 +279,13 @@ export const cliConfigValuesLayer = Layer.effect(
         const used = displayPath(parsed.path);
         const declaration = parsed.schemaDeclaration;
         if (declaration !== undefined && declaration.version === undefined) {
-          yield* warnOnce(
-            `${used} declares schema ${declaration.ref}, which is not a Supabase config schema URL (https://supabase.com/schemas/config/v<N>.json). Reading it as v1.`,
-          );
+          yield* printOnce(unrecognizedSchemaLine(used, declaration.ref));
         }
         const unknownKeys = findUnknownCliConfigKeys(parsed.rawDocument)
-          .filter((key) => {
-            const own = key[0] === "remotes" ? key.slice(2) : key;
-            return !cliConfigDocumentOnlyPaths.has(own.join("."));
-          })
+          .filter((key) => !isDocumentOnlyKey(key[0] === "remotes" ? key.slice(2) : key))
           .map((key) => key.join("."));
         if (unknownKeys.length > 0) {
-          yield* warnOnce(
-            `${used} has keys this version of the Supabase CLI does not recognize: ${unknownKeys.join(", ")}. They may need a newer Supabase CLI, or they may be misspelled.`,
-          );
+          yield* printOnce(unknownKeysLine(used, unknownKeys));
         }
         for (const ignoredPath of parsed.ignoredPaths) {
           const ignored = displayPath(ignoredPath);

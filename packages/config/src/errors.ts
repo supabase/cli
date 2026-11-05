@@ -52,7 +52,8 @@ export class CliConfigSchemaVersionError extends Data.TaggedError("CliConfigSche
   readonly path: string;
   readonly format: ConfigFormat;
   readonly schemaRef: string;
-  readonly declaredVersion: bigint;
+  /** The declared version in decimal digits, which can exceed the safe integer range. */
+  readonly declaredVersion: string;
   readonly supportedVersion: number;
 }> {
   override get message(): string {
