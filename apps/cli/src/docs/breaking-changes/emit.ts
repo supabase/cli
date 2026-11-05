@@ -22,8 +22,12 @@ export function docsBreakingChangesFor(
 ): ReadonlyArray<DocsBreakingChange> {
   return registry.flatMap((change) => {
     if (!change.commands.some((command) => commandIdOf(command) === commandId)) return [];
-    const direction = specMajor >= change.major ? "changed" : "upcoming";
-    if (direction === "upcoming" && change.warnInPrevious !== true) return [];
+    if (
+      specMajor !== change.major &&
+      !(change.warnInPrevious === true && specMajor === change.major - 1)
+    )
+      return [];
+    const direction = specMajor === change.major ? "changed" : "upcoming";
     return [
       {
         id: change.id,
