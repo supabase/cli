@@ -47,6 +47,20 @@ export class CliConfigFileConflictError extends Data.TaggedError("CliConfigFileC
   }
 }
 
+/** A config file declares a schema version newer than this package reads. */
+export class CliConfigSchemaVersionError extends Data.TaggedError("CliConfigSchemaVersionError")<{
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly schemaRef: string;
+  readonly declaredVersion: bigint;
+  readonly supportedVersion: number;
+}> {
+  override get message(): string {
+    const file = this.path.split(/[\\/]/).slice(-2).join("/");
+    return `${file} declares config schema v${this.declaredVersion}, but this version of the Supabase CLI only reads up to v${this.supportedVersion}. Upgrade the Supabase CLI to use this config.`;
+  }
+}
+
 const PROJECT_CONFIG_PARSE_ERROR_MESSAGE_PREFIX =
   "Could not read the project config from the Management API response";
 

@@ -2,7 +2,13 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Predicate } from "effect";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { applyConfigEdits, loadCliConfig, type ConfigEdit } from "@supabase/config/internal";
+import {
+  applyConfigEdits,
+  findUnknownCliConfigKeys,
+  loadCliConfig,
+  type ConfigEdit,
+} from "@supabase/config/internal";
+import * as SmolToml from "smol-toml";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 import {
@@ -182,6 +188,15 @@ describe("project init templates", () => {
       expect(loaded?.deprecatedPaths).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+
+  it("renders a config with no keys the schema does not recognize", () => {
+    for (const experimentalStack of [false, true]) {
+      for (const useOrioledb of [false, true]) {
+        const rendered = renderCliConfigTemplate("demo-project", useOrioledb, experimentalStack);
+        expect(findUnknownCliConfigKeys(SmolToml.parse(rendered))).toEqual([]);
+      }
+    }
+  });
 
   it("enables pg-delta by default in the generated config", () => {
     const rendered = renderCliConfigTemplate("demo-project", false);

@@ -14,6 +14,7 @@ export {
 } from "./base.ts";
 export {
   CliConfigFileConflictError,
+  CliConfigSchemaVersionError,
   CliConfigParseError,
   CliConfigRemovedKeyError,
   CliProjectEnvParseError,

@@ -486,7 +486,8 @@ The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` enviro
 
 1. `parseCliConfigDocumentFile` reads `config.json`, `config.jsonc` or `config.toml` without decoding, and
    fails with `CliConfigRemovedKeyError` when the document uses a removed key, or
-   `CliConfigFileConflictError` when both JSON files exist.
+   `CliConfigFileConflictError` when both JSON files exist, or `CliConfigSchemaVersionError` when
+   the file declares a newer schema version.
 2. `mergeParsedCliConfig` applies the remote chosen by the `selectRemote` callback.
 3. The CLI overlays flag, env and default values onto the merged document.
 4. `decodeMergedCliConfig` expands `env()` references, then decodes and validates the overlaid
@@ -494,6 +495,36 @@ The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` enviro
 
 The result is the `materialized` config on the resolved config; `get(key)` also reports the tier a value
 came from.
+
+## Schema version
+
+A config file declares its schema version with `$schema` in `config.json`/`config.jsonc`, or with a
+leading `#:schema <url>` directive in `config.toml` (a top-level `"$schema"` key is the fallback;
+the directive wins). The directive must come before any other content; blank lines and comments
+may precede it. A file with no declaration is v1.
+
+- `https://supabase.com/schemas/config/v<N>.json` declares version `N`.
+- The legacy `https://supabase.com/docs/cli/config.schema.json` and paths ending in
+  `node_modules/@supabase/config/schema.json` read as v1.
+- Any other reference is unrecognized: the file is read as v1 and the CLI warns that the value is
+  not a Supabase config schema URL.
+- A file declaring a version newer than the package supports fails with
+  `CliConfigSchemaVersionError` and an upgrade message, in `loadCliConfig`, `loadCliConfigFile`,
+  `parseCliConfigDocumentFile` and `saveCliConfig` alike. For TOML the directive is checked before
+  parsing, so a newer file this version cannot parse still reports the upgrade error.
+
+## Unknown keys
+
+`findUnknownCliConfigKeys(document)` (`@supabase/config/internal`) returns the sorted dotted paths
+of keys in a raw config document that `CliConfigSchema` does not accept, derived from the schema
+itself: the document is decoded with excess-property errors enabled and the unexpected-key issues
+are collected. A key a union member accepts is not reported. The top-level `$schema` key is
+ignored, and `[remotes.<name>]` blocks report as `remotes.<name>.<key>`. Pass the document after
+deprecated spellings are folded, as `parseCliConfigDocumentFile` exposes it in `rawDocument`.
+
+The loader still ignores unknown keys. The CLI warns once per file, listing them, because they may
+need a newer CLI or be misspelled. It does not warn for the document-only `db.password` and
+`db.root_key`.
 
 ## CLI-owned Repo State
 

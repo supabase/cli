@@ -2,6 +2,7 @@ import type { CliConfigValueOrigin } from "@supabase/config";
 import {
   decodeMergedCliConfig,
   ENV_CAPTURE_REGEX,
+  findUnknownCliConfigKeys,
   mergeParsedCliConfig,
   parseCliConfigDocumentFile,
   type MergedCliConfigDocument,
@@ -54,6 +55,7 @@ import {
 } from "./cli-config-key.ts";
 import {
   cliConfigFamilyEnvNames,
+  cliConfigDocumentOnlyPaths,
   cliConfigFamilyKey,
   cliConfigRegistry,
   cliRemoteProjectIdEnvName,
@@ -261,6 +263,23 @@ export const cliConfigValuesLayer = Layer.effect(
         const displayPath = (filePath: string) =>
           path.relative(target.workdir, filePath).replaceAll("\\", "/");
         const used = displayPath(parsed.path);
+        const declaration = parsed.schemaDeclaration;
+        if (declaration !== undefined && declaration.version === undefined) {
+          yield* warnOnce(
+            `${used} declares schema ${declaration.ref}, which is not a Supabase config schema URL (https://supabase.com/schemas/config/v<N>.json). Reading it as v1.`,
+          );
+        }
+        const unknownKeys = findUnknownCliConfigKeys(parsed.rawDocument)
+          .filter((key) => {
+            const own = key[0] === "remotes" ? key.slice(2) : key;
+            return !cliConfigDocumentOnlyPaths.has(own.join("."));
+          })
+          .map((key) => key.join("."));
+        if (unknownKeys.length > 0) {
+          yield* warnOnce(
+            `${used} has keys this version of the Supabase CLI does not recognize: ${unknownKeys.join(", ")}. They may need a newer Supabase CLI, or they may be misspelled.`,
+          );
+        }
         for (const ignoredPath of parsed.ignoredPaths) {
           const ignored = displayPath(ignoredPath);
           yield* warnOnce(
