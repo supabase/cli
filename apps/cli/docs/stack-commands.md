@@ -357,8 +357,8 @@ format, or comes from a newer CLI always fails the start. The lock's JSON Schema
 `https://supabase.com/schemas/supabase-lock/v1.json`. A database with initialized data keeps
 its build: any change other than a new `-rN` revision of the same build (a different upstream build,
 release line or major) is refused. The refusal offers to keep the data by pinning the recorded build with
-`[local.services.database] version`, setting `[db] major_version` back when the major differs and removing any
-`[db] orioledb_version` when an OrioleDB build is requested, or to run `supabase stack destroy` and recreate it. `supabase link`
+`local.services.database.version` in your config file, setting `db.major_version` back when the major differs and removing any
+`db.orioledb_version` when an OrioleDB build is requested, or to run `supabase stack destroy` and recreate it. `supabase link`
 and `supabase stack update` warn when the versions they lock would be refused by an existing stack's
 data. A database that never initialized adopts the change. See the [`start` side
 effects](../src/commands/experimental/stack/start/SIDE_EFFECTS.md#service-versions-and-the-lock) for

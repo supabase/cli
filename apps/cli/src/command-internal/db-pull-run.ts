@@ -19,7 +19,7 @@ import type { ResolvedTarget } from "./target/resolve-target.ts";
 import { flagsForTarget } from "./target/target-flags.ts";
 import { resolveDbImage } from "./db-image.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
-import { loadProjectEnvValues, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
+import { loadProjectEnvValues, readDbConfig, resolveDeclarativeDir } from "./db-config.read.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
 import { buildLocalDbContainerInputs } from "./db-bootstrap/local-container-inputs.ts";
@@ -156,7 +156,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
 
     // Read the config for the matching `[remotes.<ref>]` block before connecting, so a
     // connection failure still reports which override matched.
-    const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const toml = yield* readDbConfig(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
@@ -314,7 +314,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
 
         // pg-delta ignores schema_paths in favor of the migrations baseline.
         if (usePgDeltaDiff && toml.schemaPaths !== undefined && toml.schemaPaths.length > 0) {
-          yield* output.raw(schemaPathsTransitionWarning, "stderr");
+          yield* output.raw(schemaPathsTransitionWarning(toml.configFile), "stderr");
         }
 
         // Migration-file path.
@@ -492,7 +492,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               targetLocal: resolved.isLocal,
               migrationMode,
               // `toml.schemaPathPatterns` is used here, not the raw `@supabase/config` field on
-              // `localInputs`, since only `toml` (via `readDbToml`) resolves the
+              // `localInputs`, since only `toml` (via `readDbConfig`) resolves the
               // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` env override.
               schemaPaths: toml.schemaPathPatterns,
               pgDelta: toml.pgDelta,

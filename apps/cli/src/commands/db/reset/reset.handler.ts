@@ -17,10 +17,7 @@ import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import { resetLocalDatabase } from "../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import {
-  checkDbToml,
-  loadProjectEnvValues,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { checkDbConfig, loadProjectEnvValues } from "../../../command-internal/db-config.read.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import {
   experimentalSchemaPathsIgnoredWarning,
@@ -197,7 +194,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     // Decodes the whole config with env-expansion and weak-typed boolean parsing, applies
     // `SUPABASE_*` overrides, merges a matching `[remotes.<ref>]` block, and decrypts every
     // `encrypted:` secret — aborting here, before the destructive prompt, on any invalid config.
-    const toml = yield* checkDbToml(fs, path, workdir, linkedRef);
+    const toml = yield* checkDbConfig(fs, path, workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
@@ -217,7 +214,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         schemaPaths: toml.schemaPaths,
       })
     ) {
-      yield* output.raw(experimentalSchemaPathsIgnoredWarning, "stderr");
+      yield* output.raw(experimentalSchemaPathsIgnoredWarning(toml.configFile), "stderr");
     }
 
     // Takes the schema-files branch when `--experimental`/`SUPABASE_EXPERIMENTAL` is set, no

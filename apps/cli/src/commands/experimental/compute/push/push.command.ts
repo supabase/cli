@@ -33,7 +33,7 @@ const config = {
       (instances) => `--instances ${instances} is negative; pass zero or more.`,
     ),
     Flag.withDescription(
-      "Number of instances to run, overriding `instances` in supabase/config.toml for this deploy. Falls back to the recorded value, then 1.",
+      "Number of instances to run, overriding `instances` in the project config file for this deploy. Falls back to the recorded value, then 1.",
     ),
     Flag.optional,
   ),
@@ -44,7 +44,7 @@ const config = {
     // `[compute.<name>] exposure` stays a plain string, so a value the API
     // grows before this CLI does can still be recorded there.
     Flag.withDescription(
-      "Whether the compute is reachable from the internet, overriding `exposure` in supabase/config.toml for this deploy. Falls back to the recorded value, then public.",
+      "Whether the compute is reachable from the internet, overriding `exposure` in the project config file for this deploy. Falls back to the recorded value, then public.",
     ),
     Flag.optional,
   ),
@@ -66,7 +66,7 @@ export type ComputePushFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const computePushCommand = Command.make("push", config).pipe(
   Command.withAlias("deploy"),
   Command.withDescription(
-    "Build and deploy compute into the linked Supabase project. Reads each compute's runtime, size, exposure and source directory from supabase/config.toml.",
+    "Build and deploy compute into the linked Supabase project. Reads each compute's runtime, size, exposure and source directory from the project config file.",
   ),
   Command.withShortDescription("Build and deploy compute"),
   Command.withExamples([

@@ -747,7 +747,7 @@ export const withProjectLease = <A, E, R>(projectRoot: string, effect: Effect.Ef
   holdLease(projectRoot).pipe(Effect.andThen(effect), Effect.scoped);
 
 /**
- * Fails a project without `supabase/config.toml` that is frozen, explicitly or by `CI` with a
+ * Fails a project without a config file that is frozen, explicitly or by `CI` with a
  * lock present: with no config the lock cannot be checked, so the bundled versions must not
  * silently stand in for it. An explicitly frozen project with no lock fails on the missing lock.
  */
@@ -758,7 +758,7 @@ export const rejectFrozenWithoutConfig = Effect.fn("StackLock.rejectFrozenWithou
     if (Option.isSome(lock))
       return yield* new LockResolutionError({
         reason: "frozen-missing",
-        message: `supabase/config.toml not found, so ${LOCK_FILE} cannot be checked; commit supabase/config.toml next to it`,
+        message: `supabase/config.toml, config.json or config.jsonc not found, so ${LOCK_FILE} cannot be checked; commit your config file next to it`,
       });
     if (frozen)
       return yield* new LockResolutionError({

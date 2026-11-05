@@ -239,6 +239,8 @@ export const resolveStatusLocalState = Effect.fnUntraced(function* (
   projectEnvValues?: Readonly<Record<string, string>>,
   /** `LoadedCliConfig.document` — see {@link resolveLocalConfigValues}'s doc comment. */
   document?: Readonly<Record<string, unknown>>,
+  /** The loaded config file's path, so messages name it; `undefined` reads as `config.toml`. */
+  configPath?: string,
   /**
    * An already-resolved {@link resolveLocalConfigValues} result to reuse instead of
    * re-deriving one. Callers that resolved `local` earlier in the same process (e.g.
@@ -250,7 +252,8 @@ export const resolveStatusLocalState = Effect.fnUntraced(function* (
   precomputedLocal?: LocalConfigValues,
 ) {
   const local =
-    precomputedLocal ?? (yield* resolveLocalConfigValues(config, hostname, workdir, document));
+    precomputedLocal ??
+    (yield* resolveLocalConfigValues(config, hostname, workdir, document, configPath));
 
   const apiEnabled = config.api.enabled;
   const studioSectionEnabled = config.studio.enabled;

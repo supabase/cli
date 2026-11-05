@@ -33,7 +33,7 @@ const configPushHandler = (flags: ConfigPushFlags) =>
 
 export const configPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
-    "Pushes the properties your local config.toml declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview. Shows the exact diff for every changed resource, then asks once before anything is written (the default answer is no). Piped answers are not read: non-interactive and JSON runs need --yes or a SUPABASE_YES set in the shell. Run `supabase config diff` first to review the changes.",
+    "Pushes the properties your local config file declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview. Shows the exact diff for every changed resource, then asks once before anything is written (the default answer is no). Piped answers are not read: non-interactive and JSON runs need --yes or a SUPABASE_YES set in the shell. Run `supabase config diff` first to review the changes.",
   ),
   Command.withShortDescription("Push local config to linked project"),
   Command.withExamples([
@@ -66,39 +66,39 @@ export const configPushCommand = Command.make("push", config).pipe(
           {
             operationId: "v1-update-postgrest-service-config",
             kind: "required",
-            context: "config.toml's [api] settings differ from the remote's",
+            context: "the config file's api settings differ from the remote's",
           },
           {
             operationId: "v1-update-postgres-config",
             kind: "required",
-            context: "config.toml's [db.settings] differ from the remote's",
+            context: "the config file's db.settings differ from the remote's",
           },
           {
             operationId: "v1-update-network-restrictions",
             kind: "required",
             context:
-              "config.toml sets [db.network_restrictions] enabled = true and its rules differ from the remote's",
+              "the config file sets db.network_restrictions.enabled = true and its rules differ from the remote's",
           },
           {
             operationId: "v1-update-ssl-enforcement-config",
             kind: "required",
-            context: "config.toml declares [db.ssl_enforcement] and it differs from the remote's",
+            context: "the config file declares db.ssl_enforcement and it differs from the remote's",
           },
           {
             operationId: "v1-update-auth-service-config",
             kind: "required",
             context:
-              "config.toml's [auth] settings, a referenced email template file, or a resolved auth secret differ from the remote's",
+              "the config file's auth settings, a referenced email template file, or a resolved auth secret differ from the remote's",
           },
           {
             operationId: "v1-update-storage-config",
             kind: "required",
-            context: "config.toml's [storage] settings differ from the remote's",
+            context: "the config file's storage settings differ from the remote's",
           },
           {
             operationId: "v1-enable-database-webhook",
             kind: "required",
-            context: "config.toml sets [experimental.webhooks] enabled = true",
+            context: "the config file sets experimental.webhooks.enabled = true",
           },
         ],
       },

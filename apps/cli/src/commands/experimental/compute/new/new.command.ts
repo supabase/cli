@@ -27,19 +27,19 @@ const config = {
   ),
   runtime: Flag.Literals("runtime", COMPUTE_RUNTIMES).pipe(
     Flag.withDescription(
-      "Runtime to scaffold and record in supabase/config.toml. Prompted when omitted.",
+      "Runtime to scaffold and record in the project config file. Prompted when omitted.",
     ),
     Flag.optional,
   ),
   size: Flag.Literals("size", COMPUTE_SIZES).pipe(
     Flag.withDescription(
-      "Instance size to record in supabase/config.toml. Each size implies its own vCPU count, so there is no separate --cpu. Prompted when omitted.",
+      "Instance size to record in the project config file. Each size implies its own vCPU count, so there is no separate --cpu. Prompted when omitted.",
     ),
     Flag.optional,
   ),
   exposure: Flag.Literals("exposure", COMPUTE_EXPOSURES).pipe(
     Flag.withDescription(
-      "Whether the compute is reachable from the internet, recorded as `exposure` in supabase/config.toml. Prompted when omitted.",
+      "Whether the compute is reachable from the internet, recorded as `exposure` in the project config file. Prompted when omitted.",
     ),
     Flag.optional,
   ),
@@ -51,13 +51,13 @@ const config = {
       (instances) => `--instances ${instances} is negative; pass zero or more.`,
     ),
     Flag.withDescription(
-      "Number of instances to record in supabase/config.toml. Not prompted for, and recorded only when it differs from the default of 1.",
+      "Number of instances to record in the project config file. Not prompted for, and recorded only when it differs from the default of 1.",
     ),
     Flag.optional,
   ),
   source: Flag.String("source").pipe(
     Flag.withDescription(
-      "Scaffold the compute here instead of the default compute directory, recorded as `source` in supabase/config.toml.",
+      "Scaffold the compute here instead of the default compute directory, recorded as `source` in the project config file.",
     ),
     Flag.optional,
   ),
@@ -76,7 +76,7 @@ const computeNewRuntimeLayer = Layer.mergeAll(
 
 export const computeNewCommand = Command.make("new", config).pipe(
   Command.withDescription(
-    "Scaffold a compute directory from a runtime's starter files and record the choices in supabase/config.toml. Nothing is deployed.",
+    "Scaffold a compute directory from a runtime's starter files and record the choices in the project config file. Nothing is deployed.",
   ),
   Command.withShortDescription("Scaffold a compute locally"),
   Command.withExamples([

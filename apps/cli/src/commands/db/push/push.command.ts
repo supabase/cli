@@ -30,7 +30,7 @@ const config = {
     description: "Include seed data from your config.",
   }),
   skipVault: Flag.Boolean("skip-vault").pipe(
-    Flag.withDescription("Skip updating vault secrets from config.toml."),
+    Flag.withDescription("Skip updating vault secrets from the config file."),
     Flag.withDefault(false),
   ),
   dryRun: Flag.Boolean("dry-run").pipe(
@@ -52,7 +52,7 @@ export type DbPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
-    "Push new migrations to a database. Vault secrets from config.toml are updated before migrations unless --skip-vault is set.",
+    "Push new migrations to a database. Vault secrets from the config file are updated before migrations unless --skip-vault is set.",
   ),
   Command.withShortDescription("Push new migrations to a database"),
   withPermissions(

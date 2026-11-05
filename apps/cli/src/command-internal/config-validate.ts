@@ -15,7 +15,7 @@ import { parseUrl } from "./storage-url.ts";
 /**
  * Single home for config validation, shared by the two config readers:
  *
- * - **D** = `db-config.toml-read.ts`: raw TOML document, Effect-based, fails with
+ * - **D** = `db-config.read.ts`: raw TOML document, Effect-based, fails with
  *   `DbConfigLoadError`.
  * - **L** = `local-config-values.ts`: decoded `@supabase/config` `CliConfig`, Effect-based,
  *   fails with an `Error`.
@@ -191,6 +191,8 @@ export interface ExperimentalInput {
  * `studio`/`localSmtp` entirely; both D and L omit `auth` when auth is disabled).
  */
 export interface ConfigValidationInput {
+  /** The config file's name for messages that name it; defaults to `config.toml`. */
+  readonly configFileName?: string;
   /** L only — D doesn't validate `project_id` here. */
   readonly projectId?: string;
   /** L only — D has no `[api]` section. */
@@ -545,7 +547,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     }
     if (input.analytics.gcpJwtPath.length === 0) {
       throw new ConfigValidateError(
-        "Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path",
+        `Path to GCP Service Account Key must be provided in config, relative to ${input.configFileName ?? "config.toml"}: analytics.gcp_jwt_path`,
       );
     }
   }

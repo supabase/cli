@@ -189,7 +189,7 @@ function portConflictSuggestion(hostPort: string, serviceLabel: string): string 
   return (
     `\nTry stopping the project or container already using ${hostPort} ` +
     "(`docker ps` lists what's bound to it, or `supabase stop` for another local Supabase project), " +
-    `or configure a different ${serviceLabel} port in supabase/config.toml.`
+    `or configure a different ${serviceLabel} port in your config file.`
   );
 }
 

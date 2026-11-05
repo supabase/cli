@@ -5,7 +5,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { checkDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { checkDbConfig } from "../../../command-internal/db-config.read.ts";
 import { dbPushCore } from "../../../command-internal/db-push-core.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { planDbSeed } from "../../../command-internal/seed-remote-consent.ts";
@@ -47,9 +47,15 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     // `SUPABASE_*` overrides, merges a matching `[remotes.<ref>]` block, and decrypts
     // `encrypted:` secrets — aborting here on any invalid config, before the
     // connection's network activity, so a remote override prints first.
-    const toml = yield* checkDbToml(fs, path, workdir, projectRef !== "" ? projectRef : undefined, {
-      resolveVaultSecrets: !flags.skipVault,
-    });
+    const toml = yield* checkDbConfig(
+      fs,
+      path,
+      workdir,
+      projectRef !== "" ? projectRef : undefined,
+      {
+        resolveVaultSecrets: !flags.skipVault,
+      },
+    );
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }

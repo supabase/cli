@@ -38,6 +38,7 @@ BranchesUnpauseNetworkError
 BranchesUnpauseUnexpectedStatusError
 BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
+CliConfigFileConflictError
 CliConfigFlagConflictError
 CliConfigLoadError
 CliConfigParseError
@@ -57,7 +58,6 @@ ComputeConfigWriteUnsafeError
 ComputeDirectoryExistsError
 ComputeEnvNotSupportedError
 ComputeFollowNotSupportedError
-ComputeJsonConfigUnsupportedError
 ComputeLogsQueryFailedError
 ComputeLogsRateLimitedError
 ComputeLogsUsageExceededError

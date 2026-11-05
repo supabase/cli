@@ -24,7 +24,7 @@ const RESERVED_SUPABASE_DIRS = ["functions", "migrations", LEGACY_PROJECT_STATE_
  * directories above, which do not cover them — `supabase/config.toml` sits
  * outside every reserved subdirectory.
  */
-const RESERVED_SUPABASE_FILES = ["config.toml", "config.json"];
+const RESERVED_SUPABASE_FILES = ["config.toml", "config.json", "config.jsonc"];
 
 /** `supabase/compute/` — where compute live, resolved against the project. */
 export function computeRootDir(path: Path.Path, projectRoot: string): string {

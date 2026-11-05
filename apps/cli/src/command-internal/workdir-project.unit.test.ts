@@ -7,7 +7,7 @@ describe("missingProjectConfigMessage", () => {
     // Pinned byte-for-byte: `diff.e2e.test.ts`/`pull.e2e.test.ts` assert this
     // exact string when run with no `--workdir`.
     expect(missingProjectConfigMessage({ workdir: "/repo/sub", explicitWorkdir: false })).toBe(
-      "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
+      "failed to read supabase/config.toml, config.json or config.jsonc: file not found. Run `supabase init` to create one.",
     );
   });
 

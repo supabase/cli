@@ -999,7 +999,7 @@ describe("start integration", () => {
 
     it.effect("fails on a bucket's invalid file_size_limit even when already running", () =>
       Effect.gen(function* () {
-        // `checkDbToml` runs unconditionally before the already-running short-circuit; later
+        // `checkDbConfig` runs unconditionally before the already-running short-circuit; later
         // checks (e.g. storage.analytics.enabled) sit after that early return and never run here.
         const { layer, child } = yield* setup({
           configContents:
@@ -1622,6 +1622,30 @@ describe("start integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("StartConfigLoadError");
+        }
+        expect(child.spawned).toEqual([]);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
+    it.effect("reports a config.json and config.jsonc conflict without an error-class prefix", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = tempRoot.current;
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.json"), "{}");
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.jsonc"), "{}");
+        const { layer, child } = yield* setup({ skipConfig: true });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(error).toMatchObject({
+            _tag: "StartConfigLoadError",
+            message:
+              "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
+          });
         }
         expect(child.spawned).toEqual([]);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
@@ -2823,7 +2847,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect("fails on an undecryptable [db.vault] secret even on a non-fresh volume", () =>
-      // `checkDbToml`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
+      // `checkDbConfig`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
       // volume, but every `encrypted:` value decrypts unconditionally regardless of volume
       // state, so an undecryptable `[db.vault]` secret must still fail eagerly here.
       withEnvVar(
@@ -5769,7 +5793,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.effect(
       "fails with a typed config error, before any container is created, on an undecryptable [edge_runtime.secrets] entry",
       () =>
-        // Caught eagerly by `checkDbToml`'s `assertDecryptableSecrets` pre-check, before the
+        // Caught eagerly by `checkDbConfig`'s `assertDecryptableSecrets` pre-check, before the
         // bring-up loop's own edge-runtime-specific decrypt.
         withEnvVar(
           "DOTENV_PRIVATE_KEY",

@@ -6,7 +6,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import { loadProjectEnvValues } from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnvValues } from "../../../command-internal/db-config.read.ts";
 import { requireTargetMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import type { HostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.token.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";

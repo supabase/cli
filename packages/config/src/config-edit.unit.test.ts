@@ -726,6 +726,100 @@ describe("applyConfigEdits (json)", () => {
 }
 `);
   });
+
+  test("replacing a scalar in a commented JSONC source changes only that value", () => {
+    const source = `{
+  // local overrides
+  "$schema": "s",
+  /* api settings */
+  "api": {
+    "max_rows": 1000, // keep small
+    "port": 5,
+  },
+}
+`;
+    const outcome = applyConfigEdits(source, "json", [{ path: ["api", "max_rows"], value: 500 }]);
+    expect(applied(outcome).text).toBe(source.replace("1000", "500"));
+    expect(applied(outcome).applied).toEqual([
+      { path: ["api", "max_rows"], action: "replaced", createdTables: [] },
+    ]);
+  });
+
+  test("inserting keys into a commented JSONC source keeps every comment and trailing comma", () => {
+    const source = `{
+  // local overrides
+  "api": {
+    // dev port
+    "port": 5,
+  },
+  /* auth settings */
+  "db": {
+    "port": 6,
+  },
+}
+`;
+    const outcome = applyConfigEdits(source, "json", [
+      { path: ["api", "max_rows"], value: 500 },
+      { path: ["auth", "site_url"], value: "http://x" },
+    ]);
+    expect(applied(outcome).text).toBe(`{
+  // local overrides
+  "api": {
+    // dev port
+    "port": 5,
+    "max_rows": 500,
+  },
+  /* auth settings */
+  "db": {
+    "port": 6,
+  },
+  "auth": {
+    "site_url": "http://x"
+  },
+}
+`);
+    expect(applied(outcome).applied).toEqual([
+      { path: ["api", "max_rows"], action: "inserted", createdTables: [] },
+      { path: ["auth", "site_url"], action: "inserted", createdTables: [] },
+    ]);
+  });
+
+  test("inserting a sibling after a property without a trailing comma keeps its inline comment on that line", () => {
+    const source = `{
+  "api": {
+    "port": 5 // dev port
+  }
+}
+`;
+    const outcome = applyConfigEdits(source, "json", [{ path: ["api", "max_rows"], value: 500 }]);
+    expect(applied(outcome).text).toBe(`{
+  "api": {
+    "port": 5, // dev port
+    "max_rows": 500
+  }
+}
+`);
+    expect(applied(outcome).applied).toEqual([
+      { path: ["api", "max_rows"], action: "inserted", createdTables: [] },
+    ]);
+  });
+
+  test("inserting a sibling after a trailing-comma property leaves its inline array and comment untouched", () => {
+    const source = `{
+  "api": {
+    "schemas": ["public"], // exposed
+  }
+}
+`;
+    const outcome = applyConfigEdits(source, "json", [{ path: ["api", "max_rows"], value: 500 }]);
+    expect(applied(outcome).text).toBe(`{
+  "api": {
+    "schemas": ["public"], // exposed
+    "max_rows": 500,
+  }
+}
+`);
+  });
 });
 
 describe("applyConfigEdits (toml): no-op", () => {

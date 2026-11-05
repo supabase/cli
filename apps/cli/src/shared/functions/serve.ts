@@ -285,6 +285,7 @@ export interface ServeEdgeRuntimeContainerConfig {
   readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  readonly configPath?: string | undefined;
 }
 
 /**
@@ -1441,7 +1442,7 @@ const resolveServeFunctionConfigs = Effect.fn("functions.serve.resolveFunctionCo
   supabaseDir: string,
   config: Pick<
     ServeEdgeRuntimeContainerConfig,
-    "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions"
+    "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions" | "configPath"
   >,
   importMapOverride: Option.Option<string>,
   noVerifyJwtOverride: Option.Option<boolean>,
@@ -1460,6 +1461,7 @@ const resolveServeFunctionConfigs = Effect.fn("functions.serve.resolveFunctionCo
     importMapOverride,
     noVerifyJwtOverride,
     quiet,
+    configPath: config.configPath,
   });
 });
 
@@ -1486,7 +1488,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
     supabaseDir: string,
     config: Pick<
       ServeEdgeRuntimeContainerConfig,
-      "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions"
+      "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions" | "configPath"
     >,
     importMapOverride: Option.Option<string>,
     noVerifyJwtOverride: Option.Option<boolean>,
@@ -1893,6 +1895,7 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
         configDeclaredFunctions: resolved.configDeclaredFunctions,
         configFunctions: resolved.configFunctions,
         rawConfigFunctions: resolved.rawConfigFunctions,
+        configPath: resolved.configPath,
       },
       authArtifacts,
       dbUrl: defaultServeDbUrl,

@@ -213,7 +213,7 @@ the bundled versions in both cases.
 advising to run `supabase start` locally and commit the lock. When the `CI` environment variable is
 set (not empty, `false` or `0`) and a lock exists, the start is frozen without the flag. A frozen
 start, explicit or by `CI`, of a project with a lock but no `supabase/config.toml` fails with
-`supabase/config.toml not found`, since the lock cannot be checked, instead of using the bundled
+`supabase/config.toml, config.json or config.jsonc not found`, since the lock cannot be checked, instead of using the bundled
 versions; with no lock and no config, `--frozen` fails with `supabase/supabase.lock not found`. A CI
 start with no lock resolves and writes it, then warns to commit it. A lock that is not valid JSON, does
 not match the format or is of a newer format version always fails, frozen or not; the first of
@@ -304,9 +304,9 @@ Initialized database data is reused only by a slim-services revision of the buil
 it: the same release line, PostgreSQL major and upstream version, with any `-rN` revision. Every
 start that finds initialized data checks this before preparing or launching the database. A
 different line, major or upstream version fails the start, naming the recorded and requested builds
-and advising to keep the data by pinning `[local.services.database] version = "<recorded build>"` in
-`supabase/config.toml`, with `[db] major_version` set to the recorded major when the major differs and
-any `[db] orioledb_version` removed when an OrioleDB build is requested, or to run `supabase stack destroy`, which permanently deletes the
+and advising to keep the data by pinning `local.services.database.version` to `"<recorded build>"` in
+your config file, with `db.major_version` set to the recorded major when the major differs and
+any `db.orioledb_version` removed when an OrioleDB build is requested, or to run `supabase stack destroy`, which permanently deletes the
 stack's local database data; data with no recorded identity offers only the destroy. A
 first start records its identity in `.supabase-database-identity.json` before initializing data, so
 a first start interrupted before readiness resumes only on that build; initialized data with no
@@ -315,8 +315,8 @@ Auth, Storage, Realtime, Analytics and the pooler own schemas in the database. T
 instance root records the newest upstream version of each in `schema-writers.json`, raised under a
 per-database lock before a service or its one-shot initialization command migrates. A start whose
 selected upstream is older than the recorded one fails, naming the version and advising to keep the
-data by pinning `[local.services.<service>] version = "<recorded version>"` in
-`supabase/config.toml`, or to run `supabase stack destroy` to recreate the stack. Versions order by their leading dotted number
+data by pinning `local.services.<service>.version` to `"<recorded version>"` in
+your config file, or to run `supabase stack destroy` to recreate the stack. Versions order by their leading dotted number
 (`v2.196.0`, `2026.10.05-sha-...`, `17.6.1.054`); a suffix is ignored and an unparseable version
 sorts oldest. Services without schemas (REST, imgproxy, Functions, Studio, pg-meta, mail) accept any
 version change. A missing record means no schema owner has migrated yet. Saving a snapshot stores

@@ -17,12 +17,12 @@ import type { PlatformError } from "effect/PlatformError";
 import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import {
-  checkDbToml,
+  checkDbConfig,
   loadProjectEnvValues,
-  readDbToml,
+  readDbConfig,
   resolveDeclarativeDir,
-  type DbTomlValues,
-} from "./db-config.toml-read.ts";
+  type DbConfigValues,
+} from "./db-config.read.ts";
 import { resolveSeedSqlPath } from "../shared/config/seed-path.ts";
 import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import type { CliConfigValues } from "../config/cli-config-values.service.ts";
@@ -69,14 +69,14 @@ const read = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* readDbToml(fs, path, workdir);
+    return yield* readDbConfig(fs, path, workdir);
   }).pipe(Effect.provide(servicesLive));
 
 const readRef = (workdir: string, ref: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* readDbToml(fs, path, workdir, ref);
+    return yield* readDbConfig(fs, path, workdir, ref);
   }).pipe(Effect.provide(servicesLive));
 
 const loadEnv = (workdir: string) =>
@@ -97,9 +97,9 @@ describe("read (lenient) vs check (throws) split", () => {
       return yield* run(fs, path);
     }).pipe(Effect.provide(servicesLive));
 
-  it.effect("checkDbToml throws on an undecryptable secret", () => {
+  it.effect("checkDbConfig throws on an undecryptable secret", () => {
     return withConfig('[db]\nroot_key = "encrypted:anything"\n').pipe(
-      Effect.flatMap((dir) => withServices(dir, (fs, path) => checkDbToml(fs, path, dir))),
+      Effect.flatMap((dir) => withServices(dir, (fs, path) => checkDbConfig(fs, path, dir))),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -114,10 +114,10 @@ describe("read (lenient) vs check (throws) split", () => {
     );
   });
 
-  it.effect("checkDbToml surfaces an invalid env value as CliConfigValueError", () => {
+  it.effect("checkDbConfig surfaces an invalid env value as CliConfigValueError", () => {
     return withConfig("[db]\nport = 5432\n").pipe(
       Effect.tap((dir) => writeFile(dir, ["supabase", ".env"], "SUPABASE_DB_PORT=notaport\n")),
-      Effect.flatMap((dir) => withServices(dir, (fs, path) => checkDbToml(fs, path, dir))),
+      Effect.flatMap((dir) => withServices(dir, (fs, path) => checkDbConfig(fs, path, dir))),
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
@@ -142,7 +142,7 @@ describe("read (lenient) vs check (throws) split", () => {
     ).pipe(
       Effect.flatMap((dir) =>
         withServices(dir, (fs, path) =>
-          checkDbToml(fs, path, dir, undefined, { resolveVaultSecrets: false }),
+          checkDbConfig(fs, path, dir, undefined, { resolveVaultSecrets: false }),
         ),
       ),
       Effect.tap((values) =>
@@ -154,24 +154,31 @@ describe("read (lenient) vs check (throws) split", () => {
     );
   });
 
-  it.effect("readDbToml({ validate: false }) tolerates the same secret, returning defaults", () => {
-    return withConfig('[db]\nroot_key = "encrypted:anything"\n').pipe(
-      Effect.flatMap((dir) =>
-        withServices(dir, (fs, path) => readDbToml(fs, path, dir, undefined, { validate: false })),
-      ),
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(v.vault).toEqual([]);
-          expect(v.port).toBeGreaterThan(0);
-        }),
-      ),
-    );
-  });
+  it.effect(
+    "readDbConfig({ validate: false }) tolerates the same secret, returning defaults",
+    () => {
+      return withConfig('[db]\nroot_key = "encrypted:anything"\n').pipe(
+        Effect.flatMap((dir) =>
+          withServices(dir, (fs, path) =>
+            readDbConfig(fs, path, dir, undefined, { validate: false }),
+          ),
+        ),
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.vault).toEqual([]);
+            expect(v.port).toBeGreaterThan(0);
+          }),
+        ),
+      );
+    },
+  );
 
-  it.effect("readDbToml({ validate: false }) still returns a valid config's values", () => {
+  it.effect("readDbConfig({ validate: false }) still returns a valid config's values", () => {
     return withConfig('project_id = "lenientproj"\n').pipe(
       Effect.flatMap((dir) =>
-        withServices(dir, (fs, path) => readDbToml(fs, path, dir, undefined, { validate: false })),
+        withServices(dir, (fs, path) =>
+          readDbConfig(fs, path, dir, undefined, { validate: false }),
+        ),
       ),
       Effect.tap((v) =>
         Effect.sync(() => {
@@ -182,7 +189,7 @@ describe("read (lenient) vs check (throws) split", () => {
   });
 });
 
-describe("readDbToml", () => {
+describe("readDbConfig", () => {
   it.effect("returns defaults when config.toml is absent", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -341,7 +348,7 @@ describe("readDbToml", () => {
       // A bare leading `/` has no Windows volume name, so it resolves as relative and joins to
       // `supabase/`, unlike Node's `path.win32.isAbsolute`, which treats a leading separator as
       // rooted at the current drive. Tests `resolveSeedSqlPath` directly with
-      // `BunPath.layerWin32` instead of the full `readDbToml` pipeline, since that pipeline
+      // `BunPath.layerWin32` instead of the full `readDbConfig` pipeline, since that pipeline
       // needs the real (POSIX-pathed) `Path.Path` service to open the temp config file on disk.
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32" });
@@ -533,7 +540,7 @@ describe("readDbToml", () => {
       table: "db.seed",
       field: "enabled",
       value: "0",
-      read: (v: DbTomlValues) => v.seed.enabled,
+      read: (v: DbConfigValues) => v.seed.enabled,
       expected: false,
     },
     {
@@ -541,7 +548,7 @@ describe("readDbToml", () => {
       table: "db.migrations",
       field: "enabled",
       value: "0",
-      read: (v: DbTomlValues) => v.migrationsEnabled,
+      read: (v: DbConfigValues) => v.migrationsEnabled,
       expected: false,
     },
     {
@@ -549,7 +556,7 @@ describe("readDbToml", () => {
       table: "experimental.pgdelta",
       field: "enabled",
       value: "1",
-      read: (v: DbTomlValues) => v.pgDelta.enabled,
+      read: (v: DbConfigValues) => v.pgDelta.enabled,
       expected: true,
     },
     {
@@ -557,7 +564,7 @@ describe("readDbToml", () => {
       table: "auth",
       field: "enabled",
       value: '"0"',
-      read: (v: DbTomlValues) => v.baseline.authEnabled,
+      read: (v: DbConfigValues) => v.baseline.authEnabled,
       expected: false,
     },
     {
@@ -565,7 +572,7 @@ describe("readDbToml", () => {
       table: "api",
       field: "auto_expose_new_tables",
       value: '"TRUE"',
-      read: (v: DbTomlValues) => Option.getOrNull(v.baseline.apiAutoExposeNewTables),
+      read: (v: DbConfigValues) => Option.getOrNull(v.baseline.apiAutoExposeNewTables),
       expected: true,
     },
   ])("decodes $name as a bool", ({ table, field, value, read: pick, expected }) => {
@@ -584,25 +591,25 @@ describe("readDbToml", () => {
       name: "db.seed.enabled",
       table: "db.seed",
       field: "enabled",
-      read: (v: DbTomlValues) => v.seed.enabled,
+      read: (v: DbConfigValues) => v.seed.enabled,
     },
     {
       name: "db.migrations.enabled",
       table: "db.migrations",
       field: "enabled",
-      read: (v: DbTomlValues) => v.migrationsEnabled,
+      read: (v: DbConfigValues) => v.migrationsEnabled,
     },
     {
       name: "experimental.pgdelta.enabled",
       table: "experimental.pgdelta",
       field: "enabled",
-      read: (v: DbTomlValues) => v.pgDelta.enabled,
+      read: (v: DbConfigValues) => v.pgDelta.enabled,
     },
     {
       name: "api.auto_expose_new_tables",
       table: "api",
       field: "auto_expose_new_tables",
-      read: (v: DbTomlValues) => Option.getOrNull(v.baseline.apiAutoExposeNewTables),
+      read: (v: DbConfigValues) => Option.getOrNull(v.baseline.apiAutoExposeNewTables),
     },
   ])(
     "expands an env() reference in $name through the shell and project .env",
@@ -1789,7 +1796,7 @@ describe("readDbToml", () => {
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
-            return yield* readDbToml(fs, path, dir, undefined, { warnOnUnresolvedEnv: false });
+            return yield* readDbConfig(fs, path, dir, undefined, { warnOnUnresolvedEnv: false });
           }),
         ),
         Effect.provide(servicesLive),
@@ -2206,7 +2213,7 @@ describe("readDbToml", () => {
   );
 });
 
-describe("readDbToml [experimental.pgdelta]", () => {
+describe("readDbConfig [experimental.pgdelta]", () => {
   it.effect("defaults pg-delta to enabled with no config", () => {
     return withConfig(undefined).pipe(
       Effect.flatMap(read),
@@ -2293,7 +2300,7 @@ describe("resolveDeclarativeDir", () => {
   );
 });
 
-describe("readDbToml auth.Enabled validation", () => {
+describe("readDbConfig auth.Enabled validation", () => {
   // Fails the config load with `message` contained in the surfaced error.
   const failsWith = (
     lines: ReadonlyArray<string>,
@@ -2565,7 +2572,7 @@ describe("readDbToml auth.Enabled validation", () => {
   );
 });
 
-describe("readDbToml encrypted secret decryption", () => {
+describe("readDbConfig encrypted secret decryption", () => {
   // An undecryptable `encrypted:` value anywhere in config.toml aborts the load with
   // `failed to parse config: <error>`.
   const expectFails = (lines: ReadonlyArray<string>, message: string) =>
@@ -2647,7 +2654,7 @@ describe("readDbToml encrypted secret decryption", () => {
   );
 });
 
-describe("readDbToml non-scalar config booleans", () => {
+describe("readDbConfig non-scalar config booleans", () => {
   // A present non-scalar boolean must fail the config load rather than falling through to the
   // schema default, which would let `db reset` prompt and drop schemas.
   const failsInvalid = (lines: ReadonlyArray<string>, field: string) =>
@@ -2667,7 +2674,7 @@ describe("readDbToml non-scalar config booleans", () => {
   );
 });
 
-describe("readDbToml project env scoping", () => {
+describe("readDbConfig project env scoping", () => {
   const LINKED = "linkedlinkedlinkedlin";
   const OTHER = "otherotherotherother";
 
@@ -2721,7 +2728,7 @@ describe("readDbToml project env scoping", () => {
   });
 });
 
-describe("readDbToml empty project_id", () => {
+describe("readDbConfig empty project_id", () => {
   it.effect("rejects a present-but-empty top-level project_id", () => {
     return withConfig('project_id = ""\n').pipe(
       Effect.flatMap(read),
@@ -2751,7 +2758,7 @@ describe("readDbToml empty project_id", () => {
   });
 });
 
-describe("readDbToml [analytics] validation", () => {
+describe("readDbConfig [analytics] validation", () => {
   const failsWith = (lines: ReadonlyArray<string>, message: string) =>
     Effect.gen(function* () {
       const dir = yield* withConfig(lines.join("\n"));
@@ -2823,7 +2830,7 @@ describe("readDbToml [analytics] validation", () => {
   });
 });
 
-describe("readDbToml SUPABASE_PROJECT_ID override", () => {
+describe("readDbConfig SUPABASE_PROJECT_ID override", () => {
   it.effect("overrides the TOML project_id with SUPABASE_PROJECT_ID", () => {
     return withConfig(['project_id = "toml-project"', ""].join("\n")).pipe(
       Effect.flatMap(read),
@@ -2891,7 +2898,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override", () => {
   });
 });
 
-describe("readDbToml OrioleDB telemetry", () => {
+describe("readDbConfig OrioleDB telemetry", () => {
   const recordedAfterRead = (workdir: string) =>
     Effect.gen(function* () {
       const recorded = yield* Ref.make<CommandTelemetryAttributeValues>({});
@@ -2921,7 +2928,7 @@ describe("readDbToml OrioleDB telemetry", () => {
   });
 });
 
-describe("readDbToml Data API exposure", () => {
+describe("readDbConfig Data API exposure", () => {
   it.effect.each([
     {
       name: "disabled in config",

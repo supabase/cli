@@ -16,6 +16,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
+import { loadConfigFileRef } from "../../../command-internal/config-file-ref.ts";
 import { loadStackConfig, StackConfigError } from "../../../command-internal/stack-config.ts";
 import { FUNCTION_SLUG_PATTERN } from "../../../command-internal/config-validate.ts";
 import {
@@ -60,7 +61,7 @@ const invalidConfig = (message: string) =>
   new FunctionsServeStackError({ reason: "invalid-config", message });
 
 /* The env file, or functions/.env, wins over secrets. Without an env file each enabled function
-   also gets its own .env, under its TOML env. */
+   also gets its own .env, under its config env. */
 const serveEnv = Effect.fn("functions.serve.env")(function* (
   workdir: string,
   envFile: Option.Option<string>,
@@ -197,10 +198,12 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const source = creations.find(
     (creation): creation is FunctionsCreation => creation.service === "functions",
   );
-  if (source === undefined)
+  if (source === undefined) {
+    const configFile = yield* loadConfigFileRef(workdir);
     return yield* invalidConfig(
-      "Enable edge_runtime in supabase/config.toml before serving Functions.",
+      `Enable edge_runtime in ${configFile.path} before serving Functions.`,
     );
+  }
   const cleanupWarning = (message: string, error: { readonly message: string }) =>
     output
       .raw(`${message}: ${error.message}\n`, "stderr")
@@ -211,7 +214,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     if (before.config.service !== "functions")
       return yield* invalidConfig("Invalid saved Functions configuration.");
     const saved = before.config.config;
-    /* Fresh TOML functions replace saved ones, so a serve that never restored cannot leave stale
+    /* Fresh config functions replace saved ones, so a serve that never restored cannot leave stale
        per-function env behind. Debug follows this command's own flag, not the one `start` saved. */
     const { functions: _savedFunctions, debug: _savedDebug, ...savedSettings } = saved;
     const desired = {
