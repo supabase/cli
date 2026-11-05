@@ -648,13 +648,16 @@ export const toConnectError = (
   cfg: PgConnInput,
   isLocal: boolean,
   error: unknown,
+  tlsError?: unknown,
 ): DbConnectError => {
   const suggestion =
     cfg.suggestionContext === undefined
       ? undefined
       : connectSuggestion(error, { ...cfg.suggestionContext, isLocal });
   return new DbConnectError({
-    message: `failed to connect to postgres: ${connectFailureMessage(cfg, error)}`,
+    message: `failed to connect to postgres: ${
+      tlsError === undefined ? "" : `${connectFailureMessage(cfg, tlsError)}; then without TLS: `
+    }${connectFailureMessage(cfg, error)}`,
     ...(suggestion === undefined ? {} : { suggestion }),
     ...(isDialFailure(error) ? { retryable: true } : {}),
     ...(isIPv6ConnectivityErrorCause(error) ? { ipv6Unreachable: true } : {}),
@@ -835,19 +838,39 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
     // retry after a TLS attempt (libpq's `prefer`) runs only when the server could not do TLS:
     // negotiation failed or `pg_hba` has no TLS entry for the client (28000). Otherwise it is
     // skipped, so an unreachable host or a wrong password is not retried in plaintext.
-    const run = (index: number): ReturnType<typeof probe> =>
+    const run = (
+      index: number,
+    ): Effect.Effect<
+      Effect.Success<ReturnType<typeof probe>>,
+      {
+        readonly error: Effect.Error<ReturnType<typeof probe>>;
+        readonly index: number;
+        readonly tlsError?: unknown;
+      },
+      Effect.Services<ReturnType<typeof probe>>
+    > =>
       probe(attempts[index]!).pipe(
         Effect.catch((error) => {
-          if (index === lastIndex) return Effect.fail(error);
+          if (index === lastIndex) return Effect.fail({ error, index });
           const next = attempts[index + 1]!;
-          if (next.isTlsDowngrade && permitsPlaintextDowngrade(error)) return run(index + 1);
-          if (isTerminalConnectError(error, attempts[index]!.triedTls)) return Effect.fail(error);
+          if (next.isTlsDowngrade && permitsPlaintextDowngrade(error)) {
+            return run(index + 1).pipe(
+              Effect.mapError((failure) =>
+                failure.index === index + 1 && extractSqlState(error) === TLS_GATED_SQLSTATE
+                  ? { ...failure, tlsError: error }
+                  : failure,
+              ),
+            );
+          }
+          if (isTerminalConnectError(error, attempts[index]!.triedTls)) {
+            return Effect.fail({ error, index });
+          }
           const nextIndex = next.isTlsDowngrade ? index + 2 : index + 1;
-          return nextIndex > lastIndex ? Effect.fail(error) : run(nextIndex);
+          return nextIndex > lastIndex ? Effect.fail({ error, index }) : run(nextIndex);
         }),
       );
     const { pool, attempt: winner } = yield* run(0).pipe(
-      Effect.mapError((error) => toConnectError(cfg, isLocal, error)),
+      Effect.mapError(({ error, tlsError }) => toConnectError(cfg, isLocal, error, tlsError)),
     );
     const winningRawConfig = winner.rawConfig;
     // libpq downgrades silently. Surfacing it tells a user who expected TLS (every hosted project
@@ -856,7 +879,7 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
       const output = yield* Effect.serviceOption(Output);
       if (Option.isSome(output)) {
         yield* output.value.warn(
-          `Connected to ${winner.host} without TLS: the server did not accept a TLS connection. Set PGSSLMODE=require (or verify-full) to refuse unencrypted connections.`,
+          `Connected to ${winner.host} without TLS: the TLS connection failed or was rejected. Set PGSSLMODE=require (or verify-full) to refuse unencrypted connections.`,
         );
       }
     }

@@ -155,11 +155,12 @@ const EMPTY_QUERY = wireMessage("I", Buffer.alloc(0));
  * attempted independent of how the attempt is resolved. `sslReply` picks how an SSLRequest is
  * answered: `N` (default, plaintext only), `S` then hang up (a failed handshake), an
  * immediate hang-up (a failure that is not about TLS negotiation), or `S` with a real handshake
- * followed by a 28000 rejection (`pg_hba` with only `hostnossl` entries). `rejectPlaintext`
+ * followed by a 28000 rejection (`pg_hba` with only `hostnossl` entries), or `S` with a real
+ * handshake followed by a successful startup (a server that accepts TLS). `rejectPlaintext`
  * answers a plaintext startup with 28000 too (`pg_hba` with no entry for the client at all).
  */
 const fakeStartupServer = (
-  sslReply: "N" | "S-then-hangup" | "hangup" | "S-then-28000" = "N",
+  sslReply: "N" | "S-then-hangup" | "hangup" | "S-then-28000" | "S-then-ok" = "N",
   { rejectPlaintext = false }: { readonly rejectPlaintext?: boolean } = {},
 ): Effect.Effect<{
   readonly port: number;
@@ -202,6 +203,20 @@ const fakeStartupServer = (
                     }),
                   ),
                 );
+                secure.on("error", () => {});
+              } else if (sslReply === "S-then-ok") {
+                socket.write("S");
+                const secure = new tls.TLSSocket(socket, {
+                  isServer: true,
+                  key: KONG_LOCAL_TLS_KEY,
+                  cert: KONG_LOCAL_TLS_CERT,
+                });
+                secure.once("data", () => {
+                  secure.write(Buffer.concat([AUTHENTICATION_OK, READY_FOR_QUERY]));
+                  secure.on("data", () =>
+                    secure.write(Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY])),
+                  );
+                });
                 secure.on("error", () => {});
               } else socket.destroy();
               return;
@@ -1113,6 +1128,9 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
 });
 
 describe("a non-local plaintext-only target follows libpq sslmode semantics", () => {
+  const TLS_FALLBACK_WARNING =
+    "Connected to 127.0.0.1 without TLS: the TLS connection failed or was rejected. Set PGSSLMODE=require (or verify-full) to refuse unencrypted connections.";
+
   const connectAndQuery = (
     server: { readonly port: number },
     sslmode: string | undefined,
@@ -1144,17 +1162,40 @@ describe("a non-local plaintext-only target follows libpq sslmode semantics", ()
         Effect.ensuring(Effect.sync(server.close)),
       );
       expect(server.sawSslRequest()).toBe(true);
-      expect(warnings).toEqual([
-        "Connected to 127.0.0.1 without TLS: the server did not accept a TLS connection. Set PGSSLMODE=require (or verify-full) to refuse unencrypted connections.",
-      ]);
+      expect(warnings).toEqual([TLS_FALLBACK_WARNING]);
+    }),
+  );
+
+  it.live("connects over TLS without a warning when the server accepts TLS", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer("S-then-ok");
+      const warnings = yield* connectAndQuery(server, "prefer").pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.connectionCount()).toBe(1);
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.live("connects in plaintext without a warning when sslmode=allow", () =>
+    Effect.gen(function* () {
+      const server = yield* fakeStartupServer();
+      const warnings = yield* connectAndQuery(server, "allow").pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.sawSslRequest()).toBe(false);
+      expect(warnings).toEqual([]);
     }),
   );
 
   it.live("tries TLS, then connects in plaintext when sslmode=prefer", () =>
     Effect.gen(function* () {
       const server = yield* fakeStartupServer();
-      yield* connectAndQuery(server, "prefer").pipe(Effect.ensuring(Effect.sync(server.close)));
+      const warnings = yield* connectAndQuery(server, "prefer").pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
       expect(server.sawSslRequest()).toBe(true);
+      expect(warnings).toEqual([TLS_FALLBACK_WARNING]);
     }),
   );
 
@@ -1200,9 +1241,12 @@ describe("a non-local plaintext-only target follows libpq sslmode semantics", ()
   it.live("retries in plaintext when pg_hba rejects the TLS attempt with 28000 under prefer", () =>
     Effect.gen(function* () {
       const server = yield* fakeStartupServer("S-then-28000");
-      yield* connectAndQuery(server, "prefer").pipe(Effect.ensuring(Effect.sync(server.close)));
+      const warnings = yield* connectAndQuery(server, "prefer").pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
       expect(server.sawSslRequest()).toBe(true);
       expect(server.connectionCount()).toBe(2);
+      expect(warnings).toEqual([TLS_FALLBACK_WARNING]);
     }),
   );
 
@@ -1228,6 +1272,8 @@ describe("a non-local plaintext-only target follows libpq sslmode semantics", ()
       expect(rejecting.connectionCount()).toBe(2);
       expect(next.connectionCount()).toBe(0);
       expect(error.message).toContain("SQLSTATE 28000");
+      expect(error.message).toContain("SSL encryption");
+      expect(error.message).toContain("no encryption");
     }),
   );
 
