@@ -120,7 +120,7 @@ const ContractEnv = Schema.StructWithRest(
   [Schema.Record(Schema.String, Schema.String)],
 );
 
-/** The `status` env a consumer copies from one running local setup, every reported name kept. */
+/** The env `start` reports for one running local setup, every reported name kept. */
 export class ContractTarget extends Context.Service<ContractTarget, typeof ContractEnv.Type>()(
   "supabase/tests/ContractTarget",
 ) {}
@@ -264,11 +264,14 @@ export const legacyTarget = Layer.effect(
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "contract-legacy-" });
     const projectId = sanitizeProjectId(path.basename(root));
     /* Legacy Docker binds the fixed host ports in config.toml, so probing them first is intrinsic.
-       This is the only integration allocator below the stack's 10000+ auto ports. */
+       It skips 8915, the fixed API port start.native.integration.test.ts binds. */
+    const legacyPort = pickFreePort.pipe(
+      Effect.repeat({ until: (port) => port !== 8_915, times: 3 }),
+    );
     yield* writeContractProject(root, projectId, {
-      api: yield* pickFreePort,
-      db: yield* pickFreePort,
-      mailpit: yield* pickFreePort,
+      api: yield* legacyPort,
+      db: yield* legacyPort,
+      mailpit: yield* legacyPort,
     });
     const output = mockOutput({ format: "json" });
     const layers = Layer.mergeAll(
