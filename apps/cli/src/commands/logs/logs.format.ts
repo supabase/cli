@@ -1,5 +1,5 @@
 import { DateTime, Option } from "effect";
-import { parseSince } from "../../command-internal/stack-logs/retained-logs.format.ts";
+import { parseSince } from "../../command-internal/logs/since.ts";
 import { LogsInputError } from "./logs.errors.ts";
 import { Effect } from "effect";
 
@@ -10,6 +10,7 @@ export const logsWindow = Effect.fnUntraced(function* (
     readonly to?: Option.Option<string>;
   },
   now: number,
+  maximumDuration = 86_400_000,
 ) {
   const from = Option.getOrUndefined(options.from ?? Option.none());
   const to = Option.getOrUndefined(options.to ?? Option.none());
@@ -22,7 +23,7 @@ export const logsWindow = Effect.fnUntraced(function* (
   const end = to === undefined ? DateTime.makeUnsafe(now) : utc(to);
   const since = parseSince(
     Option.getOrElse(options.since, () => "1h"),
-    now,
+    to !== undefined && end !== undefined ? DateTime.toEpochMillis(end) : now,
   );
   const start =
     from === undefined
@@ -34,11 +35,13 @@ export const logsWindow = Effect.fnUntraced(function* (
     start === undefined ||
     end === undefined ||
     DateTime.toEpochMillis(end) < DateTime.toEpochMillis(start) ||
-    DateTime.toEpochMillis(end) - DateTime.toEpochMillis(start) > 86_400_000
+    DateTime.toEpochMillis(end) - DateTime.toEpochMillis(start) > maximumDuration
   )
     return yield* new LogsInputError({
       message:
-        "Use a valid UTC time range of at most 24 hours, or --since with a duration such as 1h.",
+        maximumDuration === Infinity
+          ? "Use a valid UTC time range, or --since with a duration such as 1h."
+          : "Use a valid UTC time range of at most 24 hours, or --since with a duration such as 1h.",
     });
   return { start: DateTime.formatIso(start), end: DateTime.formatIso(end) };
 });

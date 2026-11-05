@@ -1,19 +1,15 @@
 import { DateTime, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
 import {
   gatewayLog,
-  sharesApiEndpoint,
   streamStackLogs,
   type LogPosition,
   type StackLogRecord,
 } from "@supabase/stack/effect";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { StackTargetResolver, validateStackTarget } from "../../command-internal/stack-target.ts";
-import {
-  isAfter,
-  isFromLaunch,
-  makeHistoryCollector,
-  parseSince,
-} from "../../command-internal/stack-logs/retained-logs.format.ts";
+import { isFromLaunch, makeHistoryCollector } from "../../command-internal/logs/local-history.ts";
+import { parseSince } from "../../command-internal/logs/since.ts";
+import { hasGatewayLogs } from "../../command-internal/logs/local-sources.ts";
 import { LogsInputError } from "./logs.errors.ts";
 import { logsWindow } from "./logs.format.ts";
 import type { LogsFlags, LogsSession } from "./logs.session.ts";
@@ -65,19 +61,20 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
   const members = new Set(definition.composition.members.map(({ id }) => id));
   const available: Array<{ readonly id: string; readonly service: string }> =
     definition.instances.map(({ id, creation }) => ({ id, service: creation.service }));
-  if (
-    definition.instances.some(({ id, creation }) => members.has(id) && sharesApiEndpoint(creation))
-  )
+  if (hasGatewayLogs(definition))
     available.push({ id: gatewayLog.instanceId, service: gatewayLog.service });
   const unknown = requested.find(
-    (value) => !available.some(({ id, service }) => id === value || service === value),
+    (value) =>
+      !available.some(
+        ({ id, service }) => id === value || (Option.isNone(flags.resource) && service === value),
+      ),
   );
   if (unknown !== undefined)
     return yield* new LogsInputError({ message: `No service matches ${unknown}.` });
   const selected = available.filter(({ id, service }) =>
     requested.length === 0
       ? members.has(id) || id === gatewayLog.instanceId
-      : requested.includes(id) || requested.includes(service),
+      : requested.includes(id) || (Option.isNone(flags.resource) && requested.includes(service)),
   );
   if (selected.length === 0)
     return yield* new LogsInputError({
@@ -86,7 +83,7 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
     });
   const explicitRange =
     Option.isSome(flags.from) || Option.isSome(flags.to)
-      ? yield* logsWindow(flags, started)
+      ? yield* logsWindow(flags, started, Infinity)
       : undefined;
   const since =
     explicitRange === undefined
@@ -103,60 +100,71 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
   const stateRoot = path.join(settings.supabaseHome, "stacks");
   let positions = new Map<string, LogPosition>();
   let launches: ReadonlyMap<string, number> = new Map();
-  let deferred: ReadonlyArray<StackLogRecord> = [];
+  let gaps = new Map<string, LogPosition>();
+  let resumePositions = new Map<string, LogPosition>();
   let initialized = false;
+  let attempted = false;
   let lastEnd = explicitRange === undefined ? started : Date.parse(explicitRange.end);
   const load = Effect.fn("Logs.local.load")(function* (
     capturedEnd: number,
     emit: (row: Schema.JsonObject) => Effect.Effect<void>,
   ) {
-    const end = initialized ? Math.max(lastEnd, capturedEnd) : lastEnd;
+    const end = attempted ? Math.max(lastEnd, capturedEnd) : lastEnd;
+    attempted = true;
     const nextPositions = new Map(positions);
-    const pending: Array<StackLogRecord> = [];
-    let pendingBytes = 0;
+    const nextGaps = new Map(gaps);
+    const scannedPositions = new Map(resumePositions);
+    const nextResume = new Map<string, LogPosition>();
     const collector = makeHistoryCollector(flags.limit, since.kind === "start");
     const accept = Effect.fnUntraced(function* (record: StackLogRecord) {
-      if (Date.parse(record.timestamp) > end) {
-        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.JsonObject))(
-          record,
-        ).pipe(Effect.orDie);
-        pendingBytes += new TextEncoder().encode(encoded).byteLength;
-        if (pending.length >= 1000 || pendingBytes > 8 * 1024 * 1024)
-          return yield* new LogsInputError({
-            message:
-              "Too many local logs have future timestamps. Correct the source clock and retry.",
-          });
-        pending.push(record);
-      } else if (!initialized) collector.push(record);
+      const position = record.position ?? record.resumeAt;
+      const previous = scannedPositions.get(record.instanceId);
+      if (Date.parse(record.timestamp) > end && !nextResume.has(record.instanceId))
+        nextResume.set(
+          record.instanceId,
+          previous ?? { generation: position?.generation ?? 0, byteOffset: 0 },
+        );
+      if (position !== undefined) {
+        scannedPositions.set(record.instanceId, position);
+        const highWater = nextPositions.get(record.instanceId);
+        if (
+          record.position !== undefined &&
+          (highWater === undefined || afterPosition(position, highWater))
+        )
+          nextPositions.set(record.instanceId, position);
+      }
+      if (Date.parse(record.timestamp) > end) return;
+      if (record.position === undefined && record.resumeAt !== undefined) {
+        const previousGap = gaps.get(record.instanceId);
+        if (previousGap !== undefined && !afterPosition(record.resumeAt, previousGap)) return;
+        nextGaps.set(record.instanceId, record.resumeAt);
+      }
+      const scanned = positions.get(record.instanceId);
+      if (
+        initialized &&
+        record.position !== undefined &&
+        scanned !== undefined &&
+        !afterPosition(record.position, scanned) &&
+        Date.parse(record.timestamp) <= lastEnd
+      )
+        return;
+      if (!initialized) collector.push(record);
       else if (isFromLaunch(record, launches.get(record.instanceId)))
         yield* Schema.decodeEffect(Schema.JsonObject)(record).pipe(
           Effect.orDie,
           Effect.flatMap(emit),
         );
     });
-    for (const record of deferred) yield* accept(record);
     yield* streamStackLogs({
       stateRoot,
       stackId,
       instances: selected.map(({ id }) => id),
       snapshot: true,
-      from: positions,
+      from: resumePositions,
       ...(since.kind === "time" ? { since: since.iso } : {}),
     }).pipe(
       Stream.mapError(inputError),
-      Stream.runForEach((record) =>
-        Effect.gen(function* () {
-          if (!isAfter(record, positions.get(record.instanceId))) return;
-          const position = record.position;
-          const previous = nextPositions.get(record.instanceId);
-          if (
-            position !== undefined &&
-            (previous === undefined || afterPosition(position, previous))
-          )
-            nextPositions.set(record.instanceId, position);
-          yield* accept(record);
-        }),
-      ),
+      Stream.runForEach(accept),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
@@ -170,12 +178,14 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
       launches = initial.launches;
     }
     positions = nextPositions;
-    deferred = pending;
+    gaps = nextGaps;
+    resumePositions = scannedPositions;
+    for (const [instance, position] of nextResume) resumePositions.set(instance, position);
     initialized = true;
     lastEnd = end;
     yield* Effect.annotateCurrentSpan({
       "logs.instance_count": selected.length,
-      "logs.deferred_count": pending.length,
+      "logs.deferred_instance_count": nextResume.size,
     });
     return since.kind === "time"
       ? { kind: "range" as const, start: since.iso, end: iso(end) }

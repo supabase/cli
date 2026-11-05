@@ -216,22 +216,162 @@ it.effect(
     }).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.effect("rejects excessive future records and retries with the initial history intact", () =>
+it.effect(
+  "rereads large historical windows without retaining post-window rows or replaying eligible rows",
+  () =>
+    Effect.gen(function* () {
+      const test = yield* fixture();
+      const future = Array.from({ length: 1001 }, (_, index) => line(`future-${index}`, 30)).join(
+        "",
+      );
+      yield* test.fs.writeFileString(test.file, line("initial") + future + line("eligible", 5));
+      const session = yield* makeLocalLogsSession(
+        { ...flags, limit: 10, from: Option.some(iso(0)), to: Option.some(iso(10)) },
+        40,
+      ).pipe(Effect.provide(test.layer));
+      const rows: Array<Schema.JsonObject> = [];
+      const emit = (row: Schema.JsonObject) =>
+        Effect.sync(() => {
+          rows.push(row);
+        });
+      yield* session.load(40, emit);
+      expect(rows.map(({ text }) => text)).toEqual(["initial", "eligible"]);
+      rows.length = 0;
+      yield* test.fs.writeFileString(test.file, line("late older", 2), { flag: "a" });
+      yield* session.load(20, emit);
+      expect(rows.map(({ text }) => text)).toEqual(["late older"]);
+      rows.length = 0;
+      yield* session.load(30, emit);
+      expect(rows).toHaveLength(1001);
+      expect(new Set(rows.map(({ text }) => text)).size).toBe(1001);
+      rows.length = 0;
+      yield* session.load(40, emit);
+      expect(rows).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+);
+
+it.effect("requires a resource instance ID instead of a service name", () =>
   Effect.gen(function* () {
     const test = yield* fixture();
-    const future = Array.from({ length: 1001 }, (_, index) => line(`future-${index}`, 30)).join("");
-    yield* test.fs.writeFileString(test.file, line("initial") + future);
+    const invalid = yield* makeLocalLogsSession(
+      { ...flags, resource: Option.some("mail") },
+      10,
+    ).pipe(Effect.provide(test.layer), Effect.flip);
+    expect(invalid.message).toBe("No service matches mail.");
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+
+it.effect("permits retained local ranges longer than a day", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture();
+    yield* test.fs.writeFileString(test.file, line("retained", 5));
+    const session = yield* makeLocalLogsSession(
+      {
+        ...flags,
+        resource: Option.some("one"),
+        from: Option.some(iso(0)),
+        to: Option.some(iso(172800000)),
+      },
+      172800000,
+    ).pipe(Effect.provide(test.layer));
+    const rows: Schema.JsonObject[] = [];
+    yield* session.load(172800000, (row) =>
+      Effect.sync(() => {
+        rows.push(row);
+      }),
+    );
+    expect(rows.map(({ text }) => text)).toEqual(["retained"]);
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+
+it.effect("advances a failed initial load to the retry time without committing a cursor", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture();
+    yield* test.fs.writeFileString(test.file, line("available on retry", 15));
+    let fail = true;
+    const failingFs: FileSystem.FileSystem = {
+      ...test.fs,
+      open: (target, options) =>
+        fail && target === test.file
+          ? Effect.fail(
+              new PlatformError.PlatformError(
+                new PlatformError.SystemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "open",
+                  pathOrDescriptor: target,
+                }),
+              ),
+            )
+          : test.fs.open(target, options),
+    };
+    const session = yield* makeLocalLogsSession(flags, 10).pipe(
+      Effect.provide(test.layer),
+      Effect.provideService(FileSystem.FileSystem, failingFs),
+    );
+    expect((yield* session.load(10, () => Effect.void).pipe(Effect.exit))._tag).toBe("Failure");
+    fail = false;
+    const rows: Schema.JsonObject[] = [];
+    expect(
+      yield* session.load(20, (row) =>
+        Effect.sync(() => {
+          rows.push(row);
+        }),
+      ),
+    ).toMatchObject({ end: iso(20) });
+    expect(rows.map(({ text }) => text)).toEqual(["available on retry"]);
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+
+it.effect("reports rotated-away pending history once and resumes the remaining segment", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture();
+    const path = yield* Path.Path;
+    yield* test.fs.writeFileString(test.file, line("initial", 5) + line("unavailable future", 30));
     const session = yield* makeLocalLogsSession(flags, 10).pipe(Effect.provide(test.layer));
-    const rows: Array<Schema.JsonObject> = [];
+    yield* session.load(10, () => Effect.void);
+    yield* test.fs.remove(test.file);
+    yield* test.fs.writeFileString(
+      path.join(path.dirname(test.file), "0000000003.log"),
+      line("rotated", 15),
+    );
+    const rows: Schema.JsonObject[] = [];
     const emit = (row: Schema.JsonObject) =>
       Effect.sync(() => {
         rows.push(row);
       });
-    const failed = yield* session.load(10, emit).pipe(Effect.flip);
-    expect(failed.message).toContain("future timestamps");
+    yield* session.load(20, emit);
+    expect(rows.map(({ kind }) => kind)).toEqual(["lost", "stdout"]);
+    expect(rows[1]?.["text"]).toBe("rotated");
+    rows.length = 0;
+    yield* session.load(30, emit);
     expect(rows).toEqual([]);
-    yield* test.fs.writeFileString(test.file, line("initial"));
-    yield* session.load(10, emit);
-    expect(rows.map(({ text }) => text)).toEqual(["initial"]);
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+
+it.effect("does not treat a gap resume cursor as a scanned row in an empty rotated segment", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture();
+    const path = yield* Path.Path;
+    yield* test.fs.writeFileString(test.file, line("initial", 5));
+    const session = yield* makeLocalLogsSession(flags, 10).pipe(Effect.provide(test.layer));
+    yield* session.load(10, () => Effect.void);
+    yield* test.fs.remove(test.file);
+    const rotated = path.join(path.dirname(test.file), "0000000003.log");
+    yield* test.fs.writeFileString(rotated, "");
+    const rows: Schema.JsonObject[] = [];
+    const emit = (row: Schema.JsonObject) =>
+      Effect.sync(() => {
+        rows.push(row);
+      });
+    yield* session.load(20, emit);
+    expect(rows.map(({ kind }) => kind)).toEqual(["lost"]);
+    rows.length = 0;
+    yield* test.fs.writeFileString(rotated, line("late at gap cursor", 15));
+    yield* session.load(30, emit);
+    expect(rows.map(({ text }) => text)).toEqual(["late at gap cursor"]);
+    rows.length = 0;
+    yield* session.load(40, emit);
+    expect(rows).toEqual([]);
   }).pipe(Effect.provide(BunServices.layer)),
 );
