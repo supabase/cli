@@ -1,12 +1,15 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, FileSystem } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
 
 import { rootCommand } from "../cli/root.ts";
+import { DOCS_EXAMPLE_GROUPS, groupSelects } from "../../tests/helpers/docs-example-groups.ts";
 import {
+  type DocsExampleScenarioName,
   isDocsExampleScenario,
   missingScenarioFixtures,
+  scenarioKind,
 } from "../../tests/helpers/docs-example-scenarios.ts";
 import {
   type AuthoredDocsExample,
@@ -110,6 +113,40 @@ describe("published docs examples", () => {
       const unknown = scenarios.filter((name) => !isDocsExampleScenario(name));
       expect(unknown, "recorded examples naming an unknown scenario").toEqual([]);
       expect(yield* missingScenarioFixtures(scenarios.filter(isDocsExampleScenario))).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("are each run by exactly one docs-examples file", () =>
+    Effect.gen(function* () {
+      const recorded = (yield* authoredDocsExamples).flatMap((example) =>
+        example.output === "recorded" && isDocsExampleScenario(example.scenario ?? "")
+          ? [{ example, kind: scenarioKind(example.scenario as DocsExampleScenarioName) }]
+          : [],
+      );
+      const groups = Object.entries(DOCS_EXAMPLE_GROUPS).flatMap(([kind, named]) =>
+        Object.entries(named).map(([name, selector]) => ({ kind, name, selector })),
+      );
+      const selections = recorded.map(({ example, kind }) => ({
+        key: `supabase ${example.commandPath.join(" ")} ${example.id}`,
+        picked: groups
+          .filter((group) => group.kind === kind && groupSelects(group.selector, example))
+          .map((group) => `${group.kind}/${group.name}`),
+      }));
+      expect(
+        selections.filter(({ picked }) => picked.length !== 1),
+        "recorded examples picked by zero or several groups in DOCS_EXAMPLE_GROUPS",
+      ).toEqual([]);
+      const used = new Set(selections.flatMap(({ picked }) => picked));
+      expect(
+        groups.map(({ kind, name }) => `${kind}/${name}`).filter((group) => !used.has(group)),
+        "DOCS_EXAMPLE_GROUPS entries that select no example",
+      ).toEqual([]);
+      const fs = yield* FileSystem.FileSystem;
+      const missingFiles = yield* Effect.filter(
+        groups.map(({ kind, name }) => `docs-examples/${kind}-${name}.e2e.test.ts`),
+        (file) => fs.exists(new URL(file, import.meta.url).pathname).pipe(Effect.map((x) => !x)),
+      );
+      expect(missingFiles, "groups without a test file").toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

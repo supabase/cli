@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it, layer } from "@effect/vitest";
 import { Config, Effect, FileSystem, Layer, Path, type Scope } from "effect";
 
-import { runSupabaseEffect } from "../../tests/helpers/cli.ts";
+import { runSupabaseEffect } from "./cli.ts";
 import {
   type DocsExampleKind,
   type DocsExampleRun,
@@ -14,7 +14,13 @@ import {
   isDocsExampleScenario,
   prepareDocsExample,
   scenarioKind,
-} from "../../tests/helpers/docs-example-scenarios.ts";
+} from "./docs-example-scenarios.ts";
+import {
+  DOCS_EXAMPLE_GROUPS,
+  type DocsExampleGroups,
+  type DocsExampleSelector,
+  groupSelects,
+} from "./docs-example-groups.ts";
 import {
   type AuthoredDocsExample,
   authoredDocsExamples,
@@ -26,20 +32,26 @@ import {
   rewriteYamlResponse,
   substitute,
   supabaseInvocations,
-} from "../../tests/helpers/docs-examples.ts";
-import { docsJsonOutputSchema } from "./docs-spec.ts";
+} from "./docs-examples.ts";
+import { docsJsonOutputSchema } from "../../src/docs/docs-spec.ts";
 
 const recordedExamples = (
   await Effect.runPromise(authoredDocsExamples.pipe(Effect.provide(BunServices.layer)))
 ).filter((example) => example.output === "recorded");
 
-const examplesOfKind = (kind: DocsExampleKind) =>
-  recordedExamples.filter(
+const examplesOf = (kind: DocsExampleKind, group: string) => {
+  const selector: DocsExampleSelector | undefined = Object.entries(DOCS_EXAMPLE_GROUPS[kind]).find(
+    ([name]) => name === group,
+  )?.[1];
+  return recordedExamples.filter(
     (example) =>
       example.scenario !== undefined &&
       isDocsExampleScenario(example.scenario) &&
-      scenarioKind(example.scenario) === kind,
+      scenarioKind(example.scenario) === kind &&
+      selector !== undefined &&
+      groupSelects(selector, example),
   );
+};
 
 /** `DOCS_EXAMPLES_UPDATE=1` rewrites drifted `response` text in source instead of failing. */
 const updateMode = Config.Boolean("DOCS_EXAMPLES_UPDATE").pipe(Config.withDefault(false));
@@ -128,39 +140,40 @@ const scenarioOf = (example: AuthoredDocsExample) => {
   return scenario;
 };
 
-describe("recorded docs examples", () => {
-  it("exist", () => {
-    expect(recordedExamples.length).toBeGreaterThan(0);
-  });
+const itLive = (example: AuthoredDocsExample) =>
+  it.live(title(example), () =>
+    checkRecorded(example, prepareDocsExample(scenarioOf(example))).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+    ),
+  );
 
-  describe("replayed against Management API fixtures", () => {
-    for (const example of examplesOfKind("replay")) {
-      it.live(title(example), () =>
-        checkRecorded(example, prepareDocsExample(scenarioOf(example))).pipe(
-          Effect.scoped,
-          Effect.provide(BunServices.layer),
-        ),
-      );
-    }
-  });
+/**
+ * Registers the recorded docs examples of one group from `DOCS_EXAMPLE_GROUPS`. A docker group
+ * starts its own stack, so its examples do not depend on another file having run.
+ */
+export const describeDocsExamples = <Kind extends DocsExampleKind>(options: {
+  readonly kind: Kind;
+  readonly group: DocsExampleGroups[Kind];
+}) => {
+  const examples = examplesOf(options.kind, String(options.group));
+  const name = `recorded docs examples: ${options.kind} ${String(options.group)}`;
 
-  describe("run in a local project directory", () => {
-    for (const example of examplesOfKind("local")) {
-      it.live(title(example), () =>
-        checkRecorded(example, prepareDocsExample(scenarioOf(example))).pipe(
-          Effect.scoped,
-          Effect.provide(BunServices.layer),
-        ),
-      );
-    }
-  });
-
+  if (options.kind !== "docker") {
+    describe(name, () => {
+      it("exist", () => {
+        expect(examples.length).toBeGreaterThan(0);
+      });
+      for (const example of examples) itLive(example);
+    });
+    return;
+  }
   if (dockerEnabled) {
     layer(Layer.provideMerge(docsStackLayer, BunServices.layer), {
       excludeTestServices: true,
       timeout: RUN_TIMEOUT_MS,
-    })("run against a local Docker stack", (it) => {
-      for (const example of examplesOfKind("docker")) {
+    })(`${name} (local Docker stack)`, (it) => {
+      for (const example of examples) {
         it.effect(
           title(example),
           () =>
@@ -173,8 +186,8 @@ describe("recorded docs examples", () => {
       }
     });
   } else {
-    describe.skip("run against a local Docker stack (pnpm docs:examples:docker)", () => {
-      for (const example of examplesOfKind("docker")) it(title(example), () => {});
+    describe.skip(`${name} (pnpm docs:examples:docker)`, () => {
+      for (const example of examples) it(title(example), () => {});
     });
   }
-});
+};
