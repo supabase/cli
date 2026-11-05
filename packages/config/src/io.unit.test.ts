@@ -3682,6 +3682,23 @@ describe("config io schema version", () => {
       }),
     ));
 
+  test("saveCliConfig fails and keeps a shadowed config.toml that declares a newer schema", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const { cwd } = yield* writeConfig("config.json", `{"project_id": "x"}`);
+        const tomlPath = join(cwd, "supabase", "config.toml");
+        const toml = `#:schema ${v("2")}\nproject_id = "y"\n`;
+        yield* fs.writeFileString(tomlPath, toml);
+
+        const error = yield* failureOf(saveCliConfig({ cwd, config: sampleConfig }));
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(tomlPath)).toBe(toml);
+      }),
+    ));
+
   const loadsAsBefore: ReadonlyArray<{
     readonly name: string;
     readonly file: string;

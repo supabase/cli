@@ -855,23 +855,25 @@ const readExistingSchemaRef = Effect.fnUntraced(function* (cwd: string) {
   return getSchemaRef(document);
 });
 
-/** Fails on an existing file declaring a newer schema; a file that does not parse can still be overwritten. */
-const rejectNewerExistingSchema = Effect.fnUntraced(function* (cwd: string) {
+/** Fails when any existing config file, including a shadowed sibling the save removes, declares a
+ * newer schema; a file that does not parse can still be overwritten. */
+const rejectNewerExistingSchema = Effect.fnUntraced(function* (paths: ReadonlyArray<string>) {
   const fs = yield* FileSystem.FileSystem;
-  const located = yield* locateCliConfigFile(cwd, undefined);
-  if (located === null) {
-    return;
+  for (const filePath of paths) {
+    if (!(yield* fs.exists(filePath))) {
+      continue;
+    }
+    const format = cliConfigFormatForPath(filePath);
+    const content = yield* fs.readFileString(filePath);
+    const document = yield* Effect.try(() => parseCliConfigDocument(content, format)).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    yield* failIfSchemaTooNew(
+      filePath,
+      format,
+      readCliConfigSchemaDeclaration(content, format, document),
+    );
   }
-  const format = cliConfigFormatForPath(located.filePath);
-  const content = yield* fs.readFileString(located.filePath);
-  const document = yield* Effect.try(() => parseCliConfigDocument(content, format)).pipe(
-    Effect.orElseSucceed(() => undefined),
-  );
-  yield* failIfSchemaTooNew(
-    located.filePath,
-    format,
-    readCliConfigSchemaDeclaration(content, format, document),
-  );
 });
 
 /** Saves `config`; an existing JSON/JSONC file is edited in place so comments survive, and a TOML
@@ -882,8 +884,8 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
   const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
   const { format, filePath, allPaths } = yield* resolveSaveTarget(baseCwd, options.format);
-  if (project !== null && options.schemaRef !== undefined) {
-    yield* rejectNewerExistingSchema(baseCwd);
+  if (project !== null) {
+    yield* rejectNewerExistingSchema(allPaths);
   }
   const existingSchemaRef =
     options.schemaRef !== undefined || project === null

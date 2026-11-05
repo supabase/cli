@@ -511,8 +511,9 @@ may precede it, and surrounding spaces or tabs are ignored. A file with no decla
   the current schema URL.
 - A file declaring a version newer than the package supports fails with
   `CliConfigSchemaVersionError` and an upgrade message, in `loadCliConfig`, `loadCliConfigFile`,
-  `parseCliConfigDocumentFile` and `saveCliConfig` alike. A save with an explicit `schemaRef` still
-  overwrites an existing file that does not parse, unless that file declares a newer version. For TOML the directive is checked before
+  `parseCliConfigDocumentFile` and `saveCliConfig` alike. A save checks every existing config
+  file, including a shadowed sibling it would remove, and still overwrites a file that does not
+  parse unless that file declares a newer version. For TOML the directive is checked before
   parsing, so a newer file this version cannot parse still reports the upgrade error.
 
 ## Unknown keys
