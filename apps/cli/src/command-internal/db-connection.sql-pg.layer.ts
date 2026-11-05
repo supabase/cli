@@ -87,7 +87,7 @@ function needsRoleStepDown(user: string): boolean {
 
 // These SQLSTATEs terminate the multi-host fallback chain instead of trying the next host,
 // since they indicate the server rejected the attempt rather than being unreachable; `28000`
-// only terminates when the failed attempt used TLS.
+// only terminates once the target has been tried over TLS.
 const TERMINAL_SQLSTATES = new Set(["28P01", "3D000", "42501"]);
 const TLS_GATED_SQLSTATE = "28000";
 
@@ -98,11 +98,11 @@ const TLS_GATED_SQLSTATE = "28000";
  * Postgres SQLSTATE as a `code` property on the server error, carried through `@effect/sql`'s
  * `SqlError.cause`, so this walks the `cause` chain looking for one.
  */
-export function isTerminalConnectError(error: unknown, usedTls: boolean): boolean {
+export function isTerminalConnectError(error: unknown, triedTls: boolean): boolean {
   const code = extractSqlState(error);
   if (code === undefined) return false;
   if (TERMINAL_SQLSTATES.has(code)) return true;
-  return code === TLS_GATED_SQLSTATE && usedTls;
+  return code === TLS_GATED_SQLSTATE && triedTls;
 }
 
 const permitsPlaintextDowngrade = (error: unknown): boolean =>
@@ -796,9 +796,10 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
         clientCert,
       ).map((ssl, index, configs) => ({
         pool: makePool(dialHost, port, ssl),
-        // The fallback chain only short-circuits on an auth error when the failed attempt used
-        // TLS; a TLS config is any non-plaintext `ssl` value.
-        usedTls: isTlsConfig(ssl),
+        // A 28000 rejection is final once the target has been tried over TLS: `allow` still
+        // follows a plaintext rejection with its TLS attempt, while a `prefer` plaintext retry
+        // that is rejected too ends the chain instead of moving on to the next host.
+        triedTls: configs.slice(0, index + 1).some(isTlsConfig),
         isTlsDowngrade: index > 0 && !isTlsConfig(ssl) && isTlsConfig(configs[index - 1]),
         rawConfig: buildRawPgConfig(cfg, dialHost, port, ssl, connectTimeoutSeconds),
       })),
@@ -838,7 +839,7 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
           if (index === lastIndex) return Effect.fail(error);
           const next = attempts[index + 1]!;
           if (next.isTlsDowngrade && permitsPlaintextDowngrade(error)) return run(index + 1);
-          if (isTerminalConnectError(error, attempts[index]!.usedTls)) return Effect.fail(error);
+          if (isTerminalConnectError(error, attempts[index]!.triedTls)) return Effect.fail(error);
           const nextIndex = next.isTlsDowngrade ? index + 2 : index + 1;
           return nextIndex > lastIndex ? Effect.fail(error) : run(nextIndex);
         }),

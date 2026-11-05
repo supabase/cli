@@ -154,10 +154,12 @@ const EMPTY_QUERY = wireMessage("I", Buffer.alloc(0));
  * attempted independent of how the attempt is resolved. `sslReply` picks how an SSLRequest is
  * answered: `N` (default, plaintext only), `S` then hang up (a failed handshake), an
  * immediate hang-up (a failure that is not about TLS negotiation), or `S` with a real handshake
- * followed by a 28000 rejection (`pg_hba` with only `hostnossl` entries).
+ * followed by a 28000 rejection (`pg_hba` with only `hostnossl` entries). `rejectPlaintext`
+ * answers a plaintext startup with 28000 too (`pg_hba` with no entry for the client at all).
  */
 const fakeStartupServer = (
   sslReply: "N" | "S-then-hangup" | "hangup" | "S-then-28000" = "N",
+  { rejectPlaintext = false }: { readonly rejectPlaintext?: boolean } = {},
 ): Effect.Effect<{
   readonly port: number;
   readonly close: () => void;
@@ -201,6 +203,16 @@ const fakeStartupServer = (
                 );
                 secure.on("error", () => {});
               } else socket.destroy();
+              return;
+            } else if (rejectPlaintext) {
+              socket.end(
+                errorResponse({
+                  S: "FATAL",
+                  V: "FATAL",
+                  C: "28000",
+                  M: 'no pg_hba.conf entry for host "127.0.0.1", user "postgres", database "postgres", no encryption',
+                }),
+              );
               return;
             } else {
               sawStartup = true;
@@ -1182,6 +1194,31 @@ describe("a non-local plaintext-only target follows libpq sslmode semantics", ()
       yield* connectAndQuery(server, "prefer").pipe(Effect.ensuring(Effect.sync(server.close)));
       expect(server.sawSslRequest()).toBe(true);
       expect(server.connectionCount()).toBe(2);
+    }),
+  );
+
+  it.live("stops at a target that rejects both the TLS and the plaintext attempt with 28000", () =>
+    Effect.gen(function* () {
+      const rejecting = yield* fakeStartupServer("S-then-28000", { rejectPlaintext: true });
+      const next = yield* fakeStartupServer();
+      const error = yield* connectFailure(
+        {
+          port: rejecting.port,
+          sslmode: "prefer",
+          fallbacks: [{ host: "127.0.0.1", port: next.port }],
+        },
+        false,
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            rejecting.close();
+            next.close();
+          }),
+        ),
+      );
+      expect(rejecting.connectionCount()).toBe(2);
+      expect(next.connectionCount()).toBe(0);
+      expect(error.message).toContain("SQLSTATE 28000");
     }),
   );
 

@@ -565,7 +565,7 @@ describe("isTerminalConnectError (fallback termination)", () => {
     expect(isTerminalConnectError({ code: "42501" }, false)).toBe(true);
   });
 
-  it("gates 28000 on the attempt having used TLS (a TLS attempt is required)", () => {
+  it("gates 28000 on the target having been tried over TLS", () => {
     expect(isTerminalConnectError({ code: "28000" }, true)).toBe(true);
     expect(isTerminalConnectError({ code: "28000" }, false)).toBe(false);
   });
