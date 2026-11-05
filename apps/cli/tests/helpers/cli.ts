@@ -294,8 +294,8 @@ const portError = (error: Error) => new E2ePortError({ message: error.message, c
 const isPortTaken = (error: NodeJS.ErrnoException) =>
   error.code === "EADDRINUSE" || error.code === "EACCES";
 
-/** Succeeds with whether `port` could be bound on every interface, as Docker publishes it. */
-const probePort = (port: number) =>
+/** Succeeds with whether `port` could be bound on `host`. */
+const probePort = (port: number, host: string) =>
   Effect.callback<boolean, E2ePortError>((resume) => {
     const server = createServer();
     let settled = false;
@@ -308,7 +308,7 @@ const probePort = (port: number) =>
     server.on("error", (error: NodeJS.ErrnoException) =>
       settle(isPortTaken(error) ? Effect.succeed(false) : Effect.fail(portError(error))),
     );
-    server.listen(port, "0.0.0.0", () => {
+    server.listen(port, host, () => {
       server.close((error) => {
         settle(error ? Effect.fail(portError(error)) : Effect.succeed(true));
       });
@@ -320,12 +320,13 @@ const probePort = (port: number) =>
   });
 
 /*
- * Ports come from below the Linux (32768+) and macOS (49152+) ephemeral ranges, so an outbound
- * connection cannot take a probed port before Docker binds it. Concurrent e2e workers each keep
- * only ports in their own slot, so one worker never hands out a port another worker picked.
+ * Ports come from below the stack's own allocation ranges (10000+, see `packages/stack/src/Ports.ts`)
+ * and the OS ephemeral ranges, so neither a concurrent stack nor an outbound connection can take a
+ * probed port before Docker binds it. Concurrent e2e workers each keep only ports in their own
+ * slot, so one worker never hands out a port another worker picked.
  */
-const FIXED_PORT_RANGE_START = 20_000;
-const FIXED_PORT_RANGE_END = 32_768;
+const FIXED_PORT_RANGE_START = 1_024;
+const FIXED_PORT_RANGE_END = 10_000;
 
 const envOrEmpty = (name: string) => Config.String(name).pipe(Config.withDefault(""));
 
@@ -343,7 +344,8 @@ const pickFreePort = Effect.gen(function* () {
     const port = FIXED_PORT_RANGE_START + offset;
     if (port % e2eWorkers !== e2eWorkerSlot) continue;
     nextPortOffset = offset + 1;
-    if (yield* probePort(port)) return port;
+    // Docker publishes on every interface; macOS lets that bind succeed over a loopback listener.
+    if ((yield* probePort(port, "0.0.0.0")) && (yield* probePort(port, "127.0.0.1"))) return port;
   }
   return yield* new E2ePortError({
     message: `No free port for e2e worker slot ${e2eWorkerSlot} of ${e2eWorkers}`,
