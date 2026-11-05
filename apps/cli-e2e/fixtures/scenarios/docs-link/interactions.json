@@ -1,0 +1,86 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/replayfixtureprojref",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "id": "abcdefghijklmnopqrst",
+        "ref": "abcdefghijklmnopqrst",
+        "organization_id": "qzrwtxnbvclphkmdsjyg",
+        "organization_slug": "qzrwtxnbvclphkmdsjyg",
+        "name": "My Project",
+        "region": "us-east-1",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "db.abcdefghijklmnopqrst.supabase.co",
+          "version": "17.6.1.084",
+          "postgres_engine": "17",
+          "release_channel": "ga"
+        },
+        "created_at": "2025-03-14T09:21:07Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/replayfixtureprojref/api-keys",
+      "query": {
+        "reveal": "true"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": [
+        {
+          "id": "anon",
+          "name": "anon",
+          "type": "legacy",
+          "api_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0",
+          "description": "Legacy anon API key",
+          "secret_jwt_template": null
+        },
+        {
+          "id": "service_role",
+          "name": "service_role",
+          "type": "legacy",
+          "api_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU",
+          "description": "Legacy service_role API key",
+          "secret_jwt_template": {
+            "role": "service_role"
+          }
+        }
+      ]
+    }
+  }
+]

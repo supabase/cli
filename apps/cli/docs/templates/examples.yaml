@@ -2,15 +2,24 @@ supabase-init:
   - id: basic-usage
     name: Basic usage
     code: supabase init
-    response: Finished supabase init.
+    output: recorded
+    scenario: local-empty-dir
+    response: |
+      Finished supabase init.
   - id: from-workdir
     name: Initialize from an existing directory
     code: supabase init --workdir .
-    response: Finished supabase init.
+    output: recorded
+    scenario: local-empty-dir
+    response: |
+      Finished supabase init.
   - id: with-orioledb
     name: Initialize with OrioleDB
     code: supabase init --use-orioledb
-    response: Finished supabase init.
+    output: recorded
+    scenario: local-empty-dir
+    response: |
+      Finished supabase init.
 supabase-login:
   - id: basic-usage
     name: Basic usage
@@ -23,71 +32,289 @@ supabase-start:
   - id: basic-usage
     name: Basic usage
     code: supabase start
-    response: |
-      Creating custom roles supabase/roles.sql...
-      Applying migration 20220810154536_employee.sql...
-      Seeding data supabase/seed.sql...
+    output: recorded
+    scenario: docker-stack-stopped
+    response: |+
+      Starting database...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
+      Seeding data from supabase/seed.sql...
+      Starting containers...
+      Waiting for health checks...
       Started supabase local development setup.
+
+      ╭──────────────────────────────────────╮
+      │ 🔧 Development Tools                 │
+      ├─────────┬────────────────────────────┤
+      │ Studio  │ http://127.0.0.1:54323     │
+      │ Mailpit │ http://127.0.0.1:54324     │
+      │ MCP     │ http://127.0.0.1:54321/mcp │
+      ╰─────────┴────────────────────────────╯
+
+      ╭──────────────────────────────────────────────────────╮
+      │ 🌐 APIs                                              │
+      ├────────────────┬─────────────────────────────────────┤
+      │ Project URL    │ http://127.0.0.1:54321              │
+      │ REST           │ http://127.0.0.1:54321/rest/v1      │
+      │ GraphQL        │ http://127.0.0.1:54321/graphql/v1   │
+      │ Edge Functions │ http://127.0.0.1:54321/functions/v1 │
+      ╰────────────────┴─────────────────────────────────────╯
+
+      ╭───────────────────────────────────────────────────────────────╮
+      │ ⛁ Database                                                    │
+      ├─────┬─────────────────────────────────────────────────────────┤
+      │ URL │ postgresql://postgres:postgres@127.0.0.1:54322/postgres │
+      ╰─────┴─────────────────────────────────────────────────────────╯
+
+      ╭──────────────────────────────────────────────────────────────╮
+      │ 🔑 Authentication Keys                                       │
+      ├─────────────┬────────────────────────────────────────────────┤
+      │ Publishable │ sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH │
+      │ Secret      │ sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz      │
+      ╰─────────────┴────────────────────────────────────────────────╯
+
+      ╭───────────────────────────────────────────────────────────────────────────────╮
+      │ 📦 Storage (S3)                                                               │
+      ├────────────┬──────────────────────────────────────────────────────────────────┤
+      │ URL        │ http://127.0.0.1:54321/storage/v1/s3                             │
+      │ Access Key │ 625729a08b95bf1b7ff351a663f3a23c                                 │
+      │ Secret Key │ 850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907 │
+      │ Region     │ local                                                            │
+      ╰────────────┴──────────────────────────────────────────────────────────────────╯
+      Local dev security notice
+      All services bind to 0.0.0.0 (network-accessible, not just localhost)
+      API keys and JWT secrets are shared defaults. Do not use in production
+      Studio, pgMeta (/pg/*), and analytics have no authentication
+
   - id: without-studio
     name: Start containers without studio and imgproxy
     code: supabase start -x studio,imgproxy
-    response: |
-      Excluding container: supabase/studio:20221214-4eecc99
-      Excluding container: darthsim/imgproxy:v3.8.0
+    output: recorded
+    scenario: docker-stack-stopped
+    response: |+
+      Starting database...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
+      Seeding data from supabase/seed.sql...
+      Starting containers...
+      Waiting for health checks...
       Started supabase local development setup.
+
+      ╭──────────────────────────────────╮
+      │ 🔧 Development Tools             │
+      ├─────────┬────────────────────────┤
+      │ Mailpit │ http://127.0.0.1:54324 │
+      ╰─────────┴────────────────────────╯
+
+      ╭──────────────────────────────────────────────────────╮
+      │ 🌐 APIs                                              │
+      ├────────────────┬─────────────────────────────────────┤
+      │ Project URL    │ http://127.0.0.1:54321              │
+      │ REST           │ http://127.0.0.1:54321/rest/v1      │
+      │ GraphQL        │ http://127.0.0.1:54321/graphql/v1   │
+      │ Edge Functions │ http://127.0.0.1:54321/functions/v1 │
+      ╰────────────────┴─────────────────────────────────────╯
+
+      ╭───────────────────────────────────────────────────────────────╮
+      │ ⛁ Database                                                    │
+      ├─────┬─────────────────────────────────────────────────────────┤
+      │ URL │ postgresql://postgres:postgres@127.0.0.1:54322/postgres │
+      ╰─────┴─────────────────────────────────────────────────────────╯
+
+      ╭──────────────────────────────────────────────────────────────╮
+      │ 🔑 Authentication Keys                                       │
+      ├─────────────┬────────────────────────────────────────────────┤
+      │ Publishable │ sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH │
+      │ Secret      │ sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz      │
+      ╰─────────────┴────────────────────────────────────────────────╯
+
+      ╭───────────────────────────────────────────────────────────────────────────────╮
+      │ 📦 Storage (S3)                                                               │
+      ├────────────┬──────────────────────────────────────────────────────────────────┤
+      │ URL        │ http://127.0.0.1:54321/storage/v1/s3                             │
+      │ Access Key │ 625729a08b95bf1b7ff351a663f3a23c                                 │
+      │ Secret Key │ 850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907 │
+      │ Region     │ local                                                            │
+      ╰────────────┴──────────────────────────────────────────────────────────────────╯
+      Local dev security notice
+      All services bind to 0.0.0.0 (network-accessible, not just localhost)
+      API keys and JWT secrets are shared defaults. Do not use in production
+      Studio, pgMeta (/pg/*), and analytics have no authentication
+
   - id: ignore-health-check
     name: Ignore service health checks
     code: supabase start --ignore-health-check
-    response: |
-      service not healthy: [supabase_storage_cli]
+    output: recorded
+    scenario: docker-stack-stopped
+    response: |+
+      Starting database...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
+      Seeding data from supabase/seed.sql...
+      Starting containers...
+      Waiting for health checks...
       Started supabase local development setup.
+
+      ╭──────────────────────────────────────╮
+      │ 🔧 Development Tools                 │
+      ├─────────┬────────────────────────────┤
+      │ Studio  │ http://127.0.0.1:54323     │
+      │ Mailpit │ http://127.0.0.1:54324     │
+      │ MCP     │ http://127.0.0.1:54321/mcp │
+      ╰─────────┴────────────────────────────╯
+
+      ╭──────────────────────────────────────────────────────╮
+      │ 🌐 APIs                                              │
+      ├────────────────┬─────────────────────────────────────┤
+      │ Project URL    │ http://127.0.0.1:54321              │
+      │ REST           │ http://127.0.0.1:54321/rest/v1      │
+      │ GraphQL        │ http://127.0.0.1:54321/graphql/v1   │
+      │ Edge Functions │ http://127.0.0.1:54321/functions/v1 │
+      ╰────────────────┴─────────────────────────────────────╯
+
+      ╭───────────────────────────────────────────────────────────────╮
+      │ ⛁ Database                                                    │
+      ├─────┬─────────────────────────────────────────────────────────┤
+      │ URL │ postgresql://postgres:postgres@127.0.0.1:54322/postgres │
+      ╰─────┴─────────────────────────────────────────────────────────╯
+
+      ╭──────────────────────────────────────────────────────────────╮
+      │ 🔑 Authentication Keys                                       │
+      ├─────────────┬────────────────────────────────────────────────┤
+      │ Publishable │ sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH │
+      │ Secret      │ sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz      │
+      ╰─────────────┴────────────────────────────────────────────────╯
+
+      ╭───────────────────────────────────────────────────────────────────────────────╮
+      │ 📦 Storage (S3)                                                               │
+      ├────────────┬──────────────────────────────────────────────────────────────────┤
+      │ URL        │ http://127.0.0.1:54321/storage/v1/s3                             │
+      │ Access Key │ 625729a08b95bf1b7ff351a663f3a23c                                 │
+      │ Secret Key │ 850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907 │
+      │ Region     │ local                                                            │
+      ╰────────────┴──────────────────────────────────────────────────────────────────╯
+      Local dev security notice
+      All services bind to 0.0.0.0 (network-accessible, not just localhost)
+      API keys and JWT secrets are shared defaults. Do not use in production
+      Studio, pgMeta (/pg/*), and analytics have no authentication
+
 supabase-stop:
   - id: basic-usage
     name: Basic usage
     code: supabase stop
+    output: recorded
+    scenario: docker-stack-stopping
     response: |
+      Stopping containers...
       Stopped supabase local development setup.
-      Local data are backed up to docker volume.
+      Local data are backed up to docker volume. Use docker to show them: docker volume ls --filter label=com.supabase.cli.project=my-project
   - id: clean-up
     name: Clean up local data after stopping
     code: supabase stop --no-backup
+    output: recorded
+    scenario: docker-stack-stopping
     response: |
+      Stopping containers...
       Stopped supabase local development setup.
 supabase-status:
   - id: basic-usage
     name: Basic usage
     code: supabase status
-    response: |2
+    output: recorded
+    scenario: docker-stack-running
+    response: |
+      Not linked.
+      Stopped services: [supabase_imgproxy_my-project supabase_pooler_my-project]
       supabase local development setup is running.
 
-               API URL: http://127.0.0.1:54321
-           GraphQL URL: http://127.0.0.1:54321/graphql/v1
-                DB URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
-            Studio URL: http://127.0.0.1:54323
-           Mailpit URL: http://127.0.0.1:54324
-            JWT secret: super-secret-jwt-token-with-at-least-32-characters-long
-              anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
-      service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
+      ╭──────────────────────────────────────╮
+      │ 🔧 Development Tools                 │
+      ├─────────┬────────────────────────────┤
+      │ Studio  │ http://127.0.0.1:54323     │
+      │ Mailpit │ http://127.0.0.1:54324     │
+      │ MCP     │ http://127.0.0.1:54321/mcp │
+      ╰─────────┴────────────────────────────╯
+
+      ╭──────────────────────────────────────────────────────╮
+      │ 🌐 APIs                                              │
+      ├────────────────┬─────────────────────────────────────┤
+      │ Project URL    │ http://127.0.0.1:54321              │
+      │ REST           │ http://127.0.0.1:54321/rest/v1      │
+      │ GraphQL        │ http://127.0.0.1:54321/graphql/v1   │
+      │ Edge Functions │ http://127.0.0.1:54321/functions/v1 │
+      ╰────────────────┴─────────────────────────────────────╯
+
+      ╭───────────────────────────────────────────────────────────────╮
+      │ ⛁ Database                                                    │
+      ├─────┬─────────────────────────────────────────────────────────┤
+      │ URL │ postgresql://postgres:postgres@127.0.0.1:54322/postgres │
+      ╰─────┴─────────────────────────────────────────────────────────╯
+
+      ╭──────────────────────────────────────────────────────────────╮
+      │ 🔑 Authentication Keys                                       │
+      ├─────────────┬────────────────────────────────────────────────┤
+      │ Publishable │ sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH │
+      │ Secret      │ sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz      │
+      ╰─────────────┴────────────────────────────────────────────────╯
+
+      ╭───────────────────────────────────────────────────────────────────────────────╮
+      │ 📦 Storage (S3)                                                               │
+      ├────────────┬──────────────────────────────────────────────────────────────────┤
+      │ URL        │ http://127.0.0.1:54321/storage/v1/s3                             │
+      │ Access Key │ 625729a08b95bf1b7ff351a663f3a23c                                 │
+      │ Secret Key │ 850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907 │
+      │ Region     │ local                                                            │
+      ╰────────────┴──────────────────────────────────────────────────────────────────╯
   - id: output-env
     name: Format status as environment variables
     code: supabase status -o env
+    output: recorded
+    scenario: docker-stack-running
     response: |
+      Stopped services: [supabase_imgproxy_my-project supabase_pooler_my-project]
       ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
       API_URL="http://127.0.0.1:54321"
       DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+      FUNCTIONS_URL="http://127.0.0.1:54321/functions/v1"
       GRAPHQL_URL="http://127.0.0.1:54321/graphql/v1"
       JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
+      MAILPIT_URL="http://127.0.0.1:54324"
+      MCP_URL="http://127.0.0.1:54321/mcp"
+      PUBLISHABLE_KEY="sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
+      REST_URL="http://127.0.0.1:54321/rest/v1"
+      S3_PROTOCOL_ACCESS_KEY_ID="625729a08b95bf1b7ff351a663f3a23c"
+      S3_PROTOCOL_ACCESS_KEY_SECRET="850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907"
+      S3_PROTOCOL_REGION="local"
+      SECRET_KEY="sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz"
       SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+      STORAGE_S3_URL="http://127.0.0.1:54321/storage/v1/s3"
       STUDIO_URL="http://127.0.0.1:54323"
   - id: output-custom-name
     name: Customize the names of exported variables
     code: supabase status -o env --override-name auth.anon_key=SUPABASE_ANON_KEY --override-name auth.service_role_key=SUPABASE_SERVICE_KEY
+    output: recorded
+    scenario: docker-stack-running
     response: |
-      Stopped services: [supabase_inbucket_cli supabase_rest_cli supabase_studio_cli]
-      SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+      Stopped services: [supabase_imgproxy_my-project supabase_pooler_my-project]
+      API_URL="http://127.0.0.1:54321"
       DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+      FUNCTIONS_URL="http://127.0.0.1:54321/functions/v1"
       GRAPHQL_URL="http://127.0.0.1:54321/graphql/v1"
       JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
+      MAILPIT_URL="http://127.0.0.1:54324"
+      MCP_URL="http://127.0.0.1:54321/mcp"
+      PUBLISHABLE_KEY="sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
+      REST_URL="http://127.0.0.1:54321/rest/v1"
+      S3_PROTOCOL_ACCESS_KEY_ID="625729a08b95bf1b7ff351a663f3a23c"
+      S3_PROTOCOL_ACCESS_KEY_SECRET="850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907"
+      S3_PROTOCOL_REGION="local"
+      SECRET_KEY="sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz"
+      STORAGE_S3_URL="http://127.0.0.1:54321/storage/v1/s3"
+      STUDIO_URL="http://127.0.0.1:54323"
+      SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
       SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
 supabase-migration-list:
   - id: basic-usage
@@ -101,23 +328,33 @@ supabase-migration-list:
         20230222032233 │                │ 2023-02-22 03:22:33
   - id: with-db-url
     name: Connect to self-hosted database
-    code: supabase migration list --remote='postgres://postgres[:percent_encoded_password]@db.example.com[:port]/postgres'
-    response: |2
-            LOCAL      │     REMOTE     │     TIME (UTC)
-      ─────────────────┼────────────────┼──────────────────────
-        20230103054303 │ 20230103054303 │ 2023-01-03 05:43:03
-        20230103093141 │ 20230103093141 │ 2023-01-03 09:31:41
+    code: supabase migration list --remote='postgres://user:pass@db.example.com:5432/postgres'
+    output: recorded
+    scenario: docker-self-hosted
+    response: |+
+      Target: custom Postgres (db.example.com:5432)
+
+
+         Local            | Remote           | Time (UTC)
+        ------------------|------------------|-----------------------
+         `20240101000000` | `20240101000000` | `2024-01-01 00:00:00`
+         `20240102000000` | ` `              | `2024-01-02 00:00:00`
+
 supabase-migration-new:
   - id: basic-usage
     name: Basic usage
     code: supabase migration new schema_test
+    output: recorded
+    scenario: local-project
     response: |
-      Created new migration at supabase/migrations/20230306095710_schema_test.sql.
+      Created new migration at supabase/migrations/20261104183907_schema_test.sql
   - id: pipe-stdin
     name: With statements piped from stdin
     code: echo "create schema if not exists test;" | supabase migration new schema_test
+    output: recorded
+    scenario: local-project-stdin
     response: |
-      Created new migration at supabase/migrations/20230306095710_schema_test.sql.
+      Created new migration at supabase/migrations/20261104183908_schema_test.sql
 supabase-migration-repair:
   - id: basic-usage
     name: Mark a migration as reverted
@@ -137,14 +374,19 @@ supabase-db-diff:
   - id: basic-usage
     name: Basic usage
     code: supabase db diff -f my_table
+    output: recorded
+    scenario: docker-schema-drift
     response: |
       Target: local stack (127.0.0.1:54322)
       Creating shadow database...
-      Applying migration 20230425064254_remote_commit.sql...
-      Diffing schemas: auth,extensions,public,storage
-      Finished supabase db diff on branch main.
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
+      Diffing schemas...
+      Finished supabase db diff.
 
-      No schema changes found
+      WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
+      Run supabase db reset to verify that the new migration does not generate errors.
   - id: linked-project
     name: Against linked project
     code: supabase db diff -f my_table --remote
@@ -159,21 +401,28 @@ supabase-db-diff:
   - id: specific-schema
     name: For a specific schema
     code: supabase db diff -f my_table --schema auth
+    output: recorded
+    scenario: docker-schema-drift
     response: |
       Target: local stack (127.0.0.1:54322)
       Creating shadow database...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
       Diffing schemas: auth
-      Finished supabase db diff on branch main.
+      Finished supabase db diff.
 
       No schema changes found
 supabase-db-dump:
   - id: basic-usage
     name: Basic usage
     code: supabase db dump -f supabase/schema.sql
+    output: recorded
+    scenario: docker-stack-running
     response: |
       Target: local stack (127.0.0.1:54322)
       Dumping schemas from local database...
-      Dumped schema to supabase/schema.sql.
+      Dumped schema to ~/my-project/supabase/schema.sql.
   - id: linked-project
     name: Dump the linked project
     code: supabase db dump -f supabase/schema.sql --remote
@@ -199,22 +448,144 @@ supabase-db-lint:
   - id: basic-usage
     name: Basic usage
     code: supabase db lint
+    output: recorded
+    scenario: docker-stack-running
     response: |
+      Target: local stack (127.0.0.1:54322)
+      Linting schema: extensions
       Linting schema: public
 
       No schema errors found
   - id: schema-warnings
     name: Warnings for a specific schema
     code: supabase db lint --level warning --schema storage
+    output: recorded
+    scenario: docker-stack-running
     response: |
+      Target: local stack (127.0.0.1:54322)
       Linting schema: storage
       [
+        {
+          "function": "storage.list_objects_with_delimiter",
+          "issues": [
+            {
+              "level": "warning",
+              "message": "cannot determinate a result of dynamic SQL",
+              "statement": {
+                "lineNumber": "552",
+                "text": "FOR over EXECUTE statement"
+              },
+              "hint": "Don't use dynamic SQL and record type together, when you would check function.",
+              "detail": "There is a risk of related false alarms.",
+              "sqlState": "00000"
+            },
+            {
+              "level": "error",
+              "message": "record \"v_current\" is not assigned yet",
+              "statement": {
+                "lineNumber": "557",
+                "text": "assignment"
+              },
+              "detail": "The tuple structure of a not-yet-assigned record is indeterminate.",
+              "context": "PL/pgSQL assignment \"v_common_prefix := storage.get_common_prefix(v_current.name, v_prefix, delimiter_param)\"",
+              "sqlState": "55000"
+            }
+          ]
+        },
         {
           "function": "storage.search",
           "issues": [
             {
               "level": "warning",
-              "message": "unused variable \"_bucketid\"",
+              "message": "cannot determinate a result of dynamic SQL",
+              "statement": {
+                "lineNumber": "473",
+                "text": "FOR over EXECUTE statement"
+              },
+              "hint": "Don't use dynamic SQL and record type together, when you would check function.",
+              "detail": "There is a risk of related false alarms.",
+              "sqlState": "00000"
+            },
+            {
+              "level": "error",
+              "message": "record \"v_current\" is not assigned yet",
+              "statement": {
+                "lineNumber": "478",
+                "text": "assignment"
+              },
+              "detail": "The tuple structure of a not-yet-assigned record is indeterminate.",
+              "context": "PL/pgSQL assignment \"v_common_prefix := storage.get_common_prefix(lower(v_current.name), v_prefix_lower, v_delimiter)\"",
+              "sqlState": "55000"
+            }
+          ]
+        },
+        {
+          "function": "storage.search_by_timestamp",
+          "issues": [
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"key\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"name\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"id\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"updated_at\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"created_at\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"last_accessed_at\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"metadata\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"version\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"archived_at\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"is_delete_marker\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
+              "sqlState": "00000"
+            },
+            {
+              "level": "warning extra",
+              "message": "OUT variable \"is_versioned\" is maybe unmodified",
+              "detail": "cannot to determine result of dynamic SQL",
               "sqlState": "00000"
             }
           ]
@@ -224,112 +595,325 @@ supabase-db-reset:
   - id: basic-usage
     name: Basic usage
     code: supabase db reset
+    output: recorded
+    scenario: docker-stack-running
     response: |
-      Resetting database...
-      Initializing schema...
-      Applying migration 20220810154537_create_employees_table.sql...
-      Seeding data supabase/seed.sql...
-      Finished supabase db reset on branch main.
+      Target: local stack (127.0.0.1:54322)
+      Resetting local database...
+      Recreating database...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
+      Seeding data from supabase/seed.sql...
+      Restarting containers...
+      Finished supabase db reset.
 supabase-db-schema-declarative-sync:
   - id: with-pg-delta
     name: Sync declarative schema with pg-delta
     code: |
       # After editing declarative schema files, generate a migration:
-      supabase db schema declarative sync --experimental
+      supabase db schema declarative sync --experimental --name add_updated_at --yes
+    output: recorded
+    scenario: docker-declarative-edited
     response: |
-      Creating shadow database...
-      Applying declarative schemas via pg-delta...
-      Applied 239 statements in 1 round(s).
-      Enter a name for this migration (press Enter to keep 'declarative_sync'): add_updated_at
-      Created new migration at supabase/migrations/20260317194051_add_updated_at.sql
-      Apply this migration to local database? [Y/n]
-      Target: local stack (127.0.0.1:54322)
-      Applying migration 20260317194051_add_updated_at.sql...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Generated migration SQL:
+      ALTER TABLE "public"."employees"
+        ADD COLUMN "updated_at" timestamp WITH time zone NOT NULL DEFAULT now();
+
+      Created new migration at ~/my-project/supabase/migrations/20261104184803_add_updated_at.sql
       Migration applied successfully.
   - id: generate-first
     name: Generate declarative schema from migrations
     code: |
-      supabase db schema declarative sync --experimental
+      supabase db schema declarative sync --experimental --yes
+    output: recorded
+    scenario: docker-declarative-missing
     response: |
-      No declarative schema found. Generate a new one ? [Y/n]
+      No declarative schema found. Generate a new one ? [Y/n] y
       Reset local database to match migrations first? (local data will be lost) [y/N] y
-      Resetting database...
-      ...
+      Resetting local database...
+      Recreating database...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
+      Seeding data from supabase/seed.sql...
+      Restarting containers...
+      Finished supabase db reset.
+      Target: local stack (127.0.0.1:54322)
       Declarative schema written to supabase/schemas
-      Finished supabase db schema declarative generate.
+      Initialising schema...
+      Seeding globals from roles.sql...
+      Applying migration 20240101000000_create_employees.sql...
+      Initialising schema...
+      Seeding globals from roles.sql...
+      No schema changes found
 supabase-test-db:
   - id: basic-usage
     name: Basic usage
     code: supabase test db
+    output: recorded
+    scenario: docker-stack-running
     response: |
-      /tmp/supabase/tests/nested/order_test.pg .. ok
-      /tmp/supabase/tests/pet_test.sql .......... ok
+      Target: local stack (127.0.0.1:54322)
+      ~/my-project/supabase/tests/employees_test.sql .. ok
       All tests successful.
-      Files=2, Tests=2,  6 wallclock secs ( 0.03 usr  0.01 sys +  0.05 cusr  0.02 csys =  0.11 CPU)
+      Files=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.01 sys +  0.01 cusr  0.02 csys =  0.05 CPU)
       Result: PASS
-# TODO: use actual cli response for sso commands
 supabase-sso-show:
   - id: basic-usage
     name: Show information
     code: |-
       supabase sso show 6df4d73f-bf21-405f-a084-b11adf19fea5 \
         --remote=abcdefghijklmnopqrst
-    response: |-
-      Information about the identity provider in pretty output.
+    output: recorded
+    scenario: docs-sso-show
+    response: |
+      Target: project abcdefghijklmnopqrst
+
+
+         PROPERTY             | VALUE
+        ----------------------|--------------------------------------
+         IDENTITY PROVIDER ID | 6df4d73f-bf21-405f-a084-b11adf19fea5
+         TYPE                 | SAML 2.0
+         DOMAINS              | company.com, company.org
+         SAML 2.0 METADATA    | FILE
+         SAML 2.0 EntityID    | https://idp.example.com/saml
+         NAMEID FORMAT        | -
+         CREATED AT (UTC)     | 2025-03-14 09:21:07
+         UPDATED AT (UTC)     | 2025-03-14 09:21:07
+
+      ## Attribute Mapping
+      ```json
+      {
+        "keys": {
+          "email": {
+            "name": "mail"
+          }
+        }
+      }
+      ```
+      ## SAML 2.0 Metadata XML
+      ```xml
+
+        <?xml version="1.0" encoding="UTF-8"?>
+        <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/saml">
+          <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+            <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/saml/sso"/>
+          </md:IDPSSODescriptor>
+        </md:EntityDescriptor>
+      ```
   - id: metadata-output
     name: Get raw SAML 2.0 Metadata XML
     code: |-
       supabase sso show 6df4d73f-bf21-405f-a084-b11adf19fea5 \
         --metadata \
         --remote=abcdefghijklmnopqrst
-    response: |-
-      Raw SAML 2.0 XML assigned to this identity provider. This is the
-      version used in the authentication project, and if using a SAML 2.0
-      Metadata URL it may change depending on the caching information
-      contained within the metadata.
+    output: recorded
+    scenario: docs-sso-show
+    response: |
+      Target: project abcdefghijklmnopqrst
+      <?xml version="1.0" encoding="UTF-8"?>
+      <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/saml">
+        <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+          <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/saml/sso"/>
+        </md:IDPSSODescriptor>
+      </md:EntityDescriptor>
 supabase-sso-update:
   - id: basic-usage
     name: Replace domains
     code: |-
       supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
         --domains new-company.com,new-company.net \
-        --remote=abcdefghijklmnopqrst
-    response: |-
-      Information about the updated provider.
+        --remote=abcdefghijklmnopqrst \
+        --yes
+    output: recorded
+    scenario: docs-sso-update-domains
+    response: |
+      Target: project abcdefghijklmnopqrst
+      Confirmed by --yes: Update SSO provider 6df4d73f-bf21-405f-a084-b11adf19fea5 on project abcdefghijklmnopqrst
+
+
+         PROPERTY             | VALUE
+        ----------------------|--------------------------------------
+         IDENTITY PROVIDER ID | 6df4d73f-bf21-405f-a084-b11adf19fea5
+         TYPE                 | SAML 2.0
+         DOMAINS              | new-company.com, new-company.net
+         SAML 2.0 METADATA    | FILE
+         SAML 2.0 EntityID    | https://idp.example.com/saml
+         NAMEID FORMAT        | -
+         CREATED AT (UTC)     | 2025-03-14 09:21:07
+         UPDATED AT (UTC)     | 2025-03-14 09:21:07
+
+      ## Attribute Mapping
+      ```json
+      {
+        "keys": {
+          "email": {
+            "name": "mail"
+          }
+        }
+      }
+      ```
+      ## SAML 2.0 Metadata XML
+      ```xml
+
+        <?xml version="1.0" encoding="UTF-8"?>
+        <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/saml">
+          <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+            <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/saml/sso"/>
+          </md:IDPSSODescriptor>
+        </md:EntityDescriptor>
+      ```
   - id: add-domains
     name: Add an additional domain
     code: |-
       supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
         --add-domains company.net \
-        --remote=abcdefghijklmnopqrst
-    response: |-
-      Information about the updated provider.
+        --remote=abcdefghijklmnopqrst \
+        --yes
+    output: recorded
+    scenario: docs-sso-update-add-domains
+    response: |
+      Target: project abcdefghijklmnopqrst
+      Confirmed by --yes: Update SSO provider 6df4d73f-bf21-405f-a084-b11adf19fea5 on project abcdefghijklmnopqrst
+
+
+         PROPERTY             | VALUE
+        ----------------------|---------------------------------------
+         IDENTITY PROVIDER ID | 6df4d73f-bf21-405f-a084-b11adf19fea5
+         TYPE                 | SAML 2.0
+         DOMAINS              | company.com, company.org, company.net
+         SAML 2.0 METADATA    | FILE
+         SAML 2.0 EntityID    | https://idp.example.com/saml
+         NAMEID FORMAT        | -
+         CREATED AT (UTC)     | 2025-03-14 09:21:07
+         UPDATED AT (UTC)     | 2025-03-14 09:21:07
+
+      ## Attribute Mapping
+      ```json
+      {
+        "keys": {
+          "email": {
+            "name": "mail"
+          }
+        }
+      }
+      ```
+      ## SAML 2.0 Metadata XML
+      ```xml
+
+        <?xml version="1.0" encoding="UTF-8"?>
+        <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/saml">
+          <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+            <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/saml/sso"/>
+          </md:IDPSSODescriptor>
+        </md:EntityDescriptor>
+      ```
   - id: remove-domains
     name: Remove a domain
     code: |-
       supabase sso update 6df4d73f-bf21-405f-a084-b11adf19fea5 \
         --remove-domains company.org \
-        --remote=abcdefghijklmnopqrst
-    response: |-
-      Information about the updated provider.
+        --remote=abcdefghijklmnopqrst \
+        --yes
+    output: recorded
+    scenario: docs-sso-update-remove-domains
+    response: |
+      Target: project abcdefghijklmnopqrst
+      Confirmed by --yes: Update SSO provider 6df4d73f-bf21-405f-a084-b11adf19fea5 on project abcdefghijklmnopqrst
+
+
+         PROPERTY             | VALUE
+        ----------------------|--------------------------------------
+         IDENTITY PROVIDER ID | 6df4d73f-bf21-405f-a084-b11adf19fea5
+         TYPE                 | SAML 2.0
+         DOMAINS              | company.com
+         SAML 2.0 METADATA    | FILE
+         SAML 2.0 EntityID    | https://idp.example.com/saml
+         NAMEID FORMAT        | -
+         CREATED AT (UTC)     | 2025-03-14 09:21:07
+         UPDATED AT (UTC)     | 2025-03-14 09:21:07
+
+      ## Attribute Mapping
+      ```json
+      {
+        "keys": {
+          "email": {
+            "name": "mail"
+          }
+        }
+      }
+      ```
+      ## SAML 2.0 Metadata XML
+      ```xml
+
+        <?xml version="1.0" encoding="UTF-8"?>
+        <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/saml">
+          <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+            <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/saml/sso"/>
+          </md:IDPSSODescriptor>
+        </md:EntityDescriptor>
+      ```
 supabase-sso-remove:
   - id: basic-usage
     name: Remove a provider
     code: |-
       supabase sso remove 6df4d73f-bf21-405f-a084-b11adf19fea5 \
-        --remote=abcdefghijklmnopqrst
-    response: |-
-      Information about the removed identity provider. It's a good idea to
-      save this in case you need it later on.
+        --remote=abcdefghijklmnopqrst \
+        --yes
+    output: recorded
+    scenario: docs-sso-remove
+    response: |
+      Target: project abcdefghijklmnopqrst
+      Confirmed by --yes: Remove SSO provider 6df4d73f-bf21-405f-a084-b11adf19fea5 on project abcdefghijklmnopqrst
+
+
+         PROPERTY             | VALUE
+        ----------------------|--------------------------------------
+         IDENTITY PROVIDER ID | 6df4d73f-bf21-405f-a084-b11adf19fea5
+         TYPE                 | SAML 2.0
+         DOMAINS              | company.com, company.org
+         SAML 2.0 METADATA    | FILE
+         SAML 2.0 EntityID    | https://idp.example.com/saml
+         NAMEID FORMAT        | -
+         CREATED AT (UTC)     | 2025-03-14 09:21:07
+         UPDATED AT (UTC)     | 2025-03-14 09:21:07
+
+      ## Attribute Mapping
+      ```json
+      {
+        "keys": {
+          "email": {
+            "name": "mail"
+          }
+        }
+      }
+      ```
+      ## SAML 2.0 Metadata XML
+      ```xml
+
+        <?xml version="1.0" encoding="UTF-8"?>
+        <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/saml">
+          <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+            <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/saml/sso"/>
+          </md:IDPSSODescriptor>
+        </md:EntityDescriptor>
+      ```
 supabase-sso-add:
   - id: basic-usage
     name: Add with Metadata URL
     code: |-
       supabase sso add \
         --type saml \
-        --metadata-url 'https://...' \
+        --metadata-url 'https://idp.example.com/saml/metadata' \
         --domains company.com \
-        --remote=abcdefghijklmnopqrst
+        --remote=abcdefghijklmnopqrst \
+        --yes
     response: |-
       Information about the added identity provider. You can use
       company.com as the domain name on the frontend side to initiate a SSO
@@ -339,15 +923,61 @@ supabase-sso-add:
     code: |-
       supabase sso add \
         --type saml \
-        --metadata-file /path/to/metadata/file.xml \
+        --metadata-file metadata.xml \
         --domains company.com \
-        --remote=abcdefghijklmnopqrst
-    response: |-
-      Information about the added identity provider. You can use
-      company.com as the domain name on the frontend side to initiate a SSO
-      request to the identity provider.
+        --remote=abcdefghijklmnopqrst \
+        --yes
+    output: recorded
+    scenario: docs-sso-add
+    response: |
+      Target: project abcdefghijklmnopqrst
+      Confirmed by --yes: Add an SSO provider on project abcdefghijklmnopqrst
+
+
+         PROPERTY             | VALUE
+        ----------------------|--------------------------------------
+         IDENTITY PROVIDER ID | 6df4d73f-bf21-405f-a084-b11adf19fea5
+         TYPE                 | SAML 2.0
+         DOMAINS              | company.com
+         SAML 2.0 METADATA    | FILE
+         SAML 2.0 EntityID    | https://idp.example.com/saml
+         NAMEID FORMAT        | -
+         CREATED AT (UTC)     | 2025-03-14 09:21:07
+         UPDATED AT (UTC)     | 2025-03-14 09:21:07
+
+      ## Attribute Mapping
+      ```json
+      {
+        "keys": {
+          "email": {
+            "name": "mail"
+          }
+        }
+      }
+      ```
+      ## SAML 2.0 Metadata XML
+      ```xml
+
+        <?xml version="1.0" encoding="UTF-8"?>
+        <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/saml">
+          <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+            <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/saml/sso"/>
+          </md:IDPSSODescriptor>
+        </md:EntityDescriptor>
+      ```
 supabase-sso-info:
   - id: basic-usage
     name: Show project information
     code: supabase sso info --remote=abcdefghijklmnopqrst
-    response: Information about your project's SAML 2.0 configuration.
+    output: recorded
+    scenario: docs-sso-info
+    response: |+
+      Target: project abcdefghijklmnopqrst
+
+
+         PROPERTY                     | VALUE
+        ------------------------------|--------------------------------------------------------------------
+         Single sign-on URL (ACS URL) | https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/saml/acs
+         Audience URI (SP Entity ID)  | https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/saml/metadata
+         Default Relay State          | https://abcdefghijklmnopqrst.supabase.co
+

@@ -74,24 +74,30 @@ export const linkCommand = makeCommand("link", config).pipe(
       {
         id: "basic-usage",
         name: "Basic usage",
-        code: "supabase link ********************",
-        response: `Enter your database password (or leave blank to skip): ********
+        code: "supabase link abcdefghijklmnopqrst",
+        output: "recorded",
+        scenario: "docs-link",
+        response: `Target: project abcdefghijklmnopqrst
 Finished supabase link.
 `,
       },
       {
         id: "without-password",
         name: "Link without database password",
-        code: 'supabase link ******************** <<< ""',
-        response: `Enter your database password (or leave blank to skip):
+        code: 'supabase link abcdefghijklmnopqrst <<< ""',
+        output: "recorded",
+        scenario: "docs-link",
+        response: `Target: project abcdefghijklmnopqrst
 Finished supabase link.
 `,
       },
       {
         id: "using-alternate-dns",
         name: "Link using DNS-over-HTTPS resolver",
-        code: "supabase link ******************** --dns-resolver https",
-        response: `Enter your database password (or leave blank to skip):
+        code: "supabase link abcdefghijklmnopqrst --dns-resolver https",
+        output: "recorded",
+        scenario: "docs-link",
+        response: `Target: project abcdefghijklmnopqrst
 Finished supabase link.
 `,
       },

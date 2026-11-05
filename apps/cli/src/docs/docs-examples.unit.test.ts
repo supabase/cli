@@ -1,17 +1,48 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option } from "effect";
+import { Effect, FileSystem } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
 
 import { rootCommand } from "../cli/root.ts";
-import { walkCommandTree } from "../../tests/helpers/command-tree.ts";
+import { DOCS_EXAMPLE_GROUPS, groupSelects } from "../../tests/helpers/docs-example-groups.ts";
 import {
+  type DocsExampleScenarioName,
   isDocsExampleScenario,
   missingScenarioFixtures,
+  scenarioKind,
 } from "../../tests/helpers/docs-example-scenarios.ts";
+import {
+  type AuthoredDocsExample,
+  authoredDocsExamples,
+} from "../../tests/helpers/docs-examples.ts";
 import { prepareCliArgs } from "../shared/cli/run.ts";
-import { readCommandDocs } from "./command-docs.ts";
 import { publishedDocsExamples, supabaseInvocations } from "../../tests/helpers/docs-examples.ts";
+
+/**
+ * Examples whose `response` stays hand-written, keyed `"<command> <example id>"`, each with the
+ * reason no harness run can produce it. The list only shrinks: a recorded or removed entry fails.
+ */
+const LINKED_DATABASE =
+  "the linked project's database is reached at db.<ref>.<project host>:5432, which the harness cannot point at the local stack";
+
+const ILLUSTRATIVE: ReadonlyMap<string, string> = new Map([
+  ["supabase db diff linked-project", LINKED_DATABASE],
+  ["supabase db dump linked-project", LINKED_DATABASE],
+  ["supabase db dump role-only", LINKED_DATABASE],
+  ["supabase db dump data-only", LINKED_DATABASE],
+  ["supabase db pull basic-usage", LINKED_DATABASE],
+  ["supabase db pull custom-schemas", LINKED_DATABASE],
+  ["supabase db push basic-usage", LINKED_DATABASE],
+  ["supabase db push dry-run", LINKED_DATABASE],
+  ["supabase migration list basic-usage", LINKED_DATABASE],
+  ["supabase migration repair basic-usage", LINKED_DATABASE],
+  ["supabase migration repair mark-applied", LINKED_DATABASE],
+  ["supabase login basic-usage", "the browser login flow waits for a person to approve it"],
+  [
+    "supabase sso add basic-usage",
+    "the metadata URL is fetched over HTTPS from the identity provider before the API call",
+  ],
+]);
 
 /** Examples that do not parse on purpose, keyed `"<command> <example id>"`. Every entry needs a reason. */
 const ALLOWLIST: ReadonlyMap<string, string> = new Map([]);
@@ -74,15 +105,68 @@ describe("published docs examples", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("recorded examples name a replay scenario that has a fixture", () =>
+  it.effect("recorded examples name a known scenario whose replay fixture exists", () =>
     Effect.gen(function* () {
-      const slugs = walkCommandTree(rootCommand).flatMap(({ command }) =>
-        (Option.getOrUndefined(readCommandDocs(command))?.examples ?? []).flatMap((example) =>
-          example.output === "recorded" ? [example.scenario] : [],
-        ),
+      const scenarios = (yield* authoredDocsExamples).flatMap((example) =>
+        example.output === "recorded" ? [example.scenario ?? ""] : [],
       );
-      expect(slugs.filter((slug) => !isDocsExampleScenario(slug))).toEqual([]);
-      expect(yield* missingScenarioFixtures(slugs)).toEqual([]);
+      const unknown = scenarios.filter((name) => !isDocsExampleScenario(name));
+      expect(unknown, "recorded examples naming an unknown scenario").toEqual([]);
+      expect(yield* missingScenarioFixtures(scenarios.filter(isDocsExampleScenario))).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("are each run by exactly one docs-examples file", () =>
+    Effect.gen(function* () {
+      const recorded = (yield* authoredDocsExamples).flatMap((example) =>
+        example.output === "recorded" && isDocsExampleScenario(example.scenario ?? "")
+          ? [{ example, kind: scenarioKind(example.scenario as DocsExampleScenarioName) }]
+          : [],
+      );
+      const groups = Object.entries(DOCS_EXAMPLE_GROUPS).flatMap(([kind, named]) =>
+        Object.entries(named).map(([name, selector]) => ({ kind, name, selector })),
+      );
+      const selections = recorded.map(({ example, kind }) => ({
+        key: `supabase ${example.commandPath.join(" ")} ${example.id}`,
+        picked: groups
+          .filter((group) => group.kind === kind && groupSelects(group.selector, example))
+          .map((group) => `${group.kind}/${group.name}`),
+      }));
+      expect(
+        selections.filter(({ picked }) => picked.length !== 1),
+        "recorded examples picked by zero or several groups in DOCS_EXAMPLE_GROUPS",
+      ).toEqual([]);
+      const used = new Set(selections.flatMap(({ picked }) => picked));
+      expect(
+        groups.map(({ kind, name }) => `${kind}/${name}`).filter((group) => !used.has(group)),
+        "DOCS_EXAMPLE_GROUPS entries that select no example",
+      ).toEqual([]);
+      const fs = yield* FileSystem.FileSystem;
+      const missingFiles = yield* Effect.filter(
+        groups.map(({ kind, name }) => `docs-examples/${kind}-${name}.e2e.test.ts`),
+        (file) => fs.exists(new URL(file, import.meta.url).pathname).pipe(Effect.map((x) => !x)),
+      );
+      expect(missingFiles, "groups without a test file").toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("are recorded unless the illustrative allowlist names them", () =>
+    Effect.gen(function* () {
+      const keyOf = (example: AuthoredDocsExample) =>
+        `supabase ${example.commandPath.join(" ")} ${example.id}`;
+      const examples = yield* authoredDocsExamples;
+      const illustrative = examples.filter((example) => example.output !== "recorded").map(keyOf);
+      const recorded = new Set(
+        examples.filter((example) => example.output === "recorded").map(keyOf),
+      );
+      expect(
+        illustrative.filter((key) => !ILLUSTRATIVE.has(key)),
+        "record these examples with a scenario (output: recorded) instead of hand-written responses",
+      ).toEqual([]);
+      expect(
+        [...ILLUSTRATIVE.keys()].filter((key) => recorded.has(key) || !illustrative.includes(key)),
+        "ILLUSTRATIVE entries that are recorded or gone; remove them",
+      ).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

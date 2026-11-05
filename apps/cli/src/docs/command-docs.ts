@@ -44,8 +44,8 @@ export type DocsCategory = keyof typeof DOCS_CATEGORIES;
 
 /**
  * A usage example on a command's reference page. `name` defaults to `code`. A `recorded`
- * `response` is the command's real stdout, checked and rewritten by `docs-examples.e2e.test.ts`
- * running `code` in the named scenario; any other `response` is illustrative prose.
+ * `response` is the terminal output (stdout and stderr in write order) of running `code` in the
+ * named `scenario`; any other `response` is illustrative prose.
  */
 type CommandDocsExample = {
   readonly id: string;

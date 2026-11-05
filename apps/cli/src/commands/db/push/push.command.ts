@@ -71,7 +71,10 @@ export const dbPushCommand = makeCommand("push", config).pipe(
         id: "self-hosted",
         name: "Self hosted",
         code: 'supabase db push --remote="postgres://user:pass@db.example.com:5432/postgres"',
-        response: `Pushing migration 20230410135622_create_employees_table.sql...
+        output: "recorded",
+        scenario: "docker-self-hosted",
+        response: `Target: custom Postgres (db.example.com:5432)
+Applying migration 20240102000000_add_employee_email.sql...
 Finished supabase db push.
 `,
       },

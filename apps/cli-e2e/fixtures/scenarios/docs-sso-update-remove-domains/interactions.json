@@ -1,0 +1,112 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/replayfixtureprojref/config/auth/sso/providers/__UUID__",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "id": "6df4d73f-bf21-405f-a084-b11adf19fea5",
+        "saml": {
+          "id": "9c8b7a65-4321-4fed-8cba-0987654321fe",
+          "entity_id": "https://idp.example.com/saml",
+          "metadata_xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<md:EntityDescriptor xmlns:md=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\"https://idp.example.com/saml\">\n  <md:IDPSSODescriptor protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\">\n    <md:SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Location=\"https://idp.example.com/saml/sso\"/>\n  </md:IDPSSODescriptor>\n</md:EntityDescriptor>",
+          "attribute_mapping": {
+            "keys": {
+              "email": {
+                "name": "mail"
+              }
+            }
+          },
+          "created_at": "2025-03-14T09:21:07Z",
+          "updated_at": "2025-03-14T09:21:07Z"
+        },
+        "domains": [
+          {
+            "id": "0b2e5a3c-7f61-4c1d-9a8e-3d5f0c4b2a10",
+            "domain": "company.com",
+            "created_at": "2025-03-14T09:21:07Z",
+            "updated_at": "2025-03-14T09:21:07Z"
+          },
+          {
+            "id": "0b2e5a3c-7f61-4c1d-9a8e-3d5f0c4b2a11",
+            "domain": "company.org",
+            "created_at": "2025-03-14T09:21:07Z",
+            "updated_at": "2025-03-14T09:21:07Z"
+          }
+        ],
+        "created_at": "2025-03-14T09:21:07Z",
+        "updated_at": "2025-03-14T09:21:07Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "PUT",
+      "path": "/v1/projects/replayfixtureprojref/config/auth/sso/providers/__UUID__",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": {
+        "domains": [
+          "company.com"
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "id": "6df4d73f-bf21-405f-a084-b11adf19fea5",
+        "saml": {
+          "id": "9c8b7a65-4321-4fed-8cba-0987654321fe",
+          "entity_id": "https://idp.example.com/saml",
+          "metadata_xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<md:EntityDescriptor xmlns:md=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\"https://idp.example.com/saml\">\n  <md:IDPSSODescriptor protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\">\n    <md:SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Location=\"https://idp.example.com/saml/sso\"/>\n  </md:IDPSSODescriptor>\n</md:EntityDescriptor>",
+          "attribute_mapping": {
+            "keys": {
+              "email": {
+                "name": "mail"
+              }
+            }
+          },
+          "created_at": "2025-03-14T09:21:07Z",
+          "updated_at": "2025-03-14T09:21:07Z"
+        },
+        "domains": [
+          {
+            "id": "0b2e5a3c-7f61-4c1d-9a8e-3d5f0c4b2a10",
+            "domain": "company.com",
+            "created_at": "2025-03-14T09:21:07Z",
+            "updated_at": "2025-03-14T09:21:07Z"
+          }
+        ],
+        "created_at": "2025-03-14T09:21:07Z",
+        "updated_at": "2025-03-14T09:21:07Z"
+      }
+    }
+  }
+]
