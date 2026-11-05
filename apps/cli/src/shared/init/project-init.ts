@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Path, Predicate, Schema } from "effect";
-import { parseJsonc } from "@supabase/config/internal";
+import { parseJsonc, updateJsonDocument } from "@supabase/config/internal";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { sanitizeProjectId } from "../config/project-id.ts";
 import { Output } from "../output/output.service.ts";
@@ -8,6 +8,7 @@ import {
   INIT_GITIGNORE_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
   VSCODE_EXTENSIONS_TEMPLATE,
+  VSCODE_SCHEMA_TRUST_TEMPLATE,
   VSCODE_SETTINGS_TEMPLATE,
   renderCliConfigTemplate,
 } from "./project-init.templates.ts";
@@ -83,7 +84,8 @@ function mergeJsonObjects(
   return merged;
 }
 
-function updateJsonFile(pathname: string, template: string) {
+/** Merges `template` into the JSON(C) file at `pathname`, keeping existing comments; writes the template when the file is absent or empty. */
+function mergeJsonSettingsFile(pathname: string, template: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
@@ -102,9 +104,43 @@ function updateJsonFile(pathname: string, template: string) {
       yield* parseJsonObject(pathname, existing),
       yield* parseJsonObject(pathname, template),
     );
-    yield* writeJsonFile(pathname, merged);
+    const edited = updateJsonDocument(existing, merged);
+    if (edited === undefined) {
+      yield* writeJsonFile(pathname, merged);
+      return;
+    }
+    yield* fs.writeFileString(pathname, edited, { mode: INIT_FILE_MODE });
   });
 }
+
+const SCHEMA_TRUST_KEY = "json.schemaDownload.trustedDomains";
+const SCHEMA_TRUST_DOMAIN = "https://supabase.com/schemas/";
+
+/** Adds the hosted schema domain to an existing `.vscode/settings.json` unless it already lists it; resolves to whether the file changes (or would, with `dryRun`). */
+export const trustSupabaseSchemaDomain = Effect.fnUntraced(function* (
+  cwd: string,
+  options?: { readonly dryRun?: boolean },
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const settingsPath = path.join(cwd, ".vscode", "settings.json");
+  if (!(yield* fs.exists(settingsPath))) {
+    return false;
+  }
+  const before = yield* fs.readFileString(settingsPath);
+  if (before.trim().length > 0) {
+    const trusted = (yield* parseJsonObject(settingsPath, before))[SCHEMA_TRUST_KEY];
+    if (Predicate.isObject(trusted) && Object.hasOwn(trusted, SCHEMA_TRUST_DOMAIN)) {
+      return false;
+    }
+  }
+  if (options?.dryRun === true) {
+    return true;
+  }
+  yield* mergeJsonSettingsFile(settingsPath, VSCODE_SCHEMA_TRUST_TEMPLATE);
+  return (yield* fs.readFileString(settingsPath)) !== before;
+});
 
 export const writeVscodeConfig = Effect.fnUntraced(function* (
   cwd: string,
@@ -119,8 +155,8 @@ export const writeVscodeConfig = Effect.fnUntraced(function* (
   const settingsPath = path.join(vscodeDir, "settings.json");
 
   yield* fs.makeDirectory(vscodeDir, { recursive: true, mode: INIT_DIR_MODE });
-  yield* updateJsonFile(extensionsPath, VSCODE_EXTENSIONS_TEMPLATE);
-  yield* updateJsonFile(settingsPath, VSCODE_SETTINGS_TEMPLATE);
+  yield* mergeJsonSettingsFile(extensionsPath, VSCODE_EXTENSIONS_TEMPLATE);
+  yield* mergeJsonSettingsFile(settingsPath, VSCODE_SETTINGS_TEMPLATE);
 
   if (options?.announce ?? true) {
     yield* output.raw("Generated VS Code settings in .vscode/settings.json.\n");

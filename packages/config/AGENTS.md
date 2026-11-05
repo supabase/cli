@@ -46,7 +46,7 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `AppliedConfigEdit` types — the config diff engine itself, `diffProjectConfig` and its
   `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
   `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
-  `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
+  `updateJsonDocument` (comment-preserving JSON/JSONC rewrite), `convertCliConfigTomlToJsonc` (`supabase config convert`: a pure, verified `config.toml` → `config.jsonc` converter that carries comments over; an Effect failing with `CliConfigConvertError`) with its `MovedTomlComment` type, `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
   `remoteProjectIdEntries`, the atomic single-file writer `writeCliConfigDocumentText`/
   `CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
   `parseCliConfigDocumentFile` (discover and parse) with `mergeParsedCliConfig` (merge the
