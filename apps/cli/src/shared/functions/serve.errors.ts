@@ -184,14 +184,16 @@ export class ServeConfigError extends Data.TaggedError("ServeConfigError")<{
   }
 }
 
-/** The `--env-file` / functions env input can't be read, doesn't parse, or has an invalid name. */
+/** The `--env-file` / functions env input is missing, can't be read, doesn't parse, or has an invalid name. */
 export class ServeEnvFileError extends Data.TaggedError("ServeEnvFileError")<{
   readonly message: string;
-  readonly reason: "read" | "syntax" | "env_name";
+  readonly reason: "not_found" | "read" | "syntax" | "env_name";
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
+      case "not_found":
+        return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
       case "syntax":
         return { ...actionability.invalidInput, fingerprint_suffix: "invalid_content" };
       case "env_name":

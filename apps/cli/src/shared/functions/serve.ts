@@ -31,6 +31,7 @@ import {
   Exit,
   Fiber,
   Option,
+  Predicate,
   Redacted,
   Result,
   Schema,
@@ -466,13 +467,18 @@ export function toPlainFunctionRecord(
   );
 }
 
-/* A read failure keeps its filesystem cause; a parse failure has none. */
+/* Parse failures carry no cause; a missing file is a Node `ENOENT`. */
 const typedEnvFileFailure = <A, R>(effect: Effect.Effect<A, FunctionsEnvError, R>) =>
   effect.pipe(
     Effect.mapError((error) =>
       nativeFailure(
         new ServeEnvFileError({
-          reason: error.cause === undefined ? "syntax" : "read",
+          reason:
+            error.cause === undefined
+              ? "syntax"
+              : Predicate.hasProperty(error.cause, "code") && error.cause.code === "ENOENT"
+                ? "not_found"
+                : "read",
           message: error.message,
           cause: error.cause,
         }),

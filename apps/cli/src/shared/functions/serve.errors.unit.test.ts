@@ -278,8 +278,13 @@ describe("ServeEnvFileError actionability", () => {
   it.each([
     ["syntax", undefined, "invalid_input", "tag:ServeEnvFileError:invalid_content"],
     ["env_name", undefined, "invalid_input", "tag:ServeEnvFileError:functions_env"],
-    ["read", platformCause("NotFound"), "invalid_input", "tag:ServeEnvFileError:not_found"],
-    ["read", platformCause("PermissionDenied"), "permission", "tag:ServeEnvFileError:filesystem"],
+    ["not_found", undefined, "invalid_input", "tag:ServeEnvFileError:not_found"],
+    [
+      "read",
+      Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }),
+      "unknown",
+      "tag:ServeEnvFileError:filesystem_io",
+    ],
     ["read", undefined, "unknown", "tag:ServeEnvFileError:filesystem_io"],
   ] as const)("classifies a %s failure with cause %#", (reason, cause, category, fingerprint) => {
     const result = classifyCliErrorActionability(

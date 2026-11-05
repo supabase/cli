@@ -826,14 +826,12 @@ describe("functions serve integration", () => {
       const { layer } = setupServe();
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain(`failed to parse environment file: ${functionEnvPath}`);
-        expect(error.message).toContain("unexpected character '-' in variable name");
-        expect(error.message).not.toContain("secret-value");
-        expect(error.message).not.toContain('near "API-KEY=secret-value"');
-      }
-      expect(normalizeCliError(error).code).toBe("UnknownError");
+      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvFileError);
+      expect(error.message).toContain(`failed to parse environment file: ${functionEnvPath}`);
+      expect(error.message).toContain("unexpected character '-' in variable name");
+      expect(error.message).not.toContain("secret-value");
+      expect(error.message).not.toContain('near "API-KEY=secret-value"');
+      expect(normalizeCliError(error).code).toBe("ServeEnvFileError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",
@@ -843,26 +841,6 @@ describe("functions serve integration", () => {
       expect(deployMockState.volumeCalls).toHaveLength(0);
     }).pipe(Effect.provide(BunServices.layer));
   });
-
-  it.live("fails with a typed env-file error when the --env-file path is missing", () =>
-    Effect.gen(function* () {
-      yield* writeCliConfig(['project_id = "test-project"', ""].join("\n"));
-      yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
-
-      const { layer } = setupServe();
-      const error = yield* functionsServe(baseFlags({ envFile: Option.some("missing.env") })).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
-
-      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvFileError);
-      expect(error.message).toMatch(/^failed to load environment file: .*missing\.env \(.+\)$/su);
-      expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
-        "tag:ServeEnvFileError:not_found",
-      );
-      expect(deployMockState.runCalls.some((call) => call.args[0] === "create")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
 
   it.live.each([
     ["create", "Bind for 0.0.0.0:54321 failed: port is already allocated", "port_in_use"],
@@ -4405,12 +4383,13 @@ describe("functions serve integration", () => {
         }),
       ).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
-        expect(error.message).toContain(".env");
-        expect(error.message).toContain("no such file or directory");
-      }
-      expect(normalizeCliError(error).code).toBe("UnknownError");
+      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvFileError);
+      expect(error.message).toContain(".env");
+      expect(error.message).toContain("no such file or directory");
+      expect(normalizeCliError(error).code).toBe("ServeEnvFileError");
+      expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
+        "tag:ServeEnvFileError:not_found",
+      );
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",

@@ -5701,7 +5701,7 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
-    it.effect("fails on a malformed supabase/functions/.env with the legacy error code", () =>
+    it.effect("fails on a malformed supabase/functions/.env with a typed env-file error", () =>
       Effect.gen(function* () {
         const { layer, workdir } = yield* setup();
 
@@ -5712,7 +5712,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
         expect(error.message).toContain("failed to parse environment file:");
         expect(error.message).not.toContain("secret-value");
-        expect(normalizeCliError(error).code).toBe("UnknownError");
+        expect(normalizeCliError(error).code).toBe("ServeEnvFileError");
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
