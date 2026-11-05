@@ -287,7 +287,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
           service: creation.service === "database" ? "postgres" : creation.service,
           resource: id,
           sql: null,
-          filters: ["service", "resource", "since", "tail"],
+          filters: ["service", "resource", "since", "limit"],
           kinds: ["stdout", "stderr", "launch", "lost"],
           severity: null,
         }));
@@ -300,7 +300,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
                   service: gatewayLog.service,
                   resource: gatewayLog.instanceId,
                   sql: null,
-                  filters: ["service", "since", "tail"],
+                  filters: ["service", "since", "limit"],
                   kinds: ["stdout", "stderr", "launch", "lost"],
                   severity: null,
                 },

@@ -182,7 +182,8 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (
       );
     const { window, positions: printed, launches } = collector.finish();
 
-    if (output.format === "json") return yield* output.result(window.records);
+    if (output.format === "json")
+      return yield* output.result(window.records.map((record) => logEvent(record, "history")));
     // Colour follows the terminal only when stdout is one, so piped logs stay plain.
     const terminal = output.interactive;
     const text = makeTextFormatter(selected, terminal ? process.stdout : {});

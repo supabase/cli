@@ -53,7 +53,7 @@ import {
 } from "../../../../command-internal/stack-target.ts";
 import type { RetainedLogsFlags as StackLogsFlags } from "../../../../command-internal/stack-logs/retained-logs.ts";
 import { stackLogs } from "../../../../command-internal/stack-logs/retained-logs.ts";
-import { logs } from "../../../logs/logs.handler.ts";
+import { logs, logsSources } from "../../../logs/logs.handler.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
@@ -323,7 +323,38 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
       const exit = yield* runLogs.pipe(Effect.provide(layer), Effect.exit);
       return { exit, output, telemetry, screens };
     });
-  return { stackId: stack.id, stateRoot, opened, writeSegment, run };
+  const sources = () =>
+    Effect.gen(function* () {
+      const output = mockOutput({ format: "json" });
+      const telemetry = mockTelemetryStateTracked();
+      const layer = Layer.mergeAll(
+        commandRuntimeLayer(["logs", "sources"]),
+        output.layer,
+        telemetry.layer,
+        Layer.succeed(OutputFlag, Option.none()),
+        Layer.succeed(TargetPolicy, {
+          group: "selectable",
+          consent: "none",
+          consentExemptReason: "Read logs",
+        }),
+        Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
+      );
+      yield* logsSources(
+        {
+          remote: Option.none(),
+          projectRef: Option.none(),
+          local: false,
+          linked: false,
+          stack: Option.none(),
+          stackId: Option.some(stack.id),
+          service: Option.none(),
+        },
+        true,
+        false,
+      ).pipe(Effect.provide(layer));
+      return output.stdoutText;
+    });
+  return { stackId: stack.id, stateRoot, opened, writeSegment, run, sources };
 });
 
 const failure = <E>(exit: Exit.Exit<void, E>) =>
@@ -347,7 +378,15 @@ describe("retained local logs", () => {
       expect(output.stdoutText.startsWith("[{")).toBe(true);
       const rows = decodeRows(output.stdoutText);
       expect(rows).toHaveLength(200);
-      expect(rows[0]).toMatchObject({ text: "retained 1" });
+      expect(rows[0]).toMatchObject({
+        type: "log-entry",
+        timestamp: iso(t0 + 2),
+        source: "history",
+        service: "mail",
+        instance_id: "mail-a",
+        stream: "stdout",
+        line: "retained 1",
+      });
       expect(output.stderrText.match(/Warning: stack logs is deprecated/g)).toHaveLength(1);
       expect(output.stderrText).toContain("removed in v4");
       expect(output.stdoutText).not.toContain("deprecated");
@@ -376,6 +415,20 @@ describe("retained local logs", () => {
       ).toBe(true);
       expect(screens.at(-1)).toContain("?1049l");
       expect(output.stdoutText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("advertises the accepted local log limit for instances and gateway", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
+      });
+      const sources = decodeRows(yield* f.sources());
+      const instance = sources.find((source) => source.resource === "mail-a");
+      const gateway = sources.find((source) => source.service === "gateway");
+      expect(instance?.filters).toEqual(["service", "resource", "since", "limit"]);
+      expect(gateway?.filters).toEqual(["service", "since", "limit"]);
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
@@ -604,13 +657,11 @@ describe("retained local logs", () => {
         { data: { kind: "stderr", text: "oops", launchId: 1 } },
         { data: { kind: "lost", count: 3 } },
       ]);
-      expect(
-        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(finite.output.stdoutText),
-      ).toMatchObject([
-        { kind: "launch" },
-        { kind: "stdout", text: "hello" },
-        { kind: "stderr", text: "oops" },
-        { kind: "lost", count: 3 },
+      expect(decodeRows(finite.output.stdoutText)).toMatchObject([
+        { type: "log-marker", kind: "launch", source: "history", service: "mail" },
+        { type: "log-entry", line: "hello", stream: "stdout", source: "history" },
+        { type: "log-entry", line: "oops", stream: "stderr", source: "history" },
+        { type: "log-marker", kind: "lost", count: 3, source: "history" },
       ]);
       expect(
         lines(text.output.stdoutText).map((value) => value.replace(/\d{2}:\S+ /u, "")),
