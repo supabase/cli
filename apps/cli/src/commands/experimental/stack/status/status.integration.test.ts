@@ -728,6 +728,10 @@ for (const functionsMember of [false, true])
         const result = run.out.messages.find((message) => message.type === "success")?.data;
         expect(result).toMatchObject({ config_drift: { status: "unchanged" } });
         expect(run.out.stderrText).not.toContain("Env name cannot start with SUPABASE_");
+        const requested = run.requested.find(({ service }) => service === "functions");
+        expect(requested?.service === "functions" && requested.config.env).toEqual(
+          functionsMember ? { PRIVATE_KEY: "-----BEGIN KEY-----\nsecret\n-----END KEY-----" } : {},
+        );
       }),
   );
 

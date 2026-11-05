@@ -17,6 +17,7 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import { loadStackConfig, StackConfigError } from "../../../command-internal/stack-config.ts";
+import { FUNCTION_SLUG_PATTERN } from "../../../command-internal/config-validate.ts";
 import {
   LockResolutionError,
   readSelectionOrBundled,
@@ -74,7 +75,7 @@ const serveEnv = Effect.fn("functions.serve.env")(function* (
     functionsDir: base.functionsRoot,
     envFile,
     functionSlugs: Object.entries(manifest).flatMap(([slug, { enabled }]) =>
-      enabled ? [slug] : [],
+      enabled && FUNCTION_SLUG_PATTERN.test(slug) ? [slug] : [],
     ),
     warn: true,
   });

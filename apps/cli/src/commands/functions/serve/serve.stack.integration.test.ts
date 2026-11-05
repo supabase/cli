@@ -521,14 +521,17 @@ describe("experimental Stack Functions serve", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-own-env-standalone-" });
-      yield* fs.makeDirectory(`${root}/supabase/functions/echo`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/functions/echo/index.ts`, "");
+      for (const slug of ["echo", "_shared"]) {
+        yield* fs.makeDirectory(`${root}/supabase/functions/${slug}`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/functions/${slug}/index.ts`, "");
+      }
       yield* fs.writeFileString(
         `${root}/supabase/config.toml`,
         'project_id = "functions-own-env"\n[edge_runtime.secrets]\nlower_name = "secret"\nSHARED = "secret"\nSUPABASE_TOML = "x"\nUNSET_NAME = "env(FUNCTIONS_SERVE_STACK_UNSET_SECRET)"\n',
       );
       yield* fs.writeFileString(`${root}/supabase/functions/.env`, "SHARED=dotenv\n");
       yield* fs.writeFileString(`${root}/supabase/functions/echo/.env`, "PER_FN=echo\n");
+      yield* fs.writeFileString(`${root}/supabase/functions/_shared/.env`, "BARREL=never-read\n");
       const state = yield* fixture({ standaloneProjectRoot: root });
       const run = yield* functionsServeStack(flags()).pipe(
         Effect.provide(state.layer),
@@ -540,6 +543,7 @@ describe("experimental Stack Functions serve", () => {
         SHARED: "dotenv",
       });
       expect(state.createdFunctions?.config.functions?.echo?.env).toEqual({ PER_FN: "echo" });
+      expect(state.createdFunctions?.config.functions?._shared?.env).toBeUndefined();
       expect(state.output.stderrText).toContain(
         "Env name cannot start with SUPABASE_, skipping: SUPABASE_TOML\n",
       );
