@@ -3,6 +3,8 @@ import type { LogsSession } from "./logs.session.ts";
 import { LogsClipboard } from "./logs.clipboard.ts";
 import process from "node:process";
 import { Clock, Effect, Exit, Layer, Option, Queue, Schema, Stream, Terminal } from "effect";
+import { OutputFormatFlag } from "../../command-internal/global-flags.ts";
+import { envValue } from "../../shared/config/env-option.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
@@ -26,7 +28,13 @@ export const logsTerminalLayer = Layer.effect(
 export const useLogsBrowser = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const tty = yield* Effect.serviceOption(Tty);
+  const format = yield* Effect.serviceOption(OutputFormatFlag).pipe(Effect.map(Option.flatten));
+  const ci = yield* envValue("CI");
+  const term = yield* envValue("TERM");
   return (
+    Option.isNone(format) &&
+    (ci === undefined || ci === "" || ci === "0" || ci.toLowerCase() === "false") &&
+    term !== "dumb" &&
     output.format === "text" &&
     output.interactive &&
     Option.isSome(tty) &&
@@ -156,11 +164,14 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
                 window: event.result.value.window,
                 error: undefined,
                 complete: true,
-                notice: initial
-                  ? ""
-                  : session.mode === "replace"
-                    ? "Query reloaded."
-                    : `${loadedCount} new ${loadedCount === 1 ? "log" : "logs"} loaded.`,
+                notice:
+                  event.result.value.window.kind === "range" && event.result.value.window.pending
+                    ? "More logs pending in this window. Press L to continue."
+                    : initial
+                      ? ""
+                      : session.mode === "replace"
+                        ? "Query reloaded."
+                        : `${loadedCount} new ${loadedCount === 1 ? "log" : "logs"} loaded.`,
               };
             }
             break;

@@ -3,8 +3,6 @@ import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Sink, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { rootCommandForFeatures } from "../../cli/root.ts";
-import { resolveComputeEnabled } from "../experimental/compute/compute-backend.ts";
-import { withConfigEnv } from "../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -44,11 +42,8 @@ it.effect.each([
         "--output-format",
         "json",
       ];
-      const computeEnabled = yield* withConfigEnv(env, resolveComputeEnabled({ args, cwd: home }));
       const chunks: string[] = [];
-      yield* Command.runWith(rootCommandForFeatures({ computeEnabled }), { version: "test" })(
-        args,
-      ).pipe(
+      yield* Command.runWith(rootCommandForFeatures({}), { version: "test" })(args).pipe(
         Effect.provide(
           Layer.mergeAll(
             CliOutput.layer(textCliOutputFormatter()),

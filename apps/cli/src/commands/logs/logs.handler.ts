@@ -1,10 +1,17 @@
+import { hasGatewayLogs } from "../../command-internal/logs/local-sources.ts";
 import { logEvent, markerText } from "../../command-internal/stack-log-events.ts";
-import { Clock, Effect, FileSystem, Option, Path, Schema } from "effect";
-import { gatewayLog, sharesApiEndpoint } from "@supabase/stack/effect";
+import { Clock, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
+import { gatewayLog } from "@supabase/stack/effect";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { StackTargetResolver, validateStackTarget } from "../../command-internal/stack-target.ts";
 import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import {
+  readExperimentalFeatureConfig,
+  resolveExperimentalFeature,
+} from "../../shared/config/experimental-feature.ts";
+import { currentProjectStateMode } from "../../shared/config/project-state-mode.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
@@ -20,6 +27,19 @@ import { makeRemoteLogsSession } from "./logs.remote-session.ts";
 import { makeLocalLogsSession } from "./logs.local-session.ts";
 import type { LogsFlags, LogsSession } from "./logs.session.ts";
 import type { LogsSourcesFlags } from "./logs.command.ts";
+
+const resolveLogsCompute = Effect.fn("Logs.resolveCompute")(function* () {
+  const settings = yield* CommandSettings;
+  const args = yield* Effect.serviceOption(CliArgs);
+  return yield* resolveExperimentalFeature({
+    feature: "compute",
+    configValue: readExperimentalFeatureConfig({
+      feature: "compute",
+      cwd: settings.workdir,
+      args: Option.isSome(args) ? args.value.args : [],
+    }),
+  });
+});
 
 const logsWidth = Effect.fnUntraced(function* () {
   const tty = yield* Effect.serviceOption(Tty);
@@ -60,17 +80,41 @@ const emitRows = Effect.fnUntraced(function* (
 const sqlInput = Effect.fn("Logs.sqlInput")(function* (flags: LogsFlags) {
   if (Option.isSome(flags.sql) && Option.isSome(flags.file))
     return yield* new LogsInputError({ message: "Provide SQL with --sql or --file, not both." });
-  const stdin = yield* Stdin;
-  const piped =
-    stdin.isTTY || Option.isSome(flags.sql) || Option.isSome(flags.file)
-      ? Option.none<string>()
-      : yield* stdin.readPipedText;
-  let sql = Option.getOrUndefined(flags.sql) ?? Option.getOrUndefined(piped);
+  let sql = Option.getOrUndefined(flags.sql);
   if (Option.isSome(flags.file)) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const settings = yield* CommandSettings;
-    sql = yield* fs.readFileString(path.resolve(settings.workdir, flags.file.value));
+    if (flags.file.value === "-") {
+      const stdin = yield* Stdin;
+      if (stdin.isTTY)
+        return yield* new LogsInputError({
+          message: "Pipe SQL into stdin when using --file -, or use --sql or --file <path>.",
+        });
+      sql = yield* stdin.pipedBytesStream.pipe(
+        Stream.decodeText(),
+        Stream.runFold(
+          () => "",
+          (text, chunk) => text + chunk,
+        ),
+        Effect.mapError(
+          () =>
+            new LogsInputError({
+              message: "Could not read SQL from stdin. Check the input pipe and try again.",
+            }),
+        ),
+      );
+    } else {
+      const file = flags.file.value;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const settings = yield* CommandSettings;
+      sql = yield* fs.readFileString(path.resolve(settings.workdir, file)).pipe(
+        Effect.mapError(
+          (error) =>
+            new LogsInputError({
+              message: `Could not read SQL file "${file}": ${error.message}`,
+            }),
+        ),
+      );
+    }
   }
   if (sql !== undefined && sql.trim() === "")
     return yield* new LogsInputError({ message: "The SQL input is empty." });
@@ -91,11 +135,7 @@ const localRecord = Schema.Struct({
 const filteredText = (row: Schema.JsonObject) =>
   `${String(row["timestamp"] ?? "—")} ${String(row["service"] ?? row["source"] ?? "logs")} ${String(row["event_message"] ?? row["text"] ?? (Schema.is(localRecord)(row) ? markerText(row) : (row["kind"] ?? "")))}`;
 
-export const logs = Effect.fn("logs")(function* (
-  flags: LogsFlags,
-  localEnabled: boolean,
-  computeEnabled: boolean,
-) {
+export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
     yield* rejectLegacyOutput(undefined);
@@ -119,10 +159,10 @@ export const logs = Effect.fn("logs")(function* (
         message:
           "Custom SQL cannot be combined with service, resource, kind, level, search, or stack filters.",
       });
-    if (target.kind === "local" && !localEnabled)
+    if (target.kind === "local" && (yield* currentProjectStateMode) !== "stack")
       return yield* new LogsInputError({
         message:
-          "Local logs require the experimental stack backend. Enable experimental.stack in your CLI config.",
+          "Local logs require the experimental stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml, or use --remote for hosted logs.",
       });
     const started = yield* Clock.currentTimeMillis;
     const output = yield* Output;
@@ -166,7 +206,7 @@ export const logs = Effect.fn("logs")(function* (
           flags,
           target.ref,
           started,
-          computeEnabled,
+          sql === undefined ? yield* resolveLogsCompute() : false,
           sql,
         );
         yield* run(session);
@@ -177,16 +217,13 @@ export const logs = Effect.fn("logs")(function* (
   }).pipe(Effect.ensuring(telemetry.flush));
 });
 
-export const logsSources = Effect.fn("logs.sources")(function* (
-  flags: LogsSourcesFlags,
-  localEnabled: boolean,
-  computeEnabled: boolean,
-) {
+export const logsSources = Effect.fn("logs.sources")(function* (flags: LogsSourcesFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
     yield* rejectLegacyOutput("sources");
     const target = yield* resolveTarget(flags);
     if (target.kind === "linked") {
+      const availableCompute = yield* resolveLogsCompute();
       if (Option.isSome(flags.stack) || Option.isSome(flags.stackId))
         return yield* new LogsInputError({
           message: "--stack and --stack-id are local selectors.",
@@ -196,7 +233,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
         !hostedSources.some(
           (entry) =>
             entry.service === Option.getOrUndefined(flags.service) &&
-            (computeEnabled || entry.service !== "compute"),
+            (availableCompute || entry.service !== "compute"),
         )
       )
         return yield* new LogsInputError({
@@ -206,7 +243,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
         hostedSources
           .filter(
             (entry) =>
-              (computeEnabled || entry.service !== "compute") &&
+              (availableCompute || entry.service !== "compute") &&
               (Option.isNone(flags.service) || entry.service === flags.service.value),
           )
           .map((entry) => ({
@@ -242,9 +279,10 @@ export const logsSources = Effect.fn("logs.sources")(function* (
         Option.isSome(flags.service),
       );
     }
-    if (!localEnabled)
+    if ((yield* currentProjectStateMode) !== "stack")
       return yield* new LogsInputError({
-        message: "Local log discovery requires the experimental stack backend.",
+        message:
+          "Local log discovery requires the experimental stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml, or use --remote for hosted sources.",
       });
     return yield* Effect.gen(function* () {
       yield* validateStackTarget({
@@ -261,10 +299,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
       });
       const instances = target.definition?.instances ?? [];
       const requested = Option.getOrUndefined(flags.service);
-      const members = new Set(target.definition?.composition.members.map(({ id }) => id) ?? []);
-      const gateway = instances.some(
-        ({ id, creation }) => members.has(id) && sharesApiEndpoint(creation),
-      );
+      const gateway = target.definition !== undefined && hasGatewayLogs(target.definition);
       if (
         requested !== undefined &&
         !instances.some(

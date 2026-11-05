@@ -1,7 +1,17 @@
 import { LogsClipboard } from "./logs.clipboard.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Layer, Option, Stream, Schema, Queue, Terminal } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Layer,
+  Option,
+  Stream,
+  Schema,
+  Queue,
+  Terminal,
+} from "effect";
 import { DebugFlag, ProfileFlag, WorkdirFlag } from "../../command-internal/global-flags.ts";
 import { mockContextualAnalytics, mockTelemetryRuntime } from "../../../tests/helpers/mocks.ts";
 import { TestClock } from "effect/testing";
@@ -18,6 +28,10 @@ import {
 import { StackApi, StackTargetResolver } from "../../command-internal/stack-target.ts";
 import { logs, logsSources } from "./logs.handler.ts";
 import type { LogsFlags } from "./logs.session.ts";
+import {
+  classifyCliErrorActionability,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { LogsApiError, LogsInputError } from "./logs.errors.ts";
 
 const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
@@ -51,13 +65,14 @@ const queryFlags = (overrides: Partial<LogsFlags> = {}): LogsFlags =>
   });
 const tailFlags = (overrides: Partial<LogsFlags> = {}): LogsFlags =>
   baseFlags({ service: ["postgres"], ...overrides });
-const runQuery = (flags: LogsFlags) => logs(flags, false, false);
+const runQuery = (flags: LogsFlags) => logs(flags);
 const stdin = (text?: string) =>
   Layer.succeed(Stdin, {
     isTTY: text === undefined,
     readPipedText: Effect.succeed(Option.fromUndefinedOr(text)),
     readPipedBytes: Effect.succeed(Option.none()),
-    pipedBytesStream: Stream.empty,
+    pipedBytesStream:
+      text === undefined ? Stream.empty : Stream.make(new TextEncoder().encode(text)),
     readLine: () => Effect.succeed(Option.none()),
   });
 const row = (id: string, ts = now - 1000) => ({
@@ -78,6 +93,7 @@ const prepare = Effect.fnUntraced(function* (
   const api = yield* CommandPlatformApi.pipe(Effect.provide(setup.layer));
   const layer = Layer.mergeAll(
     setup.layer,
+    ConfigProvider.layer(ConfigProvider.fromUnknown({})),
     Layer.mock(LogsClipboard, {}),
     Layer.mock(StackApi, {}),
     Layer.mock(StackTargetResolver, {}),
@@ -349,8 +365,6 @@ describe("unified logs", () => {
         });
         yield* logs(
           tailFlags({ limit: 2, level: ["error"], search: Option.some("can't_%\\") }),
-          false,
-          false,
         ).pipe(Effect.provide(setup.layer));
         const lines = decodeRows(setup.out.stdoutText);
         expect(setup.out.stderrText).toContain("History reached --limit; older rows may exist.");
@@ -367,7 +381,7 @@ describe("unified logs", () => {
     Effect.gen(function* () {
       const repo = yield* makeComputeProject();
       const setup = yield* prepare({ workdir: repo.dir, format: "json", routes: {} });
-      yield* logsSources({ ...tailFlags(), service: Option.some("storage") }, false, false).pipe(
+      yield* logsSources({ ...tailFlags(), service: Option.some("storage") }).pipe(
         Effect.provide(setup.layer),
       );
       const sources = decodeRows(setup.out.stdoutText);
@@ -379,15 +393,17 @@ describe("unified logs", () => {
   );
   it.effect("renders source summaries and full selected-service details in text", () =>
     Effect.gen(function* () {
-      const repo = yield* makeComputeProject();
+      const repo = yield* makeComputeProject({
+        "supabase/config.toml": "[experimental]\ncompute = true\n",
+      });
       const overview = yield* prepare({ workdir: repo.dir, format: "text", routes: {} });
-      yield* logsSources({ ...tailFlags(), service: Option.none() }, false, true).pipe(
+      yield* logsSources({ ...tailFlags(), service: Option.none() }).pipe(
         Effect.provide(overview.layer),
       );
       expect(overview.out.stdoutText).toContain("Use --service <service>");
       expect(overview.out.stdoutText).not.toContain("log_attributes");
       const detail = yield* prepare({ workdir: repo.dir, format: "text", routes: {} });
-      yield* logsSources({ ...tailFlags(), service: Option.some("compute") }, false, true).pipe(
+      yield* logsSources({ ...tailFlags(), service: Option.some("compute") }).pipe(
         Effect.provide(detail.layer),
       );
       expect(detail.out.stdoutText).toContain("Service:\n  compute");
@@ -397,7 +413,7 @@ describe("unified logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("reads fallback stdin but never consumes a pipe when explicit SQL is supplied", () =>
+  it.effect("reads stdin only for --file - and preserves unrelated piped input", () =>
     Effect.gen(function* () {
       const repo = yield* makeComputeProject();
       const setup = yield* prepare(
@@ -408,7 +424,9 @@ describe("unified logs", () => {
         },
         "select count() from logs",
       );
-      yield* runQuery(queryFlags({ sql: Option.none() })).pipe(Effect.provide(setup.layer));
+      yield* runQuery(queryFlags({ sql: Option.none(), file: Option.some("-") })).pipe(
+        Effect.provide(setup.layer),
+      );
       expect(setup.http.requests[0]?.urlParams.sql).toBe("select count() from logs");
       const failOnRead = Layer.succeed(Stdin, {
         isTTY: false,
@@ -419,9 +437,51 @@ describe("unified logs", () => {
       });
       yield* runQuery(queryFlags()).pipe(Effect.provide(Layer.merge(setup.layer, failOnRead)));
       expect(setup.http.requests[1]?.urlParams.sql).toContain("select event_message");
+      yield* logs(tailFlags()).pipe(Effect.provide(Layer.merge(setup.layer, failOnRead)));
+      expect(setup.http.requests[2]?.urlParams.sql).toContain("postgres_logs");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
-  it.effect.each([402, 404, 429, 500])(
+  it.effect("does not read an open stdin pipe for ordinary logs", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        format: "json",
+        routes: { [route]: { status: 200, body: { result: [], error: null } } },
+      });
+      yield* logs(tailFlags()).pipe(
+        Effect.provideService(Stdin, {
+          isTTY: false,
+          readPipedText: Effect.die("ordinary logs consumed stdin"),
+          readPipedBytes: Effect.die("ordinary logs consumed stdin"),
+          pipedBytesStream: Stream.die("ordinary logs consumed stdin"),
+          readLine: () => Effect.die("ordinary logs consumed stdin"),
+        }),
+        Effect.provide(setup.layer),
+      );
+      expect(setup.http.requests[0]?.urlParams.sql).toContain("postgres_logs");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect.each([
+    { file: "-", piped: undefined, message: "Pipe SQL into stdin" },
+    { file: "-", piped: "   ", message: "SQL input is empty" },
+    { file: "missing.sql", piped: undefined, message: 'Could not read SQL file "missing.sql"' },
+  ])("rejects unusable SQL input from $file: $message", ({ file, piped, message }) =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({ workdir: repo.dir, routes: {} }, piped);
+      const error = yield* runQuery(
+        queryFlags({ sql: Option.none(), file: Option.some(file) }),
+      ).pipe(Effect.flip, Effect.provide(setup.layer));
+      expect(error).toMatchObject({
+        _tag: "LogsInputError",
+        message: expect.stringContaining(message),
+      });
+      expect(setup.http.requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+  it.effect.each([401, 402, 403, 404, 429, 500])(
     "surfaces hosted query HTTP %s as a typed API failure",
     (status) =>
       Effect.gen(function* () {
@@ -429,9 +489,46 @@ describe("unified logs", () => {
         const setup = yield* prepare({ workdir: repo.dir, routes: { [route]: { status } } });
         const error = yield* runQuery(queryFlags()).pipe(Effect.flip, Effect.provide(setup.layer));
         expect(error).toMatchObject({ _tag: "LogsApiError", status });
+        if (Schema.is(LogsApiError)(error) && [401, 402, 403].includes(status))
+          expect(error.message).toMatch(/login|usage|permission/i);
         expect(setup.http.requests).toHaveLength(1);
         expect(setup.telemetry.flushed).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("preserves transport failure classification without an invented HTTP status", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        routes: { [route]: { transportError: "connection refused" } },
+      });
+      const error = yield* runQuery(queryFlags()).pipe(Effect.flip, Effect.provide(setup.layer));
+      expect(error).toMatchObject({ _tag: "HttpClientError", reason: { _tag: "TransportError" } });
+      expect(error).not.toHaveProperty("status");
+      expect(classifyCliErrorActionability(error)).toMatchObject({
+        error_kind: "external_service",
+        error_category: "network",
+      });
+      expect(setup.http.requests).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("classifies an unreadable successful response without inventing an HTTP failure", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        routes: { [route]: { status: 200, body: { result: "not rows" } } },
+      });
+      const error = yield* runQuery(queryFlags()).pipe(Effect.flip, Effect.provide(setup.layer));
+      expect(error).toMatchObject({ _tag: "LogsApiError", status: 200, reason: "response" });
+      if (!Schema.is(LogsApiError)(error)) return yield* Effect.die("Expected logs response error");
+      expect(error[ErrorActionabilityId]).toMatchObject({
+        error_category: "api_status",
+        fingerprint_suffix: "api_response",
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.effect("fails typed for an out-of-range log timestamp", () =>
@@ -441,13 +538,11 @@ describe("unified logs", () => {
         workdir: repo.dir,
         routes: { [route]: { status: 200, body: { result: [row("bad", 8.7e15)], error: null } } },
       });
-      const error = yield* logs(tailFlags(), false, false).pipe(
-        Effect.flip,
-        Effect.provide(setup.layer),
-      );
+      const error = yield* logs(tailFlags()).pipe(Effect.flip, Effect.provide(setup.layer));
       expect(error).toMatchObject({
         _tag: "LogsApiError",
-        status: 502,
+        status: 200,
+        reason: "response",
         message: "The logs API returned an unreadable log row.",
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -464,7 +559,7 @@ describe("unified logs", () => {
           [route]: [{ status: 200, body: { result: [row("seed")], error: null } }, { status: 404 }],
         },
       });
-      yield* logs(tailFlags(), false, false).pipe(Effect.provide(setup.layer));
+      yield* logs(tailFlags()).pipe(Effect.provide(setup.layer));
       yield* TestClock.adjust("10 seconds");
       expect(setup.http.requests).toHaveLength(1);
       expect(setup.out.events).toContainEqual(

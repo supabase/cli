@@ -87,8 +87,7 @@ const config = {
     Flag.optional,
   ),
   file: Flag.String("file").pipe(
-    Flag.withAlias("f"),
-    Flag.withDescription("Read custom hosted log SQL from a file."),
+    Flag.withDescription("Read custom hosted log SQL from a file; use - to read stdin."),
     Flag.optional,
   ),
 };
@@ -136,7 +135,7 @@ const logsReadFlags = [
   "file",
 ];
 
-export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
+export const logsCommandFor = () =>
   Command.make("logs", config).pipe(
     Command.annotate(OptionalSubcommand, true),
     Command.withDescription(
@@ -144,7 +143,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
     ),
     withPermissions(readPermissions(logsReadFlags)),
     Command.withHandler((flags) =>
-      logs(flags, localEnabled, computeEnabled).pipe(
+      logs(flags).pipe(
         withCommandTelemetry({ flags, config, outputFormats: GLOBAL_OUTPUT_FORMATS }),
         withJsonErrorHandling,
       ),
@@ -174,7 +173,7 @@ export const logsCommandFor = (localEnabled: boolean, computeEnabled = false) =>
           ),
         ),
         Command.withHandler((flags) =>
-          logsSources(flags, localEnabled, computeEnabled).pipe(
+          logsSources(flags).pipe(
             withCommandTelemetry({
               flags,
               config: sourcesConfig,

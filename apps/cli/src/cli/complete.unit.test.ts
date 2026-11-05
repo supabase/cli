@@ -530,29 +530,23 @@ describe("respondToComplete", () => {
 
   describe("--output's choice values are validated per-command, not the widened global union (CLI-1965 review)", () => {
     it.each([
-      { leaf: "query", format: "table", accepted: false },
-      { leaf: "query", format: "csv", accepted: false },
-      { leaf: "sources", format: "table", accepted: false },
-      { leaf: "sources", format: "csv", accepted: false },
-      { leaf: "tail", format: "table", accepted: false },
-      { leaf: "tail", format: "csv", accepted: false },
-      { leaf: "query", format: "env", accepted: false },
-    ])(
-      "validates logs $leaf -o $format before completing the next flag",
-      ({ leaf, format, accepted }) => {
-        const result = respondToComplete(rootCommand, [
-          "__complete",
-          "logs",
-          leaf,
-          "-o",
-          format,
-          "--rem",
-        ]);
-        if (accepted)
-          expect(result?.candidates.map((candidate) => candidate.name)).toContain("--remote=");
-        else expect(result).toEqual({ candidates: [], directive: CompletionDirective.Default });
-      },
-    );
+      { path: ["logs"], format: "table" },
+      { path: ["logs"], format: "csv" },
+      { path: ["logs", "sources"], format: "table" },
+      { path: ["logs", "sources"], format: "csv" },
+      { path: ["logs"], format: "env" },
+    ])("rejects $path -o $format with a valid output-format control", ({ path, format }) => {
+      const control = respondToComplete(rootCommand, [
+        "__complete",
+        ...path,
+        "--output-format",
+        "json",
+        "--rem",
+      ]);
+      expect(control?.candidates.map((candidate) => candidate.name)).toContain("--remote=");
+      const result = respondToComplete(rootCommand, ["__complete", ...path, "-o", format, "--rem"]);
+      expect(result).toEqual({ candidates: [], directive: CompletionDirective.Default });
+    });
 
     it("rejects db query's own local values (table/csv) everywhere else", () => {
       const result = respondToComplete(rootCommand, ["__complete", "--output", "table", ""]);

@@ -180,7 +180,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       linkCommand,
       loginCommand,
       logoutCommand,
-      logsCommandFor(options.stackBackend === "stack", options.computeEnabled),
+      logsCommandFor(),
       migrationCommand,
       networkBansCommand,
       networkRestrictionsCommand,

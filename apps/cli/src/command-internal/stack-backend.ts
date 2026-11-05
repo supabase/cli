@@ -113,22 +113,11 @@ export const resolveProjectStateSelection = Effect.fn("ProjectState.resolveSelec
         : commandPath;
     const routedPath = completePath[0] === "help" ? completePath.slice(1) : completePath;
     const command = routedPath[0];
-    const customSql = routingArgs.some(
-      (argument) =>
-        argument === "--sql" ||
-        argument.startsWith("--sql=") ||
-        argument === "--file" ||
-        argument.startsWith("--file=") ||
-        argument === "-f" ||
-        argument.startsWith("-f="),
-    );
-    const logsCapability = command === "logs" && !customSql;
     const routed =
       command === undefined ||
       command === "stack" ||
       STACK_BACKEND_COMMANDS.has(command) ||
-      isFunctionsServePath(routedPath) ||
-      logsCapability;
+      isFunctionsServePath(routedPath);
 
     const projectState = yield* Effect.exit(projectStateMode({ ...input, args: routingArgs }));
     const stackBackend = routed

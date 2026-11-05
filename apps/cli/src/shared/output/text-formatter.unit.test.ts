@@ -13,7 +13,7 @@ describe("textCliOutputFormatter", () => {
     "shows the logs subcommand as optional while preserving required command groups",
     (makeFormatter) => {
       const formatter = makeFormatter();
-      const logsDoc = helpDocFor(logsCommandFor(false), ["supabase", "logs"]);
+      const logsDoc = helpDocFor(logsCommandFor(), ["supabase", "logs"]);
       const groupDoc = helpDocFor(ssoCommand, ["supabase", "sso"]);
       if (logsDoc === undefined || groupDoc === undefined) throw new Error("Missing command help");
       expect(formatter.formatHelpDoc(logsDoc)).toContain("supabase logs [subcommand] [flags]");

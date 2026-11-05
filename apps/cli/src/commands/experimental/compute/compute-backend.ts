@@ -21,18 +21,7 @@ export const resolveComputeEnabled = (input: {
       commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
         ? commandPath.slice(1)
         : commandPath;
-    const customSql = routingArgs.some(
-      (argument) =>
-        argument === "--sql" ||
-        argument.startsWith("--sql=") ||
-        argument === "--file" ||
-        argument.startsWith("--file=") ||
-        argument === "-f" ||
-        argument.startsWith("-f="),
-    );
-    const logsCapability = completePath[0] === "logs" && !customSql;
-    if (completePath[0] !== undefined && completePath[0] !== "compute" && !logsCapability)
-      return false;
+    if (completePath[0] !== undefined && completePath[0] !== "compute") return false;
     return yield* resolveExperimentalFeature({
       feature: "compute",
       configValue: readExperimentalFeatureConfig({

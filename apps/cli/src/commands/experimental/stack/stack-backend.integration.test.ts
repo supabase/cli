@@ -82,11 +82,30 @@ stack = true
         expect(yield* resolve({ args: ["storage", "ls"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["seed", "buckets"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["services"], cwd: root, env: {} })).toBe("stack");
-        expect(yield* resolve({ args: ["logs"], cwd: root, env: {} })).toBe("stack");
-        expect(yield* resolve({ args: ["logs", "sources"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["logs"], cwd: root, env: {} })).toBeUndefined();
+        expect(yield* resolve({ args: ["logs", "sources"], cwd: root, env: {} })).toBeUndefined();
       }),
     );
   });
+
+  it.effect.each([
+    ["logs", "--service", "--sql"],
+    ["logs", "--search=--file"],
+    ["logs", "--remote"],
+    ["logs", "sources"],
+    ["help", "logs"],
+    ["__complete", "logs", "--"],
+  ])("defers local logs feature validation until after parsing %j", (args) =>
+    Effect.gen(function* () {
+      const selection = yield* select({
+        args,
+        cwd: "/missing",
+        env: { SUPABASE_EXPERIMENTAL_STACK: "invalid" },
+      });
+      expect(selection.stackBackend).toBeUndefined();
+      expect(selection.projectState?._tag).toBe("Failure");
+    }),
+  );
 
   it.effect("keeps storage on legacy when the feature flag is disabled", () => {
     return withServices(
@@ -106,7 +125,7 @@ stack = true
               cwd: root,
               env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
             }),
-          ).toBe("legacy");
+          ).toBeUndefined();
         }
       }),
     );
@@ -341,14 +360,10 @@ stack = true
           ["help", "status"],
           ["help", "stop"],
           ["help", "stack"],
-          ["help", "logs", "tail"],
-          ["help", "logs", "sources"],
           ["stack", "--help"],
           ["__complete", "st"],
           ["__complete", "start", "--"],
           ["__complete", "status", "--"],
-          ["__complete", "logs", "tail", "--"],
-          ["__complete", "logs", "sources", "--"],
         ]) {
           expect(yield* resolve({ args, cwd: root, env: {} })).toBe("stack");
         }
