@@ -58,6 +58,7 @@ const input = (lang: string): GenTypesGenerateInput => ({
   dnsResolver: "native",
   lang,
   includedSchemas: ["public"],
+  extraSearchPath: [],
   options: {},
 });
 
