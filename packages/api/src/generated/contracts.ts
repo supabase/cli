@@ -4159,6 +4159,22 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
         "Populated when a new config has been received, but not registered as successfully applied to a project.",
     }),
   ),
+  pending_config: Schema.optionalKey(
+    Schema.Struct({
+      dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+      dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+    }).annotate({
+      description:
+        "Present when a change that was never applied is waiting for review. `config` is the list the project enforces. Apply or reject the change with `POST /v1/projects/{ref}/network-restrictions/review`; submitting a new config also replaces it.",
+    }),
+  ),
+  pending_requested_at: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "When the change in `pending_config` was requested. Send it as `requested_at` to the review endpoint.",
+      format: "date-time",
+    }),
+  ),
   status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
   updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -4780,6 +4796,13 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
         obj_name: Schema.String,
       }),
       Schema.Struct({ type: Schema.Literal("active_replication_slot"), slot_name: Schema.String }),
+      Schema.Struct({
+        type: Schema.Literal("table_using_reg_type"),
+        schema_name: Schema.String,
+        table_name: Schema.String,
+        column_name: Schema.String,
+        type_name: Schema.String,
+      }),
       Schema.Struct({ type: Schema.Literal("x86_architecture") }),
       Schema.Struct({ type: Schema.Literal("project_hibernating") }),
     ]),
@@ -7436,6 +7459,66 @@ export const V1RestorePitrBackupInput = Schema.Struct({
       }),
     ),
 });
+export const V1ReviewNetworkRestrictionsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  action: Schema.Literals(["apply", "reject"]).annotate({
+    description:
+      "`apply` replaces the enforced list with the pending one and applies it. `reject` discards the pending one and keeps the enforced list.",
+  }),
+  requested_at: Schema.String.annotate({
+    description:
+      "The `pending_requested_at` of the change being reviewed. Only that change is resolved: if another one has replaced it, the request gets a 409.",
+    format: "date-time",
+  }),
+});
+export const V1ReviewNetworkRestrictionsOutput = Schema.Struct({
+  entitlement: Schema.Union([Schema.Literals(["disallowed", "allowed"]), OpenString]),
+  config: Schema.Struct({
+    dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+    dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+  }).annotate({
+    description:
+      "At any given point in time, this is the config that the user has requested be applied to their project. The `status` field indicates if it has been applied to the project, or is pending. When an updated config is received, the applied config is moved to `old_config`.",
+  }),
+  old_config: Schema.optionalKey(
+    Schema.Struct({
+      dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+      dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+    }).annotate({
+      description:
+        "Populated when a new config has been received, but not registered as successfully applied to a project.",
+    }),
+  ),
+  pending_config: Schema.optionalKey(
+    Schema.Struct({
+      dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+      dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+    }).annotate({
+      description:
+        "Present when a change that was never applied is waiting for review. `config` is the list the project enforces. Apply or reject the change with `POST /v1/projects/{ref}/network-restrictions/review`; submitting a new config also replaces it.",
+    }),
+  ),
+  pending_requested_at: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "When the change in `pending_config` was requested. Send it as `requested_at` to the review endpoint.",
+      format: "date-time",
+    }),
+  ),
+  status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
+  updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+});
 export const V1RevokeTokenInput = Schema.Struct({
   client_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
@@ -9592,6 +9675,22 @@ export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
     }).annotate({
       description:
         "Populated when a new config has been received, but not registered as successfully applied to a project.",
+    }),
+  ),
+  pending_config: Schema.optionalKey(
+    Schema.Struct({
+      dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+      dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+    }).annotate({
+      description:
+        "Present when a change that was never applied is waiting for review. `config` is the list the project enforces. Apply or reject the change with `POST /v1/projects/{ref}/network-restrictions/review`; submitting a new config also replaces it.",
+    }),
+  ),
+  pending_requested_at: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "When the change in `pending_config` was requested. Send it as `requested_at` to the review endpoint.",
+      format: "date-time",
     }),
   ),
   status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
@@ -12132,6 +12231,13 @@ export const V2DeployAComputeInstanceInput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
+        secrets_scope: Schema.optionalKey(
+          Schema.Union([
+            Schema.Literals(["all", "supabase", "none"]),
+            Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+            Schema.Null,
+          ]),
+        ),
       }),
       context_upload_id: Schema.optionalKey(
         Schema.String.annotate({
@@ -12162,6 +12268,13 @@ export const V2DeployAComputeInstanceOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
+        secrets_scope: Schema.optionalKey(
+          Schema.Union([
+            Schema.Union([Schema.Literals(["all", "supabase", "none"]), OpenString]),
+            Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+            Schema.Null,
+          ]),
+        ),
       }),
       build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
       secret_generation: Schema.String,
@@ -12282,6 +12395,13 @@ export const V2GetAComputeInstanceOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
+        secrets_scope: Schema.optionalKey(
+          Schema.Union([
+            Schema.Union([Schema.Literals(["all", "supabase", "none"]), OpenString]),
+            Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+            Schema.Null,
+          ]),
+        ),
       }),
       build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
       secret_generation: Schema.String,
@@ -12559,6 +12679,22 @@ export const V2GetProjectConfigOutput = Schema.Struct({
             Schema.Struct({
               address: Schema.String,
               type: Schema.Union([Schema.Literals(["v4", "v6"]), OpenString]),
+            }),
+          ),
+          pending_allowed_cidrs: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                address: Schema.String,
+                type: Schema.Union([Schema.Literals(["v4", "v6"]), OpenString]),
+              }),
+            ).annotate({
+              description:
+                "Present when a change that was never applied is waiting for review. `allowed_cidrs` is the list the project enforces. Apply or reject the change with `POST /v1/projects/{ref}/network-restrictions/review`; submitting a new config also replaces it.",
+            }),
+          ),
+          pending_requested_at: Schema.optionalKey(
+            Schema.String.annotate({
+              description: "When the change in `pending_allowed_cidrs` was requested.",
             }),
           ),
           updated_at: Schema.optionalKey(Schema.String),
@@ -13231,6 +13367,13 @@ export const V2ListAllComputeInstancesOutput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
+          secrets_scope: Schema.optionalKey(
+            Schema.Union([
+              Schema.Union([Schema.Literals(["all", "supabase", "none"]), OpenString]),
+              Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+              Schema.Null,
+            ]),
+          ),
         }),
         build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
         secret_generation: Schema.String,
@@ -18110,6 +18253,7 @@ export const openApiOperationIdMap = {
   "v1-restore-a-project": "v1RestoreAProject",
   "v1-restore-physical-backup": "v1RestorePhysicalBackup",
   "v1-restore-pitr-backup": "v1RestorePitrBackup",
+  "v1-review-network-restrictions": "v1ReviewNetworkRestrictions",
   "v1-revoke-token": "v1RevokeToken",
   "v1-rollback-migrations": "v1RollbackMigrations",
   "v1-run-a-query": "v1RunAQuery",
@@ -20145,6 +20289,24 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V1RestorePitrBackupInput,
     outputSchema: V1RestorePitrBackupOutput,
+  },
+  v1ReviewNetworkRestrictions: {
+    id: "v1ReviewNetworkRestrictions",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v1/projects/{ref}/network-restrictions/review",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: {
+      kind: "json",
+      contentType: "application/json",
+      fields: ["action", "requested_at"],
+    },
+    response: { kind: "json" },
+    inputSchema: V1ReviewNetworkRestrictionsInput,
+    outputSchema: V1ReviewNetworkRestrictionsOutput,
   },
   v1RevokeToken: {
     id: "v1RevokeToken",
