@@ -11,17 +11,19 @@ supabase logs --remote --service postgres --level error
 supabase logs sources --remote
 ```
 
-Use `--remote` for the linked project, `--remote=<ref>` for another project, or `--remote=<branch>` for a branch of the linked project. Local logs require the experimental stack backend.
+Use `--remote` for the linked project, `--remote=<ref>` for another project, or `--remote=<branch>` for a branch of the linked project. Local logs require `SUPABASE_EXPERIMENTAL_STACK=1` or `stack = true` under `[experimental]` in your CLI config. Use `--remote` to read hosted logs.
 
 ## Browse logs
 
-An interactive terminal opens a log browser. The first load reads the latest 100 lines from the last hour. Use `--limit` to change the initial line count, up to 1000.
+An interactive terminal opens a log browser when you omit `--output-format`. Use `--output-format text` for one plain-text read. The browser also stays closed in CI, with `TERM=dumb`, or when stdin or stdout is not a terminal. The first load reads the latest 100 lines from the last hour. Use `--limit` to change the initial line count, up to 1000.
 
 Use the up and down arrows to select a row. Enter opens its full details, and Escape returns to the list. `C` copies the full selected record as indented JSON, including metadata and the original timestamp. `q` exits.
 
 Press `L` to load newer logs through the current time. The browser keeps your selection and viewport. It does not poll in the background. A failed load opens the full error in a scrollable panel. Use the arrows to scroll, Escape to return to the previous list or details, or `L` to retry. The browser preserves your rows, selection, window, and detail scroll. `C` is inactive while the error panel is open.
 
-The `Window:` header shows the requested time range, including its captured end. Each successful load extends that end. For filtered logs, the browser retains up to 1000 rows and approximately 8 MiB, with a visible notice when older rows are discarded. Open details stay pinned to their record. `NO_COLOR` preserves the selection marker without styling.
+Hosted filtered refreshes read up to five pages of 1000 rows per load. If more rows remain, the header shows `more pending`. Press `L` to continue toward the same captured end. The next load advances the end once that range is complete. A rate-limited page retries once after at least 60 seconds, or longer when `Retry-After` requires it. You can quit during the wait.
+
+The `Window:` header shows the requested time range, including its captured end. A successful load can extend that end; pending hosted pages keep the same end until the range is complete. For filtered logs, the browser retains up to 1000 rows and approximately 8 MiB, with a visible notice when older rows are discarded. Open details stay pinned to their record. `NO_COLOR` preserves the selection marker without styling.
 
 Copying uses your system clipboard and reports success or failure in the footer. On Linux, install `wl-clipboard`, `xclip`, or `xsel` if no clipboard tool is available.
 
@@ -36,19 +38,21 @@ supabase logs --remote --since 30m --limit 500
 
 Repeat `--service` or `--level` to select several values. Hosted `--search` matches a case-insensitive literal substring. Percent and underscore characters have no wildcard meaning.
 
-Use `--since` with a duration or ISO-8601 timestamp. Use `--from` and `--to` for explicit UTC bounds. Do not combine `--since` with `--from` or `--to`. Hosted ranges must be at most 24 hours. The lower bound stays fixed when you load newer logs.
+Use `--since` with a duration or ISO-8601 timestamp. Use `--from` and `--to` for explicit UTC bounds. Do not combine `--since` with `--from` or `--to`. With only `--to`, the range covers the hour ending at that timestamp. Hosted ranges must be at most 24 hours. Local ranges have no 24-hour limit. The lower bound stays fixed when you load newer logs.
 
-Severity comes from service fields, such as Postgres error severity or HTTP status. Unknown severity stays unknown. `--level` requires services with a supported severity mapping. `logs sources --remote --service <service>` lists the supported filters.
+Severity comes from service fields, such as Postgres error severity or HTTP status. Unknown severity stays unknown. `--level` requires services with a supported severity mapping. Without `--service`, it searches `postgres`, `edge`, `auth`, `functions`, and `function-edge`. `logs sources --remote --service <service>` lists the supported filters.
 
 ## Query hosted logs
 
-Pass SQL with `--sql`, a file, or stdin. Select a hosted target explicitly:
+Pass SQL with `--sql`, `--file <path>`, or `--file -` for piped stdin. Select a hosted target explicitly:
 
 ```sh
 supabase logs --remote --sql "select timestamp, id, event_message, log_attributes from logs limit 20"
 supabase logs --remote --file errors.sql --since 30m --output-format json
-cat errors.sql | supabase logs --remote --output-format stream-json
+cat errors.sql | supabase logs --remote --file - --output-format stream-json
 ```
+
+The command reads stdin only with `--file -`. Other invocations leave stdin untouched. `--file -` requires piped input; an empty input or unreadable file fails with a suggestion. `--file` has no `-f` alias.
 
 The query uses ClickHouse SQL over the hosted `logs` table. It does not query Postgres. Select `log_attributes` to keep correlation IDs and user attributes. For example, `where source = 'postgres_logs'` limits rows to Postgres.
 
@@ -65,7 +69,7 @@ supabase logs --output-format json
 supabase logs --remote --service postgres --output-format stream-json
 ```
 
-JSON output returns an indented array of full records. Stream JSON emits one compact event per line. Filtered reads emit `log-entry` or `log-marker` events with the full record in `data`. SQL reads emit a `result` event with the array. Local records retain instance IDs, launch IDs, positions, and loss markers. Hosted records retain IDs, severity, attributes, and timestamps.
+JSON output returns an indented array of full records. Stream JSON emits one compact event per line. Filtered reads emit `log-entry` or `log-marker` events with the full record in `data`. SQL reads emit a `result` event with the array. Local records retain instance IDs, launch IDs, positions, and loss markers. Hosted records retain IDs, severity, attributes, and timestamps. Their `service` uses the selector name, such as `postgres`, while `source` keeps the original value, such as `postgres_logs`.
 
 Use `--output-format text`, `json`, or `stream-json`. The command rejects the legacy `-o/--output` flag.
 
@@ -85,4 +89,4 @@ Compute sources require the experimental Compute feature. Use `--service compute
 supabase logs --remote --service compute --resource api --kind requests
 ```
 
-The deprecated `supabase compute logs` and `supabase stack logs` commands keep their existing flags and follow behavior until removal in v4.
+The deprecated `supabase compute logs` and `supabase stack logs` commands keep their existing flags and follow behavior until removal in v4. They warn on stderr. Their `-f` still means `--follow`; use `--file` for SQL files with `supabase logs`.
