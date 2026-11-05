@@ -260,7 +260,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
   // `projectRef` is passed only for the linked path, so a matching `[remotes.*]` overlay is
   // merged in the same load; omitted for the local and `--remote=<url>` paths.
-  const loadProjectConfig = (projectRef?: string) =>
+  const loadCliConfigValues = (projectRef?: string) =>
     configValues
       .load({
         workdir: cliSettings.workdir,
@@ -283,7 +283,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       );
 
   const loadApiSchemas = (projectRef?: string) =>
-    loadProjectConfig(projectRef).pipe(
+    loadCliConfigValues(projectRef).pipe(
       Effect.tap((resolvedConfig) =>
         requireProjectConfigWhenExplicit(resolvedConfig.hasConfigFile),
       ),
@@ -312,7 +312,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         })
       : Effect.void;
 
-  // `--schema` skips the config load, so a `--remote=<url> --schema ...` invocation must not fail
+  // `--schema` skips the schema load, so a `--remote=<url> --schema ...` invocation must not fail
   // just because the workdir has no project config.
   const resolveIncludedSchemas = (projectRef?: string) =>
     schemas.length > 0
@@ -322,7 +322,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   // Read even with `--schema` and without a project, where the default list applies, since it
   // describes the target's PostgREST rather than which schemas to generate.
   const resolveExtraSearchPath = (projectRef?: string) =>
-    loadProjectConfig(projectRef).pipe(
+    loadCliConfigValues(projectRef).pipe(
       Effect.flatMap((resolvedConfig) => resolvedConfig.get(CliConfigKeys.api.extraSearchPath)),
       Effect.map(({ value }) => value),
     );
@@ -695,7 +695,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         return;
       }
 
-      const host = yield* getHostname(yield* loadProjectConfig());
+      const host = yield* getHostname(yield* loadCliConfigValues());
       yield* announceTarget(renderLocalTarget(host, config.port));
       const linkedCheckout = yield* isCheckoutLinked(
         fs,

@@ -1077,6 +1077,32 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("fails on a malformed config before any API call even with --schema", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-esp-malformed-");
+        yield* writeConfig(workdir, 'project_id = "unterminated\n');
+        const { layer, api, generator } = yield* setup({
+          workdir,
+          skipConfig: true,
+          args: ["gen", "types", "--lang", "go", `--remote=${VALID_REF}`, "--schema", "api"],
+        });
+        const exit = yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            lang: "go",
+            schema: ["api"],
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain("GenTypesParseConfigError");
+        }
+        expect(api.requests).toHaveLength(0);
+        expect(generator.calls).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("is passed to the generator for a preview branch", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-esp-branch-");
