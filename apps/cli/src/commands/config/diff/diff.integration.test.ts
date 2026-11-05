@@ -709,7 +709,9 @@ describe("config diff integration", () => {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("ConfigDiffLoadConfigError");
         // The config load probes both config.toml and config.json, so the message names both.
-        expect(causeText).toContain("supabase/config.toml or supabase/config.json: file not found");
+        expect(causeText).toContain(
+          "supabase/config.toml, config.json or config.jsonc: file not found",
+        );
         expect(causeText).toContain("supabase init");
       }
       expect(api.requests).toHaveLength(0);

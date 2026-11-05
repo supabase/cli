@@ -297,12 +297,30 @@ const routeFor = (url: string, routes: ReadonlyArray<HttpRoute>) => {
   );
 };
 
-const setCors = (response: ServerResponse, request: IncomingMessage) => {
+const corsMethods = "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS,TRACE,CONNECT";
+
+/** Headers the platform gateway puts on responses it answers itself. */
+const setCors = (response: ServerResponse) => {
   response.setHeader("access-control-allow-origin", "*");
-  response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  response.setHeader("access-control-allow-methods", corsMethods);
+};
+
+const varyOnOrigin = (response: ServerResponse) => {
+  const vary = response.getHeader("vary");
+  const values = (Array.isArray(vary) ? vary.join(",") : String(vary ?? ""))
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value !== "");
+  if (values.some((value) => value === "*" || value.toLowerCase() === "origin")) return;
+  response.setHeader("vary", [...values, "Origin"].join(", "));
+};
+
+const setPreflightCors = (response: ServerResponse, request: IncomingMessage) => {
+  setCors(response);
   response.setHeader(
     "access-control-allow-headers",
-    request.headers["access-control-request-headers"] ?? "authorization,apikey,content-type",
+    request.headers["access-control-request-headers"] ??
+      "accept-profile,apikey,authorization,x-client-info",
   );
 };
 
@@ -449,11 +467,15 @@ const forward = Effect.fn("HttpProxy.forward")(function* (
           sent.bytes += chunk.length;
         });
         response.once("finish", onFinish);
-        if (route.upstreamCors !== true) setCors(response, request);
         response.statusCode = value.statusCode ?? 502;
         for (const [name, header] of Object.entries(value.headers)) {
           if (header !== undefined && !hopByHop.has(name.toLowerCase()))
             response.setHeader(name, header);
+        }
+        if (route.upstreamCors !== true) {
+          const origin = request.headers.origin;
+          response.setHeader("access-control-allow-origin", origin ?? "*");
+          varyOnOrigin(response);
         }
         response.flushHeaders();
         value.pipe(response, { end: false });
@@ -678,11 +700,13 @@ export const makeHttpProxy = (options: {
               const route = yield* Ref.get(routes).pipe(
                 Effect.map((current) => routeFor(request.url ?? "/", current)),
               );
-              if (route?.upstreamCors !== true) setCors(response, request);
-              if (request.method === "OPTIONS" && route?.upstreamCors !== true)
-                respond(response, sent, 204);
-              else if (route === undefined) respond(response, sent, 404, "Not Found");
-              else {
+              if (request.method === "OPTIONS" && route?.upstreamCors !== true) {
+                setPreflightCors(response, request);
+                respond(response, sent, 200);
+              } else if (route === undefined) {
+                setCors(response);
+                respond(response, sent, 404, "Not Found");
+              } else {
                 yield* proxyRequest(request, response, route, agent, sent).pipe(
                   Effect.tapError((cause) =>
                     cause._tag === "HttpProxyDisconnected"
@@ -695,7 +719,7 @@ export const makeHttpProxy = (options: {
                       if (response.destroyed) return;
                       if (response.headersSent || sent.clientLeft) response.destroy();
                       else {
-                        setCors(response, request);
+                        setCors(response);
                         respond(response, sent, 502, "Bad Gateway");
                       }
                     }),

@@ -193,6 +193,21 @@ stack = true
     );
   });
 
+  it.effect("reads experimental.stack from a commented config.jsonc", () => {
+    return withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = false\n");
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.jsonc"),
+          '{\n  // opt in\n  "experimental": { "stack": true, },\n}\n',
+        );
+        expect(yield* resolve({ args: ["start"], cwd: root, env: {} })).toBe("stack");
+      }),
+    );
+  });
+
   it.effect("rejects invalid overrides and bypasses malformed config", () => {
     return withServices(
       Effect.gen(function* () {

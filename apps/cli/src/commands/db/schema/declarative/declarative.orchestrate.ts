@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Path } from "effect";
 
 import type { PgDeltaContext } from "../../../../command-internal/pgdelta.ts";
-import type { DbTomlValues } from "../../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../../command-internal/db-config.read.ts";
 import { findDropStatements } from "../../../../command-internal/sql-split.ts";
 import {
   PgDeltaEngine,
@@ -73,7 +73,7 @@ const formatImplicitExtensionLoadFailure = (
  */
 export const diffDeclarativeToMigrations = Effect.fn("DeclarativeSchema.plan")(function* (
   run: DeclarativeRunContext,
-  toml: DbTomlValues,
+  toml: DbConfigValues,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

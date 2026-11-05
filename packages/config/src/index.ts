@@ -13,6 +13,7 @@ export {
   type CliConfigJson,
 } from "./base.ts";
 export {
+  CliConfigFileConflictError,
   CliConfigParseError,
   CliConfigRemovedKeyError,
   CliProjectEnvParseError,

@@ -9,6 +9,7 @@
 
 import { stripVTControlCharacters } from "node:util";
 
+import { findCliProjectRoot } from "@supabase/config/effect";
 import {
   Clock,
   Config,
@@ -197,7 +198,6 @@ const resolveNoticeBaseDir = Effect.fnUntraced(function* (
   env: Readonly<Record<string, string | undefined>>,
   isValueTakingFlagToken?: (token: string) => boolean,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // A set flag beats the env even when empty; an empty effective value falls
   // through to the ancestor walk.
@@ -206,16 +206,7 @@ const resolveNoticeBaseDir = Effect.fnUntraced(function* (
   if (explicit !== undefined && explicit !== "") {
     return path.resolve(cwd, explicit);
   }
-  let current = cwd;
-  while (true) {
-    for (const configFile of ["config.json", "config.toml"]) {
-      const configPath = path.join(current, "supabase", configFile);
-      if (yield* fs.exists(configPath).pipe(Effect.orElseSucceed(() => false))) return current;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) return cwd;
-    current = parent;
-  }
+  return (yield* findCliProjectRoot(cwd)) ?? cwd;
 });
 
 /**

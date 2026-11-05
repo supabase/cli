@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, FileSystem, Path, PlatformError, Predicate, Schema } from "effect";
+import { parseJsonc } from "@supabase/config/internal";
 import * as SmolToml from "smol-toml";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
 import {
@@ -12,7 +13,6 @@ import {
   InvalidComputeSourceError,
   MissingComputeNameError,
   ComputeDirectoryExistsError,
-  ComputeJsonConfigUnsupportedError,
 } from "../../../../shared/compute/compute.errors.ts";
 import {
   COMPUTE_RUNTIME_EXCLUSIONS,
@@ -483,7 +483,7 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("refuses a JSON-only ancestor even when the name is already configured", () =>
+  it.effect("reads a JSON-only ancestor config and refuses a name it already records", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -506,7 +506,7 @@ describe("compute new", () => {
           flags({ name: Option.some("api"), runtime: Option.some("deno") }),
         ).pipe(Effect.flip);
 
-        expect(Predicate.isTagged(error, "ComputeJsonConfigUnsupportedError")).toBe(true);
+        expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
         // Nothing was scaffolded at the subdirectory either.
         expect(yield* fs.exists(path.join(sub, "supabase"))).toBe(false);
       }).pipe(Effect.provide(layer));
@@ -915,58 +915,39 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect.each([false, true])(
-    "refuses JSON before prompts or writes (TOML present: %s)",
-    (withToml) =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fs = yield* FileSystem.FileSystem;
-        const configJson = '{"project_id":"demo"}\n';
-        const repo = yield* makeComputeProject({
-          "supabase/config.json": configJson,
-          ...(withToml ? { "supabase/config.toml": CONFIG_WITH_COMMENTS } : {}),
-        });
-        const { layer, out } = setupCompute({ workdir: repo.dir });
-        return yield* Effect.gen(function* () {
-          const error = yield* computeNew(flags({ name: Option.none() })).pipe(Effect.flip);
-          expect(error).toBeInstanceOf(ComputeJsonConfigUnsupportedError);
-          expect(out.promptTextCalls).toEqual([]);
-          expect(out.promptSelectCalls).toEqual([]);
-          expect(yield* fs.readFileString(path.join(repo.dir, "supabase", "config.json"))).toBe(
-            configJson,
-          );
-          const tomlPath = path.join(repo.dir, "supabase", "config.toml");
-          if (withToml) expect(yield* fs.readFileString(tomlPath)).toBe(CONFIG_WITH_COMMENTS);
-          else expect(yield* fs.exists(tomlPath)).toBe(false);
-          expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
-        }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("refuses an unconfigured JSON-only ancestor before asking for a name", () =>
+  it.effect.each([
+    { file: "config.json", source: '{"project_id":"demo"}\n' },
+    { file: "config.jsonc", source: '// keep me\n{"project_id":"demo",}\n' },
+  ])("records the entry in $file and keeps its comments", ({ file, source }) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      const configJson = '{"project_id":"demo"}\n';
-      const repo = yield* makeComputeProject({ "supabase/config.json": configJson });
-      const child = path.join(repo.dir, "nested");
-      yield* fs.makeDirectory(child);
-      const resolved = yield* resolveWorkdir(Option.none(), Option.none(), child, path);
-      const { layer, out } = setupCompute({
-        workdir: resolved.workdir,
-        explicitWorkdir: resolved.explicit,
-      });
+      const repo = yield* makeComputeProject({ [`supabase/${file}`]: source });
+      const { layer } = setupCompute({ workdir: repo.dir });
       return yield* Effect.gen(function* () {
-        const error = yield* computeNew(flags({ name: Option.none() })).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(ComputeJsonConfigUnsupportedError);
-        expect(out.promptTextCalls).toEqual([]);
-        expect(out.promptSelectCalls).toEqual([]);
-        expect(yield* fs.readFileString(path.join(repo.dir, "supabase", "config.json"))).toBe(
-          configJson,
-        );
-        expect(yield* fs.readDirectory(child)).toEqual([]);
+        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
+        const written = yield* fs.readFileString(path.join(repo.dir, "supabase", file));
+        const parsed = parseJsonc(written) as { compute: Record<string, { runtime: string }> };
+        expect(parsed.compute["api"]?.runtime).toBe("node");
+        if (file === "config.jsonc") expect(written).toContain("// keep me");
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "config.toml"))).toBe(false);
-        expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
+        expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api"))).toBe(true);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("names the entry in JSON terms when the compute is already in config.json", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject({
+        "supabase/config.json": '{"project_id":"demo","compute":{"api":{"runtime":"node"}}}\n',
+      });
+      const { layer } = setupCompute({ workdir: repo.dir });
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("node") }),
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
+        expect(error).toMatchObject({ suggestion: expect.stringContaining("Edit compute.api in") });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

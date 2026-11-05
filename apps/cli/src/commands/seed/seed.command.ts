@@ -6,9 +6,9 @@ import { bucketsCommand } from "./buckets/buckets.command.ts";
 
 export const seedCommand = Command.make("seed").pipe(
   Command.withDescription(
-    "Populate a local or hosted project with the data described in supabase/config.toml.",
+    "Populate a local or hosted project with the data described in the project config file.",
   ),
-  Command.withShortDescription("Seed a project from config.toml"),
+  Command.withShortDescription("Seed a project from its config file"),
   Command.withSubcommands([bucketsCommand]),
   // The selector flags are persistent, accepted before or after the subcommand. Kept after
   // `withSubcommands` so it discharges the subcommands' flag requirements.

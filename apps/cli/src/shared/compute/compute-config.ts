@@ -1,5 +1,9 @@
 import { Data, Effect, FileSystem, Path } from "effect";
-import * as SmolToml from "smol-toml";
+import {
+  applyConfigEdits,
+  cliConfigFormatForPath,
+  parseCliConfigDocument,
+} from "@supabase/config/internal";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -13,12 +17,13 @@ import {
 } from "./toml-section.ts";
 
 /**
- * The `[compute]` section of `supabase/config.toml`, read through the decoded
+ * The `[compute]` section of the project config, read through the decoded
  * project config and written back surgically.
  *
  * `[compute]` carries one `[compute.<name>]` table per compute. The schema in
- * `@supabase/config` models exactly that; writing goes through
- * `./toml-section.ts` so a user's comments and formatting survive.
+ * `@supabase/config` models exactly that; TOML writes go through
+ * `./toml-section.ts` and JSON/JSONC writes through `applyConfigEdits`, so a
+ * user's comments and formatting survive.
  */
 
 /** One compute's recorded metadata. Every key is optional. */
@@ -37,7 +42,7 @@ export interface ComputeSection {
 }
 
 /**
- * The compute is already recorded in `config.toml`. `compute new` creates a compute; changing
+ * The compute is already recorded in the project config. `compute new` creates a compute; changing
  * one that exists is a different operation, and the file is the user's to edit. Refusing also
  * keeps writes append-only, avoiding the need to find and rewrite an entry in place.
  */
@@ -53,7 +58,7 @@ export class ComputeAlreadyConfiguredError extends Data.TaggedError(
 }
 
 /**
- * Appending the new table would leave `config.toml` unparseable — e.g. a `[compute]` that's
+ * Appending the new table would leave the config unparseable — e.g. a `[compute]` that's
  * already an inline table (`compute = {}`) can't be extended, so appending `[compute.api]`
  * produces a file nothing can read. Rather than enumerate every representation that breaks,
  * the plan is parsed before it's returned and anything that doesn't round-trip is refused,
@@ -145,14 +150,14 @@ export function readComputeSection(compute: unknown): ComputeSection {
   return { compute: entries };
 }
 
-/** A rendered `config.toml`, not yet written. */
+/** A rendered project config, not yet written. */
 export interface ComputeEntryWrite {
   readonly configPath: string;
   readonly text: string;
 }
 
 /**
- * Renders `config.toml` with `[compute.<name>]` appended, without writing it. Split from the
+ * Renders the project config with the compute entry added, without writing it. Split from the
  * write so callers can find out an entry already exists before they scaffold anything: `new`
  * writes the starter files first, and a failure after that would leave a directory nothing
  * records.
@@ -160,12 +165,14 @@ export interface ComputeEntryWrite {
 export const planComputeEntry = Effect.fn("Compute.planConfigEntry")(function* (options: {
   readonly configPath: string;
   readonly name: string;
-  /** Rendered as written: strings are quoted, numbers are not, lists become TOML arrays. */
+  /** Rendered as written: strings are quoted, numbers are not, lists become arrays. */
   readonly patch: Readonly<Record<string, TomlSectionValue>>;
   /** The already-parsed config — the authority on whether an entry exists. */
   readonly existingCompute: Readonly<Record<string, ComputeEntry>>;
 }) {
   const fs = yield* FileSystem.FileSystem;
+  const format = cliConfigFormatForPath(options.configPath);
+  const entryRef = format === "toml" ? `[compute.${options.name}]` : `compute.${options.name}`;
 
   // Append-only, so an entry that already exists cannot be amended. The decoded config is
   // the authority on whether one exists — regex over the file text can't answer that
@@ -173,7 +180,7 @@ export const planComputeEntry = Effect.fn("Compute.planConfigEntry")(function* (
   if (options.existingCompute[options.name] !== undefined) {
     return yield* new ComputeAlreadyConfiguredError({
       detail: `"${options.name}" is already configured in ${options.configPath}.`,
-      suggestion: `Edit [compute.${options.name}] in ${options.configPath} yourself, or pick a different compute name.`,
+      suggestion: `Edit ${entryRef} in ${options.configPath} yourself, or pick a different compute name.`,
     });
   }
 
@@ -186,37 +193,48 @@ export const planComputeEntry = Effect.fn("Compute.planConfigEntry")(function* (
   if (unrenderable !== undefined) {
     return yield* new ComputeConfigWriteUnsafeError({
       detail: `Recording "${options.name}" would write ${unrenderable[0]} = ${String(unrenderable[1])} to ${options.configPath}, which is not a whole, non-negative count.`,
-      suggestion: `Pass a whole number of zero or more, or add [compute.${options.name}] to ${options.configPath} yourself.`,
+      suggestion: `Pass a whole number of zero or more, or add ${entryRef} to ${options.configPath} yourself.`,
     });
   }
 
   const exists = yield* fs.exists(options.configPath);
   const text = exists ? yield* fs.readFileString(options.configPath) : "";
-  const header = `compute.${tomlKey(options.name)}`;
-  const next = appendTomlSection(text, header, options.patch);
+  let next: string;
+  if (format === "toml") {
+    next = appendTomlSection(text, `compute.${tomlKey(options.name)}`, options.patch);
+  } else {
+    const outcome = applyConfigEdits(text, format, [
+      { path: ["compute", options.name], value: options.patch },
+    ]);
+    if (outcome.kind === "refused") {
+      return yield* new ComputeConfigWriteUnsafeError({
+        detail: `Recording "${options.name}" in ${options.configPath} was refused: ${outcome.refusal.detail}`,
+        suggestion: `Add ${entryRef} to ${options.configPath} yourself.`,
+      });
+    }
+    next = outcome.text;
+  }
 
-  // The rendered file has to parse and the new table has to be readable back out of it —
-  // appending is a syntactic operation on a file this code didn't write, so reading the
+  // The rendered file has to parse and the new entry has to be readable back out of it —
+  // editing is a syntactic operation on a file this code didn't write, so reading the
   // result back is the only honest check.
   const parsed = yield* Effect.try({
-    try: () => SmolToml.parse(next),
+    try: () => parseCliConfigDocument(next, format),
     catch: (cause) =>
       new ComputeConfigWriteUnsafeError({
         detail: `Recording "${options.name}" would make ${options.configPath} unparseable: ${String(cause)}.`,
-        suggestion: `Add [compute.${options.name}] to ${options.configPath} yourself.`,
+        suggestion: `Add ${entryRef} to ${options.configPath} yourself.`,
       }),
   });
 
-  const compute = parsed["compute"];
-  if (
-    typeof compute !== "object" ||
-    compute === null ||
-    Array.isArray(compute) ||
-    !(options.name in compute)
-  ) {
+  const compute = isRecord(parsed) ? parsed["compute"] : undefined;
+  if (!isRecord(compute) || !(options.name in compute)) {
     return yield* new ComputeConfigWriteUnsafeError({
-      detail: `Recording "${options.name}" in ${options.configPath} would not take effect, because its [compute] section cannot be extended by appending a table.`,
-      suggestion: `Add [compute.${options.name}] to ${options.configPath} yourself.`,
+      detail:
+        format === "toml"
+          ? `Recording "${options.name}" in ${options.configPath} would not take effect, because its [compute] section cannot be extended by appending a table.`
+          : `Recording "${options.name}" in ${options.configPath} would not take effect, because its compute section cannot hold the new entry.`,
+      suggestion: `Add ${entryRef} to ${options.configPath} yourself.`,
     });
   }
 

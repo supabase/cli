@@ -54,7 +54,7 @@ export type StackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const stackStartCommand = makeCommand("start", config).pipe(
   Command.withDescription(
-    "Create or resume a managed local Supabase stack using supabase/config.toml when present. " +
+    "Create or resume a managed local Supabase stack using the project config file when present. " +
       "Without a config file, default settings are used and no file is created. " +
       "For a new stack, auto selects Docker when its engine is reachable, then Podman, then native on supported platforms; the choice is persisted for that stack. " +
       "Explicit runtime choices are honored. Values support explicit env(NAME) references and automatic SUPABASE_* overrides.",

@@ -7,7 +7,7 @@ import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 
 import { withEnvVar, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
-import { readDbToml } from "./db-config.toml-read.ts";
+import { readDbConfig } from "./db-config.read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
@@ -17,7 +17,7 @@ const stringifyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
  * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
- * pipelines — D (`readDbToml`, Effect/raw-TOML) and L (`resolveLocalConfigValues`,
+ * pipelines — D (`readDbConfig`, Effect/raw-TOML) and L (`resolveLocalConfigValues`,
  * `@supabase/config`-decoded) — and asserts they fail with the same error-message substring,
  * since both route through the single `validateResolvedConfig`. A third caller, the
  * storage-credentials resolver (S), shares the `api.port`/`api.tls` presence branches and the
@@ -25,7 +25,7 @@ const stringifyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  * that pipeline.
  *
  * D's harness replicates the `withConfig`/`read`/`failsWith` pattern from
- * `db-config.toml-read.unit.test.ts` (file-local there, not exported). L's harness replicates
+ * `db-config.read.unit.test.ts` (file-local there, not exported). L's harness replicates
  * the `baseConfig`/`WORKDIR` pattern from `local-config-values.unit.test.ts`.
  */
 
@@ -43,7 +43,7 @@ const readD = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* readDbToml(fs, path, workdir);
+    return yield* readDbConfig(fs, path, workdir);
   }).pipe(
     Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer, cliConfigValuesTestLayer)),
   );

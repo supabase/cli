@@ -1,3 +1,4 @@
+import { configDisplayPath } from "../../command-internal/config-advice.ts";
 import { scratchDir } from "../../command-internal/scratch-paths.ts";
 import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { URL } from "node:url";
@@ -11,6 +12,7 @@ import {
   inferFunctionsManifest,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
+import { cliConfigFormatForPath, parseJsonc } from "@supabase/config/internal";
 import {
   Cause,
   Config,
@@ -476,81 +478,6 @@ function humanSize(bytes: number) {
   return `${value.toFixed(precision)} ${units[index]}`;
 }
 
-function stripJsonComments(contents: string): string {
-  const src = contents.replace(/^\uFEFF/, "");
-  const out: Array<string> = [];
-  let pendingCommaIndex = -1;
-  let index = 0;
-  while (index < src.length) {
-    const char = src.charAt(index);
-
-    if (char === '"') {
-      pendingCommaIndex = -1;
-      out.push(char);
-      index += 1;
-      while (index < src.length) {
-        const stringChar = src.charAt(index);
-        out.push(stringChar);
-        index += 1;
-        if (stringChar === "\\") {
-          if (index < src.length) {
-            out.push(src.charAt(index));
-            index += 1;
-          }
-        } else if (stringChar === '"') {
-          break;
-        }
-      }
-      continue;
-    }
-
-    if (char === "/" && src.charAt(index + 1) === "/") {
-      index += 2;
-      while (index < src.length && src.charAt(index) !== "\n") {
-        index += 1;
-      }
-      continue;
-    }
-
-    if (char === "/" && src.charAt(index + 1) === "*") {
-      index += 2;
-      while (index < src.length && !(src.charAt(index) === "*" && src.charAt(index + 1) === "/")) {
-        index += 1;
-      }
-      index += 2;
-      continue;
-    }
-
-    if (char === ",") {
-      pendingCommaIndex = out.length;
-      out.push(char);
-      index += 1;
-      continue;
-    }
-
-    if (char === "}" || char === "]") {
-      if (pendingCommaIndex >= 0) {
-        out[pendingCommaIndex] = "";
-        pendingCommaIndex = -1;
-      }
-      out.push(char);
-      index += 1;
-      continue;
-    }
-
-    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
-      out.push(char);
-      index += 1;
-      continue;
-    }
-
-    pendingCommaIndex = -1;
-    out.push(char);
-    index += 1;
-  }
-  return out.join("");
-}
-
 function resolveImportTarget(path: Path.Path, jsonPath: string, target: string) {
   if (target.startsWith("/")) {
     return target;
@@ -690,9 +617,13 @@ class ImportMapFile {
 }
 
 const parseImportMapContents = (contents: Uint8Array) =>
-  decodeJson(stripJsonComments(new TextDecoder().decode(contents))).pipe(
-    Effect.mapError((error) => new FunctionImportMapSyntaxError({ message: error.message })),
-  );
+  Effect.try({
+    try: () => parseJsonc(new TextDecoder().decode(contents)),
+    catch: (error) =>
+      new FunctionImportMapSyntaxError({
+        message: error instanceof Error ? error.message : String(error),
+      }),
+  });
 
 const loadImportMapFile = Effect.fnUntraced(function* <E = never, R = never>(
   pathname: string,
@@ -2152,6 +2083,8 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
     readonly noVerifyJwtOverride: Option.Option<boolean>;
     /** Skips the fallback-import-map warning, for a resolve whose result is discarded. */
     readonly quiet?: boolean;
+    /** The loaded config file; absent reads as `config.toml`. */
+    readonly configPath?: string | undefined;
   }) {
     const output = yield* Output;
     const path = yield* Path.Path;
@@ -2260,7 +2193,10 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
       const configPath = relativePath.startsWith("../") ? relativePath : `./${relativePath}`;
       return yield* new FunctionDeployError({
         message: `import_map.json in a function directory is no longer supported: ${[...unsupportedImportMaps.keys()].join(", ")}`,
-        suggestion: `Rename it to deno.json, or set functions.${slug}.import_map = "${configPath}" in config.toml to keep the file.`,
+        suggestion:
+          input.configPath !== undefined && cliConfigFormatForPath(input.configPath) === "json"
+            ? `Rename it to deno.json, or set \`functions.${slug}.import_map\` to \`"${configPath}"\` in ${configDisplayPath(path, input.projectRoot, input.configPath)} to keep the file.`
+            : `Rename it to deno.json, or set functions.${slug}.import_map = "${configPath}" in config.toml to keep the file.`,
       });
     }
 
@@ -2636,6 +2572,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     rawConfigFunctions,
     importMapOverride: flags.importMap,
     noVerifyJwtOverride,
+    configPath: context.configPath,
   });
   const dashboardUrl = `${dependencies.dashboardUrl}/project/${projectRef}/functions`;
 

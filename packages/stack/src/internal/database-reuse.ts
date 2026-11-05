@@ -8,7 +8,7 @@ export const recreateStackAdvice = (stackId: string): string =>
 
 /** Recovery that keeps data created at `version` by pinning it again, before the destructive recreate. */
 export const keepOrRecreateAdvice = (stackId: string, service: string, version: string): string =>
-  `keep this data by pinning \`[local.services.${service}] version = "${version}"\` in supabase/config.toml, or ${recreateStackAdvice(stackId)}`;
+  `keep this data by pinning \`local.services.${service}.version\` to \`"${version}"\` in your config file, or ${recreateStackAdvice(stackId)}`;
 
 /** The runtimes a database runs under. */
 export const DatabaseRuntime = Schema.Literals(["native", "docker", "podman"]);
@@ -50,7 +50,7 @@ export class DatabaseIdentityMismatch extends Schema.TaggedError<DatabaseIdentit
 ) {}
 
 /**
- * How to keep data `recorded` created: pin its build, which selects its line, plus the `[db]` edits
+ * How to keep data `recorded` created: pin its build, which selects its line, plus the `db` edits
  * that keep the pin valid whichever setting selected the requested build.
  */
 const keepDatabaseAdvice = (
@@ -61,15 +61,15 @@ const keepDatabaseAdvice = (
   const edits = [
     ...(recorded.major === requested.major
       ? []
-      : [`setting \`[db] major_version = ${recorded.major}\``]),
-    ...(requested.line === "orioledb" ? ["removing any `[db] orioledb_version`"] : []),
+      : [`setting \`db.major_version\` to \`${recorded.major}\``]),
+    ...(requested.line === "orioledb" ? ["removing any `db.orioledb_version`"] : []),
   ];
   if (edits.length === 0) return keepOrRecreateAdvice(stackId, "database", recorded.build);
   const clauses = new Intl.ListFormat("en", { type: "conjunction" }).format([
-    `pinning \`[local.services.database] version = "${recorded.build}"\``,
+    `pinning \`local.services.database.version\` to \`"${recorded.build}"\``,
     ...edits,
   ]);
-  return `keep this data by ${clauses} in supabase/config.toml, or ${recreateStackAdvice(stackId)}`;
+  return `keep this data by ${clauses} in your config file, or ${recreateStackAdvice(stackId)}`;
 };
 
 /**

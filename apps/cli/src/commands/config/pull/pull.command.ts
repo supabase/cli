@@ -32,7 +32,7 @@ const config = {
     default: false,
   }),
   force: cliFlag("force", Flag.Boolean, {
-    description: "Write even when `supabase/config.toml` has uncommitted changes in git.",
+    description: "Write even when the project config file has uncommitted changes in git.",
     default: false,
   }),
 } as const;
@@ -53,9 +53,9 @@ const configPullHandler = (flags: ConfigPullFlags) =>
 
 export const configPullCommand = makeCommand("pull", config).pipe(
   Command.withDescription(
-    "Write the configuration of a remote project or branch into `supabase/config.toml`, so the file reflects what is deployed. Use `--dry-run` to preview first.\n\nOn an interactive terminal it asks for confirmation before writing, unless you pass `--yes`.",
+    "Write the configuration of a remote project or branch into the project config file, so the file reflects what is deployed. Use `--dry-run` to preview first.\n\nOn an interactive terminal it asks for confirmation before writing, unless you pass `--yes`.",
   ),
-  Command.withShortDescription("Pull remote config into config.toml"),
+  Command.withShortDescription("Pull remote config into the project config file"),
   Command.withExamples([
     {
       command: "supabase config pull",
@@ -63,7 +63,7 @@ export const configPullCommand = makeCommand("pull", config).pipe(
     },
     {
       command: "supabase config pull --remote=staging",
-      description: "Pull from the 'staging' branch into [remotes.staging]",
+      description: "Pull from the 'staging' branch into remotes.staging",
     },
     {
       command: "supabase config pull --dry-run",

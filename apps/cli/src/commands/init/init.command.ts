@@ -22,7 +22,8 @@ const config = {
     default: false,
   }),
   force: cliFlag("force", Flag.Boolean, {
-    description: "Overwrite an existing supabase/config.toml.",
+    description:
+      "Write a fresh supabase/config.toml, replacing an existing config.toml and removing any config.json or config.jsonc.",
     default: false,
   }),
   withVscodeWorkspace: cliFlag("with-vscode-workspace", Flag.Boolean, {

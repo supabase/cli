@@ -30,7 +30,7 @@ it("treats versions that differ only by suffix or a v prefix as the same", () =>
 
 it("offers to keep the data by pinning the recorded version before recreating the stack", () => {
   expect(schemaWriterDowngrade("stack-a", { auth: "v2.197.0" }, "auth", "v2.196.1")?.message).toBe(
-    'auth v2.196.1 is older than v2.197.0, which already migrated this database; downgrading does not restore the old schema, so keep this data by pinning `[local.services.auth] version = "v2.197.0"` in supabase/config.toml, or run `supabase stack destroy --stack-id stack-a` to recreate the stack — this permanently deletes its local database data',
+    'auth v2.196.1 is older than v2.197.0, which already migrated this database; downgrading does not restore the old schema, so keep this data by pinning `local.services.auth.version` to `"v2.197.0"` in your config file, or run `supabase stack destroy --stack-id stack-a` to recreate the stack — this permanently deletes its local database data',
   );
 });
 

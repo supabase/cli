@@ -10,9 +10,9 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import {
   loadProjectEnvValues,
-  readDbToml,
+  readDbConfig,
   resolveDeclarativeDir,
-} from "../../../../../command-internal/db-config.toml-read.ts";
+} from "../../../../../command-internal/db-config.read.ts";
 import { resolveTarget } from "../../../../../command-internal/target/resolve-target.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
@@ -53,13 +53,14 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
   const linkedProjectRef = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
-    const baseToml = yield* readDbToml(fs, path, cliSettings.workdir);
+    const baseToml = yield* readDbConfig(fs, path, cliSettings.workdir);
     // Gate on the base config: a remote `experimental.pgdelta.enabled = true` must not enable a
     // base-disabled command without `--experimental`.
     yield* requirePgDelta({
       experimental,
       pgDeltaEnabled: baseToml.pgDelta.enabled,
-      configPath: path.join("supabase", "config.toml"),
+      configPath: baseToml.configFile.path,
+      configFormat: baseToml.configFile.format,
     });
 
     const target = yield* resolveTarget(flags);
@@ -69,7 +70,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     let toml = baseToml;
     if (target.kind === "linked") {
       yield* Ref.set(linkedProjectRef, target.ref);
-      toml = yield* readDbToml(fs, path, cliSettings.workdir, target.ref);
+      toml = yield* readDbConfig(fs, path, cliSettings.workdir, target.ref);
     }
 
     // Preserve the selected value for user-facing output: invocation-local `--output` wins,
@@ -92,7 +93,13 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
           "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
       });
     }
-    yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
+    yield* warnFormerDeclarativeDefault(
+      fs,
+      path,
+      cliSettings.workdir,
+      toml.pgDelta,
+      toml.configFile,
+    );
     const run: DeclarativeRunContext = {
       pgDelta: {
         projectId: toml.projectId,

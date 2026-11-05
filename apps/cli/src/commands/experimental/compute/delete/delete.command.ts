@@ -28,7 +28,7 @@ export type ComputeDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const computeDeleteCommand = makeCommand("delete", config).pipe(
   Command.withDescription(
-    "Delete a compute from the linked Supabase project. Irreversible; its local directory and supabase/config.toml entry are kept.",
+    "Delete a compute from the linked Supabase project. Irreversible; its local directory and config file entry are kept.",
   ),
   Command.withShortDescription("Delete a compute from Supabase"),
   Command.withExamples([

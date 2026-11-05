@@ -117,7 +117,8 @@ export const stackUpdate = Effect.fn("experimental.stack.update")(function* (
     if (result === undefined)
       return yield* new StackCommandUpdateError({
         reason: "invalid-config",
-        message: "No supabase/config.toml in this project, so there is no lock to update.",
+        message:
+          "No supabase/config.toml, config.json or config.jsonc in this project, so there is no lock to update.",
         suggestion: "Run supabase init, then supabase start to create supabase/supabase.lock.",
       });
 

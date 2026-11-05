@@ -35,7 +35,7 @@ const config = {
   }),
   force: cliFlag("force", Flag.Boolean, {
     description:
-      "Write even when supabase/config.toml, supabase/migrations, or supabase/functions has uncommitted changes in git.",
+      "Write even when the project config file, supabase/migrations, or supabase/functions has uncommitted or untracked changes in git.",
     default: false,
   }),
   withMigrationHistory: cliFlag("with-migration-history", Flag.Boolean, {

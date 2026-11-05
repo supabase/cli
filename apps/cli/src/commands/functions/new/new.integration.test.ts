@@ -256,6 +256,56 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  describe("JSONC config", () => {
+    const jsoncSource = [
+      "{",
+      "  // keep this comment",
+      '  "api": { "port": 54321, },',
+      "}",
+      "",
+    ].join("\n");
+
+    it.effect("edits config.jsonc in place and never creates config.toml", () => {
+      const { layer, workdir } = setup();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configPath = path.join(workdir, "supabase", "config.jsonc");
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(configPath, jsoncSource);
+
+        yield* functionsNew({ functionName: "hello-world", auth: "user" });
+
+        const config = yield* fs.readFileString(configPath);
+        expect(config).toContain("// keep this comment");
+        expect(config).toContain('"api": { "port": 54321, },');
+        expect(config).toContain('"hello-world"');
+        expect(config).toContain('"verify_jwt": true');
+        expect(config).toContain('"entrypoint": "./functions/hello-world/index.ts"');
+        expect(yield* fs.exists(path.join(workdir, "supabase", "config.toml"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("warns and leaves config.jsonc untouched when the function is declared", () => {
+      const { layer, out, workdir } = setup();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configPath = path.join(workdir, "supabase", "config.jsonc");
+        const declared = '{\n  // c\n  "functions": { "hello-world": { "enabled": true } },\n}\n';
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(configPath, declared);
+
+        yield* functionsNew({ functionName: "hello-world", auth: "apikey" });
+
+        expect(yield* fs.readFileString(configPath)).toBe(declared);
+        expect(out.stderrText).toContain("functions.hello-world is already declared in ");
+        expect(out.stderrText).toContain("config.jsonc");
+        expect(yield* fs.exists(path.join(workdir, "supabase", "config.toml"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
   it.effect("does not auto-generate IDE files when another function already exists", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {

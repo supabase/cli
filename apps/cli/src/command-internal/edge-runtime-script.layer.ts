@@ -5,7 +5,7 @@ import { DebugFlag, NetworkIdFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
-import { readDbToml } from "./db-config.toml-read.ts";
+import { readDbConfig } from "./db-config.read.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { resolveEdgeRuntimeImage, resolveLockedEdgeRuntimeImage } from "./edge-runtime-image.ts";
@@ -81,7 +81,7 @@ export const edgeRuntimeScriptLayer = Layer.effect(
           const workdir = opts.workdir ?? cliSettings.workdir;
           const denoVersion =
             opts.denoVersion ??
-            (yield* readDbToml(fs, path, workdir).pipe(
+            (yield* readDbConfig(fs, path, workdir).pipe(
               Effect.provideService(CliConfigValues, configValues),
               Effect.mapError((error) => new EdgeRuntimeScriptError({ message: error.message })),
             )).denoVersion;

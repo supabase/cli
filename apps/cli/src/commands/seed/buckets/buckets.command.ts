@@ -20,9 +20,9 @@ export type BucketsFlags = TargetFlagValues;
 
 export const bucketsCommand = Command.make("buckets").pipe(
   Command.withDescription(
-    "Create or update the Storage buckets declared in config.toml and upload the files from each bucket's objects_path. A remote project asks for confirmation before the first write.",
+    "Create or update the Storage buckets declared in the project config file and upload the files from each bucket's objects_path. A remote project asks for confirmation before the first write.",
   ),
-  Command.withShortDescription("Seed Storage buckets from config.toml"),
+  Command.withShortDescription("Seed Storage buckets from the project config file"),
   Command.withExamples([
     { command: "supabase seed buckets", description: "Seed buckets on the local stack" },
     {

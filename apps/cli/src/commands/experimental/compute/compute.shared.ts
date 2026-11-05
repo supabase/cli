@@ -1,4 +1,3 @@
-import { findCliProjectPaths } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
@@ -13,10 +12,7 @@ import {
   computeSourceDir,
 } from "../../../shared/compute/compute-paths.ts";
 import { validateComputeNameMessage } from "../../../shared/compute/compute-runtimes.ts";
-import {
-  ComputeJsonConfigUnsupportedError,
-  InvalidComputeNameError,
-} from "../../../shared/compute/compute.errors.ts";
+import { InvalidComputeNameError } from "../../../shared/compute/compute.errors.ts";
 
 /**
  * What every `supabase compute` command needs before it does
@@ -66,25 +62,6 @@ export const loadComputeProject = Effect.gen(function* () {
     section: readComputeSection(resolvedConfig.materialized.config.compute),
     computeDir: computeRootDir(path, projectRoot),
   } satisfies ComputeProject;
-});
-
-/**
- * As {@link loadComputeProject}, for the `[compute.<name>]` entry writer.
- *
- * `commitComputeEntry` is a TOML text editor, so a JSON project is rejected: appending a
- * `[compute.<name>]` table to `config.json` would make the file unparseable.
- */
-export const loadComputeProjectForEntryWrite = Effect.fnUntraced(function* () {
-  const settings = yield* CommandSettings;
-  const path = yield* Path.Path;
-  const paths = yield* findCliProjectPaths(settings.workdir, { search: false });
-  if (paths !== null && path.basename(paths.configPath) === "config.json") {
-    return yield* new ComputeJsonConfigUnsupportedError({
-      detail: `This project is configured by ${paths.configPath}, which the compute new command cannot edit safely.`,
-      suggestion: `Create the source files manually and add the compute entry to ${paths.configPath}, or convert the whole project configuration to TOML before scaffolding it.`,
-    });
-  }
-  return yield* loadComputeProject;
 });
 
 /**

@@ -604,7 +604,7 @@ describe("link warns when a saved stack would refuse the versions it locks", () 
         const out = yield* runLink(world);
 
         expect(stackWarnings(out)).toEqual([
-          `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data was initialized by stock PostgreSQL build ${BUILT}, but stock PostgreSQL build ${HOSTED_DATABASE} was requested; keep this data by pinning \`[local.services.database] version = "${BUILT}"\` in supabase/config.toml, or ${destroy(stackId)}`,
+          `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data was initialized by stock PostgreSQL build ${BUILT}, but stock PostgreSQL build ${HOSTED_DATABASE} was requested; keep this data by pinning \`local.services.database.version\` to \`"${BUILT}"\` in your config file, or ${destroy(stackId)}`,
         ]);
         expect((yield* readServices(world.workdir)).database.resolved.upstreamVersion).toBe(
           HOSTED_DATABASE,

@@ -26,6 +26,7 @@ export const functionsLocalConfigLoader: FunctionsLocalConfigLoader = {
         context.hostname,
         projectRoot,
         context.resolvedConfig.loaded.document,
+        context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
       ).pipe(Effect.mapError(toError));
       return {
         loaded: { config: context.config, document: context.resolvedConfig.loaded.document },

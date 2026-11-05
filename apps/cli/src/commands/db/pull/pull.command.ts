@@ -78,7 +78,7 @@ const config = {
 export type DbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 const DECLARATIVE_SUGGESTION =
-  "Use --declarative to pull the declarative schema. The diff engine is chosen with --diff-engine or [experimental.pgdelta] enabled in config.toml.";
+  "Use --declarative to pull the declarative schema. The diff engine is chosen with --diff-engine or experimental.pgdelta.enabled in the config file.";
 
 const EXPERIMENTAL_SUGGESTION =
   "Use --declarative to pull per-object schema files, or pass --experimental=false (or unset SUPABASE_EXPERIMENTAL) for a migration pull.";

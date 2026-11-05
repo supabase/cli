@@ -987,7 +987,7 @@ describe("db push", () => {
     "decrypts an encrypted vault secret keyed by the project .env (not process.env)",
     () => {
       // `DOTENV_PRIVATE_KEY` present only in the project .env must still decrypt — the
-      // config load merges the project .env into the key set (`checkDbToml`).
+      // config load merges the project .env into the key set (`checkDbConfig`).
       const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
       const ENCRYPTED =
         "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
@@ -1240,7 +1240,7 @@ describe("db push", () => {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // Config loads through the shared reader (`checkDbToml`), same as the other db
+        // Config loads through the shared reader (`checkDbConfig`), same as the other db
         // commands.
         expect(Cause.pretty(exit.cause)).toContain("failed to load config");
       }

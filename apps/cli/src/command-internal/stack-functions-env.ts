@@ -1,73 +1,27 @@
-import { Data, Effect, FileSystem, Predicate } from "effect";
+import { Effect, Option } from "effect";
 import type { ServiceCreationInput } from "@supabase/stack/effect";
-import { parseDotEnv } from "../shared/config/dotenv.ts";
-import {
-  actionability,
-  type CliErrorActionabilityDeclaration,
-  ErrorActionabilityId,
-} from "../shared/telemetry/error-actionability.ts";
+import { resolveFunctionsEnv } from "../shared/functions/functions-config.ts";
 
-export class StackFunctionsEnvError extends Data.TaggedError("StackFunctionsEnvError")<{
-  readonly message: string;
-  readonly path: string;
-  readonly cause?: unknown;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
-
-/** Reads a Functions dotenv file and removes reserved Stack-provided variables. */
-export const readStackFunctionsEnv = Effect.fn("StackFunctionsEnv.read")(function* (
-  filePath: string,
-  optional: boolean,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const contents = yield* fs.readFileString(filePath).pipe(
-    Effect.catchTag("PlatformError", (error) =>
-      optional && Predicate.isTagged(error.reason, "NotFound")
-        ? Effect.succeed("")
-        : Effect.fail(
-            new StackFunctionsEnvError({
-              path: filePath,
-              message: `Unable to load environment file ${filePath}: ${error.message}`,
-              cause: error,
-            }),
-          ),
-    ),
-  );
-  const parsed = yield* Effect.try({
-    try: () => parseDotEnv(contents),
-    catch: (cause) =>
-      new StackFunctionsEnvError({
-        path: filePath,
-        message: `Unable to parse environment file ${filePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        cause,
-      }),
-  });
-  const env = Object.fromEntries(
-    Object.entries(parsed).filter(([key]) => !key.startsWith("SUPABASE_")),
-  );
-  if (Object.keys(env).some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)))
-    return yield* new StackFunctionsEnvError({
-      path: filePath,
-      message: `Environment names in ${filePath} must start with a letter or underscore and contain only letters, digits, and underscores.`,
-    });
-  if (Object.values(env).some((value) => /[\0\r\n]/u.test(value)))
-    return yield* new StackFunctionsEnvError({
-      path: filePath,
-      message: `Multiline environment values in ${filePath} are not supported by the stack backend.`,
-    });
-  return env;
-});
-
-/** Adds the project Functions dotenv values to a Functions creation; configured values win. */
-export const withProjectFunctionsEnv = (creation: ServiceCreationInput) =>
+/** Adds the project Functions env, plus `debug` when set, to a Functions creation. */
+export const withProjectFunctionsConfig = (
+  creation: ServiceCreationInput,
+  options: { readonly warn: boolean; readonly debug: boolean },
+) =>
   creation.service === "functions"
-    ? readStackFunctionsEnv(`${creation.config.functionsRoot}/.env`, true).pipe(
-        Effect.map((env): ServiceCreationInput => ({
+    ? resolveFunctionsEnv({
+        secrets: creation.config.env ?? {},
+        functionsDir: creation.config.functionsRoot,
+        envFile: Option.none(),
+        functionSlugs: [],
+        warn: options.warn,
+      }).pipe(
+        Effect.map(({ shared }): ServiceCreationInput => ({
           ...creation,
-          config: { ...creation.config, env: { ...env, ...creation.config.env } },
+          config: {
+            ...creation.config,
+            env: shared,
+            ...(options.debug ? { debug: true } : {}),
+          },
         })),
       )
     : Effect.succeed(creation);
