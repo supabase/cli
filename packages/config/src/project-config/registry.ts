@@ -270,7 +270,7 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     unit: "type-tagged {address,type}[] → filtered string[] (v6)",
   },
   // Unmapped (no faithful counterpart): database.network_restrictions.{entitlement,status,
-  // updated_at,applied_at}. `db.network_restrictions.enabled` has no API-side counterpart at
+  // pending_allowed_cidrs,pending_requested_at,updated_at,applied_at}. `db.network_restrictions.enabled` has no API-side counterpart at
   // all — it's a purely local management switch, not an unmapped API field.
   {
     configPath: ["db", "pooler", "pool_mode"],
