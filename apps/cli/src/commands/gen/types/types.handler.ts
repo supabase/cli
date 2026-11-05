@@ -260,7 +260,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
   // `projectRef` is passed only for the linked path, so a matching `[remotes.*]` overlay is
   // merged in the same load; omitted for the local and `--remote=<url>` paths.
-  const loadApiSchemas = (projectRef?: string) =>
+  const loadCliConfigValues = (projectRef?: string) =>
     configValues
       .load({
         workdir: cliSettings.workdir,
@@ -280,21 +280,25 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             new GenTypesParseConfigError({ message: cause.message }),
           CliConfigLoadError: (cause) => new GenTypesParseConfigError({ message: cause.message }),
         }),
-        Effect.tap((resolvedConfig) =>
-          requireProjectConfigWhenExplicit(resolvedConfig.hasConfigFile),
-        ),
-        Effect.tap((resolvedConfig) =>
-          Effect.annotateCurrentSpan("config.found", resolvedConfig.hasConfigFile),
-        ),
-        Effect.flatMap((resolvedConfig) =>
-          resolvedConfig.get(CliConfigKeys.api.schemas).pipe(
-            // Without a project the embedded default applies, not the schema's default list.
-            Effect.map(({ value, origin }) =>
-              origin.tier === "default" && !resolvedConfig.hasConfigFile ? [] : value,
-            ),
+      );
+
+  const loadApiSchemas = (projectRef?: string) =>
+    loadCliConfigValues(projectRef).pipe(
+      Effect.tap((resolvedConfig) =>
+        requireProjectConfigWhenExplicit(resolvedConfig.hasConfigFile),
+      ),
+      Effect.tap((resolvedConfig) =>
+        Effect.annotateCurrentSpan("config.found", resolvedConfig.hasConfigFile),
+      ),
+      Effect.flatMap((resolvedConfig) =>
+        resolvedConfig.get(CliConfigKeys.api.schemas).pipe(
+          // Without a project the embedded default applies, not the schema's default list.
+          Effect.map(({ value, origin }) =>
+            origin.tier === "default" && !resolvedConfig.hasConfigFile ? [] : value,
           ),
         ),
-      );
+      ),
+    );
 
   // An explicit --workdir that holds no project must not silently resolve to the embedded
   // default schemas (dropping a declared [api].schemas and writing a public-only file at exit
@@ -308,12 +312,20 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         })
       : Effect.void;
 
-  // `--schema` skips the config load, so a `--remote=<url> --schema ...` invocation must not fail
+  // `--schema` skips the schema load, so a `--remote=<url> --schema ...` invocation must not fail
   // just because the workdir has no project config.
   const resolveIncludedSchemas = (projectRef?: string) =>
     schemas.length > 0
       ? Effect.succeed(schemas)
       : loadApiSchemas(projectRef).pipe(Effect.map(defaultSchemas));
+
+  // Read even with `--schema` and without a project, where the default list applies, since it
+  // describes the target's PostgREST rather than which schemas to generate.
+  const resolveExtraSearchPath = (projectRef?: string) =>
+    loadCliConfigValues(projectRef).pipe(
+      Effect.flatMap((resolvedConfig) => resolvedConfig.get(CliConfigKeys.api.extraSearchPath)),
+      Effect.map(({ value }) => value),
+    );
 
   /**
    * Sets a session-level `statement_timeout` and connect timeout from `--query-timeout` on
@@ -352,6 +364,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     readonly conn: PgConnInput;
     readonly isLocal: boolean;
     readonly includedSchemas: ReadonlyArray<string>;
+    readonly extraSearchPath: ReadonlyArray<string>;
     readonly detectOneToOneRelationships: boolean;
     readonly poolerFallback?: {
       readonly directHost: string;
@@ -374,6 +387,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             dnsResolver,
             lang,
             includedSchemas: input.includedSchemas,
+            extraSearchPath: input.extraSearchPath,
             options: {
               ...languageOptions,
               "detect-one-to-one-relationships": input.detectOneToOneRelationships,
@@ -426,11 +440,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const api = yield* platformApi.make;
 
       if (lang !== "typescript") {
+        const extraSearchPath = yield* resolveExtraSearchPath(projectRef);
         const projectResult = yield* api.v1.getProject({ ref: projectRef }).pipe(
           Effect.catch(mapProjectDatabaseHostError),
           Effect.as("project" as const),
           Effect.catchIf(isProjectNotFound, () =>
-            runPreviewBranchTypes(projectRef, includedSchemas).pipe(Effect.as("branch" as const)),
+            runPreviewBranchTypes(projectRef, includedSchemas, extraSearchPath).pipe(
+              Effect.as("branch" as const),
+            ),
           ),
         );
         if (projectResult === "branch") return;
@@ -442,6 +459,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           conn,
           isLocal: resolved.isLocal,
           includedSchemas,
+          extraSearchPath,
           detectOneToOneRelationships: !flags.postgrestV9Compat,
           poolerFallback: {
             directHost: conn.host,
@@ -465,7 +483,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
   };
 
-  const runPreviewBranchTypes = (branchRef: string, includedSchemas: ReadonlyArray<string>) =>
+  const runPreviewBranchTypes = (
+    branchRef: string,
+    includedSchemas: ReadonlyArray<string>,
+    extraSearchPath: ReadonlyArray<string>,
+  ) =>
     Effect.gen(function* () {
       const api = yield* platformApi.make;
       yield* Effect.annotateCurrentSpan("typegen.preview_branch", true);
@@ -511,6 +533,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         }),
         isLocal: false,
         includedSchemas,
+        extraSearchPath,
         detectOneToOneRelationships: !flags.postgrestV9Compat,
         poolerFallback: {
           directHost: branch.db_host,
@@ -659,20 +682,20 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const forcedV9 = restVersion.length > 0 && restVersion.includes("v9");
 
       const includedSchemas = schemas.length > 0 ? schemas : defaultSchemas(config.apiSchemas);
+      const extraSearchPath = yield* resolveExtraSearchPath();
       if (backend.kind === "stack") {
         const resolved = yield* connectTo(target);
         yield* runGenerate({
           conn: resolved.conn,
           isLocal: true,
           includedSchemas,
+          extraSearchPath,
           detectOneToOneRelationships: !(flags.postgrestV9Compat || forcedV9),
         });
         return;
       }
 
-      const host = yield* getHostname(
-        yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
-      );
+      const host = yield* getHostname(yield* loadCliConfigValues());
       yield* announceTarget(renderLocalTarget(host, config.port));
       const linkedCheckout = yield* isCheckoutLinked(
         fs,
@@ -696,6 +719,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         },
         isLocal: true,
         includedSchemas,
+        extraSearchPath,
         detectOneToOneRelationships: !(flags.postgrestV9Compat || forcedV9),
       });
       return;
@@ -704,6 +728,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     if (target.kind === "db-url") {
       yield* Effect.annotateCurrentSpan("typegen.source", "db_url");
       const includedSchemas = yield* resolveIncludedSchemas();
+      const extraSearchPath = yield* resolveExtraSearchPath();
       const resolved = yield* connectTo(target);
 
       // A DSN's own `sslmode`/`sslrootcert` is honored as-is; only a known Supabase host with
@@ -721,6 +746,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         conn,
         isLocal: resolved.isLocal,
         includedSchemas,
+        extraSearchPath,
         detectOneToOneRelationships: !flags.postgrestV9Compat,
       });
       return;
