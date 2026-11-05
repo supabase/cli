@@ -332,6 +332,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         output.layer,
         telemetry.layer,
         Layer.succeed(OutputFlag, Option.none()),
+        Layer.mock(ProjectRefResolver, {}),
         Layer.succeed(TargetPolicy, {
           group: "selectable",
           consent: "none",
