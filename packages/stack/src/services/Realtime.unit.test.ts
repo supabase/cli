@@ -31,6 +31,12 @@ it.effect("connects to the database over IPv4 whichever family Realtime binds", 
   }),
 );
 
+it.effect("caps Realtime's BEAM port table", () =>
+  Effect.gen(function* () {
+    expect(yield* realtimeEnv(undefined)).toMatchObject({ ERL_MAX_PORTS: "65536" });
+  }),
+);
+
 it.effect("requires the selected HTTP port on a successful native endpoint bind line", () =>
   Effect.sync(() => {
     const readinessOutput = makeSpec().nativeReadinessOutput;
