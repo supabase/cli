@@ -98,7 +98,7 @@ import {
   EdgeRuntimeDockerStepError,
   EdgeRuntimeLogStreamLostError,
   ServeConfigError,
-  ServeEnvFileError,
+  ServeEnvError,
   ServeFilesystemError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
@@ -472,7 +472,7 @@ const typedEnvFileFailure = <A, R>(effect: Effect.Effect<A, FunctionsEnvError, R
   effect.pipe(
     Effect.mapError((error) =>
       nativeFailure(
-        new ServeEnvFileError({
+        new ServeEnvError({
           reason:
             error.cause === undefined
               ? "syntax"
@@ -1745,7 +1745,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
         catch: (cause) =>
           nativeFailure(
-            new ServeEnvFileError({
+            new ServeEnvError({
               reason: "env_name",
               message: cause instanceof Error ? cause.message : String(cause),
             }),

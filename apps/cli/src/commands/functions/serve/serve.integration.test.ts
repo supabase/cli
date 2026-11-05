@@ -67,7 +67,7 @@ import {
   DockerLogsStreamError,
   EdgeRuntimeContainerCrashedError,
   EdgeRuntimeLogStreamLostError,
-  ServeEnvFileError,
+  ServeEnvError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
 } from "../../../shared/functions/serve.errors.ts";
@@ -829,12 +829,12 @@ describe("functions serve integration", () => {
       const { layer } = setupServe();
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvFileError);
+      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvError);
       expect(error.message).toContain(`failed to parse environment file: ${functionEnvPath}`);
       expect(error.message).toContain("unexpected character '-' in variable name");
       expect(error.message).not.toContain("secret-value");
       expect(error.message).not.toContain('near "API-KEY=secret-value"');
-      expect(normalizeCliError(error).code).toBe("ServeEnvFileError");
+      expect(normalizeCliError(error).code).toBe("ServeEnvError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",
@@ -859,9 +859,9 @@ describe("functions serve integration", () => {
       );
 
       expect(error.message).toContain("failed to load environment file:");
-      expect(normalizeCliError(error).code).toBe("ServeEnvFileError");
+      expect(normalizeCliError(error).code).toBe("ServeEnvError");
       expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
-        "tag:ServeEnvFileError:filesystem_io",
+        "tag:ServeEnvError:filesystem_io",
       );
       expect(deployMockState.runCalls.some((call) => call.args[0] === "create")).toBe(false);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -1408,7 +1408,7 @@ describe("functions serve integration", () => {
         expect(error.message).toContain("invalid multiline environment variable name");
         expect(error.message).toContain("FOO.BAR");
       }
-      expect(normalizeCliError(error).code).toBe("ServeEnvFileError");
+      expect(normalizeCliError(error).code).toBe("ServeEnvError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",
@@ -4433,12 +4433,12 @@ describe("functions serve integration", () => {
         }),
       ).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvFileError);
+      expect(unwrapNativeFailure(error)).toBeInstanceOf(ServeEnvError);
       expect(error.message).toContain(".env");
       expect(error.message).toContain("no such file or directory");
-      expect(normalizeCliError(error).code).toBe("ServeEnvFileError");
+      expect(normalizeCliError(error).code).toBe("ServeEnvError");
       expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
-        "tag:ServeEnvFileError:not_found",
+        "tag:ServeEnvError:not_found",
       );
       expect(
         deployMockState.runCalls.filter(

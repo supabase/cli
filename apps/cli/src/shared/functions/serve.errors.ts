@@ -174,7 +174,7 @@ export class ServeConfigError extends Data.TaggedError("ServeConfigError")<{
 }
 
 /** The functions env input, an env file or a configured secret, is missing, can't be read, doesn't parse, or has an invalid name. */
-export class ServeEnvFileError extends Data.TaggedError("ServeEnvFileError")<{
+export class ServeEnvError extends Data.TaggedError("ServeEnvError")<{
   readonly message: string;
   readonly reason: "not_found" | "read" | "syntax" | "env_name";
   readonly cause?: unknown;

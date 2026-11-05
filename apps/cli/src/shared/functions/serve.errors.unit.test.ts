@@ -16,7 +16,7 @@ import {
   EdgeRuntimeDockerStepError,
   EdgeRuntimeLogStreamLostError,
   ServeConfigError,
-  ServeEnvFileError,
+  ServeEnvError,
   ServeFilesystemError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
@@ -266,21 +266,21 @@ describe("ServeConfigError actionability", () => {
   });
 });
 
-describe("ServeEnvFileError actionability", () => {
+describe("ServeEnvError actionability", () => {
   it.each([
-    ["syntax", undefined, "invalid_input", "tag:ServeEnvFileError:invalid_content"],
-    ["env_name", undefined, "invalid_input", "tag:ServeEnvFileError:functions_env"],
-    ["not_found", undefined, "invalid_input", "tag:ServeEnvFileError:not_found"],
+    ["syntax", undefined, "invalid_input", "tag:ServeEnvError:invalid_content"],
+    ["env_name", undefined, "invalid_input", "tag:ServeEnvError:functions_env"],
+    ["not_found", undefined, "invalid_input", "tag:ServeEnvError:not_found"],
     [
       "read",
       Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }),
       "unknown",
-      "tag:ServeEnvFileError:filesystem_io",
+      "tag:ServeEnvError:filesystem_io",
     ],
-    ["read", undefined, "unknown", "tag:ServeEnvFileError:filesystem_io"],
+    ["read", undefined, "unknown", "tag:ServeEnvError:filesystem_io"],
   ] as const)("classifies a %s failure with cause %#", (reason, cause, category, fingerprint) => {
     const result = classifyCliErrorActionability(
-      new ServeEnvFileError({ message: "m", reason, cause }),
+      new ServeEnvError({ message: "m", reason, cause }),
     );
 
     expect(result.error_category).toBe(category);
@@ -407,7 +407,7 @@ describe("DockerResourceCreateError actionability", () => {
 describe("new serve errors built without fields", () => {
   it.each([
     ServeConfigError,
-    ServeEnvFileError,
+    ServeEnvError,
     ServeFilesystemError,
     EdgeRuntimeDockerStepError,
     DockerResourceCreateError,

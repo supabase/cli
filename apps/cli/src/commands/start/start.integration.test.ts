@@ -5712,7 +5712,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
         expect(error.message).toContain("failed to parse environment file:");
         expect(error.message).not.toContain("secret-value");
-        expect(normalizeCliError(error).code).toBe("ServeEnvFileError");
+        expect(normalizeCliError(error).code).toBe("ServeEnvError");
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 

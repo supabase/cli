@@ -86,7 +86,7 @@ health-checked via an HTTP probe through Kong (`/functions/v1/_internal/health`)
 Docker healthcheck — mirroring PostgREST's own probe shape.
 
 Its bring-up failures use the same typed errors as `functions serve` (`ServeConfigError` for
-the missing-import check, `ServeEnvFileError` for a malformed `supabase/functions/.env` or an
+the missing-import check, `ServeEnvError` for a malformed `supabase/functions/.env` or an
 invalid multiline env name from an env file or configured secret, `ServeFilesystemError` for
 staging the env files on the host, and `EdgeRuntimeDockerStepError` for the container's
 `docker create`/`cp`/`start`), so with `--output json` the `error.code` is the error's name

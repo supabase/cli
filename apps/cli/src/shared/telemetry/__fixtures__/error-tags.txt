@@ -450,7 +450,7 @@ SeedConfigLoadError
 SeedMissingProjectConfigError
 SeedWorkdirError
 ServeConfigError
-ServeEnvFileError
+ServeEnvError
 ServeFilesystemError
 ServeLocalDbInspectError
 ServeLocalDbNotRunningError
