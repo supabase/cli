@@ -64,7 +64,7 @@ export const dbPushCommand = makeCommand("push", config).pipe(
         id: "basic-usage",
         name: "Basic usage",
         code: "supabase db push --remote",
-        response: `Linked project is up to date.
+        response: `Remote database is up to date.
 `,
       },
       {
