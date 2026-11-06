@@ -271,6 +271,11 @@ Keep CLI tests hermetic: real filesystem layers that use `RuntimeInfo.homeDir` o
 or credentials layers also use `isolatedHomeLayer` so ambient `SUPABASE_HOME`, `SUPABASE_PROFILE`,
 and tokens cannot leak.
 
+Cross-backend consumer behavior lives in `tests/contract/`: `cases.ts` holds supabase-js cases per
+service that run unchanged against legacy, stack/container and stack/native, one
+`contract.<setup>.integration.test.ts` runner per setup. A parity fix adds the case it makes pass
+there; a new service adds its case list next to the others.
+
 Use `*.unit.test.ts` for pure logic and narrow edge cases, `*.integration.test.ts` for handlers and
 service behavior with realistic layered replacements, `*.e2e.test.ts` for local subprocess and
 Docker-stack behavior, and `*.live.test.ts` only when the command reaches the real platform or

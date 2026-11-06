@@ -334,7 +334,8 @@ const FIXED_PORT_SPAN = FIXED_PORT_RANGE_END - FIXED_PORT_RANGE_START;
 /* Walks the range from a random start, so one worker never hands out the same port twice. */
 let nextPortOffset: number | undefined;
 
-const pickFreePort = Effect.gen(function* () {
+/** A free host port below the stack and ephemeral ranges, split by worker under SUPABASE_E2E_WORKERS. */
+export const pickFreePort = Effect.gen(function* () {
   const e2eWorkers = Number((yield* envOrEmpty("SUPABASE_E2E_WORKERS")) || "1");
   const e2eWorkerSlot = Number((yield* envOrEmpty("VITEST_POOL_ID")) || "1") % e2eWorkers;
   const start =

@@ -2,6 +2,25 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import type { ServiceEndpoint } from "./Recipe.ts";
 import * as Pooler from "./Pooler.ts";
+import { selection } from "../../tests/pins.ts";
+
+describe("Pooler environment", () => {
+  it.effect("caps Supavisor's BEAM port table", () =>
+    Effect.gen(function* () {
+      const env = yield* Pooler.makeSpec().env(
+        {
+          service: "pooler",
+          pin: selection.pooler,
+          config: { databaseUrl: "postgresql://supabase_admin:postgres@db.internal:5432/postgres" },
+        },
+        new Map(),
+        true,
+      );
+
+      expect(env).toMatchObject({ ERL_MAX_PORTS: "65536" });
+    }),
+  );
+});
 
 describe("native Pooler readiness output", () => {
   it.effect("requires the selected HTTP port on a successful endpoint bind line", () =>
