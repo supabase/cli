@@ -2,77 +2,6 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/replayfixtureprojref",
-      "query": {},
-      "headers": {
-        "accept-encoding": "gzip",
-        "authorization": "Bearer __ACCESS_TOKEN__",
-        "host": "localhost:__PORT__",
-        "user-agent": "SupabaseCLI/<VERSION>"
-      },
-      "body": null
-    },
-    "response": {
-      "status": 200,
-      "headers": {
-        "content-type": "application/json; charset=utf-8"
-      },
-      "body": {
-        "id": "replayfixtureprojref",
-        "ref": "replayfixtureprojref",
-        "organization_id": "replayfixtureprojref",
-        "organization_slug": "replayfixtureprojref",
-        "name": "cli-e2e-test",
-        "region": "us-east-1",
-        "status": "ACTIVE_HEALTHY",
-        "database": {
-          "host": "db.replayfixtureprojref.supabase.invalid",
-          "version": "17.6.1.111",
-          "postgres_engine": "17",
-          "release_channel": "ga"
-        },
-        "created_at": "2000-01-01T00:00:00Z"
-      }
-    }
-  },
-  {
-    "request": {
-      "method": "GET",
-      "path": "/v1/projects/replayfixtureprojref/config/database/pooler",
-      "query": {},
-      "headers": {
-        "accept-encoding": "gzip",
-        "authorization": "Bearer __ACCESS_TOKEN__",
-        "host": "localhost:__PORT__",
-        "user-agent": "SupabaseCLI/<VERSION>"
-      },
-      "body": null
-    },
-    "response": {
-      "status": 200,
-      "headers": {
-        "content-type": "application/json; charset=utf-8"
-      },
-      "body": [
-        {
-          "identifier": "replayfixtureprojref",
-          "database_type": "PRIMARY",
-          "db_user": "postgres.replayfixtureprojref",
-          "db_host": "pooler.supabase.invalid",
-          "db_port": 6543,
-          "db_name": "postgres",
-          "connection_string": "postgresql://postgres.replayfixtureprojref:[YOUR-PASSWORD]@pooler.supabase.invalid:6543/postgres",
-          "pool_mode": "transaction",
-          "default_pool_size": null,
-          "max_client_conn": null,
-          "is_using_scram_auth": true
-        }
-      ]
-    }
-  },
-  {
-    "request": {
-      "method": "GET",
       "path": "/v1/projects/replayfixtureprojref/types/typescript",
       "query": {
         "included_schemas": "public"
@@ -92,42 +21,6 @@
       },
       "body": {
         "types": "export type Json =\n  | string\n  | number\n  | boolean\n  | null\n  | { [key: string]: Json | undefined }\n  | Json[]\n\nexport type Database = {\n  public: {\n    Tables: {\n      [_ in never]: never\n    }\n    Views: {\n      [_ in never]: never\n    }\n    Functions: {\n      [_ in never]: never\n    }\n    Enums: {\n      [_ in never]: never\n    }\n    CompositeTypes: {\n      [_ in never]: never\n    }\n  }\n}\n"
-      }
-    }
-  },
-  {
-    "request": {
-      "method": "GET",
-      "path": "/v1/projects/replayfixtureprojref",
-      "query": {},
-      "headers": {
-        "accept-encoding": "gzip",
-        "authorization": "Bearer __ACCESS_TOKEN__",
-        "host": "localhost:__PORT__",
-        "user-agent": "SupabaseCLI/<VERSION>"
-      },
-      "body": null
-    },
-    "response": {
-      "status": 200,
-      "headers": {
-        "content-type": "application/json; charset=utf-8"
-      },
-      "body": {
-        "id": "replayfixtureprojref",
-        "ref": "replayfixtureprojref",
-        "organization_id": "replayfixtureprojref",
-        "organization_slug": "replayfixtureprojref",
-        "name": "cli-e2e-test",
-        "region": "us-east-1",
-        "status": "ACTIVE_HEALTHY",
-        "database": {
-          "host": "db.replayfixtureprojref.supabase.invalid",
-          "version": "17.6.1.111",
-          "postgres_engine": "17",
-          "release_channel": "ga"
-        },
-        "created_at": "2000-01-01T00:00:00Z"
       }
     }
   }

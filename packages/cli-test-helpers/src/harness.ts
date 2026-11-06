@@ -171,7 +171,7 @@ export function createHarness(options: HarnessOptions): CLIHarness {
 const execEffect = Effect.fnUntraced(function* (
   harness: CLIHarness,
   args: string[],
-  opts?: { env?: Record<string, string>; projectHost?: string },
+  opts?: { env?: Record<string, string> },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -208,7 +208,7 @@ const execEffect = Effect.fnUntraced(function* (
     `name: test`,
     `api_url: "${url}"`,
     `dashboard_url: "${url}"`,
-    `project_host: ${opts?.projectHost ?? harness.options.projectHost ?? "localhost"}`,
+    `project_host: ${harness.options.projectHost ?? "localhost"}`,
   ].join("\n");
   const command = [...built.cmd, ...args];
   // Default to os.tmpdir() so subprocess file writes never land in the repo
@@ -248,7 +248,7 @@ const execEffect = Effect.fnUntraced(function* (
 export function exec(
   harness: CLIHarness,
   args: string[],
-  opts?: { env?: Record<string, string>; projectHost?: string },
+  opts?: { env?: Record<string, string> },
 ): Promise<CLIResult> {
   return runHarness(execEffect(harness, args, opts));
 }

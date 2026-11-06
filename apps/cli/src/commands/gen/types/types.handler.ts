@@ -368,6 +368,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     readonly includedSchemas: ReadonlyArray<string>;
     readonly extraSearchPath: ReadonlyArray<string>;
     readonly detectOneToOneRelationships: boolean;
+    readonly postgrestVersion?: string;
     readonly poolerFallback?: {
       readonly directHost: string;
       readonly eligible: boolean;
@@ -393,6 +394,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             options: {
               ...languageOptions,
               "detect-one-to-one-relationships": input.detectOneToOneRelationships,
+              ...(input.postgrestVersion === undefined
+                ? {}
+                : { "postgrest-version": input.postgrestVersion }),
             },
           });
         }),
@@ -445,6 +449,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     branch: Effect.Success<ReturnType<typeof lookupPreviewBranch>>,
     includedSchemas: ReadonlyArray<string>,
     extraSearchPath: ReadonlyArray<string>,
+    postgrestVersion: string | undefined,
   ) =>
     Effect.gen(function* () {
       const api = yield* platformApi.make;
@@ -489,6 +494,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         includedSchemas,
         extraSearchPath,
         detectOneToOneRelationships: !flags.postgrestV9Compat,
+        postgrestVersion,
         poolerFallback: {
           directHost: branch.db_host,
           eligible: isDirectDbHost(branch.db_host, cliSettings.projectHost),
@@ -496,6 +502,26 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         },
       });
     });
+
+  /**
+   * Remote TypeScript runs in-process only when its output can match the Management API's without
+   * minting a login role, which would reset that role's password under any concurrent command: the
+   * ref is the linked project, `link` recorded its PostgREST version (emitted as
+   * `__InternalSupabase.PostgrestVersion`), and a database password resolves. Any unreadable input
+   * keeps the API path.
+   */
+  const directTypescriptPostgrestVersion = (projectRef: string) =>
+    Effect.gen(function* () {
+      const linkedRef = yield* legacyState.readProjectRef(cliSettings.workdir);
+      if (!Option.contains(linkedRef, projectRef)) return Option.none<string>();
+      const restVersion = (yield* legacyState.read(cliSettings.workdir, "restVersion")).trim();
+      if (restVersion.length === 0) return Option.none<string>();
+      const resolvedConfig = yield* loadCliConfigValues(projectRef);
+      const { value: password } = yield* resolvedConfig.get(CliConfigKeys.linkedDb.password);
+      return Option.exists(password, (value) => value.length > 0)
+        ? Option.some(restVersion.replace(/^v/i, ""))
+        : Option.none<string>();
+    }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
   const runProjectTypes = (
     target: Extract<ResolvedTarget, { readonly kind: "linked" }>,
@@ -506,25 +532,44 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       yield* Effect.annotateCurrentSpan("project.ref", projectRef);
       const api = yield* platformApi.make;
 
-      // Other languages fail on a bad config before any API call; TypeScript defers the read into
-      // the direct path so the same failure can still fall back to the API.
-      const earlyExtraSearchPath =
-        lang === "typescript" ? undefined : yield* resolveExtraSearchPath(projectRef);
+      const generateViaApi = Effect.gen(function* () {
+        const response = yield* api.v1
+          .generateTypescriptTypes({
+            ref: projectRef,
+            included_schemas: includedSchemas.join(","),
+          })
+          .pipe(Effect.catch(mapProjectTypesError));
+        yield* output.raw(response.types);
+      });
 
-      // The project and branch lookups sit outside the TypeScript fallback: the Management API
-      // types endpoint takes the same token and ref, so it would fail the same way.
-      const branch = yield* api.v1.getProject({ ref: projectRef }).pipe(
-        Effect.catch(mapProjectDatabaseHostError),
-        Effect.as(Option.none<Effect.Success<ReturnType<typeof lookupPreviewBranch>>>()),
-        Effect.catchIf(isProjectNotFound, () =>
-          lookupPreviewBranch(projectRef).pipe(Effect.map(Option.some)),
-        ),
+      const postgrestVersion =
+        lang === "typescript"
+          ? yield* directTypescriptPostgrestVersion(projectRef)
+          : Option.none<string>();
+      yield* Effect.annotateCurrentSpan(
+        "typegen.direct",
+        lang !== "typescript" || Option.isSome(postgrestVersion),
       );
+      if (lang === "typescript" && Option.isNone(postgrestVersion)) return yield* generateViaApi;
 
       const generateDirect = Effect.gen(function* () {
-        const extraSearchPath = earlyExtraSearchPath ?? (yield* resolveExtraSearchPath(projectRef));
+        const extraSearchPath = yield* resolveExtraSearchPath(projectRef);
+        // Inside the TypeScript fallback: the types endpoint needs only `database:read`, while
+        // the project lookup also needs `projects:read`.
+        const branch = yield* api.v1.getProject({ ref: projectRef }).pipe(
+          Effect.catch(mapProjectDatabaseHostError),
+          Effect.as(Option.none<Effect.Success<ReturnType<typeof lookupPreviewBranch>>>()),
+          Effect.catchIf(isProjectNotFound, () =>
+            lookupPreviewBranch(projectRef).pipe(Effect.map(Option.some)),
+          ),
+        );
         if (Option.isSome(branch)) {
-          return yield* runPreviewBranchTypes(branch.value, includedSchemas, extraSearchPath);
+          return yield* runPreviewBranchTypes(
+            branch.value,
+            includedSchemas,
+            extraSearchPath,
+            Option.getOrUndefined(postgrestVersion),
+          );
         }
 
         const connectionInput = yield* connectionInputFor(target);
@@ -536,6 +581,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           includedSchemas,
           extraSearchPath,
           detectOneToOneRelationships: !flags.postgrestV9Compat,
+          postgrestVersion: Option.getOrUndefined(postgrestVersion),
           poolerFallback: {
             directHost: conn.host,
             eligible: !resolved.isLocal && isDirectDbHost(conn.host, cliSettings.projectHost),
@@ -553,13 +599,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           Effect.gen(function* () {
             yield* Effect.annotateCurrentSpan("typegen.api_fallback", true);
             yield* output.raw(`${yellow(apiFallbackWarning(error))}\n`, "stderr");
-            const response = yield* api.v1
-              .generateTypescriptTypes({
-                ref: projectRef,
-                included_schemas: includedSchemas.join(","),
-              })
-              .pipe(Effect.catch(mapProjectTypesError));
-            yield* output.raw(response.types);
+            yield* generateViaApi;
           }),
         ),
       );

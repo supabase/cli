@@ -149,9 +149,14 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
               kind: "required",
               when: [{ flag: "lang", oneOf: ["typescript"] }],
               context:
-                "direct generation failed before introspection started (config, connection, TLS, authentication, pooler or login-role failure); a generator or project-lookup failure does not fall back",
+                "direct generation is not eligible (the ref is not the linked project, supabase/.temp/rest-version is missing, or no database password resolves), or it failed before introspection started (project lookup, config, connection, TLS, authentication or pooler failure); a generator failure does not fall back",
             },
-            { operationId: "v1-get-project", kind: "required" },
+            {
+              operationId: "v1-get-project",
+              kind: "required",
+              context:
+                "every language but TypeScript; TypeScript only when direct generation is eligible",
+            },
             {
               operationId: "v1-get-a-branch-config",
               kind: "required",

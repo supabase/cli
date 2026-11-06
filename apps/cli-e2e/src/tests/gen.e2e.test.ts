@@ -8,10 +8,6 @@ function decodeJwtPart(part: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(padded, "base64").toString("utf8")) as Record<string, unknown>;
 }
 
-/* The replay profile's default `localhost` makes the direct database host dialable on loopback, where a
-   local Postgres would make the CLI skip the fallback; `.invalid` never resolves. */
-const UNRESOLVABLE_PROJECT_HOST = "invalid";
-
 describe("gen", () => {
   describe("gen:types", () => {
     testBehaviour.skipIf(isRecording)(
@@ -23,13 +19,10 @@ describe("gen", () => {
             // plugin hint (would break `gen types > file.ts` and similar captures).
             const result = yield* run(["gen", "types", `--remote=${projectRef}`], {
               env: { CLAUDECODE: "1" },
-              projectHost: UNRESOLVABLE_PROJECT_HOST,
             });
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("export type Json");
             expect(result.stdout).toContain("export type Database");
-            expect(result.stdout).not.toContain("Warning");
-            expect(result.stderr).toContain("so these types come from the Management API");
             expect(result.stdout).not.toMatch(/claude-code-hint/);
             expect(result.stderr).not.toMatch(/claude-code-hint/);
           }),
@@ -42,9 +35,7 @@ describe("gen", () => {
       ({ run, projectRef, signal }) =>
         runE2e(
           Effect.gen(function* () {
-            const result = yield* run(["gen", "types", "--debug", `--remote=${projectRef}`], {
-              projectHost: UNRESOLVABLE_PROJECT_HOST,
-            });
+            const result = yield* run(["gen", "types", "--debug", `--remote=${projectRef}`]);
             expect(result.exitCode).toBe(0);
             expect(result.stderr).toMatch(/HTTP.*GET:/);
           }),
