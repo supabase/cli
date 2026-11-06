@@ -188,7 +188,9 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
           pin: selection.auth,
           config: {
             jwtSecret: secret,
-            templates: [{ id: "recovery", path: `${templateRoot}/recovery.html`, root: templateRoot }],
+            templates: [
+              { id: "recovery", path: `${templateRoot}/recovery.html`, root: templateRoot },
+            ],
           },
           endpoints: { http: endpoint("auto") },
         },
