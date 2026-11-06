@@ -763,7 +763,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
     }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("keeps a loopback url on another port remote so it still requires TLS", () =>
+  it.effect("keeps a loopback url on another port remote so it still negotiates TLS", () =>
     Effect.gen(function* () {
       const resolved = yield* resolveOnStack(yield* withWorkdir(), stackUrl(STACK_SQL_PORT + 1));
       expect(resolved.isLocal).toBe(false);
