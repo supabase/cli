@@ -59,7 +59,7 @@ export const genTypesRuntimeLayer = (() => {
     platformApiFactory,
     projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
-      Layer.provide(credentials),
+      Layer.provide(platformApiFactory),
       Layer.provide(cliSettings),
       Layer.provide(httpClient),
       Layer.provide(identityStitchLayer),

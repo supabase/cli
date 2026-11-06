@@ -98,14 +98,23 @@ Configuration can join the contract once every config and settings read goes thr
 - **Ownership.** It overlaps ADR 0032 and the `config.jsonc` project (CLI-2862, CLI-2867 in review), both owned by Colum Ferry, so it's a separate proposal to take to him.
 - **Untested.** Whether template-literal table keys behave like the wildcard, and type-check time with long `Reads` unions.
 
+## Prerequisite for the Boundary
+
+The boundary needs every Management API request a command makes to go through one client, so the runtime guard has one insertion point and the compile-time check has one type to tag.
+
+- **Done for `branches delete`.** It used two clients: `CommandPlatformApi` (the handler, `branchPrompt`, `branchRef` and, through `commandPlatformApiFactoryFromApiLayer`, `projectRefPicker`) and a client `LinkedProjectCache` built for itself on a separate `HttpClient`. `LinkedProjectCache` now uses the command's lazy `CommandPlatformApiFactory` and still skips quietly when no access token resolves. Every runtime layer that provides the cache now provides the factory too.
+- **Left: the `sso` profile override.** `sso add` and `sso update` pass a reconciled profile (`LinkedProjectCacheProfile`, with its own API URL and token) to `cache(...)`, and the cache builds a separate client for it, because the factory can't take a profile. The fix is a factory that accepts a profile.
+- **Left: raw `HttpClient` callers.** Sixteen non-test files take `HttpClient` directly (for example `apps/cli/src/commands/domains/create/create.handler.ts` and `apps/cli/src/shared/services/services.shared.ts`). Not yet audited for which ones call the Management API rather than other hosts.
+
 ## Open Questions
 
 - How should shared code contribute its errors to a contract? The declared lists grow with the shared code a command composes, not with what the command does: 36 errors for `branches delete`, 41 for `secrets set` and 92 for `db reset`. Repeating them in every contract makes them the bulk of each declaration and copies the compiler's output by hand. One option is error fragments contributed by shared code and combined per command, the way permissions use `block(...)` and `compose(...)`; the compile-time check would then compare `E` against the composed list. Settle this before annotating a third command.
 
 ## Decision Log
 
-| Date       | Decision                                                                            | Reason                                                                                                                                                         |
-| ---------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-11-06 | Spike on `branches delete`, `secrets set`, `branches get`                           | `branches delete` tests the boundary; the other two cover configuration, variable write counts, docs retirement and output modes that it doesn't.              |
-| 2026-11-06 | Contract references `CliConfigKeys` and `CommandSettings` fields; `EnvVar` reverted | Follows the canonical config paths and the documented rule that process env isn't a service; settings stay unchecked until a runtime-settings registry exists. |
-| 2026-11-06 | Drop `configuration` from the contract; record the prerequisite                     | Only compile-time checks count, and a compile-time config check needs every read behind a key first (about 150 files), which is config work outside this POC.  |
+| Date       | Decision                                                                                                 | Reason                                                                                                                                                         |
+| ---------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-11-06 | Spike on `branches delete`, `secrets set`, `branches get`                                                | `branches delete` tests the boundary; the other two cover configuration, variable write counts, docs retirement and output modes that it doesn't.              |
+| 2026-11-06 | Contract references `CliConfigKeys` and `CommandSettings` fields; `EnvVar` reverted                      | Follows the canonical config paths and the documented rule that process env isn't a service; settings stay unchecked until a runtime-settings registry exists. |
+| 2026-11-06 | Drop `configuration` from the contract; record the prerequisite                                          | Only compile-time checks count, and a compile-time config check needs every read behind a key first (about 150 files), which is config work outside this POC.  |
+| 2026-11-06 | `LinkedProjectCache` uses `CommandPlatformApiFactory`; one client per command is a boundary prerequisite | Gives the guard one insertion point for `branches delete` and the compile-time check one client type; the `sso` override and raw `HttpClient` callers remain.  |

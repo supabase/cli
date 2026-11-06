@@ -1,6 +1,17 @@
 import type { Effect, Option, Redacted } from "effect";
 import { Context } from "effect";
 
+/**
+ * A reconciled profile whose host and token replace the command's for the cache-fill GET, so the
+ * stale profile's bearer token is never sent to the reconciled host.
+ */
+export interface LinkedProjectCacheProfile {
+  /** Management API base URL; defaults to `cliSettings.apiUrl`. */
+  readonly apiUrl: string | undefined;
+  /** `None` skips the GET rather than fall back to the stale profile's token. */
+  readonly accessToken: Option.Option<Redacted.Redacted<string>>;
+}
+
 interface LinkedProjectCacheShape {
   /**
    * Fire-and-forget: fetches the project metadata from the Management API and writes it if no
@@ -16,20 +27,13 @@ interface LinkedProjectCacheShape {
    * Best-effort. Never fails the calling effect — auth errors, network errors, and write errors
    * are all swallowed.
    *
-   * `apiUrl` overrides the Management API base URL of the cache-fill GET: commands that reconcile
-   * a flag-effective profile differing from the config layer's (e.g. `sso add`/`update`) pass
-   * that profile's URL. Defaults to `cliSettings.apiUrl`.
-   *
-   * `accessToken` complements `apiUrl`: a reconciled caller passes the reconciled profile's token
-   * along with its URL, since the stale profile's bearer token must never be sent to the
-   * reconciled host. `Some` uses that token, `None` skips the GET entirely, `undefined` resolves
-   * from the config/credentials services.
+   * `profile` is passed by commands that reconcile a flag-effective profile differing from the
+   * config layer's (e.g. `sso add`/`update`). Without it the GET uses the command's client.
    */
   readonly cache: (
     ref: string,
     workdir?: string,
-    apiUrl?: string,
-    accessToken?: Option.Option<Redacted.Redacted<string>>,
+    profile?: LinkedProjectCacheProfile,
   ) => Effect.Effect<void>;
 }
 

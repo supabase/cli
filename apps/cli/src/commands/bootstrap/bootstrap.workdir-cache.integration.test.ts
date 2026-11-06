@@ -35,6 +35,7 @@ import {
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { SuccessTrailer, successTrailerLayer } from "../../shared/cli/success-trailer.ts";
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
+import { realPlatformApiFactory } from "../../../tests/helpers/permission-real-layers.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
@@ -206,6 +207,7 @@ describe("bootstrap linked-project cache location", () => {
           Layer.provide(BunServices.layer),
         );
         const cacheLayer = linkedProjectCacheLayer.pipe(
+          Layer.provide(realPlatformApiFactory),
           Layer.provide(configLayer),
           Layer.provide(credentials.layer),
           Layer.provide(api.httpClientLayer),
