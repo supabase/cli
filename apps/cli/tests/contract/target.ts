@@ -94,10 +94,9 @@ enabled = false
 enabled = false
 `;
 
-/* Migrations and seeds log to contract_log in the order they run, and are written out of that order.
-   Byte order runs 0, 10, 2026, then 9, and skips notes.sql and nested/. zz runs once before the glob
-   that matches it again, then aa and mm in byte order. 10 creates config-public private, so aa seeing
-   public=false and a public bucket at the end prove config buckets seed after migrations and seeds. */
+/* Migrations and seeds log to contract_log in run order: 0, 10, 2026, 9, skipping notes.sql and nested/,
+   then zz once, then aa and mm. 10 creates config-public private, so the last seed mm seeing
+   public=false and a public bucket at the end prove config buckets seed after every seed. */
 const projectFiles = (projectId: string, ports: LegacyPorts | undefined) => ({
   "config.toml": config(projectId, ports),
   "migrations/9_after_10.sql": `insert into public.contract_log (source) values ('migration 9');
@@ -119,9 +118,9 @@ insert into public.contract_log (source) select format('migration 0 sees auth=%s
 `,
   "migrations/nested/1_nested.sql": `insert into public.contract_log (source) values ('nested/1_nested.sql');
 `,
-  "seeds/mm.sql": `insert into public.contract_log (source) values ('seed mm');
+  "seeds/mm.sql": `insert into public.contract_log (source) select 'seed mm sees public=' || public from storage.buckets where id = 'config-public';
 `,
-  "seeds/aa.sql": `insert into public.contract_log (source) select 'seed aa sees public=' || public from storage.buckets where id = 'config-public';
+  "seeds/aa.sql": `insert into public.contract_log (source) values ('seed aa');
 `,
   "seeds/zz.sql": `insert into public.contract_log (source) values ('seed zz');
 `,

@@ -329,8 +329,8 @@ const appliesInOrder = Effect.gen(function* () {
     "migration 20260101000000",
     "migration 9",
     "seed zz",
-    "seed aa sees public=false",
-    "seed mm",
+    "seed aa",
+    "seed mm sees public=false",
   ]);
   const buckets = yield* sdk("list buckets", () => client.storage.listBuckets());
   expect(Object.fromEntries(buckets.map(({ id, public: open }) => [id, open]))).toMatchObject({
