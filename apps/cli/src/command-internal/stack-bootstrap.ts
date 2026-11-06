@@ -4,7 +4,7 @@ import { Output } from "../shared/output/output.service.ts";
 import { applyDatabaseWebhooks, ensureStackWebhookSchema } from "./db-bootstrap/db-setup.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { DbConnection, type DbSession } from "./db-connection.service.ts";
-import type { DbTomlValues } from "./db-config.toml-read.ts";
+import type { DbConfigValues } from "./db-config.read.ts";
 import { migrateAndSeed } from "./migrate-and-seed.ts";
 import { StackCatalogSetup, type StackCatalogSetupInput } from "./stack-catalog-setup.ts";
 
@@ -86,8 +86,8 @@ export const applyStackWebhooksOnly = (
 interface StackMigrations {
   readonly workdir: string;
   readonly toml: Pick<
-    DbTomlValues,
-    "migrationsEnabled" | "seed" | "pgDelta" | "schemaPaths" | "webhooksEnabled"
+    DbConfigValues,
+    "migrationsEnabled" | "seed" | "pgDelta" | "schemaPaths" | "webhooksEnabled" | "configFile"
   >;
   readonly experimental: boolean;
   /** Applies migrations up to this version; omitted applies all of them. */
@@ -116,6 +116,7 @@ const applyStackMigrateAndSeed = (
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
           localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+          configFile: toml.configFile,
         });
       }),
     "postgres",
@@ -123,7 +124,7 @@ const applyStackMigrateAndSeed = (
 
 /** The catalog overlay declared by a project's `config.toml`. */
 export const projectCatalogOverlay = (
-  toml: Pick<DbTomlValues, "webhooksEnabled" | "baseline" | "vault">,
+  toml: Pick<DbConfigValues, "webhooksEnabled" | "baseline" | "vault">,
   workdir: string,
 ): StackCatalogSetupInput["overlay"] => ({
   webhooks: "config",

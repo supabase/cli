@@ -21,6 +21,7 @@ import {
   SsoListUnexpectedStatusError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
+import { ssoReadRequestOptions, warnIfProjectUnhealthy } from "../sso.request-policy.ts";
 import { renderListProviders } from "../sso.format.ts";
 import type { SsoListFlags } from "./list.command.ts";
 
@@ -74,8 +75,9 @@ export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
     yield* Effect.gen(function* () {
       const fetching =
         output.format === "text" ? yield* output.task("Fetching SSO providers...") : undefined;
-      const response = yield* api.v1.listAllSsoProvider({ ref }).pipe(
+      const response = yield* api.v1.listAllSsoProvider({ ref }, yield* ssoReadRequestOptions).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        Effect.tapError((cause) => warnIfProjectUnhealthy(ref, cause)),
         Effect.catch((cause) => handleListError(ref, cause)),
       );
       yield* fetching?.clear ?? Effect.void;

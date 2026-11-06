@@ -16,10 +16,10 @@ import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
-  readDbToml,
+  readDbConfig,
   resolveDeclarativeDir,
-  type DbTomlValues,
-} from "../../../command-internal/db-config.toml-read.ts";
+  type DbConfigValues,
+} from "../../../command-internal/db-config.read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
@@ -225,18 +225,20 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       let mergedLinkedRef: string | undefined;
       // The first migrations endpoint resolved wins: the engine provisions a single migrations
       // shadow/catalog, so only refs resolved before that point should influence it.
-      let migrationsToml: DbTomlValues | undefined;
+      let migrationsToml: DbConfigValues | undefined;
       // The project `remote` names resolves once, so `--from remote --to remote` announces it once.
       let linkedTarget: LinkedTarget | undefined;
       const namedTargets = new Map<string, LinkedTarget>();
       // Each hosted resolution mints a temporary login role that invalidates the previous one for
       // that project, so every ref to a project shares a single connection.
       const hostedEndpoints = new Map<string, PgDeltaDatabaseEndpoint>();
-      let loadedCfg: { readonly ref: string | undefined; readonly toml: DbTomlValues } | undefined;
+      let loadedCfg:
+        | { readonly ref: string | undefined; readonly toml: DbConfigValues }
+        | undefined;
       const loadCfg = Effect.fnUntraced(function* () {
         const ref = mergedLinkedRef;
         if (loadedCfg !== undefined && loadedCfg.ref === ref) return loadedCfg.toml;
-        const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
+        const toml = yield* readDbConfig(fs, path, cliSettings.workdir, ref);
         loadedCfg = { ref, toml };
         return toml;
       });
@@ -462,7 +464,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // fallible) resolve, so the project cache is still written even if a later step fails.
       yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
     }
-    const cfg = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const cfg = yield* readDbConfig(fs, path, cliSettings.workdir, linkedRef);
     if (cfg.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
@@ -486,7 +488,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       debug,
       // So the shadow's own container spec (image/JWT secret/root key/db.settings/service
       // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
-      // as `cfg` above (`readDbToml(..., linkedRef)`).
+      // as `cfg` above (`readDbConfig(..., linkedRef)`).
       linkedRef,
     );
 
@@ -515,7 +517,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     });
     // pg-delta ignores schema_paths when building its migrations baseline.
     if (useDelta && cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
-      yield* output.raw(schemaPathsTransitionWarning, "stderr");
+      yield* output.raw(schemaPathsTransitionWarning(cfg.configFile), "stderr");
     }
 
     // pgAdmin's own text-mode status lines go to stdout, not stderr, unlike the migra/pg-delta
@@ -636,7 +638,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         migrationMode,
         // `cfg.schemaPathPatterns`, not `localInputs.context.config.db.migrations.schema_paths`:
         // the latter is the raw `@supabase/config` field, which never applies the
-        // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` env override that `cfg` (`readDbToml`) resolves.
+        // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` env override that `cfg` (`readDbConfig`) resolves.
         schemaPaths: cfg.schemaPathPatterns,
         pgDelta: cfg.pgDelta,
       };

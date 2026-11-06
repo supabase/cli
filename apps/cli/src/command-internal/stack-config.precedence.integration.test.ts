@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 
@@ -153,6 +153,7 @@ describe("stack config precedence goldens", () => {
 
         const layer = Layer.mergeAll(
           BunServices.layer,
+          BunCrypto.layer,
           runtimeInfoLayer,
           mockCommandSettings({ workdir, supabaseHome: workdir }),
           cliConfigValuesTestLayer,

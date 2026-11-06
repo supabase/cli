@@ -247,7 +247,7 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
       importMapDiscoveredByRuntime,
       staticFiles,
       verifyJWT: override.verifyJWT ?? override.verify_jwt ?? true,
-      env: override.env,
+      env: { ...globalDefaults?.env, ...functionOverride?.env },
     };
   },
 );

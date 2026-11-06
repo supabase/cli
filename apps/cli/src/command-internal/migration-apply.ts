@@ -311,7 +311,7 @@ const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
 
 /**
  * Renders a failed statement's error context: the `^` caret under the server-reported error
- * position, the `Detail` line when present, the SQLSTATE-42704 extension hint, then
+ * position, the `Detail` line when present, the SQLSTATE-42704 or 25P01 hint, then
  * `At statement: <index>` and the caret-marked statement text. The structured `detail`/`position`
  * fields are only set by the driver for real server error responses.
  *
@@ -333,6 +333,12 @@ export const formatExecBatchError = (e: DbExecError, index: number, stat: string
     msg.push("      Use schema-qualified type references to avoid this error:");
     msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
     msg.push("      Learn more: supabase migration new --help");
+  }
+  if (e.code === "25P01") {
+    msg.push("");
+    msg.push("Hint: This statement must run inside an explicit BEGIN; ... COMMIT; block;");
+    msg.push("      the CLI adds none. Review any existing transaction boundaries.");
+    msg.push("      Move each non-transactional statement (e.g. VACUUM) to its own file.");
   }
   msg.push(`At statement: ${index}`, marked);
   return formattedExecBatchFailure(`${errorMessage(e)}\n${msg.join("\n")}`, e);

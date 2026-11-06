@@ -1,6 +1,7 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Crypto, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { Context, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
@@ -48,8 +49,8 @@ const layout = Effect.fnUntraced(function* (runtime: SavedStack["runtime"], stac
 /** Starts Database and Storage in an owned stack and returns Storage's gateway URL. */
 const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]) {
   const fs = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
-  const stackId = `storage-gateway-${runtime}-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const stackId = `storage-gateway-${runtime}-${(yield* crypto.uuidV4()).slice(0, 8)}`;
   const { stateRoot, dataRoot, storageRoot } = yield* layout(runtime, stackId);
   yield* fs.makeDirectory(storageRoot, { recursive: true });
   const saved: SavedStack = {
@@ -180,6 +181,10 @@ for (const runtime of ["native", testEngine] as const)
               expect(Option.getOrUndefined(info.uid)).toBe(process.getuid?.());
           }
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 180_000 },
   );

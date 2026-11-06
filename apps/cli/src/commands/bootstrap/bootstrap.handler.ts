@@ -25,7 +25,8 @@ import { getProjectApiKeys } from "../../command-internal/get-api-keys.ts";
 import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import type { ConnectSuggestionContext } from "../../command-internal/connect-errors.ts";
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
-import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
+import { pinSupabaseTls } from "../../command-internal/supabase-tls.ts";
+import { checkDbConfig } from "../../command-internal/db-config.read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
 import {
   hostedMutationPreapproval,
@@ -246,7 +247,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
 
       // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
       // rather than after side effects start.
-      const toml = yield* checkDbToml(fs, path, workdir, projectRef).pipe(
+      const toml = yield* checkDbConfig(fs, path, workdir, projectRef).pipe(
         Effect.withSpan("bootstrap.loadConfig"),
       );
       if (toml.appliedRemote !== undefined) {
@@ -372,6 +373,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       const resolvedConn = yield* resolveLinkedConn(
         projectRef,
         workdir,
+        cliSettings.profile,
         cliSettings.projectHost,
         cliSettings.poolerHost,
         dnsResolver,
@@ -379,10 +381,13 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         {
           removeNetworkBans: Option.isSome(yield* hostedMutationPreapproval),
           poolerUrl: linkSnapshot.poolerUrl,
+          dashboardUrl: cliSettings.dashboardUrl,
         },
       ).pipe(
         Effect.catchTag("DbConfigIpv6Error", (error) =>
-          output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),
+          output
+            .raw(`${error.message}\n`, "stderr")
+            .pipe(Effect.as(pinSupabaseTls(dbConfig, cliSettings.profile))),
         ),
       );
       const conn = { ...resolvedConn, suggestionContext };

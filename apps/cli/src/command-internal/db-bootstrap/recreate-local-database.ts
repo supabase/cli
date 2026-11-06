@@ -23,8 +23,8 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { isSqlState } from "../connect-errors.ts";
-import { isContainerNotFoundMessage } from "../container-cli.ts";
-import { checkDbToml } from "../db-config.toml-read.ts";
+import { dockerSupportsHealthStartInterval, isContainerNotFoundMessage } from "../container-cli.ts";
+import { checkDbConfig } from "../db-config.read.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
 import { DbExecError, type DbConnectError } from "../db-connection.errors.ts";
 import { CLI_PROJECT_LABEL } from "../docker-ids.ts";
@@ -292,7 +292,10 @@ const recreateLocalDatabase15 = <E>(
       ...input.postgresSpec,
       image: resolvedPostgresImage,
     });
-    yield* createContainer(spawner, postgresSpec, input.containerOpts);
+    yield* createContainer(spawner, postgresSpec, {
+      ...input.containerOpts,
+      healthStartInterval: yield* dockerSupportsHealthStartInterval(spawner),
+    });
 
     // Never swallowed — reset has no `--from-backup`-equivalent gate.
     yield* waitForPostgresReady(
@@ -373,7 +376,7 @@ const recreateLocalDatabase14 = <E>(
   Effect.gen(function* () {
     const { setup, fs, path, workdir } = input;
     const dbPassword = startInternalDbPassword(setup.dbUrl);
-    const toml = yield* checkDbToml(fs, path, workdir);
+    const toml = yield* checkDbConfig(fs, path, workdir);
     const dbConnection = yield* DbConnection;
     const output = yield* Output;
 
@@ -447,6 +450,7 @@ const recreateLocalDatabase14 = <E>(
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
           localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+          configFile: toml.configFile,
         });
       }),
     );

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -94,6 +94,7 @@ export function realDbConfigResolver(opts: {
       Layer.provide(services),
     ),
     services,
+    BunCrypto.layer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(opts.env, { preserveEmptyStrings: true })),
     configValuesLayer({ env: definedEnv(opts.env) }),
   );

@@ -7,7 +7,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
-import caProd2021 from "../commands/gen/types/templates/prod-ca-2021.ts";
+import caProd2021 from "./supabase-ca-templates/prod-ca-2021.ts";
 import {
   KONG_LOCAL_TLS_CERT,
   KONG_LOCAL_TLS_KEY,

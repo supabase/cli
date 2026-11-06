@@ -7,6 +7,7 @@
  * internal-only `cliCompat` knob.
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export { withoutSafeIntegerBounds } from "./json-schema-document.ts";
 export {
   DEFAULT_MIGRATION_CHECK_SEVERITY,
   MIGRATION_CHECK_RULES,
@@ -46,6 +47,8 @@ export {
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,
   parseCliConfigDocument,
+  cliConfigFormatForPath,
 } from "./io.ts";
+export { JsoncSyntaxError, parseJsonc } from "./jsonc.ts";
 export { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
 export { CliConfigWriteError } from "./errors.ts";

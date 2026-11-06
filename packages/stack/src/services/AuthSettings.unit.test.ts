@@ -95,6 +95,7 @@ describe("Auth settings environment", () => {
     expect(env["GOTRUE_EXTERNAL_CUSTOM_REDIRECT_URI"]).toBe("https://issuer.example/callback");
     expect(env["GOTRUE_EXTERNAL_CUSTOM_SECRET"]).toBe("");
     expect(env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
+    expect(env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD"]).toBe("false");
     expect(env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe("https://example.test,https://app.example.test");
     expect(env["GOTRUE_MAILER_NOTIFICATIONS_EMAIL_CHANGED_ENABLED"]).toBe("true");
     expect(env["GOTRUE_MAILER_SUBJECTS_EMAIL_CHANGED_NOTIFICATION"]).toBe("changed");

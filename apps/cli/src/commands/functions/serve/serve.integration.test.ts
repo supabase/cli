@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { CliConfigParseError } from "@supabase/config";
 import {
   Cause,
+  Clock,
   Deferred,
   Duration,
   Effect,
@@ -16,11 +17,13 @@ import {
   Predicate,
   PubSub,
   Queue,
+  Ref,
   Schema,
   Sink,
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { TestClock } from "effect/testing";
 import { beforeEach, vi } from "vitest";
 
 import {
@@ -52,6 +55,10 @@ import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../../../telemetry/command-telemetry-attributes.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
   DockerLogsStreamError,
@@ -64,6 +71,7 @@ import {
   actionability,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
+import { normalizeCliError } from "../../../shared/output/normalize-error.ts";
 import {
   serveFunctions,
   type FunctionsServeFlags,
@@ -295,9 +303,30 @@ function mockQueuedProcessControl() {
   };
 }
 
-function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
-  const pubsub = Effect.runSync(PubSub.unbounded<ReadonlyArray<FileWatchEvent>>({ replay: 8 }));
+function mockCommandTelemetry() {
+  const records = Ref.makeUnsafe<ReadonlyArray<CommandTelemetryAttributeValues>>([]);
+
+  return {
+    provide: Effect.provideService(CommandTelemetryAttributes, {
+      record: (values: CommandTelemetryAttributeValues) =>
+        Ref.update(records, (current) => [...current, values]),
+    }),
+    recorded: Ref.get(records),
+  };
+}
+
+// `replay: false` delivers an event only to streams already subscribed, so a restart's
+// re-subscription cannot see it again.
+function mockFileWatcher(
+  expectedPaths: ReadonlyArray<string> = [],
+  { replay = true }: { readonly replay?: boolean } = {},
+) {
+  const pubsub = Effect.runSync(
+    PubSub.unbounded<ReadonlyArray<FileWatchEvent>>({ replay: replay ? 8 : 0 }),
+  );
   const expectedWatch = Deferred.makeUnsafe<void>();
+  const expectedSubscription = Deferred.makeUnsafe<void>();
+  const subscribedPaths = new Set<string>();
   const watchCalls: Array<{
     path: string;
     ignore?: ReadonlyArray<string>;
@@ -321,7 +350,19 @@ function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
           ) {
             Deferred.doneUnsafe(expectedWatch, Exit.void);
           }
-          return Stream.fromPubSub(pubsub);
+          return Stream.unwrap(
+            PubSub.subscribe(pubsub).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  subscribedPaths.add(path);
+                  if (expectedPaths.every((expectedPath) => subscribedPaths.has(expectedPath))) {
+                    Deferred.doneUnsafe(expectedSubscription, Exit.void);
+                  }
+                }),
+              ),
+              Effect.map(Stream.fromSubscription),
+            ),
+          );
         },
       }),
     ),
@@ -332,6 +373,7 @@ function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
       return watchCalls;
     },
     awaitExpectedWatch: Deferred.await(expectedWatch),
+    awaitExpectedSubscription: Deferred.await(expectedSubscription),
   };
 }
 
@@ -352,7 +394,7 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
 
           const record = {
             command: command.command,
-            args: [...command.args],
+            args: command.args.map(String),
           };
           spawned.push(record);
           yield* Effect.acquireRelease(
@@ -487,6 +529,42 @@ function serveWithTimers(flags: FunctionsServeFlags, timers: FunctionsServeTimer
       timers,
     }).pipe(Effect.ensuring(telemetryState.flush));
   });
+}
+
+// Opens when serve starts a sleep of `period`, so a test acts inside that window instead of
+// racing it.
+function sleepProbe(period: Duration.Duration, window: string) {
+  const opened = Deferred.makeUnsafe<void>();
+
+  return {
+    period,
+    provide: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Clock.clockWith((clock) =>
+        Effect.provideService(effect, Clock.Clock, {
+          currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+          currentTimeMillis: clock.currentTimeMillis,
+          currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+          currentTimeNanos: clock.currentTimeNanos,
+          monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+          monotonicTimeNanos: clock.monotonicTimeNanos,
+          sleep: (duration) =>
+            Duration.equals(duration, period)
+              ? Deferred.succeed(opened, undefined).pipe(Effect.andThen(clock.sleep(duration)))
+              : clock.sleep(duration),
+        }),
+      ),
+    awaitOpened: Effect.fnUntraced(function* (serving: Fiber.Fiber<unknown, unknown>) {
+      const didOpen = yield* Effect.raceFirst(
+        Deferred.await(opened).pipe(Effect.as(true)),
+        Fiber.await(serving).pipe(Effect.as(false)),
+      );
+      expect(didOpen, `serve ended before the ${window} opened`).toBe(true);
+    }),
+  };
+}
+
+function shutdownGraceProbe() {
+  return sleepProbe(Duration.millis(2_345), "shutdown grace window");
 }
 
 const writeCliConfig = Effect.fnUntraced(function* (content: string) {
@@ -752,6 +830,7 @@ describe("functions serve integration", () => {
         expect(error.message).not.toContain("secret-value");
         expect(error.message).not.toContain('near "API-KEY=secret-value"');
       }
+      expect(normalizeCliError(error).code).toBe("UnknownError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",
@@ -761,6 +840,79 @@ describe("functions serve integration", () => {
       expect(deployMockState.volumeCalls).toHaveLength(0);
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.live(
+    "skips a disabled function and sets up the runtime before a malformed functions/.env fails",
+    () => {
+      return Effect.gen(function* () {
+        yield* writeCliConfig(
+          ['project_id = "test-project"', "[functions.off]", "enabled = false", ""].join("\n"),
+        );
+        yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
+        yield* writeProjectFile("supabase/functions/.env", "API-KEY=secret-value\n");
+
+        const { layer, out } = setupServe();
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error.message).toContain("failed to parse environment file:");
+        expect(out.stderrText).toContain("Skipped serving Function: off\n");
+        expect(deployMockState.volumeCalls).toHaveLength(1);
+        expect(deployMockState.networkCalls).toHaveLength(1);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.live("reports a missing entrypoint before a missing explicit env file", () => {
+    return Effect.gen(function* () {
+      yield* writeCliConfig(
+        [
+          'project_id = "test-project"',
+          "[functions.hello]",
+          'entrypoint = "./functions/hello/missing.ts"',
+          "",
+        ].join("\n"),
+      );
+      yield* writeFunctionFile("hello", "deno.json", '{"imports":{}}\n');
+
+      const { layer } = setupServe();
+      const error = yield* functionsServe(baseFlags({ envFile: Option.some("missing.env") })).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error.message).toContain("failed to read file:");
+      expect(error.message).not.toContain("missing.env");
+      expect(deployMockState.volumeCalls).toHaveLength(0);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live(
+    "reports a malformed function env file before a later function's missing entrypoint",
+    () => {
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* writeCliConfig(
+          [
+            'project_id = "test-project"',
+            "[functions.a]",
+            "[functions.b]",
+            'entrypoint = "./functions/b/missing.ts"',
+            "",
+          ].join("\n"),
+        );
+        yield* writeFunctionFile("a", "index.ts", 'Deno.serve(() => new Response("a"))\n');
+        yield* writeFunctionFile("a", ".env", "API-KEY=secret-value\n");
+        yield* writeFunctionFile("b", "deno.json", '{"imports":{}}\n');
+
+        const { layer } = setupServe();
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error.message).toContain(
+          `failed to parse environment file: ${path.join(tempRoot.current, "supabase", "functions", "a", ".env")}`,
+        );
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 
   it.live(
     "starts the runtime from config-defined functions and wires env, binds, and telemetry",
@@ -2023,6 +2175,7 @@ describe("functions serve integration", () => {
   it.effect("stops serving cleanly on a process signal", () => {
     const processControl = mockQueuedProcessControl();
     const childSpawner = mockDockerLogSpawner([{ pending: true }]);
+    const telemetry = mockCommandTelemetry();
 
     return Effect.gen(function* () {
       const created = yield* Deferred.make<void>();
@@ -2057,6 +2210,7 @@ describe("functions serve integration", () => {
       const { layer, out } = setupServe({ processControl, childSpawner });
       const fiber = yield* functionsServe(baseFlags()).pipe(
         Effect.provide(layer),
+        telemetry.provide,
         Effect.forkChild({ startImmediately: true }),
       );
 
@@ -2071,6 +2225,7 @@ describe("functions serve integration", () => {
           .replaceAll("\u001b[22m", "")
           .replaceAll("\\", "/"),
       ).toContain("Stopped serving supabase/functions\n");
+      expect(yield* telemetry.recorded).toStrictEqual([{ serve_end_reason: "signal" }]);
     });
   });
 
@@ -2305,30 +2460,25 @@ describe("functions serve integration", () => {
       () => {
         deployMockState.runHandler = baseDockerRunHandler();
         const processControl = mockQueuedProcessControl();
+        const grace = shutdownGraceProbe();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 1, stderr: "docker logs killed by signal" },
+        ]);
 
         return Effect.gen(function* () {
-          const scope = yield* Effect.scope;
-          // Delays the signal past the log-stream failure so only the grace window, not a
-          // same-tick race, can produce a clean exit. A generous injected grace period keeps
-          // this margin independent of the real clock.
-          const childSpawner = mockDockerLogSpawner([
-            {
-              exitCode: 1,
-              stderr: "docker logs killed by signal",
-              onSpawn: () =>
-                Effect.sleep(Duration.millis(15)).pipe(
-                  Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
-                  Effect.forkIn(scope),
-                  Effect.asVoid,
-                ),
-            },
-          ]);
           yield* writeHelloFunction;
 
           const { layer, out } = setupServe({ processControl, childSpawner });
           const fiber = yield* serveWithTimers(baseFlags(), {
-            shutdownSignalGracePeriod: Duration.seconds(2),
-          }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+            shutdownSignalGracePeriod: grace.period,
+          }).pipe(
+            Effect.provide(layer),
+            grace.provide,
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          yield* grace.awaitOpened(fiber);
+          processControl.signal("SIGINT");
 
           const exit = yield* Fiber.await(fiber);
           expect(Exit.isSuccess(exit)).toBe(true);
@@ -2346,26 +2496,20 @@ describe("functions serve integration", () => {
       "downgrades a startup failure to a clean shutdown when the signal lands within the grace window",
       () => {
         const processControl = mockQueuedProcessControl();
+        const telemetry = mockCommandTelemetry();
+        const grace = shutdownGraceProbe();
 
         return Effect.gen(function* () {
-          const scope = yield* Effect.scope;
-          // Delays the signal past the startup failure so only the grace window, not a
-          // same-tick race, can produce a clean exit. A generous injected grace period keeps
-          // this margin independent of the real clock.
           deployMockState.runHandler = (command, args) => {
             if (command !== "docker") {
               throw new Error(`unexpected process: ${command}`);
             }
             if (args[0] === "container" && args[1] === "inspect") {
-              return Effect.sleep(Duration.millis(15)).pipe(
-                Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
-                Effect.forkIn(scope),
-                Effect.as({
-                  exitCode: 1,
-                  stdout: "",
-                  stderr: "Error: No such container: supabase_db_test-project",
-                }),
-              );
+              return {
+                exitCode: 1,
+                stdout: "",
+                stderr: "Error: No such container: supabase_db_test-project",
+              };
             }
             throw new Error(`unexpected docker args: ${args.join(" ")}`);
           };
@@ -2373,8 +2517,16 @@ describe("functions serve integration", () => {
 
           const { layer, out } = setupServe({ processControl });
           const fiber = yield* serveWithTimers(baseFlags(), {
-            shutdownSignalGracePeriod: Duration.seconds(2),
-          }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+            shutdownSignalGracePeriod: grace.period,
+          }).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            grace.provide,
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          yield* grace.awaitOpened(fiber);
+          processControl.signal("SIGINT");
 
           const exit = yield* Fiber.await(fiber);
           expect(Exit.isSuccess(exit)).toBe(true);
@@ -2384,6 +2536,7 @@ describe("functions serve integration", () => {
               .replaceAll("\u001b[22m", "")
               .replaceAll("\\", "/"),
           ).toContain("Stopped serving supabase/functions\n");
+          expect(yield* telemetry.recorded).toStrictEqual([{ serve_end_reason: "signal" }]);
         });
       },
     );
@@ -2398,12 +2551,17 @@ describe("functions serve integration", () => {
           { exitCode: 0 },
           inspectStateBehavior(false, 1),
         ]);
+        const telemetry = mockCommandTelemetry();
 
         return Effect.gen(function* () {
           yield* writeHelloFunction;
 
           const { layer } = setupServe({ childSpawner });
-          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+          const error = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            Effect.flip,
+          );
 
           expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
           if (error instanceof EdgeRuntimeContainerCrashedError) {
@@ -2414,28 +2572,75 @@ describe("functions serve integration", () => {
             // and specifically not `unknown`.
             expect(error[ErrorActionabilityId]).toEqual(actionability.runtimeCrash);
           }
+          expect(yield* telemetry.recorded).toStrictEqual([
+            { serve_end_reason: "container_crashed", edge_runtime_exit_code: 1 },
+          ]);
         });
       },
     );
 
-    it.effect(
-      "ends the session successfully, with a distinct message, when a supervisor tears the container down (exit 143)",
-      () => {
+    it.effect.each([143, 15])(
+      "ends the session successfully, with a distinct message, when a supervisor tears the container down (exit %d)",
+      (exitCode) => {
         deployMockState.runHandler = baseDockerRunHandler();
         const childSpawner = mockDockerLogSpawner([
           { exitCode: 0 },
-          inspectStateBehavior(false, 143),
+          inspectStateBehavior(false, exitCode),
         ]);
+        const telemetry = mockCommandTelemetry();
 
         return Effect.gen(function* () {
           yield* writeHelloFunction;
 
           const { layer, out } = setupServe({ childSpawner });
-          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
+          const exit = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            Effect.exit,
+          );
 
           expect(Exit.isSuccess(exit)).toBe(true);
-          expect(out.stdoutText).toContain("Edge Runtime container stopped (exit 143).");
+          expect(out.stdoutText).toContain(`Edge Runtime container stopped (exit ${exitCode}).`);
           expect(out.stdoutText).toContain("Stopped serving");
+          expect(yield* telemetry.recorded).toStrictEqual([
+            { serve_end_reason: "container_stopped", edge_runtime_exit_code: exitCode },
+          ]);
+        });
+      },
+    );
+
+    it.live(
+      "records the shutdown signal, not a crash, when a signal lands within the grace window of a container crash",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const processControl = mockQueuedProcessControl();
+        const telemetry = mockCommandTelemetry();
+        const grace = shutdownGraceProbe();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 1),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* writeHelloFunction;
+
+          const { layer } = setupServe({ processControl, childSpawner });
+          const fiber = yield* serveWithTimers(baseFlags(), {
+            shutdownSignalGracePeriod: grace.period,
+          }).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            grace.provide,
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          yield* grace.awaitOpened(fiber);
+          processControl.signal("SIGINT");
+
+          const exit = yield* Fiber.await(fiber);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(containerInspectCalls(childSpawner)).toHaveLength(1);
+          expect(yield* telemetry.recorded).toStrictEqual([{ serve_end_reason: "signal" }]);
         });
       },
     );
@@ -2570,16 +2775,24 @@ describe("functions serve integration", () => {
           { exitCode: 0 },
           inspectStateBehavior(false, 0),
         ]);
+        const telemetry = mockCommandTelemetry();
 
         return Effect.gen(function* () {
           yield* writeHelloFunction;
 
           const { layer, out } = setupServe({ childSpawner });
-          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
+          const exit = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            Effect.exit,
+          );
 
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(out.stdoutText).toContain("Edge Runtime exited (code 0).");
           expect(out.stdoutText).toContain("Stopped serving");
+          expect(yield* telemetry.recorded).toStrictEqual([
+            { serve_end_reason: "container_exited", edge_runtime_exit_code: 0 },
+          ]);
         });
       },
     );
@@ -2596,19 +2809,71 @@ describe("functions serve integration", () => {
               "Error response from daemon: No such container: supabase_edge_runtime_test-project",
           },
         ]);
+        const telemetry = mockCommandTelemetry();
 
         return Effect.gen(function* () {
           yield* writeHelloFunction;
 
           const { layer, out } = setupServe({ childSpawner });
-          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
+          const exit = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            Effect.exit,
+          );
 
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(out.stdoutText).toContain("Edge Runtime container is no longer available.");
           expect(out.stdoutText).toContain("Stopped serving");
+          expect(yield* telemetry.recorded).toStrictEqual([
+            { serve_end_reason: "container_removed" },
+          ]);
         });
       },
     );
+
+    it.effect("records only the final end, not the watched-file restart before it", () => {
+      deployMockState.runHandler = baseDockerRunHandler();
+      const childSpawner = mockDockerLogSpawner([
+        { pending: true },
+        { exitCode: 0 },
+        inspectStateBehavior(false, 15),
+      ]);
+      const telemetry = mockCommandTelemetry();
+      const restartDebounce = sleepProbe(Duration.millis(500), "restart debounce window");
+
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* writeHelloFunction;
+        const functionsDir = path.join(tempRoot.current, "supabase", "functions");
+        const fileWatcher = mockFileWatcher([functionsDir], { replay: false });
+
+        const { layer, out } = setupServe({ fileWatcher, childSpawner });
+        const fiber = yield* functionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          telemetry.provide,
+          restartDebounce.provide,
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* fileWatcher.awaitExpectedSubscription;
+        fileWatcher.emit([{ path: path.join(functionsDir, "hello", "index.ts"), type: "update" }]);
+        yield* restartDebounce.awaitOpened(fiber);
+        yield* TestClock.adjust(Duration.millis(500));
+
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(
+          deployMockState.runCalls.filter(
+            (call) => call.command === "docker" && call.args[0] === "create",
+          ),
+        ).toHaveLength(2);
+        expect(fileWatcher.watchCalls.filter((call) => call.path === functionsDir)).toHaveLength(2);
+        expect(out.stdoutText).toContain("Edge Runtime container stopped (exit 15).");
+        expect(yield* telemetry.recorded).toStrictEqual([
+          { serve_end_reason: "container_stopped", edge_runtime_exit_code: 15 },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer));
+    });
 
     it.live(
       "re-attaches instead of reporting a graceful exit when docker logs exits 0 but the container is still running",
@@ -2685,6 +2950,7 @@ describe("functions serve integration", () => {
         const childSpawner = mockDockerLogSpawner(
           Array.from({ length: 6 }, () => reattachPair).flat(),
         );
+        const telemetry = mockCommandTelemetry();
 
         return Effect.gen(function* () {
           yield* writeHelloFunction;
@@ -2692,7 +2958,7 @@ describe("functions serve integration", () => {
           const { layer } = setupServe({ childSpawner });
           const error = yield* serveWithTimers(baseFlags(), {
             dockerLogRetryDelay: Duration.millis(1),
-          }).pipe(Effect.provide(layer), Effect.flip);
+          }).pipe(Effect.provide(layer), telemetry.provide, Effect.flip);
 
           expect(error).toBeInstanceOf(EdgeRuntimeLogStreamLostError);
           if (error instanceof EdgeRuntimeLogStreamLostError) {
@@ -2701,6 +2967,7 @@ describe("functions serve integration", () => {
             expect(error.message).toContain("5 times");
           }
           expect(childSpawner.maxLiveHandles).toBe(1);
+          expect(yield* telemetry.recorded).toStrictEqual([]);
         });
       },
     );
@@ -2742,12 +3009,17 @@ describe("functions serve integration", () => {
           { exitCode: 1, stderr: "docker logs connection reset" },
           inspectStateBehavior(false, 137, true),
         ]);
+        const telemetry = mockCommandTelemetry();
 
         return Effect.gen(function* () {
           yield* writeHelloFunction;
 
           const { layer } = setupServe({ childSpawner });
-          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+          const error = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            Effect.flip,
+          );
 
           expect(error).toBeInstanceOf(DockerLogsStreamError);
           if (error instanceof DockerLogsStreamError) {
@@ -2759,6 +3031,39 @@ describe("functions serve integration", () => {
               fingerprint_suffix: "out_of_memory",
             });
           }
+          expect(yield* telemetry.recorded).toStrictEqual([
+            { serve_end_reason: "container_crashed", edge_runtime_exit_code: 137 },
+          ]);
+        });
+      },
+    );
+
+    it.live.each([0, 15])(
+      "fails with the log-stream error without recording a crash when the stopped container exited with %d",
+      (containerExitCode) => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 1, stderr: "docker logs connection reset" },
+          inspectStateBehavior(false, containerExitCode),
+        ]);
+        const telemetry = mockCommandTelemetry();
+
+        return Effect.gen(function* () {
+          yield* writeHelloFunction;
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            telemetry.provide,
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(DockerLogsStreamError);
+          if (error instanceof DockerLogsStreamError) {
+            expect(error.message).toBe("docker logs connection reset");
+            expect(error.oomKilled).toBe(false);
+          }
+          expect(yield* telemetry.recorded).toStrictEqual([]);
         });
       },
     );
@@ -4035,6 +4340,7 @@ describe("functions serve integration", () => {
         expect(error.message).toContain(".env");
         expect(error.message).toContain("no such file or directory");
       }
+      expect(normalizeCliError(error).code).toBe("UnknownError");
       expect(
         deployMockState.runCalls.filter(
           (call) => call.command === "docker" && call.args[0] === "create",

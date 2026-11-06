@@ -2115,6 +2115,26 @@ describe("config pull integration", () => {
     },
   );
 
+  it.effect(
+    "a commented config.jsonc with a trailing comma keeps its bytes except the drifted value",
+    () => {
+      const before = `{
+  // local overrides
+  "project_id": "test",
+  "api": {
+    "max_rows": 500, /* rows per page */
+  },
+}
+`;
+      const { layer } = setup({ yes: true });
+      return Effect.gen(function* () {
+        yield* writeProjectFile("config.jsonc", before);
+        yield* configPull(noFlags);
+        expect(yield* readProjectFile("config.jsonc")).toBe(before.replace("500", "1000"));
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("a branch-lookup transport failure maps to the branch list network error", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', branchList: "fail" });
     return Effect.gen(function* () {

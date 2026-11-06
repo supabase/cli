@@ -1,8 +1,7 @@
-import { NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
-import { describe, expect, it } from "@effect/vitest";
+import { NodeCrypto, NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
+import { beforeAll, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
-  Crypto,
   Deferred,
   Effect,
   Exit,
@@ -14,14 +13,17 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { prepareNativeArtifact } from "../Artifacts.ts";
 import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
 import { makeFakeNpmRegistry } from "../../tests/fake-npm-registry.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
+import { serviceJwt } from "./ServiceConfig.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
@@ -145,61 +147,85 @@ describe("service catalog", () => {
           expect(inspectorResponse.status).toBe(200);
           yield* instance.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 
-  it.live("destroy survives a symlink planted where its runtime directory used to be", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-symlink-" });
-        const stackId = "c".repeat(64);
-        const instanceId = "functions-symlink-instance";
-        const callerRoot = yield* fs.makeTempDirectoryScoped({
-          prefix: "functions-symlink-caller-",
-        });
-        const functionsRoot = `${callerRoot}/user-functions`;
-        yield* fs.makeDirectory(functionsRoot, { recursive: true });
-        yield* fs.writeFileString(`${functionsRoot}/index.ts`, "export default {};");
-        const recipe = yield* makeServiceRecipe(
-          {
-            service: "functions",
-            pin: selection.functions,
-            config: { functionsRoot, databaseUrl: "postgres://functions-db" },
-          },
-          {
-            ...options(root),
-            stackId,
-            instanceId,
-            cacheRoot: testArtifactCacheRoot,
-          },
-        );
-        const config = recipe.creation;
-        yield* recipe.definition.prepare?.(config) ?? Effect.void;
-        const instanceRoot = path.join(root, instanceId);
-        const runtimeDir = path.join(instanceRoot, "runtime");
-        expect(yield* fs.exists(runtimeDir)).toBe(true);
-        const outside = yield* fs.makeTempDirectoryScoped({
-          prefix: "functions-symlink-outside-",
-        });
-        // removeData reaches for `<runtime>/functions` specifically, not the whole runtime
-        // directory; the sentinel sits there so this test proves that previously endangered
-        // data survives, not just the symlink target's top level.
-        const sentinel = path.join(outside, "functions", "sentinel");
-        yield* fs.makeDirectory(path.join(outside, "functions"), { recursive: true });
-        yield* fs.writeFileString(sentinel, "do not remove me");
-        // The planted attack: the recipe's own runtime directory replaced by a symlink.
-        yield* fs.remove(runtimeDir, { recursive: true, force: true });
-        yield* fs.symlink(outside, runtimeDir);
-        const scope = yield* Scope.make();
-        yield* recipe.definition.removeData({ id: instanceId, config, scope });
-        yield* Scope.close(scope, Exit.void);
-        expect(yield* fs.exists(sentinel)).toBe(true);
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  );
+  describe("with a warm Edge Runtime artifact", () => {
+    // A cold download can outlast the test timeout, so it gets its own guard here.
+    beforeAll(
+      () =>
+        prepareNativeArtifact(
+          { service: "functions", pin: selection.functions },
+          testArtifactCacheRoot,
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
+      120_000,
+    );
+
+    it.live("destroy survives a symlink planted where its runtime directory used to be", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-symlink-" });
+          const stackId = "c".repeat(64);
+          const instanceId = "functions-symlink-instance";
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-symlink-caller-",
+          });
+          const functionsRoot = `${callerRoot}/user-functions`;
+          yield* fs.makeDirectory(functionsRoot, { recursive: true });
+          yield* fs.writeFileString(`${functionsRoot}/index.ts`, "export default {};");
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "functions",
+              pin: selection.functions,
+              config: { functionsRoot, databaseUrl: "postgres://functions-db" },
+            },
+            {
+              ...options(root),
+              stackId,
+              instanceId,
+              cacheRoot: testArtifactCacheRoot,
+            },
+          );
+          const config = recipe.creation;
+          yield* recipe.definition.prepare?.(config) ?? Effect.void;
+          const instanceRoot = path.join(root, instanceId);
+          const runtimeDir = path.join(instanceRoot, "runtime");
+          expect(yield* fs.exists(runtimeDir)).toBe(true);
+          const outside = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-symlink-outside-",
+          });
+          // removeData reaches for `<runtime>/functions` specifically, not the whole runtime
+          // directory; the sentinel sits there so this test proves that previously endangered
+          // data survives, not just the symlink target's top level.
+          const sentinel = path.join(outside, "functions", "sentinel");
+          yield* fs.makeDirectory(path.join(outside, "functions"), { recursive: true });
+          yield* fs.writeFileString(sentinel, "do not remove me");
+          // The planted attack: the recipe's own runtime directory replaced by a symlink.
+          yield* fs.remove(runtimeDir, { recursive: true, force: true });
+          yield* fs.symlink(outside, runtimeDir);
+          const scope = yield* Scope.make();
+          yield* recipe.definition.removeData({ id: instanceId, config, scope });
+          yield* Scope.close(scope, Exit.void);
+          expect(yield* fs.exists(sentinel)).toBe(true);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
+    );
+  });
 
   const ancestors = [
     {
@@ -294,7 +320,11 @@ describe("service catalog", () => {
             expect(yield* response.text).toBe("shared");
             yield* instance.stop;
           }),
-        ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
       { timeout: 120_000 },
     );
 
@@ -368,7 +398,11 @@ describe("service catalog", () => {
           expect(yield* response.text).toBe("config");
           yield* instance.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 
@@ -456,7 +490,11 @@ describe("service catalog", () => {
           );
           yield* instance.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 });
@@ -486,7 +524,7 @@ for (const runtime of ["native", testEngine] as const) {
           yield* fs.makeDirectory(`${filesRoot}/source`, { recursive: true });
           yield* fs.writeFileString(
             `${filesRoot}/source/main.ts`,
-            `import {message} from "message"; Deno.serve(async () => Response.json({message, local: Deno.env.get("LOCAL"), shared: Deno.env.get("SHARED"), asset: await Deno.readTextFile(new URL("./asset.txt", import.meta.url))}));`,
+            `import {message} from "message"; Deno.serve(async () => Response.json({message, local: Deno.env.get("LOCAL"), shared: Deno.env.get("SHARED"), multi: Deno.env.get("MULTI"), legacy: Deno.env.get("LEGACY.NAME"), perFunction: Deno.env.get("PER_FUNCTION"), nul: Deno.env.get("NUL_VALUE"), asset: await Deno.readTextFile(new URL("./asset.txt", import.meta.url))}));`,
           );
           yield* fs.writeFileString(
             `${filesRoot}/source/message.ts`,
@@ -501,6 +539,12 @@ for (const runtime of ["native", testEngine] as const) {
             `${functionsRoot}/locked/index.ts`,
             'Deno.serve(() => new Response("locked"));',
           );
+          /* No functions entry: its env arrives only through $default. */
+          yield* fs.makeDirectory(`${functionsRoot}/unlisted`, { recursive: true });
+          yield* fs.writeFileString(
+            `${functionsRoot}/unlisted/index.ts`,
+            'Deno.serve(() => Response.json({multi: Deno.env.get("MULTI"), legacy: Deno.env.get("LEGACY.NAME"), perFunction: Deno.env.get("PER_FUNCTION"), nul: Deno.env.get("NUL_VALUE")}));',
+          );
           const recipe = yield* makeServiceRecipe(
             {
               service: "functions",
@@ -513,6 +557,10 @@ for (const runtime of ["native", testEngine] as const) {
                 env: {
                   SHARED: "shared",
                   LOCAL: "global",
+                  MULTI: "first\r\nsecond\nthird",
+                  "LEGACY.NAME": "legacy",
+                  NUL_VALUE: "a\0b",
+                  PER_FUNCTION: "shared\nvalue",
                   SUPABASE_INTERNAL_DEBUG: "true",
                 },
                 functions: {
@@ -521,7 +569,7 @@ for (const runtime of ["native", testEngine] as const) {
                     entrypoint: `${filesRoot}/source/main.ts`,
                     import_map: `${filesRoot}/supabase/import_map.json`,
                     static_files: [`${filesRoot}/source/*.txt`],
-                    env: { LOCAL: "function" },
+                    env: { LOCAL: "function", PER_FUNCTION: "function\r\nvalue" },
                   },
                   disabled: { enabled: false, entrypoint: `${filesRoot}/source/main.ts` },
                 },
@@ -569,6 +617,10 @@ for (const runtime of ["native", testEngine] as const) {
                   message: Schema.String,
                   local: Schema.String,
                   shared: Schema.String,
+                  multi: Schema.String,
+                  legacy: Schema.String,
+                  perFunction: Schema.String,
+                  nul: Schema.String,
                   asset: Schema.String,
                 }),
               ),
@@ -577,7 +629,37 @@ for (const runtime of ["native", testEngine] as const) {
               message: "custom entrypoint",
               local: "function",
               shared: "shared",
+              multi: "first\r\nsecond\nthird",
+              legacy: "legacy",
+              perFunction: "function\r\nvalue",
+              nul: "a\0b",
               asset: "static content",
+            });
+            const unlisted = yield* client.execute(
+              HttpClientRequest.get(`${base}/unlisted`).pipe(
+                HttpClientRequest.bearerToken(
+                  yield* serviceJwt("anon", "test-function-jwt-with-at-least-32-characters"),
+                ),
+              ),
+            );
+            const unlistedText = yield* unlisted.text;
+            expect(unlisted.status, unlistedText).toBe(200);
+            expect(
+              yield* Schema.decodeEffect(
+                Schema.fromJsonString(
+                  Schema.Struct({
+                    multi: Schema.String,
+                    legacy: Schema.String,
+                    perFunction: Schema.String,
+                    nul: Schema.String,
+                  }),
+                ),
+              )(unlistedText),
+            ).toEqual({
+              multi: "first\r\nsecond\nthird",
+              legacy: "legacy",
+              perFunction: "shared\nvalue",
+              nul: "a\0b",
             });
             expect((yield* client.get(`${base}/disabled`)).status).toBe(404);
             expect((yield* client.get(`${base}/locked`)).status).toBe(401);
@@ -592,7 +674,11 @@ for (const runtime of ["native", testEngine] as const) {
             ),
           );
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 }
@@ -690,7 +776,11 @@ it.live(
           ),
         );
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 120_000 },
 );
 
@@ -739,7 +829,8 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
         fs: yield* FileSystem.FileSystem,
         path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
-        crypto: yield* Crypto.Crypto,
+        crypto: yield* SecureRandom.SecureRandom,
+        digest: yield* Digest.Digest,
         client: yield* HttpClient.HttpClient,
         spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
         container,
@@ -785,5 +876,82 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         static_files: ["/__supabase_project/source/*.txt"],
       });
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
+);
+
+it.effect("passes the API host port and debug mode to the docker Functions runtime", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const launched = yield* Ref.make<Parameters<ContainerRuntime["launch"]>[0] | undefined>(
+        undefined,
+      );
+      const container: ContainerRuntime = {
+        prepare: () => Effect.void,
+        prepareImage: (image) => Effect.succeed(image),
+        ensureImage: (image) => Effect.succeed({ image, pulled: false }),
+        launchCommand: () => Effect.die("Functions has no startup commands"),
+        launch: (spec) =>
+          Ref.set(launched, spec).pipe(
+            Effect.andThen(
+              Effect.fail(new ContainerError({ operation: "start", message: "captured" })),
+            ),
+          ),
+      };
+      const fakeBootstrap: FunctionsBootstrapOwner = {
+        root: "/fake-bootstrap-root",
+        write: () => Effect.succeed("/fake-bootstrap-root/generation-fake/index.ts"),
+      };
+      const deps = {
+        borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+        fs: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        crypto: yield* SecureRandom.SecureRandom,
+        digest: yield* Digest.Digest,
+        client: yield* HttpClient.HttpClient,
+        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        container,
+      };
+      const recipe = yield* makeProcessRecipe(
+        { ...options("/stack"), stackId: "f".repeat(64), runtime: "docker" },
+        deps,
+        Functions.makeSpec(fakeBootstrap, deps.path, deps.fs),
+      );
+      const capture = Effect.fn(function* (apiUrl: string) {
+        const scope = yield* Scope.make();
+        yield* recipe.definition
+          .launch({
+            id: "debug",
+            config: {
+              service: "functions",
+              pin: selection.functions,
+              config: {
+                functionsRoot: "/project/supabase/functions",
+                apiUrl,
+                debug: true,
+                env: { PLAIN: "plain" },
+              },
+            },
+            scope,
+            launchId: 1,
+          })
+          .pipe(Effect.flip, Effect.ensuring(Scope.close(scope, Exit.void)));
+        return yield* Ref.get(launched);
+      });
+
+      const spec = yield* capture("http://host.supabase.internal:61121");
+      expect(spec?.env.SUPABASE_INTERNAL_HOST_PORT).toBe("61121");
+      expect(spec?.env.SUPABASE_INTERNAL_DEBUG).toBe("true");
+      expect(spec?.args).toContain("--verbose");
+      expect(spec?.env.PLAIN).toBe("plain");
+      expect((yield* capture("http://127.0.0.1:80"))?.env.SUPABASE_INTERNAL_HOST_PORT).toBe("80");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );

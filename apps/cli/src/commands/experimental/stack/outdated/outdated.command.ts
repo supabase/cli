@@ -9,7 +9,7 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 
 export const stackOutdatedCommand = Command.make("outdated").pipe(
   Command.withDescription(
-    "Report, for each service in supabase/supabase.lock, the release supabase stack update would lock instead, this CLI's bundled pin, and whether the entry is out of date with config.toml. " +
+    "Report, for each service in supabase/supabase.lock, the release supabase stack update would lock instead, this CLI's bundled pin, and whether the entry is out of date with the project config file. " +
       "Read-only: it writes nothing and downloads no artifacts.",
   ),
   Command.withShortDescription("Show locked service versions with newer releases"),

@@ -79,7 +79,8 @@ export const describeConfigLoadFailure = (cause: unknown): string =>
           cause._tag === "CliConfigFlagConflictError" ||
           cause._tag === "CliConfigLoadError" ||
           cause._tag === "CliConfigRemovedKeyError" ||
-          cause._tag === "CliConfigRemovedEnvError") &&
+          cause._tag === "CliConfigRemovedEnvError" ||
+          cause._tag === "CliConfigFileConflictError") &&
         "message" in cause &&
         typeof cause.message === "string"
       ? cause.message

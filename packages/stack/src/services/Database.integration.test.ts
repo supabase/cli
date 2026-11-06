@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg";
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Clock,
@@ -23,6 +23,7 @@ import {
 import { HttpClient } from "effect/http";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw release fixture server.
+import { SLIM_NATIVE_SUPABASE_S3_MIRROR } from "../Artifacts.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { databaseIdentity, recordDatabaseIdentity } from "../internal/database-reuse.ts";
@@ -175,7 +176,11 @@ describe("database component", { timeout: 180_000 }, () => {
             }
             yield* service.destroy;
           }),
-        ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
     );
 
   it.live("refuses initialized data with no or another identity before preparing an artifact", () =>
@@ -214,7 +219,7 @@ describe("database component", { timeout: 180_000 }, () => {
           '{"runtime":"native","profile":"supabase"}',
         );
         expect((yield* Effect.flip(prepare(orioledbConfig))).message).toContain(
-          `PostgreSQL data was initialized by stock PostgreSQL build ${selection.database.upstreamVersion}, but OrioleDB build ${orioledb.upstreamVersion} was requested; keep this data by pinning \`[local.services.database] version = "${selection.database.upstreamVersion}"\` and removing any \`[db] orioledb_version\` in supabase/config.toml, or ${recreate}`,
+          `PostgreSQL data was initialized by stock PostgreSQL build ${selection.database.upstreamVersion}, but OrioleDB build ${orioledb.upstreamVersion} was requested; keep this data by pinning \`local.services.database.version\` to \`"${selection.database.upstreamVersion}"\` and removing any \`db.orioledb_version\` in your config file, or ${recreate}`,
         );
         expect(
           (yield* Effect.flip(
@@ -224,7 +229,7 @@ describe("database component", { timeout: 180_000 }, () => {
             }),
           )).message,
         ).toContain(
-          `stock PostgreSQL build 17.99.0.001 was requested; keep this data by pinning \`[local.services.database] version = "${selection.database.upstreamVersion}"\``,
+          `stock PostgreSQL build 17.99.0.001 was requested; keep this data by pinning \`local.services.database.version\` to \`"${selection.database.upstreamVersion}"\``,
         );
 
         yield* fs.writeFileString(
@@ -235,7 +240,11 @@ describe("database component", { timeout: 180_000 }, () => {
           `Initialized database data is for the docker runtime, but the native runtime was requested; ${recreate}`,
         );
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("keeps a reset from forgetting the record of a writer that is still migrating", () =>
@@ -284,7 +293,9 @@ describe("database component", { timeout: 180_000 }, () => {
         expect(yield* fs.exists(path.join(instanceRoot, name)), name).toBe(true);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   );
 
@@ -342,7 +353,11 @@ describe("database component", { timeout: 180_000 }, () => {
         );
         yield* service.destroy;
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live(
@@ -360,14 +375,23 @@ describe("database component", { timeout: 180_000 }, () => {
           // The next revision is the published archive under a manifest that names the new revision.
           const targets = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
           const manifestJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
-          const client = HttpClient.followRedirects(yield* HttpClient.HttpClient);
+          const client = HttpClient.filterStatusOk(
+            HttpClient.followRedirects(yield* HttpClient.HttpClient),
+          );
           const manifests = new Map<string, string>();
           const manifestPins = new Map<string, string>();
           for (const target of targets) {
-            const upstream = yield* client.get(
-              `${upstreamReleases}${assetPath(published.revision, target, "manifest.json")}`,
+            const publishedVersion = releaseVersion(published.revision);
+            const body = yield* Effect.firstSuccessOf(
+              [
+                `${upstreamReleases}${assetPath(published.revision, target, "manifest.json")}`,
+                `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/postgres/${publishedVersion}/postgres-${publishedVersion}-${target}.manifest.json`,
+              ].map((url) => client.get(url).pipe(Effect.flatMap((response) => response.text))),
             );
-            const manifest = yield* Schema.decodeEffect(manifestJson)(yield* upstream.text);
+            expect(createHash("sha256").update(body).digest("hex")).toBe(
+              published.natives[target].manifest,
+            );
+            const manifest = yield* Schema.decodeEffect(manifestJson)(body);
             const text = yield* Schema.encodeEffect(manifestJson)({
               ...manifest,
               version: releaseVersion(nextRevision),
@@ -463,7 +487,11 @@ describe("database component", { timeout: 180_000 }, () => {
             yield* service.destroy;
           }).pipe(withReleases);
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 300_000 },
   );
 
@@ -523,7 +551,11 @@ describe("database component", { timeout: 180_000 }, () => {
         ).toEqual([{ ok: 1 }]);
         yield* service.destroy;
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("native PostgreSQL verifies outbound HTTPS against the configured CA bundle", () =>
@@ -614,7 +646,11 @@ describe("database component", { timeout: 180_000 }, () => {
         });
         yield* service.destroy;
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live(
@@ -669,7 +705,11 @@ describe("database component", { timeout: 180_000 }, () => {
           });
           yield* service.destroy;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
   );
 
   for (const [version, pin] of [
@@ -775,7 +815,11 @@ describe("database component", { timeout: 180_000 }, () => {
           expect(yield* settings).toMatchObject([{ workers: "32", cron: "on" }]);
           yield* service.destroy;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     );
 
   it.live("bounds the native configuration probe before first boot", () =>
@@ -798,7 +842,11 @@ describe("database component", { timeout: 180_000 }, () => {
         expect(String(failure)).toContain("PostgreSQL configuration probe timed out");
         expect(yield* fs.readDirectory(`${root}/probe/data`)).toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live(
@@ -842,7 +890,11 @@ describe("database component", { timeout: 180_000 }, () => {
           expect(yield* fs.exists(socketDirectory)).toBe(false);
           yield* service.destroy;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
   );
 
   it.live(
@@ -1009,7 +1061,11 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* secondService.destroy;
           expect(yield* fs.exists(path.join(root, "first"))).toBe(false);
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
   );
 
   for (const [version, pin] of [
@@ -1108,7 +1164,11 @@ describe("database component", { timeout: 180_000 }, () => {
           ).toEqual([{ value: "docker" }]);
           yield* reopenedService.destroy;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     );
 
   // The storage helper joins the compose project only with the Docker volume backend.
@@ -1155,7 +1215,11 @@ describe("database component", { timeout: 180_000 }, () => {
           );
           yield* service.destroy;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     );
   });
 
@@ -1236,6 +1300,10 @@ describe("database component", { timeout: 180_000 }, () => {
         ).toEqual(cleanStopEvents);
         yield* service.destroy;
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 });

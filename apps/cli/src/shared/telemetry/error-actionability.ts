@@ -953,6 +953,7 @@ const effectCliActionabilityByTag = {
   InvalidValue: () => actionability.invalidInput,
   UnknownSubcommand: () => actionability.invalidInput,
   UnrecognizedOption: () => actionability.invalidInput,
+  ValidationError: () => actionability.invalidInput,
 } satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
 
 const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
@@ -985,6 +986,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
 
   // @supabase/config
   CliConfigParseError: () => actionability.invalidConfig,
+  CliConfigFileConflictError: () => actionability.invalidConfig,
   CliConfigRemovedKeyError: () => actionability.invalidConfig,
   CliProjectEnvParseError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,

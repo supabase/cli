@@ -1,6 +1,8 @@
-import { NodeServices } from "@effect/platform-node";
-import { Console, Crypto, Effect, FileSystem, Layer, Path } from "effect";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
+import { Console, Effect, FileSystem, Layer, Path } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcessSpawner } from "effect/process";
+import { slimImageMirrors } from "../src/Artifacts.ts";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
 import { selection } from "./pins.ts";
@@ -32,7 +34,7 @@ const program = Effect.scoped(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     // Matches the caller's own target exactly, so this fixture's identity agrees with the
     // marker the caller's `prepare` already published through it.
@@ -40,6 +42,7 @@ const program = Effect.scoped(
     const container = yield* makeContainerRuntime({
       target,
       root: instanceRoot,
+      imageMirrors: slimImageMirrors,
     });
     const storage = yield* makeDockerDatabaseStorage({
       runtime: "docker",
@@ -52,11 +55,16 @@ const program = Effect.scoped(
       fs,
       path,
       crypto,
+      digest: yield* Digest.Digest,
       container,
       spawner,
     });
     yield* storage.markInitialized(selection.database);
   }),
-).pipe(Effect.provide(barrierFs.pipe(Layer.provideMerge(NodeServices.layer))));
+).pipe(
+  Effect.provide(
+    barrierFs.pipe(Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
+  ),
+);
 
 await Effect.runPromise(program);

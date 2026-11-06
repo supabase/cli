@@ -6,7 +6,7 @@ import type {
 } from "../../../command-internal/db-connection.service.ts";
 import type { PgDeltaContext } from "../../../command-internal/pgdelta.ts";
 import type { MigrationTransactionMode } from "../../../command-internal/migration-file.ts";
-import type { DbTomlValues } from "../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -127,7 +127,7 @@ export interface PgDeltaExplicitDiffInput extends PgDeltaCommonInput {
   readonly source: PgDeltaEndpoint;
   readonly desired: PgDeltaEndpoint;
   /** Already-loaded config used when a migrations endpoint needs a native shadow. */
-  readonly toml?: DbTomlValues;
+  readonly toml?: DbConfigValues;
 }
 
 export interface PgDeltaDatabaseDiffInput extends PgDeltaCommonInput {
@@ -151,7 +151,7 @@ export interface PgDeltaDeclarativePlanInput extends PgDeltaCommonInput {
   readonly manifest?: PgDeltaExportManifest;
   readonly noCache: boolean;
   /** Already-loaded config used by native shadow/catalog provisioning. */
-  readonly toml: DbTomlValues;
+  readonly toml: DbConfigValues;
 }
 
 interface PgDeltaDeclarativePlanResult extends PgDeltaDiffResult {

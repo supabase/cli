@@ -15,7 +15,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { NetworkIdFlag, resolveDebugWithProjectEnv } from "../global-flags.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { checkDbToml } from "../db-config.toml-read.ts";
+import { checkDbConfig } from "../db-config.read.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
 import {
   resolveAuthExternalProviders,
@@ -28,6 +28,7 @@ import { parseUrl } from "../storage-url.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue, localDbContainerId } from "../docker-ids.ts";
 import { isBitbucketPipeline } from "../bitbucket-pipeline.ts";
+import { dockerSupportsHealthStartInterval } from "../container-cli.ts";
 import { holdProjectLifecycleLock } from "../project-lifecycle-lock.ts";
 import { dbNotRunningError } from "../status-errors.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
@@ -75,9 +76,9 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // Config is loaded first thing: a missing config is tolerated (defaults), but a present config
   // that is malformed, references an undecryptable `encrypted:` secret, or fails validation
-  // aborts before any container work. `checkDbToml` does that load+validate, not
+  // aborts before any container work. `checkDbConfig` does that load+validate, not
   // `isLocalDbRunning`'s best-effort read, which swallows config errors.
-  const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir);
+  const dbTomlValues = yield* checkDbConfig(fs, path, cliSettings.workdir);
 
   // Threaded into `rollbackDatabaseStart`'s own teardown (gates its `Pruned …:` stderr reports) and into
   // `buildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume migrate job tees
@@ -172,6 +173,7 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     hostnameForValidation,
     cliSettings.workdir,
     document,
+    resolvedConfig.hasConfigFile ? resolvedConfig.loaded.path : undefined,
   ).pipe(Effect.mapError((cause) => new DbConfigLoadError({ message: cause.message })));
 
   // Held until this call returns, after any rollback has run.
@@ -267,7 +269,10 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     hostname,
     dbContainerId,
     dbPort: values.dbPort,
-    containerOpts,
+    containerOpts: {
+      ...containerOpts,
+      healthStartInterval: yield* dockerSupportsHealthStartInterval(spawner),
+    },
     // `db reset` has no `fromBackup` concept at all, so `postgresSpecBase` omits it.
     postgresSpec: { ...postgresSpecBase, fromBackup },
     // Only the `db` container's own image, resolved lazily, right where it would be

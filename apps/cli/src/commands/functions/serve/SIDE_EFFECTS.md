@@ -62,27 +62,27 @@ back to local keys. No scheme/host validation is performed on the discovered URL
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                              |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | clean shutdown after `SIGINT` or `SIGTERM`                                                                                                                                             |
-| `0`  | the edge-runtime container stops on its own with exit code `0`                                                                                                                         |
-| `0`  | the edge-runtime container is torn down by an external supervisor — exit `129`/`130`/`131`/`143` (`SIGHUP`/`SIGINT`/`SIGQUIT`/`SIGTERM`), e.g. `supabase stop` run in another terminal |
-| `0`  | the edge-runtime container is already gone by the time a follow-up `docker container inspect` runs after the log stream ended                                                          |
-| `0`  | the edge-runtime container is force-killed (exit `137`, no `State.OOMKilled`) and pruned before the re-inspect that follows a non-OOM `137` completes, e.g. by `supabase stop`         |
-| `0`  | an edge-runtime startup failure or log-stream failure lands within the shutdown grace period (~50ms) of a `SIGINT`/`SIGTERM`                                                           |
-| `1`  | local DB container is not running, or the Docker daemon is unreachable (surfaces from the DB inspect as `failed to inspect service: …` plus the Docker Desktop install suggestion)     |
-| `1`  | invalid inspect flag combination, or a `Config.Validate` failure anywhere in `config.toml` (not just project/auth config)                                                              |
-| `1`  | an enabled function has `import_map.json` but no `deno.json*` or configured import map — startup fails before the container is created                                                 |
-| `1`  | env file, signing key, import map, or function bind resolution failure                                                                                                                 |
-| `1`  | edge-runtime container startup, log streaming, or restart loop failure — including the edge-runtime container crashing with any exit code other than `0` or `129`/`130`/`131`/`143`    |
-| `1`  | the edge-runtime container is killed for exceeding its memory limit — `State.OOMKilled`, typically with exit `137`                                                                     |
-| `1`  | the edge-runtime container is killed from outside the CLI and is still present after a re-inspect — exit `137` without `State.OOMKilled`                                               |
+| Code | Condition                                                                                                                                                                                                                                                                    |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | clean shutdown after `SIGINT` or `SIGTERM`                                                                                                                                                                                                                                   |
+| `0`  | the edge-runtime container stops on its own with exit code `0`                                                                                                                                                                                                               |
+| `0`  | the edge-runtime container is torn down by an external supervisor — exit `129`/`130`/`131`/`143` (`SIGHUP`/`SIGINT`/`SIGQUIT`/`SIGTERM`) or `15` (edge-runtime's own `SIGTERM` exit), e.g. `supabase stop` run in another terminal                                           |
+| `0`  | the edge-runtime container is already gone by the time a follow-up `docker container inspect` runs after the log stream ended                                                                                                                                                |
+| `0`  | the edge-runtime container is force-killed (exit `137`, no `State.OOMKilled`) and pruned before the re-inspect that follows a non-OOM `137` completes, e.g. by `supabase stop`                                                                                               |
+| `0`  | an edge-runtime startup failure or log-stream failure lands within the shutdown grace period (~50ms) of a `SIGINT`/`SIGTERM`                                                                                                                                                 |
+| `1`  | local DB container is not running, or the Docker daemon is unreachable (surfaces from the DB inspect as `failed to inspect service: …` plus the Docker Desktop install suggestion; the Docker 27+ `failed to connect to the docker API …` wording counts as unreachable too) |
+| `1`  | invalid inspect flag combination, or a `Config.Validate` failure anywhere in `config.toml` (not just project/auth config)                                                                                                                                                    |
+| `1`  | an enabled function has `import_map.json` but no `deno.json*` or configured import map — startup fails before the container is created                                                                                                                                       |
+| `1`  | env file, signing key, import map, or function bind resolution failure                                                                                                                                                                                                       |
+| `1`  | edge-runtime container startup, log streaming, or restart loop failure — including the edge-runtime container crashing with any exit code other than `0`, `15`, or `129`/`130`/`131`/`143`                                                                                   |
+| `1`  | the edge-runtime container is killed for exceeding its memory limit — `State.OOMKilled`, typically with exit `137`                                                                                                                                                           |
+| `1`  | the edge-runtime container is killed from outside the CLI and is still present after a re-inspect — exit `137` without `State.OOMKilled`                                                                                                                                     |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups         |
-| ---------------------- | ------------------------------------------ | ----------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+| Event                  | When                                       | Notable properties / groups                                                       |
+| ---------------------- | ------------------------------------------ | --------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags`, `serve_end_reason`, `edge_runtime_exit_code` |
 
 ## Output
 
@@ -97,7 +97,7 @@ Writes lifecycle text to stderr / stdout while the command is running:
 - in stack mode, `--- <count> <stream or output> chunk(s) lost ---` on stderr when the stack could not persist Functions output
 - `Stopped serving supabase/functions` on a user-initiated shutdown (`SIGINT`/`SIGTERM`)
 - `Edge Runtime exited (code 0). Stopped serving supabase/functions` when the container stops on its own with exit code `0`
-- `Edge Runtime container stopped (exit <code>). Stopped serving supabase/functions` when an external supervisor tears the container down (exit `129`/`130`/`131`/`143`)
+- `Edge Runtime container stopped (exit <code>). Stopped serving supabase/functions` when an external supervisor tears the container down (exit `129`/`130`/`131`/`143`, or `15` from edge-runtime's own `SIGTERM` exit)
 - `Edge Runtime container is no longer available. Stopped serving supabase/functions` when the container is already gone by the time a follow-up inspect runs
 
 ### `--output-format json`
@@ -127,15 +127,25 @@ When `SUPABASE_EXPERIMENTAL_STACK=1` selects the Stack backend, the command open
 project stack and serves its Functions service. A composed Functions service is started or woken
 and readied in place; the stack composition and its other services remain available on shutdown.
 If Functions is excluded from the composition, a temporary standalone Functions instance is
-created under the same stack owner and destroyed with the command scope. `--env-file` and
-`--no-verify-jwt` apply only for the command lifetime and restore the saved composed configuration
-when the owner remains reachable. Import-map and inspector flags are rejected before any stack
-mutation. Stack mode writes no project files and does not stop or restart the whole composition.
-It reads the shared Functions `.env` when creating a temporary service, or the explicit `--env-file`;
-per-function `.env` files are not read, and reserved `SUPABASE_*` entries are ignored.
-For Stack mode, TOML `edge_runtime.secrets` overrides the shared `.env`; an explicit
-`--env-file` overrides matching shared secrets while retaining other saved values.
-Per-function TOML `env` remains the final override for that function.
+created under the same stack owner and destroyed with the command scope. On a running stack,
+any difference between the configuration serve resolves (env files, per-function `.env`,
+`[functions.<name>]` settings, `--env-file`, `--debug`, `--no-verify-jwt`) and the saved one
+restarts Functions for the serving session, and the saved composed configuration is restored on
+exit when the owner remains reachable. Edits made while serving apply on the next
+`functions serve`, because the stack backend does not watch files. Import-map and inspector flags
+are rejected before any stack mutation. Stack mode writes no project files and does not stop or
+restart the whole composition.
+Stack mode resolves the env like legacy serve on every invocation, for a composed or temporary
+service: the shared Functions `.env`, or the explicit `--env-file` instead, overrides the TOML
+`edge_runtime.secrets`, and without `--env-file` each enabled `<function-name>/.env` overrides
+the shared values for that Function only; reserved `SUPABASE_*` entries are skipped with a warning.
+TOML `edge_runtime.secrets` names are uppercased, empty or unresolved `env()` values and
+`SUPABASE_`-prefixed names are dropped, and encrypted values are decrypted; an undecryptable value
+fails the command.
+Per-function TOML `env` remains the final override for that function. Multiline values and names
+the process environment cannot carry reach the runtime through its Functions config. `--debug`
+runs the runtime verbose for the command lifetime. A temporary service uses the API port of a
+running REST, Auth, Storage or Realtime service, else the configured `api.port`.
 Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
 per-function `import_map.json` is not read and does not fail the command.
 
@@ -156,7 +166,7 @@ per-function `import_map.json` is not read and does not fail the command.
 - Config, project dotenv discovery, and function discovery all resolve from `<workdir>` with no ancestor search, so they can never disagree.
 - Before each container (re)start, resolves the edge-runtime image through the same registry-candidate pull-with-retry every native `functions` Docker path uses: `docker image inspect <candidate>` (ECR, then GHCR, then Docker Hub) to check the local cache, then `docker pull <candidate>` with 2 retries (4s/8s backoff) on a miss, after `assertLocalDbRunning` — resolving it earlier would hijack the down-daemon error message that DB-inspect step is responsible for producing.
 - Runs the full `Config.Validate` pipeline (`resolveLocalConfigValues`, same one `start`/`stop`/`status` use) on every startup/restart, before `assertLocalDbRunning` — an invalid config now fails `serve` up front even for fields this command never otherwise reads (e.g. a bad `db.major_version` or malformed auth hook).
-- A container that stops on its own with exit code `0`, or that is torn down by an external supervisor (exit `129`/`130`/`131`/`143`, e.g. `supabase stop` in another terminal), or that is already gone by the time a follow-up inspect runs, all end the command successfully — each prints its own distinct line (see Output above) rather than the user-initiated `Stopped serving …` line, so scrollback can tell "I stopped it" from "the runtime walked out" or "a supervisor tore it down". In a `functions serve &` CI step this means a runtime that exits on its own does not fail the step; the distinct message is the only signal, and a downstream failure otherwise only surfaces later as connection-refused. Exit `137` (SIGKILL) fails the command: `State.OOMKilled` separates a container that hit its memory limit, which reports the memory-allocation remediation, from one killed by something the CLI cannot identify. A non-OOM `137` gets one re-inspect first — if `supabase stop` force-killed a runtime that ignored `SIGTERM` and the follow-up prune has already removed the container, the command still ends successfully instead of failing on a container that is already gone. Any other non-zero container exit fails the command; the error message includes the container id. Only a watched-file change restarts the container itself — none of these outcomes ever restart it.
+- A container that stops on its own with exit code `0`, or that is torn down by an external supervisor (exit `129`/`130`/`131`/`143`, or `15` from edge-runtime's own `SIGTERM` exit, e.g. `supabase stop` or `docker stop` in another terminal), or that is already gone by the time a follow-up inspect runs, all end the command successfully — each prints its own distinct line (see Output above) rather than the user-initiated `Stopped serving …` line, so scrollback can tell "I stopped it" from "the runtime walked out" or "a supervisor tore it down". In a `functions serve &` CI step this means a runtime that exits on its own does not fail the step; the distinct message is the only signal, and a downstream failure otherwise only surfaces later as connection-refused. Exit `137` (SIGKILL) fails the command: `State.OOMKilled` separates a container that hit its memory limit, which reports the memory-allocation remediation, from one killed by something the CLI cannot identify. A non-OOM `137` gets one re-inspect first — if `supabase stop` force-killed a runtime that ignored `SIGTERM` and the follow-up prune has already removed the container, the command still ends successfully instead of failing on a container that is already gone. Any other non-zero container exit fails the command; the error message includes the container id. Only a watched-file change restarts the container itself — none of these outcomes ever restart it.
 - A `docker logs -f` re-attach (the daemon can close the stream while the container keeps running) resumes with `--since <last forwarded log timestamp>` instead of replaying the full log history, and is capped at 5 consecutive re-attaches that forward no new output; exceeding the cap fails the command with a tagged error instead of looping forever.
 - On the log-stream path, the Docker-daemon-unreachable classification comes from a follow-up `docker container inspect` failure, not from `docker logs -f`'s own stderr text. That same follow-up inspect's `State.OOMKilled` also drives the memory-limit remediation on this path, so a `docker logs -f` failure over a container killed for exceeding its memory limit reports the same suggestion as the clean-exit case above, instead of a bare unattributable failure.
 - The worker bootstrap template (`serve.main.ts`) is bundled into a single self-contained module with `jose` and the local path/status helpers inlined, so the edge-runtime worker boots without any network access (supabase/supabase#45570). The bundle is embedded at build time for shipped binaries and produced on demand (esbuild) when running from source. It is delivered into the created (not yet started) container as a `docker cp` stdin tar archive at `/root/index.ts` — never a single-file host bind mount, which materializes as an empty directory on daemons that cannot see the client's filesystem (remote `DOCKER_HOST`/Docker-context daemons, podman machines) and breaks bring-up with edge-runtime's "failed to determine entrypoint" (supabase/cli#6254). Only this bootstrap template is daemon-independent: user function sources, import maps, static files, and the multiline-env script directory (present only when an env value contains a newline) still arrive by host bind mounts, so they require a daemon that can see the project directory.

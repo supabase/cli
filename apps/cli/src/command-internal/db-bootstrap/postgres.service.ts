@@ -10,7 +10,6 @@
 import type { CliConfig } from "@supabase/config";
 
 import { localDbContainerId } from "../docker-ids.ts";
-import { toDockerMountPath } from "../docker-path.ts";
 import { encodeToml } from "../output.encoders.ts";
 import { POSTGRES_DEFAULT_ROOT_KEY } from "../local-config-values.ts";
 import type { StartContainerSpec } from "./docker-create-args.ts";
@@ -314,9 +313,7 @@ export function buildPostgresStartContainerSpec(
     binds: [
       `${containerName}:${POSTGRES_DATA_DIR}`,
       // The backup file bind is appended only on the `fromBackup` branch.
-      ...(input.fromBackup === undefined
-        ? []
-        : [`${toDockerMountPath(input.fromBackup)}:/etc/backup.sql:ro`]),
+      ...(input.fromBackup === undefined ? [] : [`${input.fromBackup}:/etc/backup.sql:ro`]),
     ],
     // Tmpfs is keyed on `isPg14OrEarlier` alone, independent of `isRestore`.
     ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),

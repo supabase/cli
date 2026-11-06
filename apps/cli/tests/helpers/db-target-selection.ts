@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Predicate, type Scope } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -339,6 +339,7 @@ export function describeDbTargetSelection<R>(
             Effect.provide(
               Layer.mergeAll(
                 BunServices.layer,
+                BunCrypto.layer,
                 legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
                 CliOutput.layer(textCliOutputFormatter()),
                 Layer.succeed(CliArgs, { args }),

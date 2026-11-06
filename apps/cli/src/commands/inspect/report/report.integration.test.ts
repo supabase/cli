@@ -293,11 +293,11 @@ describe("inspect report", () => {
       const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
       const { dir, files } = yield* dateFolderContents(base);
-      expect(files.length).toBe(14);
+      expect(files.length).toBe(16);
       expect(files).toContain("db_stats.csv");
       expect(files).toContain("unused_indexes.csv");
       expect(files).not.toContain("db-stats.csv");
-      expect(connection.copiedSql.length).toBe(14);
+      expect(connection.copiedSql.length).toBe(16);
       expect(
         connection.copiedSql.every(
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
@@ -534,10 +534,10 @@ describe("inspect report", () => {
         expect.objectContaining({ type: "success", message: "inspect report" }),
       );
       const data = out.messages.find((m) => m.type === "success")?.data;
-      expect(data?.files).toHaveLength(14);
+      expect(data?.files).toHaveLength(16);
       expect(typeof data?.outputDir).toBe("string");
       expect(data?.rules).toHaveLength(13);
-      expect((yield* dateFolderContents(base)).files.length).toBe(14);
+      expect((yield* dateFolderContents(base)).files.length).toBe(16);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -639,7 +639,7 @@ describe("inspect report", () => {
       const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
       yield* inspectReport(flags({ outputDir: "reports" })).pipe(Effect.provide(layer));
       const { files } = yield* dateFolderContents(path.join(cwd, "reports"));
-      expect(files.length).toBe(14);
+      expect(files.length).toBe(16);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -650,7 +650,7 @@ describe("inspect report", () => {
       const cwd = yield* tempDir("supabase-report-cwd-");
       const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
       yield* inspectReport(flags({ outputDir: base })).pipe(Effect.provide(layer));
-      expect((yield* dateFolderContents(base)).files.length).toBe(14);
+      expect((yield* dateFolderContents(base)).files.length).toBe(16);
       expect((yield* fs.readDirectory(cwd)).length).toBe(0);
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -706,8 +706,8 @@ describe("inspect report through the real database-config resolver", () => {
         `POST /v1/projects/${VALID_REF}/cli/login-role`,
       ]);
       const { files } = yield* dateFolderContents(base);
-      expect(files).toHaveLength(14);
-      expect(connection.copiedSql).toHaveLength(14);
+      expect(files).toHaveLength(16);
+      expect(connection.copiedSql).toHaveLength(16);
       assertPermissionDrift({
         command: "inspect report",
         activeFlags: { remote: VALID_REF, "output-dir": true },
@@ -730,8 +730,8 @@ describe("inspect report through the real database-config resolver", () => {
       yield* stubManagementApi(requests, () => undefined);
       yield* inspectReport(flags({ outputDir: base }));
       const { files } = yield* dateFolderContents(base);
-      expect(files).toHaveLength(14);
-      expect(connection.copiedSql).toHaveLength(14);
+      expect(files).toHaveLength(16);
+      expect(connection.copiedSql).toHaveLength(16);
       expect(requests).toEqual([]);
       assertPermissionDrift({
         command: "inspect report",

@@ -1,18 +1,9 @@
 import { createHash } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Config,
-  ConfigProvider,
-  Crypto,
-  Effect,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Schema,
-} from "effect";
+import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Digest } from "effect/crypto";
 import type { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
@@ -36,7 +27,7 @@ const runtimeLayer = Layer.succeed(
   }),
 );
 
-type HostnameServices = RuntimeInfo | FileSystem.FileSystem | Path.Path | Crypto.Crypto;
+type HostnameServices = RuntimeInfo | FileSystem.FileSystem | Path.Path | Digest.Digest;
 
 /** A resolved config whose env-tier lookup yields `env`; the real tier order is covered by the config service tests. */
 const resolvedConfigWith = (env: Readonly<Record<string, string>> = {}) => ({
@@ -55,6 +46,7 @@ const noConfig = resolvedConfigWith();
 function configLayer(env: Readonly<Record<string, string | undefined>>) {
   return Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     runtimeLayer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
   );
@@ -93,7 +85,7 @@ function withDockerConfig<A>(
   run: () => Effect.Effect<A, Config.ConfigError | CliConfigLoadError, HostnameServices>,
 ) {
   return writeDockerConfigDir(options).pipe(
-    Effect.provide(BunServices.layer),
+    Effect.provide([BunServices.layer, BunCrypto.layer]),
     Effect.flatMap((configDir) =>
       run().pipe(Effect.provide(configLayer({ ...env, DOCKER_CONFIG: configDir }))),
     ),
@@ -241,6 +233,7 @@ describe("getHostname", () => {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          BunCrypto.layer,
           runtimeLayer,
           ConfigProvider.layer(
             ConfigProvider.fromEnvRecord({ DOCKER_HOST: "unix:///docker.sock" }),

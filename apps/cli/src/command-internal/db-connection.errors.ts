@@ -18,6 +18,16 @@ export class DbConnectError extends Data.TaggedError("DbConnectError")<{
    */
   readonly retryable?: boolean;
   /**
+   * True when the server certificate failed verification; the temp-role probe keys off this
+   * field to fail fast, since no retry can change the certificate.
+   */
+  readonly certificateRejected?: boolean;
+  /**
+   * True when the pooler rejected the caller's IP for project network restrictions; the
+   * temp-role probe keys off this field to fail fast, since no retry can change the allow list.
+   */
+  readonly networkRestricted?: boolean;
+  /**
    * True when the failure is an IPv6 dial failure that an IPv4 pooler retry can recover;
    * `gen types`' pooler fallback keys off this field.
    */

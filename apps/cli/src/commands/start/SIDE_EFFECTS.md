@@ -110,6 +110,19 @@ the Postgres container (polling `docker container inspect` every 1s until the st
 `starting`, the container stops running, or Docker cannot launch its health check), so a
 following `supabase status` or `supabase start` does not see `starting`. It never fails the run.
 
+Before creating any container, `start` runs `docker version --format
+'{{.Client.DefaultAPIVersion}} {{.Client.APIVersion}} {{.Server.APIVersion}}'` once. When all three
+are Docker API versions >= 1.44, every container whose spec sets a Docker healthcheck also gets
+`--health-start-interval 1s` and, unless its service sets its own, `--health-start-period 10s`. The
+first check then runs about 1s after the container starts instead of one 10s interval later, and the
+interval returns to 10s after the first pass. Failures inside the period do not count, so a failing
+service with 3 retries reaches `unhealthy` about 30s after it starts, or one interval later if a slow
+probe straddles the end of the period; the wait's budget and error type do not change. Below API
+1.44, when `docker version` fails, or with the Podman CLI or a `docker` shim for it,
+`--health-start-interval` is not passed and only Mailpit and Logflare keep their own start period.
+The real `docker` client on a Podman socket reporting 1.44 gets them: Podman keeps the start period
+and drops the start interval, so there is no speedup there.
+
 When a container is running but Docker could not launch its health check, it is judged from the
 host instead of failing. This applies only when the container's last recorded probe has exit
 code `-1` with an `OCI runtime exec failed ... unable to start container process` output, whatever

@@ -1,4 +1,5 @@
 AccessTokenRequiredError
+ApiMaxRetriesError
 BackupListNetworkError
 BackupListUnexpectedStatusError
 BackupRestoreNetworkError
@@ -37,6 +38,7 @@ BranchesUnpauseNetworkError
 BranchesUnpauseUnexpectedStatusError
 BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
+CliConfigFileConflictError
 CliConfigFlagConflictError
 CliConfigLoadError
 CliConfigParseError
@@ -56,7 +58,6 @@ ComputeConfigWriteUnsafeError
 ComputeDirectoryExistsError
 ComputeEnvNotSupportedError
 ComputeFollowNotSupportedError
-ComputeJsonConfigUnsupportedError
 ComputeLogsQueryFailedError
 ComputeLogsRateLimitedError
 ComputeLogsUsageExceededError
@@ -132,6 +133,7 @@ DbConfigLibpqEnvError
 DbConfigListBansNetworkError
 DbConfigListBansStatusError
 DbConfigLoadError
+DbConfigLoginRoleMissingPrivilegedRoleError
 DbConfigLoginRoleNetworkError
 DbConfigLoginRoleStatusError
 DbConfigParseUrlError
@@ -237,6 +239,7 @@ FunctionImportNotDirectoryError
 FunctionNotFoundError
 FunctionsApiStatusError
 FunctionsApiTransportError
+FunctionsEnvError
 FunctionsEnvNotSupportedError
 FunctionsListNetworkError
 FunctionsListUnexpectedStatusError
@@ -283,6 +286,7 @@ InitConfigExistsError
 InitParseSettingsError
 InspectCsvqError
 InspectReportMkdirError
+InspectReportOutputFlagUnsupportedError
 InspectReportWriteError
 InvalidAccessTokenError
 InvalidComputeExcludeError
@@ -496,7 +500,6 @@ StackArtifactSelectionError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError
-StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError
 StackRuntimeSelectionError

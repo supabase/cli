@@ -82,7 +82,8 @@ export const CLI_CONFIG_ENV_NAME_PATHS: Readonly<Record<string, ReadonlyArray<st
 
 /** Schema sections whose keys take no `SUPABASE_*` override, with the reason. */
 export const CLI_CONFIG_NO_ENV_SECTIONS: Readonly<Record<string, string>> = {
-  local: "local stack service versions are pinned in config.toml and supabase/supabase.lock only",
+  local:
+    "local stack service versions are pinned in the config file and supabase/supabase.lock only",
 };
 
 /** Removed `SUPABASE_*` config overrides with the key and variable that replace them; a non-empty value fails config resolution. */
@@ -296,6 +297,7 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_ACCESS_TOKEN: "platform auth",
   SUPABASE_ACTIVE_HELP: "shell completion",
   SUPABASE_ANON_KEY: "functions runtime env",
+  SUPABASE_API_MAX_RETRIES: "platform api retries",
   SUPABASE_API_URL: "platform profile",
   SUPABASE_BASELINE: "pgdata snapshot marker file name",
   SUPABASE_CA_SKIP_VERIFY: "telemetry signal",

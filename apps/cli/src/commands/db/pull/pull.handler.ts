@@ -1,7 +1,7 @@
 import { Config, ConfigProvider, Effect, FileSystem, Option, Path } from "effect";
 
 import { aqua } from "../../../command-internal/colors.ts";
-import { loadProjectEnvValues } from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnvValues } from "../../../command-internal/db-config.read.ts";
 import {
   resolveExperimentalWithProjectEnv,
   WorkdirFlag,

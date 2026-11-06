@@ -1,10 +1,11 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema, Stream } from "effect";
 import {
   type Observation,
   type PlannedInstance,
   type ServiceCreation,
+  type ServiceCreationInput,
   type StackCredentials,
   StackError,
 } from "@supabase/stack/effect";
@@ -163,6 +164,7 @@ const makeStack = (
   credentials: StackCredentials = savedCredentials,
   planned: ReadonlyArray<PlannedInstance> = [],
   credentialsUnavailable = false,
+  requested: Array<ServiceCreationInput> = [],
 ): OpenedStack => ({
   id: stackId,
   services: {
@@ -176,7 +178,11 @@ const makeStack = (
       : Effect.succeed(credentials),
   },
   composition: {
-    plan: () => Effect.succeed(planned),
+    plan: (creations) =>
+      Effect.sync(() => {
+        requested.push(...creations);
+        return planned;
+      }),
     supabase: (_services, _options) => Effect.die("unused"),
     configure: (_config) => Effect.die("unused"),
     describe: Effect.succeed({ members: [...members], dependencies: [] }),
@@ -203,6 +209,7 @@ const runStatus = (input: {
   readonly credentialsUnavailable?: boolean;
   readonly planned?: ReadonlyArray<PlannedInstance>;
   readonly flags?: StackStatusFlags;
+  readonly saved?: ReadonlyArray<{ readonly id: string; readonly creation: ServiceCreation }>;
 }) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -226,16 +233,18 @@ const runStatus = (input: {
       );
       yield* fs.writeFileString(
         `${root}/supabase/functions/.env`,
-        'PRIVATE_KEY="-----BEGIN KEY-----\nsecret\n-----END KEY-----"\n',
+        'PRIVATE_KEY="-----BEGIN KEY-----\nsecret\n-----END KEY-----"\nSUPABASE_SKIP=x\n',
       );
     }
     const projectRoot = root;
+    const requested: Array<ServiceCreationInput> = [];
     const stack = makeStack(
       input.services,
       input.members ?? input.services.map(({ id }) => ({ id, activation: "lazy" as const })),
       input.stackCredentials,
       input.planned,
       input.credentialsUnavailable ?? false,
+      requested,
     );
     const definition = {
       id: stackId,
@@ -245,10 +254,12 @@ const runStatus = (input: {
         stackName: "status-stack",
       },
       runtime: "native" as const,
-      instances: input.services.map(({ id, service }) => ({
-        id,
-        creation: service === "database" ? database : rest,
-      })),
+      instances:
+        input.saved ??
+        input.services.map(({ id, service }) => ({
+          id,
+          creation: service === "database" ? database : rest,
+        })),
       composition: { members: input.members ?? [], dependencies: [] },
       lifetime: "detached" as const,
     };
@@ -279,13 +290,14 @@ const runStatus = (input: {
       mockCommandSettings({ workdir: projectRoot, supabaseHome: root }),
       cliConfigValuesTestLayer,
       BunServices.layer,
+      BunCrypto.layer,
       runtimeInfoLayer,
     );
     if (input.config === "explicit" || input.config === "multiline-functions-env")
       yield* seedLock(root).pipe(Effect.provide(layer));
     const effect = stackStatus(input.flags ?? flags()).pipe(Effect.provide(layer));
-    return { effect, out, root };
-  }).pipe(Effect.provide(BunServices.layer));
+    return { effect, out, root, requested };
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 it.effect("renders connections and a services summary without internal IDs", () =>
   Effect.gen(function* () {
@@ -693,12 +705,9 @@ it.effect("omits Storage S3 details for a Storage member saved without S3 keys",
   }),
 );
 
-for (const { functionsMember, status } of [
-  { functionsMember: false, status: "unchanged" },
-  { functionsMember: true, status: "unavailable" },
-] as const)
+for (const functionsMember of [false, true])
   it.effect(
-    `reports ${status} drift for a multiline Functions dotenv when Functions is ${functionsMember ? "" : "not "}a member`,
+    `reports unchanged drift for a multiline Functions dotenv when Functions is ${functionsMember ? "" : "not "}a member`,
     () =>
       Effect.gen(function* () {
         const services = [
@@ -717,9 +726,40 @@ for (const { functionsMember, status } of [
         });
         yield* run.effect;
         const result = run.out.messages.find((message) => message.type === "success")?.data;
-        expect(result).toMatchObject({ config_drift: { status } });
+        expect(result).toMatchObject({ config_drift: { status: "unchanged" } });
+        expect(run.out.stderrText).not.toContain("Env name cannot start with SUPABASE_");
+        const requested = run.requested.find(({ service }) => service === "functions");
+        expect(requested?.service === "functions" && requested.config.env).toEqual(
+          functionsMember ? { PRIVATE_KEY: "-----BEGIN KEY-----\nsecret\n-----END KEY-----" } : {},
+        );
       }),
   );
+
+it.effect("plans drift with the saved debug mode of a debug-started stack", () =>
+  Effect.gen(function* () {
+    const saved: ServiceCreation = { ...functions, config: { ...functions.config, debug: true } };
+    const run = yield* runStatus({
+      services: [
+        makeService({ id: "database-id", creation: database, statusCalls: { value: 0 } }),
+        makeService({ id: "functions-id", creation: saved, statusCalls: { value: 0 } }),
+      ],
+      members: [
+        { id: "database-id", activation: "eager" },
+        { id: "functions-id", activation: "eager" },
+      ],
+      saved: [
+        { id: "database-id", creation: database },
+        { id: "functions-id", creation: saved },
+      ],
+      config: "multiline-functions-env",
+      reachable: false,
+      outputFormat: "json",
+    });
+    yield* run.effect;
+    const requested = run.requested.find(({ service }) => service === "functions");
+    expect(requested?.service === "functions" && requested.config.debug).toBe(true);
+  }),
+);
 
 it.effect("reports unavailable owner and does not query service status", () =>
   Effect.gen(function* () {

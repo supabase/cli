@@ -199,6 +199,7 @@ export const BranchResponse_Output = Schema.Struct({
         "RESTARTING",
         "PAUSE_FAILED",
         "RESIZING",
+        "PROMOTING",
       ]),
       OpenString,
     ]),
@@ -309,6 +310,7 @@ export const V1ProjectWithDatabaseResponse_Output = Schema.Struct({
       "RESTARTING",
       "PAUSE_FAILED",
       "RESIZING",
+      "PROMOTING",
     ]),
     OpenString,
   ]),
@@ -1094,6 +1096,7 @@ export const V1CreateABranchOutput = Schema.Struct({
         "RESTARTING",
         "PAUSE_FAILED",
         "RESIZING",
+        "PROMOTING",
       ]),
       OpenString,
     ]),
@@ -1352,6 +1355,7 @@ export const V1CreateAProjectOutput = Schema.Struct({
       "RESTARTING",
       "PAUSE_FAILED",
       "RESIZING",
+      "PROMOTING",
     ]),
     OpenString,
   ]),
@@ -2426,6 +2430,18 @@ export const V1ExchangeOauthTokenOutput = Schema.Struct({
       }),
     ),
   token_type: Schema.Literal("Bearer"),
+  scope: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Space-delimited scopes granted to the token. Omitted when no scopes were granted.",
+    }),
+  ),
+  project_refs: Schema.Union([
+    Schema.Array(Schema.String).annotate({
+      description: "Project refs the token is limited to. `null` means all projects.",
+    }),
+    Schema.Null,
+  ]),
 });
 export const V1GenerateTypescriptTypesInput = Schema.Struct({
   included_schemas: Schema.optionalKey(Schema.String),
@@ -2530,6 +2546,7 @@ export const V1GetABranchOutput = Schema.Struct({
         "RESTARTING",
         "PAUSE_FAILED",
         "RESIZING",
+        "PROMOTING",
       ]),
       OpenString,
     ]),
@@ -2584,6 +2601,7 @@ export const V1GetABranchConfigOutput = Schema.Struct({
       "RESTARTING",
       "PAUSE_FAILED",
       "RESIZING",
+      "PROMOTING",
     ]),
     OpenString,
   ]),
@@ -2956,6 +2974,7 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
           "RESTARTING",
           "PAUSE_FAILED",
           "RESIZING",
+          "PROMOTING",
         ]),
         OpenString,
       ]),
@@ -4152,6 +4171,22 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
         "Populated when a new config has been received, but not registered as successfully applied to a project.",
     }),
   ),
+  pending_config: Schema.optionalKey(
+    Schema.Struct({
+      dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+      dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+    }).annotate({
+      description:
+        "Present when a change that was never applied is waiting for review. `config` is the list the project enforces. Apply or reject the change with `POST /v1/projects/{ref}/network-restrictions/review`; submitting a new config also replaces it.",
+    }),
+  ),
+  pending_requested_at: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "When the change in `pending_config` was requested. Send it as `requested_at` to the review endpoint.",
+      format: "date-time",
+    }),
+  ),
   status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
   updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -4358,6 +4393,9 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
           "log_auth_error_rate_high",
           "log_storage_error_rate_high",
           "log_edge_function_error_rate_high",
+          "realtime_authorization_timeouts",
+          "realtime_postgres_changes_spike",
+          "realtime_concurrent_users_near_limit",
           "project_not_active",
           "advisor_check_unavailable",
         ]),
@@ -4770,6 +4808,13 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
         obj_name: Schema.String,
       }),
       Schema.Struct({ type: Schema.Literal("active_replication_slot"), slot_name: Schema.String }),
+      Schema.Struct({
+        type: Schema.Literal("table_using_reg_type"),
+        schema_name: Schema.String,
+        table_name: Schema.String,
+        column_name: Schema.String,
+        type_name: Schema.String,
+      }),
       Schema.Struct({ type: Schema.Literal("x86_architecture") }),
       Schema.Struct({ type: Schema.Literal("project_hibernating") }),
     ]),
@@ -4781,6 +4826,7 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
         Schema.Struct({ type: Schema.Literal("ltree_reindex_required") }),
         Schema.Struct({ type: Schema.Literal("operator_estimator_gate") }),
         Schema.Struct({ type: Schema.Literal("btree_gist_nan_reindex") }),
+        Schema.Struct({ type: Schema.Literal("collation_reindex_required") }),
       ],
       { mode: "oneOf" },
     ),
@@ -4906,6 +4952,38 @@ export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  db_pool_max_lifetime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 1800.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+    Schema.Null,
+  ]),
+  db_pool_max_idletime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 30.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
+      ),
+    Schema.Null,
+  ]),
   jwt_secret: Schema.optionalKey(Schema.String),
 });
 export const V1GetProfileInput = Schema.Record(Schema.String, Schema.Never);
@@ -4969,6 +5047,7 @@ export const V1GetProjectOutput = Schema.Struct({
       "RESTARTING",
       "PAUSE_FAILED",
       "RESIZING",
+      "PROMOTING",
     ]),
     OpenString,
   ]),
@@ -5823,6 +5902,9 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
           "log_auth_error_rate_high",
           "log_storage_error_rate_high",
           "log_edge_function_error_rate_high",
+          "realtime_authorization_timeouts",
+          "realtime_postgres_changes_spike",
+          "realtime_concurrent_users_near_limit",
           "project_not_active",
           "advisor_check_unavailable",
         ]),
@@ -7095,6 +7177,480 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
 });
+export const V1PatchPostgresConfigInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  effective_cache_size: Schema.optionalKey(Schema.String),
+  logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
+  "cron.log_statement": Schema.optionalKey(Schema.Boolean),
+  log_autovacuum_min_duration: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  log_checkpoints: Schema.optionalKey(Schema.Boolean),
+  log_connections: Schema.optionalKey(Schema.Boolean),
+  log_disconnections: Schema.optionalKey(Schema.Boolean),
+  log_duration: Schema.optionalKey(Schema.Boolean),
+  log_lock_waits: Schema.optionalKey(Schema.Boolean),
+  log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+  log_replication_commands: Schema.optionalKey(Schema.Boolean),
+  log_startup_progress_interval: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  log_temp_files: Schema.optionalKey(Schema.String),
+  maintenance_work_mem: Schema.optionalKey(Schema.String),
+  track_activity_query_size: Schema.optionalKey(Schema.String),
+  max_connections: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_locks_per_transaction: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(10).annotate({
+          expected: "a value greater than or equal to 10",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(2147483640).annotate({
+          expected: "a value less than or equal to 2147483640",
+        }),
+      ),
+  ),
+  max_logical_replication_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_parallel_maintenance_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_parallel_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_parallel_workers_per_gather: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_replication_slots: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+  ),
+  max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
+  max_standby_archive_delay: Schema.optionalKey(Schema.String),
+  max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+  max_sync_workers_per_subscription: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_wal_size: Schema.optionalKey(Schema.String),
+  max_wal_senders: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+  ),
+  max_worker_processes: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  session_replication_role: Schema.optionalKey(Schema.Literals(["origin", "replica", "local"])),
+  shared_buffers: Schema.optionalKey(Schema.String),
+  statement_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
+  wal_keep_size: Schema.optionalKey(Schema.String),
+  wal_sender_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  work_mem: Schema.optionalKey(Schema.String),
+  checkpoint_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: s" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
+  restart_database: Schema.optionalKey(Schema.Boolean),
+});
+export const V1PatchPostgresConfigOutput = Schema.Struct({
+  effective_cache_size: Schema.optionalKey(Schema.String),
+  logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
+  "cron.log_statement": Schema.optionalKey(Schema.Boolean),
+  log_autovacuum_min_duration: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  log_checkpoints: Schema.optionalKey(Schema.Boolean),
+  log_connections: Schema.optionalKey(Schema.Boolean),
+  log_disconnections: Schema.optionalKey(Schema.Boolean),
+  log_duration: Schema.optionalKey(Schema.Boolean),
+  log_lock_waits: Schema.optionalKey(Schema.Boolean),
+  log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+  log_replication_commands: Schema.optionalKey(Schema.Boolean),
+  log_startup_progress_interval: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  log_temp_files: Schema.optionalKey(Schema.String),
+  maintenance_work_mem: Schema.optionalKey(Schema.String),
+  track_activity_query_size: Schema.optionalKey(Schema.String),
+  max_connections: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_locks_per_transaction: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(10).annotate({
+          expected: "a value greater than or equal to 10",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(2147483640).annotate({
+          expected: "a value less than or equal to 2147483640",
+        }),
+      ),
+  ),
+  max_logical_replication_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_parallel_maintenance_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_parallel_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_parallel_workers_per_gather: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_replication_slots: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+  ),
+  max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
+  max_standby_archive_delay: Schema.optionalKey(Schema.String),
+  max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+  max_sync_workers_per_subscription: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_wal_size: Schema.optionalKey(Schema.String),
+  max_wal_senders: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+  ),
+  max_worker_processes: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  session_replication_role: Schema.optionalKey(
+    Schema.Union([Schema.Literals(["origin", "replica", "local"]), OpenString]),
+  ),
+  shared_buffers: Schema.optionalKey(Schema.String),
+  statement_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
+  wal_keep_size: Schema.optionalKey(Schema.String),
+  wal_sender_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  work_mem: Schema.optionalKey(Schema.String),
+  checkpoint_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: s" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
+});
 export const V1PauseAProjectInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -7389,6 +7945,66 @@ export const V1RestorePitrBackupInput = Schema.Struct({
       }),
     ),
 });
+export const V1ReviewNetworkRestrictionsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  action: Schema.Literals(["apply", "reject"]).annotate({
+    description:
+      "`apply` replaces the enforced list with the pending one and applies it. `reject` discards the pending one and keeps the enforced list.",
+  }),
+  requested_at: Schema.String.annotate({
+    description:
+      "The `pending_requested_at` of the change being reviewed. Only that change is resolved: if another one has replaced it, the request gets a 409.",
+    format: "date-time",
+  }),
+});
+export const V1ReviewNetworkRestrictionsOutput = Schema.Struct({
+  entitlement: Schema.Union([Schema.Literals(["disallowed", "allowed"]), OpenString]),
+  config: Schema.Struct({
+    dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+    dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+  }).annotate({
+    description:
+      "At any given point in time, this is the config that the user has requested be applied to their project. The `status` field indicates if it has been applied to the project, or is pending. When an updated config is received, the applied config is moved to `old_config`.",
+  }),
+  old_config: Schema.optionalKey(
+    Schema.Struct({
+      dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+      dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+    }).annotate({
+      description:
+        "Populated when a new config has been received, but not registered as successfully applied to a project.",
+    }),
+  ),
+  pending_config: Schema.optionalKey(
+    Schema.Struct({
+      dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+      dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+    }).annotate({
+      description:
+        "Present when a change that was never applied is waiting for review. `config` is the list the project enforces. Apply or reject the change with `POST /v1/projects/{ref}/network-restrictions/review`; submitting a new config also replaces it.",
+    }),
+  ),
+  pending_requested_at: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "When the change in `pending_config` was requested. Send it as `requested_at` to the review endpoint.",
+      format: "date-time",
+    }),
+  ),
+  status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
+  updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+});
 export const V1RevokeTokenInput = Schema.Struct({
   client_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
@@ -7643,6 +8259,7 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
         "RESTARTING",
         "PAUSE_FAILED",
         "RESIZING",
+        "PROMOTING",
       ]),
       OpenString,
     ]),
@@ -9546,6 +10163,22 @@ export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
         "Populated when a new config has been received, but not registered as successfully applied to a project.",
     }),
   ),
+  pending_config: Schema.optionalKey(
+    Schema.Struct({
+      dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
+      dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
+    }).annotate({
+      description:
+        "Present when a change that was never applied is waiting for review. `config` is the list the project enforces. Apply or reject the change with `POST /v1/projects/{ref}/network-restrictions/review`; submitting a new config also replaces it.",
+    }),
+  ),
+  pending_requested_at: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "When the change in `pending_config` was requested. Send it as `requested_at` to the review endpoint.",
+      format: "date-time",
+    }),
+  ),
   status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
   updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -10147,6 +10780,30 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
         Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
       ),
   ),
+  db_pool_max_lifetime: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+  ),
+  db_pool_max_idletime: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
+      ),
+  ),
 });
 export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
@@ -10193,6 +10850,38 @@ export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
         Schema.isLessThanOrEqualTo(9007199254740991).annotate({
           expected: "a value less than or equal to 9007199254740991",
         }),
+      ),
+    Schema.Null,
+  ]),
+  db_pool_max_lifetime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 1800.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(3600).annotate({
+          expected: "a value less than or equal to 3600",
+        }),
+      ),
+    Schema.Null,
+  ]),
+  db_pool_max_idletime: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 30.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(60).annotate({ expected: "a value less than or equal to 60" }),
       ),
     Schema.Null,
   ]),
@@ -10713,12 +11402,12 @@ export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
   user_id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
-        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
         "u",
       ),
     ).annotate({
       expected:
-        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
     }),
   ),
   data: Schema.Struct({
@@ -11596,6 +12285,7 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           "unauthorized",
           "validation_failed",
           "agentic_credential_not_found",
+          "backup_unsupported",
           "branch_admin_required",
           "compute_build_context_too_large",
           "compute_build_in_progress",
@@ -12027,6 +12717,13 @@ export const V2DeployAComputeInstanceInput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
+        secrets_scope: Schema.optionalKey(
+          Schema.Union([
+            Schema.Literals(["all", "supabase", "none"]),
+            Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+            Schema.Null,
+          ]),
+        ),
       }),
       context_upload_id: Schema.optionalKey(
         Schema.String.annotate({
@@ -12057,6 +12754,13 @@ export const V2DeployAComputeInstanceOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
+        secrets_scope: Schema.optionalKey(
+          Schema.Union([
+            Schema.Union([Schema.Literals(["all", "supabase", "none"]), OpenString]),
+            Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+            Schema.Null,
+          ]),
+        ),
       }),
       build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
       secret_generation: Schema.String,
@@ -12115,6 +12819,30 @@ export const V2DeployAComputeInstanceOutput = Schema.Struct({
     }),
   }),
 });
+export const V2DownloadProjectBackupInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("project_backup_file_url").annotate({ description: "Resource type." }),
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+  }),
+});
+export const V2DownloadProjectBackupOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_backup_file_url").annotate({ description: "Resource type." }),
+    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    attributes: Schema.Struct({ file_url: Schema.String }),
+  }),
+});
 export const V2GetAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -12153,6 +12881,13 @@ export const V2GetAComputeInstanceOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
+        secrets_scope: Schema.optionalKey(
+          Schema.Union([
+            Schema.Union([Schema.Literals(["all", "supabase", "none"]), OpenString]),
+            Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+            Schema.Null,
+          ]),
+        ),
       }),
       build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
       secret_generation: Schema.String,
@@ -12430,6 +13165,22 @@ export const V2GetProjectConfigOutput = Schema.Struct({
             Schema.Struct({
               address: Schema.String,
               type: Schema.Union([Schema.Literals(["v4", "v6"]), OpenString]),
+            }),
+          ),
+          pending_allowed_cidrs: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                address: Schema.String,
+                type: Schema.Union([Schema.Literals(["v4", "v6"]), OpenString]),
+              }),
+            ).annotate({
+              description:
+                "Present when a change that was never applied is waiting for review. `allowed_cidrs` is the list the project enforces. Apply or reject the change with `POST /v1/projects/{ref}/network-restrictions/review`; submitting a new config also replaces it.",
+            }),
+          ),
+          pending_requested_at: Schema.optionalKey(
+            Schema.String.annotate({
+              description: "When the change in `pending_allowed_cidrs` was requested.",
             }),
           ),
           updated_at: Schema.optionalKey(Schema.String),
@@ -12802,6 +13553,32 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
+        db_pool_max_lifetime: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(3600).annotate({
+              expected: "a value less than or equal to 3600",
+            }),
+          ),
+        db_pool_max_idletime: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(60).annotate({
+              expected: "a value less than or equal to 60",
+            }),
+          ),
         db_pool: Schema.Union([
           Schema.Number.annotate({
             description:
@@ -13076,6 +13853,13 @@ export const V2ListAllComputeInstancesOutput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
+          secrets_scope: Schema.optionalKey(
+            Schema.Union([
+              Schema.Union([Schema.Literals(["all", "supabase", "none"]), OpenString]),
+              Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+              Schema.Null,
+            ]),
+          ),
         }),
         build_state: Schema.Union([Schema.Literals(["building", "active", "failed"]), OpenString]),
         secret_generation: Schema.String,
@@ -13519,6 +14303,68 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
     ),
   }),
 });
+export const V2ListOrganizationMaintenanceWindowsInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+});
+export const V2ListOrganizationMaintenanceWindowsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("maintenance_window").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "AWS region." }),
+      attributes: Schema.Struct({
+        window: Schema.Struct({
+          day: Schema.Union([
+            Schema.Literals(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]).annotate({
+              description: "UTC day the window starts.",
+            }),
+            OpenString,
+          ]),
+          start_utc: Schema.String.annotate({ description: "UTC start time." }),
+          duration_minutes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+        }),
+        current_window: Schema.Union([
+          Schema.Struct({
+            start_at: Schema.String.annotate({
+              description: "Start of the occurrence, inclusive.",
+              format: "date-time",
+            }),
+            end_at: Schema.String.annotate({
+              description: "End of the occurrence, exclusive.",
+              format: "date-time",
+            }),
+          }).annotate({ description: "The open occurrence, or null when the window is closed." }),
+          Schema.Null,
+        ]),
+        next_windows: Schema.Array(
+          Schema.Struct({
+            start_at: Schema.String.annotate({
+              description: "Start of the occurrence, inclusive.",
+              format: "date-time",
+            }),
+            end_at: Schema.String.annotate({
+              description: "End of the occurrence, exclusive.",
+              format: "date-time",
+            }),
+          }),
+        ).annotate({ description: "The next five occurrences that start after now, in order." }),
+      }),
+    }),
+  ),
+});
 export const V2ListOrganizationMembersInput = Schema.Struct({
   slug: Schema.String.check(
     Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
@@ -13746,6 +14592,7 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
             "RESTARTING",
             "PAUSE_FAILED",
             "RESIZING",
+            "PROMOTING",
           ]).annotate({ description: "Project status" }),
           OpenString,
         ]),
@@ -14077,6 +14924,7 @@ export const V2OrganizationsSlugWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.project.branch.created",
             "v1.project.branch.updated",
             "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
             "v1.organization.member.invitation.created",
             "v1.organization.member.invitation.canceled",
             "v1.organization.member.added",
@@ -14086,6 +14934,7 @@ export const V2OrganizationsSlugWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
           ]).annotate({ description: "Webhook event type." }),
           OpenString,
         ]),
@@ -14219,6 +15068,7 @@ export const V2OrganizationsSlugWebhooksEndpointsDeleteOutput = Schema.Struct({
                 "v1.project.branch.created",
                 "v1.project.branch.updated",
                 "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
                 "v1.organization.member.invitation.created",
                 "v1.organization.member.invitation.canceled",
                 "v1.organization.member.added",
@@ -14228,6 +15078,7 @@ export const V2OrganizationsSlugWebhooksEndpointsDeleteOutput = Schema.Struct({
                 "v1.organization.member.role.updated",
                 "v1.organization.billing.plan.upgraded",
                 "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
                 "*",
               ]).annotate({ description: "Webhook event type." }),
               OpenString,
@@ -14354,6 +15205,7 @@ export const V2OrganizationsSlugWebhooksEndpointsGetOutput = Schema.Struct({
                 "v1.project.branch.created",
                 "v1.project.branch.updated",
                 "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
                 "v1.organization.member.invitation.created",
                 "v1.organization.member.invitation.canceled",
                 "v1.organization.member.added",
@@ -14363,6 +15215,7 @@ export const V2OrganizationsSlugWebhooksEndpointsGetOutput = Schema.Struct({
                 "v1.organization.member.role.updated",
                 "v1.organization.billing.plan.upgraded",
                 "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
                 "*",
               ]).annotate({ description: "Webhook event type." }),
               OpenString,
@@ -14503,6 +15356,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeleteOutput = Schema.Struct(
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -14512,6 +15366,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeleteOutput = Schema.Struct(
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -14702,6 +15557,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -14711,6 +15567,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
           ]),
@@ -14849,6 +15706,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdGetOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -14858,6 +15716,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdGetOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -14953,6 +15812,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchInput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -14962,6 +15822,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchInput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
           }),
@@ -15062,6 +15923,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -15071,6 +15933,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdPatchOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -15141,6 +16004,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdTestPostInput = Schema.Struct
           "v1.project.branch.created",
           "v1.project.branch.updated",
           "v1.project.branch.removed",
+          "v1.project.secrets.leaked",
           "v1.organization.member.invitation.created",
           "v1.organization.member.invitation.canceled",
           "v1.organization.member.added",
@@ -15150,6 +16014,7 @@ export const V2OrganizationsSlugWebhooksEndpointsIdTestPostInput = Schema.Struct
           "v1.organization.member.role.updated",
           "v1.organization.billing.plan.upgraded",
           "v1.organization.billing.plan.downgraded",
+          "v1.organization.secrets.leaked",
         ]).annotate({ description: "Webhook event type." }),
       }),
     }),
@@ -15205,6 +16070,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostInput = Schema.Struct({
             "v1.project.branch.created",
             "v1.project.branch.updated",
             "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
             "v1.organization.member.invitation.created",
             "v1.organization.member.invitation.canceled",
             "v1.organization.member.added",
@@ -15214,6 +16080,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostInput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
             "*",
           ]).annotate({ description: "Webhook event type." }),
         }),
@@ -15305,6 +16172,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -15314,6 +16182,7 @@ export const V2OrganizationsSlugWebhooksEndpointsPostOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -15504,6 +16373,7 @@ export const V2ProjectsRefWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.project.branch.created",
             "v1.project.branch.updated",
             "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
             "v1.organization.member.invitation.created",
             "v1.organization.member.invitation.canceled",
             "v1.organization.member.added",
@@ -15513,6 +16383,7 @@ export const V2ProjectsRefWebhooksDeliveriesIdGetOutput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
           ]).annotate({ description: "Webhook event type." }),
           OpenString,
         ]),
@@ -15658,6 +16529,7 @@ export const V2ProjectsRefWebhooksEndpointsDeleteOutput = Schema.Struct({
                 "v1.project.branch.created",
                 "v1.project.branch.updated",
                 "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
                 "v1.organization.member.invitation.created",
                 "v1.organization.member.invitation.canceled",
                 "v1.organization.member.added",
@@ -15667,6 +16539,7 @@ export const V2ProjectsRefWebhooksEndpointsDeleteOutput = Schema.Struct({
                 "v1.organization.member.role.updated",
                 "v1.organization.billing.plan.upgraded",
                 "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
                 "*",
               ]).annotate({ description: "Webhook event type." }),
               OpenString,
@@ -15799,6 +16672,7 @@ export const V2ProjectsRefWebhooksEndpointsGetOutput = Schema.Struct({
                 "v1.project.branch.created",
                 "v1.project.branch.updated",
                 "v1.project.branch.removed",
+                "v1.project.secrets.leaked",
                 "v1.organization.member.invitation.created",
                 "v1.organization.member.invitation.canceled",
                 "v1.organization.member.added",
@@ -15808,6 +16682,7 @@ export const V2ProjectsRefWebhooksEndpointsGetOutput = Schema.Struct({
                 "v1.organization.member.role.updated",
                 "v1.organization.billing.plan.upgraded",
                 "v1.organization.billing.plan.downgraded",
+                "v1.organization.secrets.leaked",
                 "*",
               ]).annotate({ description: "Webhook event type." }),
               OpenString,
@@ -15954,6 +16829,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeleteOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -15963,6 +16839,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeleteOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -16159,6 +17036,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16168,6 +17046,7 @@ export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
           ]),
@@ -16312,6 +17191,7 @@ export const V2ProjectsRefWebhooksEndpointsIdGetOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16321,6 +17201,7 @@ export const V2ProjectsRefWebhooksEndpointsIdGetOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -16422,6 +17303,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchInput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16431,6 +17313,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchInput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
           }),
@@ -16531,6 +17414,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16540,6 +17424,7 @@ export const V2ProjectsRefWebhooksEndpointsIdPatchOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -16616,6 +17501,7 @@ export const V2ProjectsRefWebhooksEndpointsIdTestPostInput = Schema.Struct({
           "v1.project.branch.created",
           "v1.project.branch.updated",
           "v1.project.branch.removed",
+          "v1.project.secrets.leaked",
           "v1.organization.member.invitation.created",
           "v1.organization.member.invitation.canceled",
           "v1.organization.member.added",
@@ -16625,6 +17511,7 @@ export const V2ProjectsRefWebhooksEndpointsIdTestPostInput = Schema.Struct({
           "v1.organization.member.role.updated",
           "v1.organization.billing.plan.upgraded",
           "v1.organization.billing.plan.downgraded",
+          "v1.organization.secrets.leaked",
         ]).annotate({ description: "Webhook event type." }),
       }),
     }),
@@ -16686,6 +17573,7 @@ export const V2ProjectsRefWebhooksEndpointsPostInput = Schema.Struct({
             "v1.project.branch.created",
             "v1.project.branch.updated",
             "v1.project.branch.removed",
+            "v1.project.secrets.leaked",
             "v1.organization.member.invitation.created",
             "v1.organization.member.invitation.canceled",
             "v1.organization.member.added",
@@ -16695,6 +17583,7 @@ export const V2ProjectsRefWebhooksEndpointsPostInput = Schema.Struct({
             "v1.organization.member.role.updated",
             "v1.organization.billing.plan.upgraded",
             "v1.organization.billing.plan.downgraded",
+            "v1.organization.secrets.leaked",
             "*",
           ]).annotate({ description: "Webhook event type." }),
         }),
@@ -16786,6 +17675,7 @@ export const V2ProjectsRefWebhooksEndpointsPostOutput = Schema.Struct({
               "v1.project.branch.created",
               "v1.project.branch.updated",
               "v1.project.branch.removed",
+              "v1.project.secrets.leaked",
               "v1.organization.member.invitation.created",
               "v1.organization.member.invitation.canceled",
               "v1.organization.member.added",
@@ -16795,6 +17685,7 @@ export const V2ProjectsRefWebhooksEndpointsPostOutput = Schema.Struct({
               "v1.organization.member.role.updated",
               "v1.organization.billing.plan.upgraded",
               "v1.organization.billing.plan.downgraded",
+              "v1.organization.secrets.leaked",
               "*",
             ]).annotate({ description: "Webhook event type." }),
             OpenString,
@@ -16831,6 +17722,24 @@ export const V2ProjectsRefWebhooksEndpointsPostOutput = Schema.Struct({
       }),
     }),
   }),
+});
+export const V2RemoveOrganizationMembersInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+        "u",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+    }),
+  ),
 });
 export const V2RunProjectAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
@@ -16891,6 +17800,9 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
               "log_auth_error_rate_high",
               "log_storage_error_rate_high",
               "log_edge_function_error_rate_high",
+              "realtime_authorization_timeouts",
+              "realtime_postgres_changes_spike",
+              "realtime_concurrent_users_near_limit",
             ]),
           }),
         )
@@ -16898,7 +17810,7 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           )
           .check(
-            Schema.isMaxLength(10).annotate({ expected: "a value with a length of at most 10" }),
+            Schema.isMaxLength(15).annotate({ expected: "a value with a length of at most 15" }),
           ),
       }),
     }),
@@ -16953,6 +17865,9 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
               "log_auth_error_rate_high",
               "log_storage_error_rate_high",
               "log_edge_function_error_rate_high",
+              "realtime_authorization_timeouts",
+              "realtime_postgres_changes_spike",
+              "realtime_concurrent_users_near_limit",
               "project_not_active",
               "advisor_check_unavailable",
             ]),
@@ -17682,6 +18597,7 @@ export const V2DeleteLogDrainOutput = Schema.Void;
 export const V2DeleteNotebookOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
+export const V2RemoveOrganizationMembersOutput = Schema.Void;
 export const V2TransferAProjectOutput = Schema.Void;
 
 export const openApiOperationIdMap = {
@@ -17811,6 +18727,7 @@ export const openApiOperationIdMap = {
   "v1-oauth-authorize-project-claim": "v1OauthAuthorizeProjectClaim",
   "v1-patch-a-migration": "v1PatchAMigration",
   "v1-patch-network-restrictions": "v1PatchNetworkRestrictions",
+  "v1-patch-postgres-config": "v1PatchPostgresConfig",
   "v1-pause-a-project": "v1PauseAProject",
   "v1-push-a-branch": "v1PushABranch",
   "v1-read-only-query": "v1ReadOnlyQuery",
@@ -17823,6 +18740,7 @@ export const openApiOperationIdMap = {
   "v1-restore-a-project": "v1RestoreAProject",
   "v1-restore-physical-backup": "v1RestorePhysicalBackup",
   "v1-restore-pitr-backup": "v1RestorePitrBackup",
+  "v1-review-network-restrictions": "v1ReviewNetworkRestrictions",
   "v1-revoke-token": "v1RevokeToken",
   "v1-rollback-migrations": "v1RollbackMigrations",
   "v1-run-a-query": "v1RunAQuery",
@@ -17869,6 +18787,7 @@ export const openApiOperationIdMap = {
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
   "v2-deploy-a-compute-instance": "v2DeployAComputeInstance",
+  "v2-download-project-backup": "v2DownloadProjectBackup",
   "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
@@ -17876,6 +18795,7 @@ export const openApiOperationIdMap = {
   "v2-list-log-drains": "v2ListLogDrains",
   "v2-list-notebooks": "v2ListNotebooks",
   "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
+  "v2-list-organization-maintenance-windows": "v2ListOrganizationMaintenanceWindows",
   "v2-list-organization-members": "v2ListOrganizationMembers",
   "v2-list-organization-projects": "v2ListOrganizationProjects",
   "v2-list-organization-roles": "v2ListOrganizationRoles",
@@ -17907,6 +18827,7 @@ export const openApiOperationIdMap = {
   "v2-projects-ref-webhooks-endpoints-id-patch": "v2ProjectsRefWebhooksEndpointsIdPatch",
   "v2-projects-ref-webhooks-endpoints-id-test-post": "v2ProjectsRefWebhooksEndpointsIdTestPost",
   "v2-projects-ref-webhooks-endpoints-post": "v2ProjectsRefWebhooksEndpointsPost",
+  "v2-remove-organization-members": "v2RemoveOrganizationMembers",
   "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
@@ -19692,6 +20613,67 @@ export const operationDefinitions = {
     inputSchema: V1PatchNetworkRestrictionsInput,
     outputSchema: V1PatchNetworkRestrictionsOutput,
   },
+  v1PatchPostgresConfig: {
+    id: "v1PatchPostgresConfig",
+    description: "Partially updates project's Postgres config",
+    method: "PATCH",
+    path: "/v1/projects/{ref}/config/database/postgres",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: {
+      kind: "json",
+      contentType: "application/json",
+      fields: [
+        "effective_cache_size",
+        "logical_decoding_work_mem",
+        "pg_stat_statements.max",
+        "pg_net.batch_size",
+        "autovacuum_max_workers",
+        "autovacuum_work_mem",
+        "cron.log_statement",
+        "log_autovacuum_min_duration",
+        "log_checkpoints",
+        "log_connections",
+        "log_disconnections",
+        "log_duration",
+        "log_lock_waits",
+        "log_recovery_conflict_waits",
+        "log_replication_commands",
+        "log_startup_progress_interval",
+        "log_temp_files",
+        "maintenance_work_mem",
+        "track_activity_query_size",
+        "max_connections",
+        "max_locks_per_transaction",
+        "max_logical_replication_workers",
+        "max_parallel_maintenance_workers",
+        "max_parallel_workers",
+        "max_parallel_workers_per_gather",
+        "max_replication_slots",
+        "max_slot_wal_keep_size",
+        "max_standby_archive_delay",
+        "max_standby_streaming_delay",
+        "max_sync_workers_per_subscription",
+        "max_wal_size",
+        "max_wal_senders",
+        "max_worker_processes",
+        "session_replication_role",
+        "shared_buffers",
+        "statement_timeout",
+        "track_commit_timestamp",
+        "wal_keep_size",
+        "wal_sender_timeout",
+        "work_mem",
+        "checkpoint_timeout",
+        "hot_standby_feedback",
+        "restart_database",
+      ],
+    },
+    response: { kind: "json" },
+    inputSchema: V1PatchPostgresConfigInput,
+    outputSchema: V1PatchPostgresConfigOutput,
+  },
   v1PauseAProject: {
     id: "v1PauseAProject",
     description: "Pauses the given project",
@@ -19855,6 +20837,24 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V1RestorePitrBackupInput,
     outputSchema: V1RestorePitrBackupOutput,
+  },
+  v1ReviewNetworkRestrictions: {
+    id: "v1ReviewNetworkRestrictions",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v1/projects/{ref}/network-restrictions/review",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: {
+      kind: "json",
+      contentType: "application/json",
+      fields: ["action", "requested_at"],
+    },
+    response: { kind: "json" },
+    inputSchema: V1ReviewNetworkRestrictionsInput,
+    outputSchema: V1ReviewNetworkRestrictionsOutput,
   },
   v1RevokeToken: {
     id: "v1RevokeToken",
@@ -20500,6 +21500,8 @@ export const operationDefinitions = {
         "max_rows",
         "db_pool",
         "db_pool_acquisition_timeout",
+        "db_pool_max_lifetime",
+        "db_pool_max_idletime",
       ],
     },
     response: { kind: "json" },
@@ -20852,6 +21854,19 @@ export const operationDefinitions = {
     inputSchema: V2DeployAComputeInstanceInput,
     outputSchema: V2DeployAComputeInstanceOutput,
   },
+  v2DownloadProjectBackup: {
+    id: "v2DownloadProjectBackup",
+    description: "Download project backup",
+    method: "POST",
+    path: "/v2/projects/{ref}/backups/download",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2DownloadProjectBackupInput,
+    outputSchema: V2DownloadProjectBackupOutput,
+  },
   v2GetAComputeInstance: {
     id: "v2GetAComputeInstance",
     description:
@@ -20947,6 +21962,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ListOrganizationGithubConnectionsInput,
     outputSchema: V2ListOrganizationGithubConnectionsOutput,
+  },
+  v2ListOrganizationMaintenanceWindows: {
+    id: "v2ListOrganizationMaintenanceWindows",
+    description:
+      "Returns the weekly maintenance window for each region, with the open occurrence and the next five.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/maintenance/windows",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListOrganizationMaintenanceWindowsInput,
+    outputSchema: V2ListOrganizationMaintenanceWindowsOutput,
   },
   v2ListOrganizationMembers: {
     id: "v2ListOrganizationMembers",
@@ -21285,6 +22314,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ProjectsRefWebhooksEndpointsPostInput,
     outputSchema: V2ProjectsRefWebhooksEndpointsPostOutput,
+  },
+  v2RemoveOrganizationMembers: {
+    id: "v2RemoveOrganizationMembers",
+    description:
+      "Removes one or more organization members including their roles and project-scoped permissions.",
+    method: "DELETE",
+    path: "/v2/organizations/{slug}/members/{user_id}",
+    pathParams: ["slug", "user_id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2RemoveOrganizationMembersInput,
+    outputSchema: V2RemoveOrganizationMembersOutput,
   },
   v2RunProjectAdvisors: {
     id: "v2RunProjectAdvisors",

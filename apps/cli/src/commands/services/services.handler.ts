@@ -9,7 +9,7 @@ import {
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { failOnInvalidConfigValue } from "../../command-internal/config-value-passthrough.ts";
-import { readDbToml } from "../../command-internal/db-config.toml-read.ts";
+import { readDbConfig } from "../../command-internal/db-config.read.ts";
 import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
@@ -141,6 +141,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
               projectRef: validLinkedRef.value,
               accessToken: accessToken.value,
               userAgent: cliSettings.userAgent,
+              maxRetries: Option.getOrUndefined(cliSettings.apiMaxRetries),
             })
           : {};
       const result = yield* stackServiceVersions(cliSettings.workdir, remote);
@@ -153,7 +154,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       rows = result.rows;
     } else {
       yield* failOnInvalidConfigValue(cliSettings.workdir, linkedProjectRef);
-      const tomlValues = yield* readDbToml(
+      const tomlValues = yield* readDbConfig(
         fs,
         path,
         cliSettings.workdir,
@@ -210,6 +211,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
           projectRef: validLinkedRef.value,
           accessToken: accessToken.value,
           userAgent: cliSettings.userAgent,
+          maxRetries: Option.getOrUndefined(cliSettings.apiMaxRetries),
         });
         rows = mergeRemoteServiceVersions(remote, localImageOptions);
       }

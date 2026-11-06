@@ -27,6 +27,7 @@ import {
   validateAuthSmsProviders,
   validateResolvedConfig,
 } from "./config-validate.ts";
+import { type ConfigFileRef, configFileRefOf } from "./config-advice.ts";
 import { DbConfigLoadError, isPassthroughLoadFailure } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
 import { resolveAuthExternalProviders } from "./local-config-values.ts";
@@ -42,7 +43,7 @@ type EnvLookup = (name: string) => string | undefined;
  * defaults; a malformed one aborts the command instead of running against the default local
  * database.
  */
-export interface DbTomlValues {
+export interface DbConfigValues {
   readonly projectEnv: Readonly<Record<string, string>>;
   readonly apiSchemas: ReadonlyArray<string>;
   /** Schemas the Data API serves; empty when `[api].enabled` is false. */
@@ -71,7 +72,7 @@ export interface DbTomlValues {
    * `[experimental.pgdelta]` config, consumed by the declarative-schema commands
    * (`db schema declarative generate` / `sync`).
    */
-  readonly pgDelta: PgDeltaTomlConfig;
+  readonly pgDelta: PgDeltaConfig;
   /** Effective `[experimental.webhooks].enabled`; false when the section is absent. */
   readonly webhooksEnabled: boolean;
   /**
@@ -79,13 +80,13 @@ export interface DbTomlValues {
    * therefore the declarative catalog-cache key (`setupInputsToken`). Drift in
    * any of these must self-invalidate cached catalogs.
    */
-  readonly baseline: BaselineTomlConfig;
+  readonly baseline: BaselineConfig;
   /** `[db.migrations] enabled` (default true) — gates `up`/`down` migration apply. */
   readonly migrationsEnabled: boolean;
   /**
    * `[db.migrations] schema_paths`, default `[]` — resolved (supabase-prefixed
    * when relative) and overridable via `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`,
-   * same as {@link DbSeedTomlConfig.sqlPaths}. Resolved unconditionally, not
+   * same as {@link DbSeedConfig.sqlPaths}. Resolved unconditionally, not
    * gated on `migrationsEnabled`.
    */
   readonly schemaPaths: ReadonlyArray<string>;
@@ -98,18 +99,20 @@ export interface DbTomlValues {
    */
   readonly schemaPathPatterns: ReadonlyArray<string>;
   /** `[db.seed]` enabled + supabase-prefixed `sql_paths` globs — used by `down`. */
-  readonly seed: DbSeedTomlConfig;
+  readonly seed: DbSeedConfig;
   /** `[db.vault]` secrets (name → resolved value) — upserted by `up`/`down`. */
-  readonly vault: ReadonlyArray<DbVaultSecretToml>;
+  readonly vault: ReadonlyArray<DbVaultSecret>;
   /**
    * The matched `[remotes.<name>]` block name when a linked ref merged its override
    * (`Loading config override: [remotes.<name>]` line), else `undefined`.
    */
   readonly appliedRemote: string | undefined;
+  /** The config file the values came from, for messages that point at it. */
+  readonly configFile: ConfigFileRef;
 }
 
 /** `[db.seed]` config surfaced for `migration down`'s seed step. */
-interface DbSeedTomlConfig {
+interface DbSeedConfig {
   readonly enabled: boolean;
   /** Glob patterns, each supabase-prefixed when relative. */
   readonly sqlPaths: ReadonlyArray<string>;
@@ -120,14 +123,14 @@ interface DbSeedTomlConfig {
  * decrypted if it was a dotenvx `encrypted:` ciphertext). `resolved` is true
  * once the value is a non-empty, non-`env(...)` string.
  */
-interface DbVaultSecretToml {
+interface DbVaultSecret {
   readonly name: string;
   readonly value: string;
   readonly resolved: boolean;
 }
 
 /** Cache-key inputs from `[auth]`/`[storage]`/`[realtime]`/`[api]`/`[db.vault]`. */
-interface BaselineTomlConfig {
+interface BaselineConfig {
   /** `[auth] enabled`, default true. Gates `initSchema`'s auth service migration. */
   readonly authEnabled: boolean;
   /** `[storage] enabled`, default true. */
@@ -145,7 +148,7 @@ interface BaselineTomlConfig {
 }
 
 /** The `[experimental.pgdelta]` subtree. */
-export interface PgDeltaTomlConfig {
+export interface PgDeltaConfig {
   /** `[experimental.pgdelta] enabled`, default true. */
   readonly enabled: boolean;
   /**
@@ -343,7 +346,7 @@ const toDbConfigLoadError = (error: ResolvedConfigLoadError) => {
   }
 };
 
-const loadDbTomlResolvedConfig = (
+const loadDbResolvedConfig = (
   workdir: string,
   ref: string | undefined,
   ignoreConfigFile: boolean,
@@ -357,14 +360,14 @@ const loadDbTomlResolvedConfig = (
   ).pipe(Effect.mapError(toDbConfigLoadError));
 
 /**
- * Projects the `CliConfigValues` resolved config of `<workdir>/supabase/config.{toml,json}` (flags aside)
- * onto {@link DbTomlValues}. `fs`/`path` are passed in so the resolver can capture them once and
+ * Projects the `CliConfigValues` resolved config of `<workdir>/supabase/config.{toml,json,jsonc}` (flags aside)
+ * onto {@link DbConfigValues}. `fs`/`path` are passed in so the resolver can capture them once and
  * keep its own `R` at `never`.
  *
  * Fails with `DbConfigLoadError` when the config is present but unreadable, undecodable or invalid;
  * an absent file is not an error.
  */
-const readDbTomlCore = Effect.fnUntraced(function* (
+const readDbConfigCore = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -377,7 +380,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   warnOnUnresolvedEnv = true,
   resolveVaultSecrets = true,
 ) {
-  const resolvedConfig = yield* loadDbTomlResolvedConfig(workdir, ref, ignoreConfigFile);
+  const resolvedConfig = yield* loadDbResolvedConfig(workdir, ref, ignoreConfigFile);
   const projectEnv = resolvedConfig.projectEnvValues;
   const { config } = resolvedConfig.materialized;
   const fail = (message: string) => Effect.fail(new DbConfigLoadError({ message }));
@@ -640,7 +643,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     webhooksEnabled,
     pgdeltaFormatOptions: pgDeltaConfig?.format_options ?? "",
   };
+  const configFile = configFileRefOf(path, workdir, resolvedConfig);
   const validationInput: ConfigValidationInput = {
+    configFileName: path.basename(configFile.path),
     db: { port, majorVersion },
     storageBucketNames: Object.keys(buckets),
     functionSlugs: Object.keys(config.functions ?? {}),
@@ -668,7 +673,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   const vaultConfig = config.db.vault ?? {};
   const vaultNames = Object.keys(vaultConfig).sort();
-  const vault: Array<DbVaultSecretToml> = [];
+  const vault: Array<DbVaultSecret> = [];
   if (resolveVaultSecrets) {
     for (const name of vaultNames) {
       const value = vaultConfig[name] ?? "";
@@ -695,7 +700,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     ? [...new Set(apiSchemas.map((schema) => schema.trim()).filter((schema) => schema.length > 0))]
     : [];
 
-  const values: DbTomlValues = {
+  const values: DbConfigValues = {
     projectEnv,
     apiSchemas,
     exposedSchemas,
@@ -725,6 +730,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
     appliedRemote: Option.getOrUndefined(resolvedConfig.appliedRemote),
+    configFile,
   };
   return values;
 });
@@ -735,12 +741,12 @@ const readDbTomlCore = Effect.fnUntraced(function* (
  * validation aborts with a matching error. Call this before asserting the stack is
  * running, prompting, or any destructive work.
  */
-export const checkDbToml = (
+export const checkDbConfig = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   ref?: string,
-  // See `readDbTomlCore`'s doc comment. Pass `false` only when an earlier,
+  // See `readDbConfigCore`'s doc comment. Pass `false` only when an earlier,
   // same-invocation call already printed the OrioleDB S3 WARN once.
   opts?: {
     readonly warnOnUnresolvedEnv?: boolean;
@@ -748,7 +754,7 @@ export const checkDbToml = (
     readonly resolveVaultSecrets?: boolean;
   },
 ) =>
-  readDbTomlCore(
+  readDbConfigCore(
     fs,
     path,
     workdir,
@@ -760,12 +766,12 @@ export const checkDbToml = (
 
 /**
  * Reads `config.toml`. Defaults to the same validating behavior as
- * {@link checkDbToml}; pass `{ validate: false }` for a best-effort read that never
+ * {@link checkDbConfig}; pass `{ validate: false }` for a best-effort read that never
  * throws — a config-load failure falls back to pure defaults (env overrides still
  * applied), for callers that only need `projectId` and don't require a fully
  * validated config.
  */
-export const readDbToml = (
+export const readDbConfig = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -779,17 +785,41 @@ export const readDbToml = (
   const warnOnUnresolvedEnv = opts?.warnOnUnresolvedEnv ?? true;
   const resolveVaultSecrets = opts?.resolveVaultSecrets ?? true;
   return opts?.validate === false
-    ? readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv, resolveVaultSecrets).pipe(
+    ? readDbConfigCore(
+        fs,
+        path,
+        workdir,
+        ref,
+        false,
+        warnOnUnresolvedEnv,
+        resolveVaultSecrets,
+      ).pipe(
         // Fall back to the ignore-file defaults path (never re-reads the broken config)
         // so a best-effort caller gets a well-formed defaults result instead of a throw.
         Effect.catchTags({
           DbConfigLoadError: () =>
-            readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv, resolveVaultSecrets),
+            readDbConfigCore(
+              fs,
+              path,
+              workdir,
+              ref,
+              true,
+              warnOnUnresolvedEnv,
+              resolveVaultSecrets,
+            ),
           CliConfigValueError: () =>
-            readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv, resolveVaultSecrets),
+            readDbConfigCore(
+              fs,
+              path,
+              workdir,
+              ref,
+              true,
+              warnOnUnresolvedEnv,
+              resolveVaultSecrets,
+            ),
         }),
       )
-    : readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv, resolveVaultSecrets);
+    : readDbConfigCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv, resolveVaultSecrets);
 };
 
 /**
@@ -798,7 +828,7 @@ export const readDbToml = (
  * default `supabase/schemas`. `path` joins the segments so the separator matches the
  * host platform.
  */
-export function resolveDeclarativeDir(path: Path.Path, pgDelta: PgDeltaTomlConfig): string {
+export function resolveDeclarativeDir(path: Path.Path, pgDelta: PgDeltaConfig): string {
   return Option.getOrElse(pgDelta.declarativeSchemaPath, () =>
     path.join(...DEFAULT_DECLARATIVE_DIR_SEGMENTS),
   );

@@ -100,6 +100,7 @@ equivalent, PG15) or `InitSchema14`/`ApplyApiPrivileges` (PG14).
 | `docker container inspect supabase_db_<project>`                                                                             | local path                            | `AssertSupabaseDbIsRunning` probe (Podman fallback) — spawned only when the direct Engine-API request over the active local socket/named pipe gives no definitive answer                                                                                  |
 | `docker stop <storage\|auth\|realtime\|pooler container>`                                                                    | local path, PG15                      | stop the satellites before removing the db container so their `unless-stopped` restarts cannot race the one-shot init jobs (issue #6915), not-found tolerated per service                                                                                 |
 | `docker container rm -f supabase_db_<project>` / `docker volume rm -f <same>`                                                | local path, PG15                      | remove the existing container/volume before recreating (Podman fallback)                                                                                                                                                                                  |
+| `docker version --format ...`                                                                                                | local path, PG15                      | once before `docker create`: API >= 1.44 on both ends adds the health start flags (see below)                                                                                                                                                             |
 | `docker network create` / `docker volume create` / `docker create` / `docker start`                                          | local path, PG15                      | recreate the Postgres container (same primitives `db start` uses)                                                                                                                                                                                         |
 | `docker run --rm <realtime\|storage\|gotrue image>`                                                                          | local path, PG15, per enabled service | the one-shot `initSchema15` migrate jobs (`startSetupLocalDatabase`)                                                                                                                                                                                      |
 | `docker restart <db container>`                                                                                              | local path, PG14                      | `RestartDatabase` — pg_cron must restart after `pg_terminate_backend`                                                                                                                                                                                     |
@@ -115,7 +116,10 @@ published Postgres address (2s dial cap). Before the command returns, it waits u
 Docker's first health verdict on the database container (polling `docker container inspect` every
 1s until the status leaves `starting`, the container stops running, or Docker cannot launch its
 health check), so a following `supabase status` does not see `starting`. That wait never fails the
-reset.
+reset. When `docker version` reports API >= 1.44 on both ends, `docker create` also gets
+`--health-start-period 10s --health-start-interval 1s`, so its first check runs about 1s after start
+instead of 10s. Older engines and the Podman CLI get neither flag; the `docker` client on a Podman
+socket reporting API >= 1.44 gets both, Podman drops the interval, and there is no speedup.
 
 No subprocess delegation on either target — the remote path's
 `--experimental` schema-files apply is fully native.
@@ -338,7 +342,7 @@ to those defaults (the usual outcome for an interactive terminal).
   still runs afterward, unconditionally, exactly as on the migrations branch. The
   local target's branch is `migrateAndSeed`, reused by both the PG14 and PG15 recreate
   branches; the remote target's copy of the same branch is `applySchemaFiles`.
-  `encrypted:` vault secrets are NOT skipped on the remote path — `checkDbToml`
+  `encrypted:` vault secrets are NOT skipped on the remote path — `checkDbConfig`
   decrypts them into `toml.vault`, and `upsertVaultSecrets` upserts the
   decrypted values unconditionally, before either branch (schema-files or migrations)
   runs.

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
@@ -709,7 +709,9 @@ describe("config diff integration", () => {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("ConfigDiffLoadConfigError");
         // The config load probes both config.toml and config.json, so the message names both.
-        expect(causeText).toContain("supabase/config.toml or supabase/config.json: file not found");
+        expect(causeText).toContain(
+          "supabase/config.toml, config.json or config.jsonc: file not found",
+        );
         expect(causeText).toContain("supabase init");
       }
       expect(api.requests).toHaveLength(0);
@@ -1435,7 +1437,9 @@ describe("config diff -o/--output wrapper wiring", () => {
       Effect.provide(
         Layer.mergeAll(
           layer,
-          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
+          commandRuntimeLayer(["config", "diff"]).pipe(
+            Layer.provide([BunServices.layer, BunCrypto.layer]),
+          ),
           Stdio.layerTest({ args: Effect.succeed(["config", "diff", "-o", "table"]) }),
         ),
       ),

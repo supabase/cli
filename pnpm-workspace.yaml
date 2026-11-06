@@ -11,18 +11,18 @@ allowBuilds:
   sharp: true
 
 catalog:
-  "@effect/platform-bun": "4.0.2"
-  "@effect/platform-node": "4.0.2"
-  "@effect/sql-pg": "4.0.2"
+  "@effect/platform-bun": "4.1.2"
+  "@effect/platform-node": "4.1.2"
+  "@effect/sql-pg": "4.1.2"
   "@effect/tsgo": &effect-tsgo-version "0.37.0"
-  "@effect/vitest": "4.0.2"
+  "@effect/vitest": "4.1.2"
   "@supabase/supabase-js": ^2.110.7
   "@tsconfig/bun": "^1.0.11"
   "@types/bun": "^1.4.2"
   "@types/ws": "8.18.1"
   "typescript": "^7.0.2"
   "@vitest/coverage-v8": "^5.0.0"
-  "effect": "4.0.2"
+  "effect": "4.1.2"
   "knip": "^6.32.2"
   "oxfmt": "^0.65.0"
   "oxlint": "1.80.0"
@@ -102,17 +102,18 @@ minimumReleaseAgeExclude:
   - "@turbo/linux-arm64@2.10.11"
   - "@turbo/windows-64@2.10.11"
   - "@turbo/windows-arm64@2.10.11"
-  - "@effect/platform-bun@4.0.2"
-  - "@effect/platform-node@4.0.2"
-  - "@effect/platform-node-shared@4.0.2"
-  - "@effect/sql-pg@4.0.2"
-  - "@effect/vitest@4.0.2"
+  - "@effect/platform-bun@4.1.2"
+  - "@effect/platform-node@4.1.2"
+  - "@effect/platform-node-shared@4.1.2"
+  - "@effect/sql-pg@4.1.2"
+  - "@effect/vitest@4.1.2"
   - "@supabase/pg-delta@1.0.0-alpha.60"
   - "@supabase/pg-topo@1.0.0-alpha.8"
-  - "@supabase/postgrest-typegen@0.6.0"
-  - "@supabase/typegen@0.3.1"
-  - "effect@4.0.2"
+  - "@supabase/postgrest-typegen@0.7.0"
+  - "@supabase/typegen@0.3.2"
+  - "effect@4.1.2"
   - "turbo@2.10.11"
+  - "ws@8.22.1"
 
 supportedArchitectures:
   cpu:
@@ -130,8 +131,9 @@ supportedArchitectures:
     - win32
 
 patchedDependencies:
-  "@effect/platform-node-shared@4.0.2": patches/@effect__platform-node-shared@4.0.2.patch
-  "@effect/vitest@4.0.2": patches/@effect__vitest@4.0.2.patch
+  "@effect/platform-node-shared@4.1.2": patches/@effect__platform-node-shared@4.1.2.patch
+  "@effect/vitest@4.1.2": patches/@effect__vitest@4.1.2.patch
   "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch
+  "effect@4.1.2": patches/effect@4.1.2.patch
 
 virtualStoreType: global

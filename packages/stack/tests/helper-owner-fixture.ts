@@ -1,6 +1,8 @@
-import { NodeServices } from "@effect/platform-node";
-import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { slimImageMirrors } from "../src/Artifacts.ts";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../src/storage/DockerHelperRegistry.ts";
@@ -23,7 +25,7 @@ const HostMarker = Schema.Struct({
 const run = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const spawner = stallBeforeStart
     ? ChildProcessSpawner.make((command) =>
@@ -51,8 +53,8 @@ const run = Effect.gen(function* () {
       { mode: 0o600 },
     );
   const target = { engine: "docker" as const, argv: [], daemonId: "test-daemon-id" };
-  const container = yield* makeContainerRuntime({ target, root });
-  const helpers = shared ? yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4) : undefined;
+  const container = yield* makeContainerRuntime({ target, root, imageMirrors: slimImageMirrors });
+  const helpers = shared ? yield* makeDockerHelperRegistry(yield* crypto.uuidV4()) : undefined;
   const storage = yield* makeDockerDatabaseStorage({
     runtime: "docker",
     target,
@@ -64,6 +66,7 @@ const run = Effect.gen(function* () {
     fs,
     path,
     crypto,
+    digest: yield* Digest.Digest,
     container,
     spawner,
     helpers,
@@ -74,4 +77,6 @@ const run = Effect.gen(function* () {
   return yield* Effect.never;
 });
 
-await Effect.runPromise(run.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
+await Effect.runPromise(
+  run.pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+);

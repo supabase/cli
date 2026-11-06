@@ -1,3 +1,4 @@
+import { withoutSafeIntegerBounds } from "@supabase/config/internal";
 import { HOSTED_LOCK_SCHEMA_URL, Lock, LOCK_SCHEMA_URL } from "@supabase/stack/effect";
 import { JsonSchema, Predicate, Schema } from "effect";
 
@@ -60,8 +61,13 @@ const acceptHostedSchemaUrl = (schema: JsonSchema.JsonSchema): JsonSchema.JsonSc
 
 /** The draft-07 JSON Schema of `supabase/supabase.lock`, rendered from the stack's `Lock` schema. */
 export const lockSchemaDocument = () => {
+  const generated = Schema.toJsonSchemaDocument(Lock);
   const { schema, definitions } = dedupeDefinitions(
-    JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(Lock)),
+    JsonSchema.toDocumentDraft07({
+      ...generated,
+      schema: withoutSafeIntegerBounds(generated.schema),
+      definitions: withoutSafeIntegerBounds(generated.definitions),
+    }),
   );
   return {
     $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07,

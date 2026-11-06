@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -85,8 +85,15 @@ import type { DbConnectionInput } from "./db-config.types.ts";
 import { hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
 import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
+import {
+  SUGGEST_CA_VERIFICATION,
+  SUGGEST_ENV_VAR,
+  SUGGEST_NETWORK_RESTRICTIONS,
+} from "./connect-errors.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
+import { toConnectError } from "./db-connection.sql-pg.layer.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
+import { rootCaBundle } from "./supabase-tls.ts";
 import { StackApi } from "./stack-api.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
 import { selection } from "../../tests/helpers/pins.ts";
@@ -279,7 +286,7 @@ describe("dbConfigResolver (local + db-url)", () => {
       const dir = yield* withWorkdir('[api]\nschemas = ["app", "public"]');
       const result = yield* resolveConnection(dir, inputFor(target));
       expect(result.exposedSchemas).toEqual(["app", "public"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("local mode: uses 127.0.0.1 with config.toml db.port/password and is local", () =>
@@ -308,7 +315,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -326,7 +333,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -344,7 +351,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         );
         const r = yield* resolveConnection(dir, inputFor(localTarget));
         expect(r.conn.suggestionContext).toMatchObject({ linkedCheckout: true });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -356,7 +363,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           projectId: "abcdefghijklmnopqrst",
         });
         expect(r.conn.suggestionContext).toMatchObject({ linkedCheckout: true });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("local mode on an unlinked checkout adds no --linked pointer", () =>
@@ -364,7 +371,7 @@ describe("dbConfigResolver (local + db-url)", () => {
       const dir = yield* withWorkdir();
       const r = yield* resolveConnection(dir, inputFor(localTarget));
       expect(r.conn.suggestionContext?.linkedCheckout).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("local mode: falls back to default port/password without a config.toml", () =>
@@ -380,7 +387,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -409,7 +416,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -427,7 +434,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -445,7 +452,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -465,7 +472,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       ),
   );
 
@@ -485,7 +492,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       ),
   );
 
@@ -506,7 +513,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -527,7 +534,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -554,7 +561,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -573,7 +580,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -595,7 +602,7 @@ describe("dbConfigResolver (local + db-url)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     ),
   );
 
@@ -625,7 +632,7 @@ describe("dbConfigResolver (local + db-url)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -741,14 +748,14 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         stackApi: projectStackApi(dir, "running"),
       }).pipe(Effect.provide(stackBackendLayer("stack")));
       expect(resolved.exposedSchemas).toEqual(["app", "public"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("treats the url printed by `stack status --env` as the local database", () =>
     Effect.gen(function* () {
       const resolved = yield* resolveOnStack(yield* withWorkdir(), stackUrl(STACK_SQL_PORT));
       expect(resolved.isLocal).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("fills a passwordless stack url from the stack's credentials, not [db].password", () =>
@@ -760,14 +767,14 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       );
       expect(resolved.isLocal).toBe(true);
       expect(resolved.conn.password).toBe("stack-password");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("keeps a loopback url on another port remote so it still requires TLS", () =>
+  it.effect("keeps a loopback url on another port remote so it still negotiates TLS", () =>
     Effect.gen(function* () {
       const resolved = yield* resolveOnStack(yield* withWorkdir(), stackUrl(STACK_SQL_PORT + 1));
       expect(resolved.isLocal).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("fills from the stack's credentials when the stack port is also [db].port", () =>
@@ -781,7 +788,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       );
       expect(resolved.isLocal).toBe(true);
       expect(resolved.conn.password).toBe("stack-password");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   for (const state of ["unregistered", "stopped"] as const) {
@@ -794,7 +801,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
           projectStackApi(dir, state),
         );
         expect(resolved.isLocal).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   }
 
@@ -806,7 +813,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       );
       expect(resolved.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
       expect(resolved.isLocal).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("does not consult the stack for a non-loopback host", () =>
@@ -824,7 +831,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         untouchedStackApi,
       );
       expect(resolved.isLocal).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });
 
@@ -861,7 +868,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -984,6 +991,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
             user: `cli_login_role.${adHocRef}`,
             password: "temporary-role-password",
             database: "postgres",
+            sslmode: "require",
+            sslrootcertInline: rootCaBundle(),
             suggestionContext: {
               dashboardUrl: "https://supabase.com/dashboard",
               profileName: "supabase",
@@ -1008,6 +1017,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
                 user: `cli_login_role.${adHocRef}`,
                 password: "temporary-role-password",
                 database: "postgres",
+                sslmode: "require",
+                sslrootcertInline: rootCaBundle(),
               },
               isLocal: false,
               dnsResolver: "native",
@@ -1021,7 +1032,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -1149,6 +1160,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
                 user: `cli_login_role.${adHocRef}`,
                 password: "temporary-role-password",
                 database: "postgres",
+                sslmode: "require",
+                sslrootcertInline: rootCaBundle(),
                 suggestionContext: {
                   dashboardUrl: "https://supabase.com/dashboard",
                   profileName: "supabase",
@@ -1173,6 +1186,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
                   user: `cli_login_role.${adHocRef}`,
                   password: "temporary-role-password",
                   database: "postgres",
+                  sslmode: "require",
+                  sslrootcertInline: rootCaBundle(),
                 },
                 isLocal: false,
                 dnsResolver: "native",
@@ -1186,7 +1201,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1293,6 +1308,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
               user: `postgres.${linkedRef}`,
               password: "linked-password",
               database: "postgres",
+              sslmode: "require",
+              sslrootcertInline: rootCaBundle(),
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",
                 profileName: "supabase",
@@ -1314,7 +1331,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         }),
       ),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 });
@@ -1403,6 +1420,8 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
               user: `postgres.${ref}`,
               password: "ambient-password",
               database: "postgres",
+              sslmode: "require",
+              sslrootcertInline: rootCaBundle(),
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",
                 profileName: "supabase",
@@ -1421,7 +1440,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1521,6 +1540,8 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
               user: `postgres.${targetRef}`,
               password: "flag-password",
               database: "postgres",
+              sslmode: "require",
+              sslrootcertInline: rootCaBundle(),
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",
                 profileName: "supabase",
@@ -1539,7 +1560,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1589,7 +1610,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1640,7 +1661,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1673,7 +1694,7 @@ describe("dbConfigResolver (Management API calls)", () => {
       const r = yield* resolveConnection(dir, inputFor(localTarget));
       expect(r.isLocal).toBe(true);
       noApiCalls(requests, { local: true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("--db-url makes no Management API request and the block declares none", () => {
@@ -1687,7 +1708,7 @@ describe("dbConfigResolver (Management API calls)", () => {
       );
       expect(r.isLocal).toBe(false);
       noApiCalls(requests, { "db-url": true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect(
@@ -1729,7 +1750,7 @@ describe("dbConfigResolver (Management API calls)", () => {
           }),
         ),
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
       );
     },
   );
@@ -1781,7 +1802,7 @@ describe("dbConfigResolver (Management API calls)", () => {
         `/v1/projects/${ref}/cli/login-role`,
       );
       assertDbConfigDrift(requests, { linked: true, "project-ref": ref, password: "" });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   for (const forbidden of ["retrieve", "delete"] as const) {
@@ -1862,7 +1883,7 @@ describe("dbConfigResolver (Management API calls)", () => {
               : { method: "DELETE", path: `/v1/projects/${ref}/network-bans` },
           );
           assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
       },
     );
   }
@@ -1919,6 +1940,8 @@ describe("dbConfigResolver (container pooler fallback)", () => {
           host: "aws-0-us-east-1.pooler.supabase.com",
           user: `cli_login_role.${ref}`,
           password: "temporary-role-password",
+          sslmode: "require",
+          sslrootcertInline: rootCaBundle(),
         });
       }
       expect(requests).toEqual([
@@ -1926,7 +1949,57 @@ describe("dbConfigResolver (container pooler fallback)", () => {
         { method: "POST", path: loginRolePath },
       ]);
       assertFallbackDrift(requests, { linked: true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+  });
+
+  it.effect(
+    "reports a missing supabase_privileged_role when the login-role mint fails with 42501",
+    () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, (method, path) => {
+          if (method === "GET" && path === poolerPath)
+            return Response.json(primaryPoolerConfigs(ref));
+          if (method === "POST" && path === loginRolePath) {
+            return Response.json(
+              { message: "Failed to create login role: permission denied to alter role" },
+              { status: 400 },
+            );
+          }
+          return undefined;
+        });
+        const dir = yield* withWorkdir();
+        const error = yield* resolvePoolerFallback(dir, inputFor(explicitRefTarget(ref)), {
+          dbConnection: connects,
+          configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("DbConfigLoginRoleMissingPrivilegedRoleError");
+        expect(error).toMatchObject({ suggestion: expect.stringContaining("--password") });
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    },
+  );
+
+  it.effect("keeps the generic status error for an unrelated login-role 400", () => {
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) => {
+        if (method === "GET" && path === poolerPath)
+          return Response.json(primaryPoolerConfigs(ref));
+        if (method === "POST" && path === loginRolePath) {
+          return Response.json(
+            { message: "42501: permission denied for table x" },
+            { status: 400 },
+          );
+        }
+        return undefined;
+      });
+      const dir = yield* withWorkdir();
+      const error = yield* resolvePoolerFallback(dir, inputFor(explicitRefTarget(ref)), {
+        dbConnection: connects,
+        configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("DbConfigLoginRoleStatusError");
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("fetches the pooler config but mints no login role when a password is set", () => {
@@ -1948,7 +2021,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       );
       expect(requests).toEqual([{ method: "GET", path: poolerPath }]);
       assertFallbackDrift(requests, { linked: true, password: "secret" });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("returns no pooler when the pooler config is forbidden", () => {
@@ -1967,7 +2040,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       expect(Option.isNone(pooler)).toBe(true);
       expect(requests).toEqual([{ method: "GET", path: poolerPath }]);
       assertFallbackDrift(requests, { linked: true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect("--local returns no pooler and makes no Management API request", () => {
@@ -1979,7 +2052,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       expect(Option.isNone(pooler)).toBe(true);
       expect(requests).toEqual([]);
       assertFallbackDrift(requests, { local: true });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 });
 
@@ -2023,6 +2096,8 @@ describe("resolveLinkedConn libpq TLS", () => {
       readonly reachable?: boolean;
       readonly password?: Option.Option<string>;
       readonly poolerUrl?: string;
+      readonly profile?: string;
+      readonly projectHost?: string;
     } = {},
   ) =>
     withConfigEnv(
@@ -2032,11 +2107,16 @@ describe("resolveLinkedConn libpq TLS", () => {
         return yield* resolveLinkedConn(
           ref,
           opts.workdir ?? (yield* projectWorkdir([])),
-          "invalid",
+          opts.profile ?? "supabase",
+          opts.projectHost ?? "invalid",
           "supabase.com",
           "native",
           opts.password ?? Option.some("secret"),
-          { removeNetworkBans: false, poolerUrl: Option.fromNullishOr(opts.poolerUrl) },
+          {
+            removeNetworkBans: false,
+            poolerUrl: Option.fromNullishOr(opts.poolerUrl),
+            dashboardUrl: "https://supabase.com/dashboard",
+          },
         );
       }),
     ).pipe(Effect.scoped);
@@ -2117,6 +2197,163 @@ describe("resolveLinkedConn libpq TLS", () => {
       expect(conn.host).toBe(directHost);
     }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
   );
+
+  const pinned = { sslmode: "require", sslrootcertInline: rootCaBundle() };
+  const serviceFileWith = (content: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "cli-linked-service-" });
+      const serviceFile = path.join(dir, "pg_service.conf");
+      yield* fs.writeFileString(serviceFile, content);
+      return { PGSERVICE: "svc", PGSERVICEFILE: serviceFile };
+    });
+  const hostedPoolerUrl = `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`;
+
+  describe("Supabase CA pin", () => {
+    for (const [profile, projectHost] of [
+      ["supabase", "supabase.co"],
+      ["supabase-staging", "supabase.red"],
+      ["snap", "snapcloud.dev"],
+    ] as const) {
+      it.effect(`pins the bundled CA on the ${profile} direct host when TLS is unset`, () =>
+        Effect.gen(function* () {
+          const conn = yield* linkedConn({}, { profile, projectHost });
+          expect(conn).toMatchObject({ host: `db.${ref}.${projectHost}`, ...pinned });
+        }).pipe(Effect.provide(linkedConnLayer)),
+      );
+    }
+
+    it.effect("pins the bundled CA on the direct host before minting a login role", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          {},
+          { projectHost: "supabase.co", password: Option.some("") },
+        );
+        expect(conn).toMatchObject({ user: "cli_login_x", password: "temp", ...pinned });
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("keeps verify-full with the user's own root cert", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          { PGSSLMODE: "verify-full", PGSSLROOTCERT: "/ca.pem" },
+          { projectHost: "supabase.co" },
+        );
+        expect(conn).toMatchObject({ sslmode: "verify-full", sslrootcert: "/ca.pem" });
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("keeps PGSSLMODE=disable", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn({ PGSSLMODE: "disable" }, { projectHost: "supabase.co" });
+        expect(conn.sslmode).toBe("disable");
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("verifies against a PGSSLROOTCERT with no sslmode instead of the bundled CA", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          { PGSSLROOTCERT: "/ca.pem" },
+          { projectHost: "supabase.co" },
+        );
+        expect(conn).toMatchObject({ sslmode: "require", sslrootcert: "/ca.pem" });
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("keeps a service-file sslmode", () =>
+      Effect.gen(function* () {
+        const env = yield* serviceFileWith("[svc]\nsslmode=require\n");
+        const conn = yield* linkedConn(env, { projectHost: "supabase.co" });
+        expect(conn.sslmode).toBe("require");
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("pins the bundled CA on the pooler when TLS is unset", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          {},
+          { reachable: false, poolerUrl: hostedPoolerUrl, password: Option.some("secret") },
+        );
+        expect(conn).toMatchObject({ host: poolerHost, ...pinned });
+      }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("keeps an explicit sslmode in the saved pooler URL", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          {},
+          {
+            reachable: false,
+            poolerUrl: `${hostedPoolerUrl}?sslmode=disable`,
+            password: Option.some("secret"),
+          },
+        );
+        expect(conn.sslmode).toBe("disable");
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("pins the temp-role probe connection through the pooler", () => {
+      const probed: Array<PgConnInput> = [];
+      const probeSession: DbSession = {
+        exec: () => Effect.void,
+        execBatch: () => Effect.void,
+        query: () => Effect.succeed([]),
+        extensionExists: () => Effect.succeed(false),
+        copyToCsv: () => Effect.succeed(new Uint8Array()),
+        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+      };
+      return Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          {},
+          { reachable: false, poolerUrl: hostedPoolerUrl, password: Option.some("") },
+        );
+        expect(probed).toHaveLength(1);
+        expect(probed[0]).toMatchObject({
+          host: poolerHost,
+          user: `cli_login_x.${ref}`,
+          ...pinned,
+        });
+        expect(conn).toMatchObject(pinned);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(DbConnection, {
+          connect: (conn) => {
+            probed.push(conn);
+            return Effect.succeed(probeSession);
+          },
+        }),
+        Effect.provide(linkedConnLayer),
+      );
+    });
+
+    for (const [profile, projectHost] of [
+      ["supabase-local", "supabase.red"],
+      ["my-profile", "supabase.co"],
+    ] as const) {
+      it.effect(`does not pin the ${profile} profile`, () =>
+        Effect.gen(function* () {
+          const conn = yield* linkedConn({}, { profile, projectHost });
+          expect(conn.host).toBe(`db.${ref}.${projectHost}`);
+          expect(conn.sslmode).toBeUndefined();
+          expect(conn.sslrootcertInline).toBeUndefined();
+        }).pipe(Effect.provide(linkedConnLayer)),
+      );
+    }
+
+    it.effect("does not pin a host outside the profile's domains", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn({}, { profile: "supabase", projectHost: "supabase.red" });
+        expect(conn.sslmode).toBeUndefined();
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+  });
 
   it.effect("names the libpq variables when PGSSLMODE is invalid on a reachable direct host", () =>
     Effect.gen(function* () {
@@ -2230,7 +2467,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(r.isLocal).toBe(true);
       expect(r.target).toEqual({ kind: "local" });
       expect(output.stderrText).toBe("Target: local stack (127.0.0.1:55555)\n");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("db-url target announces the host and never the credentials", () =>
@@ -2242,7 +2479,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(r.conn).toMatchObject({ host: "db.example.com", port: 6543, user: "alice" });
       expect(r.isLocal).toBe(false);
       expect(output.stderrText).toBe("Target: custom Postgres (db.example.com:6543)\n");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("a db-url that fails to parse echoes the url with the password redacted", () =>
@@ -2252,7 +2489,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       const exit = yield* Effect.exit(resolveConnection(dir, inputFor({ kind: "db-url", url })));
       expect(failureText(exit)).toContain("DbConfigParseUrlError");
       expect(failureText(exit)).not.toContain("secret");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   const directTargets: ReadonlyArray<readonly [string, ResolvedTarget]> = [
@@ -2272,14 +2509,14 @@ describe("dbConfigResolver.resolveConnection", () => {
         );
         expect(failureText(exit)).toContain("TargetPasswordConflictError");
         expect(output.stderrText).toBe("");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
     it.effect(`accepts an empty --password for a ${label} target`, () =>
       Effect.gen(function* () {
         const dir = yield* withWorkdir();
         yield* resolveConnection(dir, inputFor(target, { password: Option.some("") }));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   }
 
@@ -2309,7 +2546,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(r.target).toEqual(target);
       expect(requests).toEqual([]);
       expect(output.stderrText).toBe("");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect(
@@ -2338,7 +2575,7 @@ describe("dbConfigResolver.resolveConnection", () => {
           { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
         ]);
         assertDbConfigDrift(requests, { remote: true });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     },
   );
 
@@ -2376,7 +2613,7 @@ describe("dbConfigResolver.resolveConnection", () => {
             }),
           ),
           Effect.scoped,
-          Effect.provide(BunServices.layer),
+          Effect.provide([BunServices.layer, BunCrypto.layer]),
         );
       },
     );
@@ -2415,7 +2652,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(requests).toEqual([
         { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   describe("network bans on the temporary login role", () => {
@@ -2447,19 +2684,23 @@ describe("dbConfigResolver.resolveConnection", () => {
         }
         return undefined;
       });
-    const failingConnect = (failures: number) => {
+    const failingConnect = (
+      failures: number,
+      failure: (cfg: PgConnInput) => DbConnectError = () =>
+        new DbConnectError({ message: "password authentication failed" }),
+    ) => {
       const attempts = { count: 0 };
       const layer = Layer.succeed(DbConnection, {
-        connect: () =>
+        connect: (cfg) =>
           Effect.suspend(() => {
             attempts.count += 1;
-            return attempts.count <= failures
-              ? Effect.fail(new DbConnectError({ message: "password authentication failed" }))
-              : Effect.succeed(session);
+            return attempts.count <= failures ? Effect.fail(failure(cfg)) : Effect.succeed(session);
           }),
       });
       return { attempts, layer };
     };
+    const driverFailure = (code: string, message: string) => (cfg: PgConnInput) =>
+      toConnectError(cfg, false, Object.assign(new Error(message), { code }));
     const forkResolve = (
       input: DbConnectionInput,
       connection: Layer.Layer<DbConnection>,
@@ -2515,9 +2756,129 @@ describe("dbConfigResolver.resolveConnection", () => {
           );
           expect(connection.attempts.count).toBe(9);
           expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
       },
     );
+
+    it.effect(
+      "keeps looking for bans when the dial fails, as a ban surfaces as a dial failure",
+      () => {
+        const requests: Array<{ readonly method: string; readonly path: string }> = [];
+        const connection = failingConnect(
+          Number.POSITIVE_INFINITY,
+          driverFailure("ETIMEDOUT", "connect ETIMEDOUT 203.0.113.9:6543"),
+        );
+        return Effect.gen(function* () {
+          yield* bannedRequests(requests, ["203.0.113.7"]);
+          const { fiber, advance } = yield* forkResolve(
+            inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+            connection.layer,
+          );
+          yield* advance(8);
+          const exit = yield* Fiber.await(fiber);
+          expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
+          expect(connection.attempts.count).toBe(9);
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+      },
+    );
+
+    it.effect("fails at once on a rejected server certificate and names the CA setting", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(
+        Number.POSITIVE_INFINITY,
+        driverFailure("SELF_SIGNED_CERT_IN_CHAIN", "self-signed certificate in certificate chain"),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        const exit = yield* Fiber.await(fiber);
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(error).toEqual(
+          Option.some(
+            expect.objectContaining({
+              _tag: "DbConfigConnectTempRoleError",
+              message: expect.stringContaining("tls error (self-signed certificate"),
+              suggestion: SUGGEST_CA_VERIFICATION,
+            }),
+          ),
+        );
+        expect(SUGGEST_CA_VERIFICATION).not.toBe(SUGGEST_ENV_VAR);
+        expect(connection.attempts.count).toBe(1);
+        expect(requests.some((request) => request.path.includes("network-bans"))).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("stops retrying authentication failures once the certificate is rejected", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY, (cfg) =>
+        connection.attempts.count <= 2
+          ? new DbConnectError({ message: "password authentication failed" })
+          : driverFailure("CERT_HAS_EXPIRED", "certificate has expired")(cfg),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, []);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(2);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
+        expect(connection.attempts.count).toBe(3);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("fails at once on an IP rejected by network restrictions and lists no bans", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(
+        Number.POSITIVE_INFINITY,
+        () =>
+          new DbConnectError({
+            message: "failed to connect to postgres: Address not in tenant allow_list",
+            networkRestricted: true,
+          }),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        const exit = yield* Fiber.await(fiber);
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(error).toEqual(
+          Option.some(
+            expect.objectContaining({
+              _tag: "DbConfigConnectTempRoleError",
+              message: expect.stringContaining("Address not in tenant allow_list"),
+              suggestion: `${SUGGEST_NETWORK_RESTRICTIONS}\nhttps://supabase.com/dashboard/project/_/database/settings`,
+            }),
+          ),
+        );
+        expect(connection.attempts.count).toBe(1);
+        expect(requests.some((request) => request.path.includes("network-bans"))).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("retries a plain authentication failure to the end and lists no ban", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY);
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, []);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(8);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
+        expect(connection.attempts.count).toBe(9);
+        expect(requests.some((request) => request.method === "DELETE")).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
 
     it.effect("connects without removing bans that are not blocking the caller", () => {
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
@@ -2533,7 +2894,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         expect(r.conn).toMatchObject({ user: `cli_login_role.${ref}` });
         expect(connection.attempts.count).toBe(4);
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect("keeps retrying without removing anything when no ban is listed", () => {
@@ -2550,7 +2911,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         expect(r.conn).toMatchObject({ user: `cli_login_role.${ref}` });
         expect(connection.attempts.count).toBe(4);
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect("removes the bans and says so once the caller holds a --yes approval", () => {
@@ -2576,7 +2937,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         });
         expect(output.stderrText).toContain("Removing network bans (203.0.113.7)...\n");
         assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect("does not remove bans for an approval obtained by prompting", () => {
@@ -2599,7 +2960,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         const exit = yield* Fiber.await(fiber);
         expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect(
@@ -2629,7 +2990,7 @@ describe("dbConfigResolver.resolveConnection", () => {
           );
           expect(failureText(exit)).not.toContain("--yes");
           expect(connection.attempts.count).toBe(9);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
       },
     );
 
@@ -2649,7 +3010,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
         expect(failureText(exit)).not.toContain("--yes");
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
 
     it.effect("keeps a failed removal when a later listing fails under --yes", () => {
@@ -2688,7 +3049,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         const exit = yield* Fiber.await(fiber);
         expect(failureText(exit)).toContain("DbConfigUnbanStatusError");
         expect(listCalls).toBeGreaterThan(1);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
   });
 });

@@ -14,18 +14,20 @@ and the command handler does not run. See the [Compute command guide](../../../.
 
 ## Files Read
 
-| Path                                     | Format     | When                                                                                                                                                          |
-| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`         | TOML       | when present and no authoritative JSON config was found — decoded to check existing entries, then read as text for the edit                                   |
-| `<workdir>/supabase/config.json`         | JSON       | writer checks existence/selection only; the feature gate reads contents when the environment override is unset or empty. Includes defaulted-workdir ancestors |
-| `<destination>/`                         | dir        | always, to refuse a destination that is not empty                                                                                                             |
-| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                          |
-| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                                   |
+| Path                                     | Format     | When                                                                                                                                                                                |
+| ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`         | TOML       | when it is the selected config — decoded to check existing entries, then read as text for the edit                                                                                  |
+| `<workdir>/supabase/config.json`         | JSON       | when it is the selected config — decoded to check existing entries, then read as text for the edit; the feature gate reads contents when the environment override is unset or empty |
+| `<workdir>/supabase/config.jsonc`        | JSONC      | when it is the selected config — as `config.json`                                                                                                                                   |
+| `<destination>/`                         | dir        | always, to refuse a destination that is not empty                                                                                                                                   |
+| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                                                |
+| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                                                         |
 
 ## Files Written
 
 | Path                                            | Format | When                                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.{json,jsonc}`        | JSON   | on success, when it is the selected config — adds `compute.<name>` with the same keys, keeping comments                                                                                                                                                                                        |
 | `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[compute.<name>]` with `runtime`, `size` and `exposure` always, `exclude` whenever the chosen runtime declares default patterns, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
 | `<workdir>/supabase/compute/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                                                                                          |
 | `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                                                                                           |
@@ -48,20 +50,18 @@ omitted entirely for a runtime that declares no patterns. The chosen list is rep
 `Excluded` row beside the compute's other dials, and carried on the machine-output payload as
 `exclude`.
 
-Compute resources are recorded in `config.toml` only. The project config loader prefers
-`supabase/config.json` when one exists, but the entry writer is a TOML text
-editor. Before prompting or writing, this command refuses a project whose
-authoritative configuration is `config.json`, including a JSON-only ancestor
-found from a defaulted workdir. It cannot append deployment settings to a TOML
-file that readers would ignore. JSON projects can configure Compute entries and
-source files manually. A rendered TOML edit that would not parse is refused
-before anything reaches disk.
+Compute resources are recorded in the project config file the loader selects:
+`supabase/config.json`, `supabase/config.jsonc`, or `supabase/config.toml`. A TOML
+file gets the `[compute.<name>]` table appended; a JSON or JSONC file is
+span-edited through `applyConfigEdits`, which keeps comments and trailing commas
+and verifies its own result. A rendered edit that would not parse, or that the
+editor refuses, is refused before anything reaches disk. When no config file
+exists, `config.toml` is created.
 
-The TOML writer is pinned to `<workdir>` with `search: false`. Before loading
-that file, a defaulted workdir also probes ancestor project paths to refuse
-JSON-authoritative projects. An explicit `--workdir` or `SUPABASE_WORKDIR`
-never searches ancestors: pointing it at a bare directory records the Compute
-entry in that directory's own `config.toml`, created if absent.
+The config is loaded from `<workdir>`; an explicit `--workdir` or
+`SUPABASE_WORKDIR` never searches ancestors, so pointing it at a bare directory
+records the Compute entry in that directory's own `config.toml`, created if
+absent.
 
 The name is prompted for when the command line does not carry one, and the
 prompt refuses a name that is not a DNS label or that `config.toml` already
@@ -112,13 +112,12 @@ root.
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                         |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`ComputeNewWorkdirError`) — beats every prompt and filesystem write |
-| `1`  | authoritative project config is JSON (`ComputeJsonConfigUnsupportedError`)                                                                      |
 | `1`  | invalid compute name — the name must be a DNS label                                                                                             |
 | `1`  | no name given, and nowhere to ask for one — stdin or stdout is not a terminal, or `-o` is in force                                              |
 | `1`  | bad `--source`: outside the project, or a path the CLI owns                                                                                     |
 | `1`  | destination exists and is not empty                                                                                                             |
-| `1`  | the compute is already recorded in `config.toml`, in any form                                                                                   |
-| `1`  | the rendered `config.toml` would not parse, or `[compute]` is a sealed inline table                                                             |
+| `1`  | the compute is already recorded in the project config, in any form                                                                              |
+| `1`  | the rendered config would not parse, the JSON edit is refused, or `[compute]` is a sealed inline table                                          |
 
 ## Environment Variables
 

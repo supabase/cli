@@ -1,4 +1,5 @@
-import { Config, Context, Crypto, Effect, FileSystem, Option, Path } from "effect";
+import { Config, Context, Effect, FileSystem, Option, Path } from "effect";
+import { Digest } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { PlatformError } from "effect/PlatformError";
 import { contentDigestHex } from "../internal/content-digest.ts";
@@ -238,13 +239,13 @@ const resolveNativeRuntimeRootForRecovery = Effect.fn(
  * (this directory plus `/.s.PGSQL.5432`) to 103 bytes, which bounds the runtime root base.
  */
 export const nativeSocketDirectoryPath = (
-  crypto: Crypto.Crypto,
+  digest: Digest.Digest["Service"],
   path: Path.Path,
   runtimeRoot: string,
   dataRoot: string,
   instanceId: string,
 ) =>
-  contentDigestHex(crypto, `${dataRoot}\0${instanceId}`).pipe(
+  contentDigestHex(digest, `${dataRoot}\0${instanceId}`).pipe(
     Effect.map((digest) => path.join(runtimeRoot, `pg-${digest}`)),
   );
 
@@ -257,7 +258,7 @@ export const removeNativeSocketDirectory = Effect.fn("NativePostgresUser.removeS
   function* (dataRoot: string, instanceId: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const runtimeRoot = yield* resolveNativeRuntimeRootForRecovery().pipe(Effect.option);
     if (Option.isNone(runtimeRoot)) {
       const base = yield* NativeRuntimeRootBase;
@@ -269,7 +270,7 @@ export const removeNativeSocketDirectory = Effect.fn("NativePostgresUser.removeS
       return;
     }
     yield* fs.remove(
-      yield* nativeSocketDirectoryPath(crypto, path, runtimeRoot.value, dataRoot, instanceId),
+      yield* nativeSocketDirectoryPath(digest, path, runtimeRoot.value, dataRoot, instanceId),
       { recursive: true, force: true },
     );
   },
@@ -278,11 +279,20 @@ export const removeNativeSocketDirectory = Effect.fn("NativePostgresUser.removeS
 /**
  * Restricts a directory to its owner but keeps an existing traverse-only grant, because a
  * stepped-down PostgreSQL resolves bundle and data paths through the cache and state roots while it runs.
+ * An already-restricted directory is left unchanged, so a concurrent stat-then-chmod cannot write
+ * back a mode that predates another process's traverse grant.
  */
 export const restrictDirectoryToOwner = (fs: FileSystem.FileSystem, directory: string) =>
-  fs
-    .stat(directory)
-    .pipe(Effect.flatMap(({ mode }) => fs.chmod(directory, 0o700 | (mode & 0o001))));
+  fs.stat(directory).pipe(
+    Effect.flatMap(({ mode, uid }) => {
+      const restricted = 0o700 | (mode & 0o001);
+      // chmod fails on another user's directory, so only an owned directory may skip it.
+      const owned = Option.getOrUndefined(uid) === process.getuid?.();
+      return owned && (mode & 0o7777) === restricted
+        ? Effect.void
+        : fs.chmod(directory, restricted);
+    }),
+  );
 
 const allowTraverse = Effect.fn("NativePostgresUser.allowTraverse")(function* (
   user: PasswdEntry,

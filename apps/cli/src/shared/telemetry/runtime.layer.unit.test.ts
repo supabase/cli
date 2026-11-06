@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import {
   Config,
   ConfigProvider,
@@ -59,7 +59,7 @@ function buildLayer(opts: {
     Layer.provide(configLayer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(ttyLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide([BunServices.layer, BunCrypto.layer]),
     Layer.provide(providerLayer),
   );
 

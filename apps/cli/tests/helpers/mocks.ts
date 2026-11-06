@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 import process from "node:process";
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunPath, BunServices } from "@effect/platform-bun";
 import { ConfigEnvPins, definedEnv } from "./config-env-pins.ts";
 import {
   Console,
@@ -141,6 +141,26 @@ export function mockTty(
     stdoutIsPipe: opts.stdoutIsPipe ?? false,
   });
 }
+
+/**
+ * Stands in for a direct write that left a real process stream `errored`, until the scope closes.
+ * A configurable own getter, unlike a spy on Bun's non-configurable inherited one, is removed again.
+ */
+export const overrideStreamErrored = (stream: NodeJS.WriteStream, errored: () => Error | null) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const own = Object.getOwnPropertyDescriptor(stream, "errored");
+      Object.defineProperty(stream, "errored", { configurable: true, get: errored });
+      return own;
+    }),
+    (own) =>
+      Effect.sync(() => {
+        if (own === undefined) Reflect.deleteProperty(stream, "errored");
+        else Object.defineProperty(stream, "errored", own);
+      }),
+  );
+
+export const epipe = () => Object.assign(new Error("EPIPE"), { code: "EPIPE" });
 
 export function mockRuntimeInfo(
   opts: {
@@ -712,6 +732,7 @@ export function emptyEnv(env: Readonly<Record<string, string | undefined>> = {})
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     runtimeInfoLayer,
     cliProjectContextLayer,
     cliProjectHomeLayer,

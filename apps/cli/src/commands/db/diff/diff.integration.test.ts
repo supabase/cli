@@ -1,5 +1,5 @@
 import { unusedGateway, unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -546,7 +546,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         yield* fs.writeFileString(path.join(workdir, file), content);
       }
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 
   const projectHttp = recordingProjectHttpClient(VALID_REF);
   const baseLayer = Layer.mergeAll(
@@ -554,6 +554,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
+    BunCrypto.layer,
     out.layer,
     configValuesLayer({
       output: out.layer,
@@ -1021,7 +1022,7 @@ describe("db diff", () => {
         );
         expect(err).toContain("the configured declarative schema directory are not read");
         expect(err).toContain("or pass --use-migra to diff them with migra");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("omits the migra suggestion for a custom dir migra would not read", () =>
@@ -3625,7 +3626,7 @@ describe("db diff", () => {
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
         expect(yield* publishedTars()).toHaveLength(2);
         expect(yield* publishedTars()).toEqual(expect.arrayContaining(migraTars));
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
     });
   });
 });
@@ -3659,7 +3660,7 @@ describe("db diff permissions through the real resolver and cache", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -3681,7 +3682,7 @@ describe("db diff permissions through the real resolver and cache", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -3711,7 +3712,7 @@ describe("db diff permissions through the real resolver and cache", () => {
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     });
@@ -3739,7 +3740,7 @@ describe("db diff permissions through the real resolver and cache", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -3762,7 +3763,7 @@ describe("db diff permissions through the real resolver and cache", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -3786,7 +3787,7 @@ describe("db diff permissions through the real resolver and cache", () => {
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },

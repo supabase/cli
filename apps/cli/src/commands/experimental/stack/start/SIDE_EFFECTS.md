@@ -24,8 +24,9 @@ S3 protocol/vector controls are forwarded to their services. Storage receives th
 keys and region, and uses the gateway's `/storage/v1` prefix to verify S3 signatures and to build
 resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PORT` are accepted
 and ignored: the stack runs no Vector service.
-Encrypted JWT secrets are decrypted before shared credentials are derived, and encrypted
-`[edge_runtime.secrets]` values are decrypted before they reach the Functions service. `db.health_timeout`
+Encrypted JWT secrets are decrypted before shared credentials are derived. `[edge_runtime.secrets]`
+names are uppercased, empty or unresolved `env()` values and `SUPABASE_`-prefixed names are dropped,
+and encrypted values are decrypted before they reach the Functions service. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
 Studio receives the database connection, the Functions management directory/URL, and Analytics
@@ -64,7 +65,9 @@ secret key (`sb_secret_…`) or a JWT, values that themselves carry such a pair 
 URL with a token), and URL userinfo.
 
 Public ports are reserved in one SQLite registry per OS user at `<passwd home>/.supabase/ports.sqlite`,
-which `$SUPABASE_HOME` does not affect and which has no override. A stopped stack's automatic
+which `$SUPABASE_HOME` does not affect and which has no override. The registry uses SQLite's WAL
+mode, so `<passwd home>/.supabase` must be on a local filesystem, and `ports.sqlite-wal` and
+`ports.sqlite-shm` sit next to it while a connection is open. A stopped stack's automatic
 ports stay reserved across every other stack's starts, including in a different state root, and
 starting it again reuses the same ports. A configured port is reserved only while its listener is
 open, so a stopped stack never blocks another project's configured port; a configured port takes
@@ -118,12 +121,14 @@ Changes to activation policy take effect after stopping and starting the stack, 
 later invocation omits an earlier `--eager` flag. `--preparation` selects on-demand or background
 artifact preparation.
 
-When Functions is selected, the CLI reads and validates `supabase/functions/.env`, ignoring reserved
-`SUPABASE_*` entries. `edge_runtime.secrets` overrides that file, while `functions.<name>.env`
-provides per-function values from project environment references. Per-function enabled/JWT policies,
-entrypoints, import maps and static files are forwarded to the worker bootstrap. Without a
-configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a per-function
-`import_map.json` is not read. Configured paths
+When Functions is selected, the CLI reads and validates `supabase/functions/.env` like legacy
+`start`, skipping reserved `SUPABASE_*` entries with a warning. That file overrides
+`edge_runtime.secrets`, per-function `.env` files are not read, and `functions.<name>.env`
+provides per-function values from project environment references. Multiline values are supported.
+`--debug` runs the Functions runtime verbose; `status` does not report it as drift. Per-function
+enabled/JWT policies, entrypoints, import maps and static files are forwarded to the worker
+bootstrap. Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
+per-function `import_map.json` is not read. Configured paths
 are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
 The inspector port is retained as an endpoint intent and does not enable debugging by itself.
 Running start calls do not refresh Functions from changed project files; stop the stack and start
@@ -208,7 +213,7 @@ the bundled versions in both cases.
 advising to run `supabase start` locally and commit the lock. When the `CI` environment variable is
 set (not empty, `false` or `0`) and a lock exists, the start is frozen without the flag. A frozen
 start, explicit or by `CI`, of a project with a lock but no `supabase/config.toml` fails with
-`supabase/config.toml not found`, since the lock cannot be checked, instead of using the bundled
+`supabase/config.toml, config.json or config.jsonc not found`, since the lock cannot be checked, instead of using the bundled
 versions; with no lock and no config, `--frozen` fails with `supabase/supabase.lock not found`. A CI
 start with no lock resolves and writes it, then warns to commit it. A lock that is not valid JSON, does
 not match the format or is of a newer format version always fails, frozen or not; the first of
@@ -299,9 +304,9 @@ Initialized database data is reused only by a slim-services revision of the buil
 it: the same release line, PostgreSQL major and upstream version, with any `-rN` revision. Every
 start that finds initialized data checks this before preparing or launching the database. A
 different line, major or upstream version fails the start, naming the recorded and requested builds
-and advising to keep the data by pinning `[local.services.database] version = "<recorded build>"` in
-`supabase/config.toml`, with `[db] major_version` set to the recorded major when the major differs and
-any `[db] orioledb_version` removed when an OrioleDB build is requested, or to run `supabase stack destroy`, which permanently deletes the
+and advising to keep the data by pinning `local.services.database.version` to `"<recorded build>"` in
+your config file, with `db.major_version` set to the recorded major when the major differs and
+any `db.orioledb_version` removed when an OrioleDB build is requested, or to run `supabase stack destroy`, which permanently deletes the
 stack's local database data; data with no recorded identity offers only the destroy. A
 first start records its identity in `.supabase-database-identity.json` before initializing data, so
 a first start interrupted before readiness resumes only on that build; initialized data with no
@@ -310,8 +315,8 @@ Auth, Storage, Realtime, Analytics and the pooler own schemas in the database. T
 instance root records the newest upstream version of each in `schema-writers.json`, raised under a
 per-database lock before a service or its one-shot initialization command migrates. A start whose
 selected upstream is older than the recorded one fails, naming the version and advising to keep the
-data by pinning `[local.services.<service>] version = "<recorded version>"` in
-`supabase/config.toml`, or to run `supabase stack destroy` to recreate the stack. Versions order by their leading dotted number
+data by pinning `local.services.<service>.version` to `"<recorded version>"` in
+your config file, or to run `supabase stack destroy` to recreate the stack. Versions order by their leading dotted number
 (`v2.196.0`, `2026.10.05-sha-...`, `17.6.1.054`); a suffix is ignored and an unparseable version
 sorts oldest. Services without schemas (REST, imgproxy, Functions, Studio, pg-meta, mail) accept any
 version change. A missing record means no schema owner has migrated yet. Saving a snapshot stores

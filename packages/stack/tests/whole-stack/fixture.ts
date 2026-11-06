@@ -1,8 +1,7 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import {
   ByteSize,
   Cause,
-  Crypto,
   Effect,
   Exit,
   FileSystem,
@@ -13,6 +12,7 @@ import {
   Ref,
   Stream,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { postgres } from "../../src/Commands.ts";
 import { homedir } from "node:os";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -134,8 +134,8 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
       `${functionsRoot}/hello/index.ts`,
       "Deno.serve(async (request) => { const authorization = request.headers.get('authorization') ?? ''; const input = await request.json(); const response = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/whole_stack_items?id=eq.${input.id}`, { headers: { authorization, apikey: authorization.replace('Bearer ', '') } }); return new Response(await response.text(), { status: response.status, headers: { 'content-type': 'application/json' } }); });",
     );
-    const crypto = yield* Crypto.Crypto;
-    const secret = `whole-stack-${yield* crypto.randomUUIDv4}-secret`;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const secret = `whole-stack-${yield* crypto.uuidV4()}-secret`;
     const locations = {
       stateRoot: `${root}/state`,
       cacheRoot: testArtifactCacheRoot,
@@ -401,7 +401,11 @@ export const waitForLifecycle = Effect.fn("WholeStack.waitForLifecycle")(
     ),
 );
 
-const servicesLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const servicesLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NodeHttpClient.layerNodeHttp,
+);
 
 export const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(servicesLayer));

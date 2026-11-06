@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import type { DbTomlValues } from "../../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../../command-internal/db-config.read.ts";
 import {
   PgDeltaEngine,
   type PgDeltaDeclarativePlanInput,
@@ -30,11 +30,11 @@ const ctx = (cwd: string, declarativeDir: string): DeclarativeRunContext => ({
   dnsResolver: "native",
 });
 
-// A minimal, valid `DbTomlValues` — matches `db-config.toml-read.ts`'s
+// A minimal, valid `DbConfigValues` — matches `db-config.read.ts`'s
 // own unconfigured defaults so this fixture doesn't silently drift from what
-// `readDbToml` would resolve for these tests' bare temp dirs (none of them
+// `readDbConfig` would resolve for these tests' bare temp dirs (none of them
 // write a `config.toml`).
-const toml: DbTomlValues = {
+const toml: DbConfigValues = {
   projectEnv: {},
   apiSchemas: ["public", "graphql_public"],
   exposedSchemas: ["public", "graphql_public"],
@@ -64,6 +64,7 @@ const toml: DbTomlValues = {
   seed: { enabled: true, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
+  configFile: { format: "toml", path: "supabase/config.toml" },
 };
 
 function jsonParseErrorMessage(raw: string): string {

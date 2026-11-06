@@ -21,7 +21,9 @@ const config = {
     Flag.withDefault(false),
   ),
   force: Flag.Boolean("force").pipe(
-    Flag.withDescription("Overwrite existing supabase/config.toml."),
+    Flag.withDescription(
+      "Write a fresh supabase/config.toml, replacing an existing config.toml and removing any config.json or config.jsonc.",
+    ),
     Flag.withDefault(false),
   ),
   withVscodeWorkspace: Flag.Boolean("with-vscode-workspace").pipe(

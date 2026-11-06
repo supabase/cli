@@ -108,7 +108,7 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
             kind: "required",
             when: [{ flag: "no-verify-jwt", is: false }],
             context:
-              "on the API path (--use-api, --use-docker=false, or Docker not running), when an enabled function has no verify_jwt in config.toml",
+              "on the API path (--use-api, --use-docker=false, or Docker not running), when an enabled function has no verify_jwt in the config file",
           },
           {
             operationId: "v1-list-all-functions",

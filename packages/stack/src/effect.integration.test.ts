@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
 import {
   Cause,
@@ -41,7 +41,7 @@ import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 import { database15, selection } from "../tests/pins.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 // Below the stack's native and auto port ranges and every OS ephemeral range, so neither another
 // test's auto allocation nor an outbound socket can already hold it.
 const FIXED_API_PORT = 9_393;

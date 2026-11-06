@@ -1,4 +1,5 @@
-import { Crypto, DateTime, Effect, FileSystem, Layer, Path } from "effect";
+import { DateTime, Effect, FileSystem, Layer, Path } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { homedir } from "node:os";
 
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
@@ -390,7 +391,7 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
 ) {
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const filePath = yield* telemetryPath(pathSvc);
   const exists = yield* fs.exists(filePath);
   const existing = exists ? yield* fs.readFileString(filePath) : undefined;
@@ -409,9 +410,9 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
 
   const state: State = {
     enabled: prior?.enabled ?? true,
-    device_id: prior?.device_id ?? (yield* crypto.randomUUIDv4),
+    device_id: prior?.device_id ?? (yield* crypto.uuidV4()),
     session_id:
-      !expired && prior?.session_id !== undefined ? prior.session_id : yield* crypto.randomUUIDv4,
+      !expired && prior?.session_id !== undefined ? prior.session_id : yield* crypto.uuidV4(),
     session_last_active: nowIso,
     ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
     // A decoded file's non-zero schema_version is kept. The numeric field is for in-memory
@@ -467,9 +468,9 @@ const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(functio
   const base = yield* loadOrCreateTelemetryState();
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const { distinct_id: _drop, ...rest } = base;
-  const nextState: State = { ...rest, device_id: yield* crypto.randomUUIDv4 };
+  const nextState: State = { ...rest, device_id: yield* crypto.uuidV4() };
   const filePath = yield* telemetryPath(pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
@@ -493,17 +494,17 @@ export const telemetryStateLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const pathSvc = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const analytics = yield* Analytics;
     const runtime = yield* TelemetryRuntime;
 
     const provide = <A, E>(
-      effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Crypto.Crypto>,
+      effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom>,
     ) =>
       effect.pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, pathSvc),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
       );
 
     return TelemetryState.of({

@@ -26,7 +26,7 @@ project lease `supabase/.supabase.lock.lease`:
   version, prints a warning (see `start`).
 - A project without `supabase/config.toml` uses the versions bundled with the CLI and writes no lock.
   Frozen, by `--frozen` or by `CI` with an existing lock, the lock cannot be checked, so it fails
-  with `supabase/config.toml not found` rather than using the bundled versions; `--frozen` without
+  with `supabase/config.toml, config.json or config.jsonc not found` rather than using the bundled versions; `--frozen` without
   a lock fails with `supabase/supabase.lock not found`. Both fail before anything is downloaded.
   Without a lock `CI` changes nothing.
 

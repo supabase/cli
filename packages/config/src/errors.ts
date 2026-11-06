@@ -37,6 +37,16 @@ export class CliConfigRemovedKeyError extends Data.TaggedError("CliConfigRemoved
   }
 }
 
+/** Both `config.json` and `config.jsonc` exist in one project; `paths` lists every conflicting file. */
+export class CliConfigFileConflictError extends Data.TaggedError("CliConfigFileConflictError")<{
+  readonly paths: ReadonlyArray<string>;
+}> {
+  override get message(): string {
+    const files = this.paths.map((path) => path.split(/[\\/]/).slice(-2).join("/"));
+    return `Found both ${files.join(" and ")}. Keep one and delete the other.`;
+  }
+}
+
 const PROJECT_CONFIG_PARSE_ERROR_MESSAGE_PREFIX =
   "Could not read the project config from the Management API response";
 

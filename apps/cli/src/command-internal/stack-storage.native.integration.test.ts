@@ -1,6 +1,7 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
@@ -25,7 +26,7 @@ import { mockOutput, mockTty } from "../../tests/helpers/mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { stdinLayer } from "../shared/runtime/stdin.layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
-import { ExperimentalFlag, YesFlag } from "./global-flags.ts";
+import { DebugFlag, ExperimentalFlag, YesFlag } from "./global-flags.ts";
 import { stackStart } from "../commands/experimental/stack/start/start.handler.ts";
 import { destroyTestStacks } from "../../tests/helpers/stack-cleanup.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
@@ -92,6 +93,7 @@ const makeLayers = (root: string) => {
     stackCatalogSetupLayer,
     dbConnectionLayer,
     Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(DebugFlag, false),
     Layer.succeed(YesFlag, false),
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
@@ -134,8 +136,8 @@ describe("native stack Storage gateway", () => {
               apiKey: credentials.apiKey,
               userAgent: "stack-storage-native-integration",
             });
-            const crypto = yield* Crypto.Crypto;
-            const bucket = `native-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+            const crypto = yield* SecureRandom.SecureRandom;
+            const bucket = `native-${(yield* crypto.uuidV4()).slice(0, 8)}`;
             const local = path.join(root, "payload.txt");
             yield* fs.writeFileString(local, "native storage payload");
 
@@ -181,7 +183,7 @@ describe("native stack Storage gateway", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(layers));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 });

@@ -83,8 +83,9 @@ export function renderConfigDiffText(
   changeSet: ConfigChangeSet,
   scope: ConfigApiScope,
   originFor?: ConfigEnvOriginLookup,
+  configPath?: string,
 ): string {
-  const changeLines = configRenderChangeLines(changeSet.changes, originFor);
+  const changeLines = configRenderChangeLines(changeSet.changes, originFor, configPath);
 
   const lines: Array<string> = [];
   const { update, remote_only, local_only, total } = changeSet.counts;

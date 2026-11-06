@@ -1,5 +1,6 @@
 import type { ConfigChange } from "@supabase/config";
 
+import { configFileName, DEFAULT_CONFIG_FILE } from "../../../command-internal/config-advice.ts";
 import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import {
   configEnvOriginList,
@@ -146,13 +147,13 @@ function renderExtraBlocks(extras: ReadonlyArray<PushExtra>): string {
 /** `[group-write]` blocks — an undeclared companion the target endpoint required alongside a
  *  declared change, sent at its config schema default since the remote returned no current value
  *  (see `pushNotes`'s matching note). */
-function renderForcedBlocks(forced: ReadonlyArray<PushForced>): string {
+function renderForcedBlocks(forced: ReadonlyArray<PushForced>, configPath: string): string {
   return forced
     .map((entry) =>
       renderBlock(
         entry.path,
         "group-write",
-        `${configRenderValue(entry.value, "(unset)")} (schema default — not declared in config.toml)`,
+        `${configRenderValue(entry.value, "(unset)")} (schema default — not declared in ${configFileName(configPath)})`,
         "(not returned)",
       ),
     )
@@ -171,6 +172,8 @@ export interface PushUpdatingLineInput {
   readonly extras: ReadonlyArray<PushExtra>;
   readonly forced: ReadonlyArray<PushForced>;
   readonly originFor?: ConfigEnvOriginLookup;
+  /** The config file named in "not declared" notes; defaults to `supabase/config.toml`. */
+  readonly configPath?: string;
 }
 
 /**
@@ -179,12 +182,13 @@ export interface PushUpdatingLineInput {
  * format `config diff` uses; the combined block always ends on a blank line.
  */
 export function pushUpdatingLine(input: PushUpdatingLineInput): string {
+  const configPath = input.configPath ?? DEFAULT_CONFIG_FILE.path;
   return (
     `${PUSH_UPDATING_PREFIX[input.resource]}\n` +
-    configRenderChangeLines(input.changes, input.originFor) +
+    configRenderChangeLines(input.changes, input.originFor, configPath) +
     renderSecretBlocks(input.secrets, input.secretsEncoded) +
     renderExtraBlocks(input.extras) +
-    renderForcedBlocks(input.forced)
+    renderForcedBlocks(input.forced, configPath)
   );
 }
 
@@ -225,6 +229,8 @@ export interface PushNotesInput {
   readonly secretsNotSet: ReadonlyArray<ReadonlyArray<string>>;
   /** `changeSet.counts.remote_only` — hands-off, informational only. */
   readonly remoteOnly: number;
+  /** The config file named in the remote-only note; defaults to `supabase/config.toml`. */
+  readonly configPath?: string;
 }
 
 /**
@@ -279,7 +285,7 @@ export function pushNotes(input: PushNotesInput): string {
   if (input.remoteOnly > 0) {
     const n = input.remoteOnly;
     lines.push(
-      `Note: ${configPlural(n, "remote property", "remote properties")} ${n === 1 ? "is" : "are"} not declared in supabase/config.toml and ${n === 1 ? "was" : "were"} left unchanged (config push no longer resets undeclared properties to their defaults; run \`supabase config diff\` to inspect).`,
+      `Note: ${configPlural(n, "remote property", "remote properties")} ${n === 1 ? "is" : "are"} not declared in ${input.configPath ?? DEFAULT_CONFIG_FILE.path} and ${n === 1 ? "was" : "were"} left unchanged (config push no longer resets undeclared properties to their defaults; run \`supabase config diff\` to inspect).`,
     );
   }
 

@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
+import { withRecordValueDecodingDefault } from "../lib/schema.ts";
 
 const tags = ["auth"];
 
@@ -15,6 +16,7 @@ const defaultEnableSignup = true;
 const defaultDoubleConfirmChanges = true;
 const defaultEnableConfirmations = false;
 const defaultSecurePasswordChange = false;
+const defaultRequireCurrentPassword = false;
 const defaultMaxFrequency = "1s";
 const defaultOtpLength = 6;
 const defaultOtpExpiry = 3600;
@@ -58,7 +60,7 @@ const template = Schema.Struct({
     default: defaultContentPath,
     description: "Path to the HTML template.",
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultContentPath))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(withRecordValueDecodingDefault(Effect.succeed({})));
 
 const notification = Schema.Struct({
   enabled: Schema.Boolean.annotate({
@@ -73,7 +75,7 @@ const notification = Schema.Struct({
     default: defaultContentPath,
     description: "Path to the HTML notification template.",
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultContentPath))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(withRecordValueDecodingDefault(Effect.succeed({})));
 
 export const email = Schema.Struct({
   enabled: Schema.optionalKey(
@@ -112,6 +114,13 @@ export const email = Schema.Struct({
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSecurePasswordChange))),
+  require_current_password: Schema.Boolean.annotate({
+    default: defaultRequireCurrentPassword,
+    description:
+      "If enabled, users will need to provide their current password to change their password, unless they signed in with a one-time password, magic link, or recovery link.",
+    tags,
+    links: [links.auth],
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultRequireCurrentPassword))),
   max_frequency: Schema.String.annotate({
     default: defaultMaxFrequency,
     description:

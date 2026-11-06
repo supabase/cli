@@ -127,7 +127,12 @@ function mockComputeHttp(routes: ComputeHttpRoutes) {
         method: request.method,
         url: request.url,
         // UrlParams is iterable over [key, value] pairs, not an array.
-        urlParams: Object.fromEntries(request.urlParams),
+        urlParams: Object.fromEntries(
+          Array.from(request.urlParams, ([key, value]) => [
+            key,
+            Redacted.isRedacted(value) ? Redacted.value(value) : value,
+          ]),
+        ),
         body: new TextDecoder().decode(bytes),
         byteLength: bytes.length,
       });
@@ -406,6 +411,7 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         explicitWorkdir,
         workdirEnvValue: Option.none(),
         userAgent: "supabase",
+        apiMaxRetries: Option.none(),
       });
     }),
   ).pipe(Layer.provide(BunServices.layer));

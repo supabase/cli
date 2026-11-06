@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Console, Effect, FileSystem, Layer, Path, Ref } from "effect";
 import { schemaWritersFile } from "../src/internal/schema-writers.ts";
 import { makeDatabaseSnapshots } from "../src/services/DatabaseSnapshot.ts";
@@ -59,6 +59,10 @@ const program = Effect.scoped(
     });
     yield* snapshots.restoreSnapshot(key);
   }),
-).pipe(Effect.provide(barrierFs.pipe(Layer.provideMerge(NodeServices.layer))));
+).pipe(
+  Effect.provide(
+    barrierFs.pipe(Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
+  ),
+);
 
 await Effect.runPromise(program);

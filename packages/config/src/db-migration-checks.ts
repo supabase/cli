@@ -80,7 +80,7 @@ const TypedMigrationChecks = Schema.Struct({
   ),
 }).annotate({
   description:
-    'Security checks run on each migration. Each rule takes "error", "warn" or "off"; a rule left unset uses "warn". When migrations run against --db-url, this section is read only from the local config.toml.',
+    'Security checks run on each migration. Each rule takes "error", "warn" or "off"; a rule left unset uses "warn". When migrations run against --db-url, this section is read only from the local config file.',
   tags,
 });
 

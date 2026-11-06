@@ -2,10 +2,11 @@
 
 Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
 
-Single shared side-effect document for all 13 active `inspect db` subcommands and
+Single shared side-effect document for all 16 active `inspect db` subcommands and
 their 12 deprecated aliases. Every subcommand has the same surface — it resolves its target, runs one read-only
 `SELECT`, and renders the result as an ASCII table. They differ only in the SQL run and
-the columns rendered (see the per-subcommand `<name>.query.ts`).
+the columns rendered (see the per-subcommand `<name>.query.ts`). `collation-drift` is the
+exception: it renders a report (see Output).
 
 ## Files Read
 
@@ -57,24 +58,31 @@ Local targets and database URLs make none.
 ## Database Queries
 
 Each subcommand runs one read-only `SELECT` (the embedded `<name>.sql`). The
-5 schema-filtered queries take `$1` = the LIKE-escaped internal-schema list;
+7 schema-filtered queries take `$1` = the LIKE-escaped internal-schema list;
 `db-stats` additionally takes `$2` = the database name.
 
-| Subcommand           | SQL file                 | InternalSchemas param?      |
-| -------------------- | ------------------------ | --------------------------- |
-| db-stats             | db_stats.sql             | yes (`$1`) + db name (`$2`) |
-| index-stats          | index_stats.sql          | yes (`$1`)                  |
-| bloat                | bloat.sql                | yes (`$1`)                  |
-| vacuum-stats         | vacuum_stats.sql         | yes (`$1`)                  |
-| table-stats          | table_stats.sql          | yes (`$1`)                  |
-| replication-slots    | replication_slots.sql    | no                          |
-| locks                | locks.sql                | no                          |
-| blocking             | blocking.sql             | no                          |
-| outliers             | outliers.sql             | no                          |
-| calls                | calls.sql                | no                          |
-| long-running-queries | long_running_queries.sql | no                          |
-| role-stats           | role_stats.sql           | no                          |
-| traffic-profile      | traffic_profile.sql      | no                          |
+| Subcommand           | SQL file                             | InternalSchemas param?      |
+| -------------------- | ------------------------------------ | --------------------------- |
+| db-stats             | db_stats.sql                         | yes (`$1`) + db name (`$2`) |
+| index-stats          | index_stats.sql                      | yes (`$1`)                  |
+| bloat                | bloat.sql                            | yes (`$1`)                  |
+| vacuum-stats         | vacuum_stats.sql                     | yes (`$1`)                  |
+| table-stats          | table_stats.sql                      | yes (`$1`)                  |
+| toast-sizes          | toast_sizes.sql                      | yes (`$1`)                  |
+| xid-age              | xid_age.sql                          | yes (`$1`)                  |
+| replication-slots    | replication_slots.sql                | no                          |
+| locks                | locks.sql                            | no                          |
+| blocking             | blocking.sql                         | no                          |
+| outliers             | outliers.sql                         | no                          |
+| calls                | calls.sql                            | no                          |
+| long-running-queries | long_running_queries.sql             | no                          |
+| role-stats           | role_stats.sql                       | no                          |
+| traffic-profile      | traffic_profile.sql                  | no                          |
+| collation-drift      | inline in `collation-drift.query.ts` | no (no params)              |
+
+`collation-drift` first runs `SELECT current_setting('server_version_num')::int` on the same
+session, then one inline parameterless detection `SELECT` built for that version (PG15+ also
+reads `pg_database.datcollversion` and `pg_database_collation_actual_version()`). Both are read-only.
 
 Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 `index-usage`/`index-sizes`/`unused-indexes`/`seq-scans`/`table-record-counts`→index-stats;
@@ -95,6 +103,9 @@ flags, run no query and open no connection, and exit 1 with
 | `0`  | success                                  |
 | `1`  | resolution, connection, or query failure |
 
+`collation-drift` also exits `1` before connecting when `-o/--output` is passed; it supports
+`--output-format` only.
+
 ## Telemetry Events Fired
 
 | Event                  | When                                       | Notable properties                  |
@@ -114,14 +125,20 @@ whitespace runs collapsed to single spaces (long-running-queries' query is NOT
 collapsed). One `Target: …` banner naming the resolved target is written to
 **stderr** before the query runs.
 
+`collation-drift` instead prints a report: a key/value header, a callout, a table of
+affected indexes, and numbered remediation steps (verify with amcheck, `REINDEX INDEX
+CONCURRENTLY`, then `ALTER ... REFRESH ... VERSION`). With no drift it prints only the
+healthy callout.
+
 ### `--output-format json`
 
 A single object: `{ "rows": [ <raw driver rows, snake_case keys> ], "target": { … } }`,
 where `target` describes the resolved target. The stderr banner is still printed.
+`collation-drift` emits `{ "rows": [...], "report": { … } }`.
 
 ### `--output-format stream-json`
 
-A `result` event carrying the same `{ rows }` payload.
+A `result` event carrying the same `{ rows }` payload (`{ rows, report }` for `collation-drift`).
 
 ### Deprecated aliases
 

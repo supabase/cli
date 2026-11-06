@@ -4,7 +4,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
-import { rootCaBundle } from "../../src/commands/gen/types/types.shared.ts";
+import { rootCaBundle } from "../../src/command-internal/supabase-tls.ts";
 import {
   type CliRunError,
   requireCliSuccess,
@@ -325,6 +325,32 @@ export function removeLiveMigration(
     }),
   );
 }
+
+const PLATFORM_DATABASE_RESTART = /\b57P01\b|the database system is shutting down/u;
+
+function isPlatformDatabaseRestart(output: string): boolean {
+  return PLATFORM_DATABASE_RESTART.test(output);
+}
+
+/**
+ * Cleanup `db reset` of the shared project, re-issued once when the platform restarted the
+ * database, so a leftover migration can't fail the next migration live file.
+ */
+export const resetLiveDatabase = Effect.fn("Live.resetDatabase")(function* (
+  cliEffect: LiveFixtures["cliEffect"],
+  project: LiveProject,
+  label: string,
+) {
+  const reset = Effect.suspend(() =>
+    cliEffect(["db", "reset", "--yes", `--remote=${project.dbUrl}`]),
+  );
+  const first = yield* reset;
+  const restarted = first.exitCode !== 0 && isPlatformDatabaseRestart(first.stderr);
+  yield* Effect.annotateCurrentSpan({ attempts: restarted ? 2 : 1 });
+  if (!restarted) return requireCliSuccess(first, label);
+  yield* Effect.logWarning(`${label} hit a platform database restart, re-issuing\n${first.stderr}`);
+  return requireCliSuccess(yield* reset, `${label} re-issued after a platform database restart`);
+});
 
 /**
  * Proves a postgres-config write through `get`. The platform can serve a stale

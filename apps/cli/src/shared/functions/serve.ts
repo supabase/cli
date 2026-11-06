@@ -30,7 +30,6 @@ import {
   Exit,
   Fiber,
   Option,
-  Predicate,
   Redacted,
   Result,
   Schema,
@@ -44,7 +43,6 @@ import {
 } from "../../command-internal/container-cli.ts";
 import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
 import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
-import { parseDotEnv } from "../config/dotenv.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import {
   resolveRemoteJwks,
@@ -81,7 +79,15 @@ import {
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsLocalConfigLoader } from "./functions-config.ts";
+import {
+  loadFunctionsCliConfig,
+  type FunctionsEnvError,
+  readFileUtf8,
+  resolveFunctionEnv,
+  resolveSharedFunctionsEnv,
+  toEdgeRuntimeSecretsEnv,
+  type FunctionsLocalConfigLoader,
+} from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
 import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
@@ -90,10 +96,13 @@ import {
   EdgeRuntimeLogStreamLostError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
+  externalTerminationExitCodes,
 } from "./serve.errors.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
+import { recordCommandTelemetry } from "../../telemetry/command-telemetry-attributes.ts";
+import { PropEdgeRuntimeExitCode, PropServeEndReason } from "../telemetry/event-catalog.ts";
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
@@ -124,15 +133,6 @@ const dockerLogDiagnosticTailLength = 4_096;
 // On Windows, `CTRL_C_EVENT` reaches every console-attached process, so the CLI's own shutdown
 // signal and a child spawn/stream failure can land microseconds apart — this is their tie-break.
 const shutdownSignalGracePeriod = Duration.millis(50);
-// Exit codes a supervisor uses to tear a container down (`supabase stop`, CI cancellation),
-// not a self-raised crash signal; 137 is excluded because it needs `OOMKilled` to tell a
-// memory-limit kill from a kill the CLI cannot attribute.
-const externalTerminationExitCodes = new Set([
-  129, // SIGHUP
-  130, // SIGINT
-  131, // SIGQUIT
-  143, // SIGTERM
-]);
 // Consecutive re-attaches to `docker logs -f` without forwarding a new line before giving up on
 // the stream and failing loudly instead of flooding replayed history forever.
 const containerLogReattachCap = 5;
@@ -285,6 +285,7 @@ export interface ServeEdgeRuntimeContainerConfig {
   readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  readonly configPath?: string | undefined;
 }
 
 /**
@@ -435,18 +436,7 @@ export function toPlainEdgeRuntimeConfig(
     policy: reveal(edgeRuntime.policy) ?? "",
     inspector_port: edgeRuntime.inspector_port,
     deno_version: edgeRuntime.deno_version,
-    // Secret names always reach the container env uppercased regardless of
-    // authored casing. Only resolved (non-empty) values are kept — an
-    // unresolved `env(VAR)` literal stays a plain string, not `Redacted`, so
-    // `Redacted.isRedacted` + non-empty filters it out, the same guard
-    // `secrets set` uses.
-    secrets: Object.fromEntries(
-      Object.entries(edgeRuntime.secrets ?? {}).flatMap(([name, value]) =>
-        Redacted.isRedacted(value) && Redacted.value(value).length > 0
-          ? [[name.toUpperCase(), Redacted.value(value)] as const]
-          : [],
-      ),
-    ),
+    secrets: toEdgeRuntimeSecretsEnv(edgeRuntime.secrets),
   };
 }
 
@@ -470,6 +460,18 @@ export function toPlainFunctionRecord(
     ]),
   );
 }
+
+/* Env file failures keep the plain error `start` and `serve` have always reported. */
+const legacyEnvFailure = <A, R>(effect: Effect.Effect<A, FunctionsEnvError, R>) =>
+  effect.pipe(
+    Effect.mapError((error) =>
+      nativeFailure(
+        error.cause === undefined
+          ? new Error(error.message)
+          : new Error(error.message, { cause: error.cause }),
+      ),
+    ),
+  );
 
 function normalizeEnvPath(flagCwd: string, pathname: string, path: Path.Path) {
   return path.isAbsolute(pathname) ? pathname : path.resolve(flagCwd, pathname);
@@ -527,10 +529,6 @@ function generateAsymmetricJwt(signingKey: SigningKeyJwk, role: string, now: num
   }).toString("base64url");
   return `${data}.${signature}`;
 }
-
-// Native UTF-8 reads retain a leading BOM, which JSON and dotenv parsers reject.
-const readFileUtf8 = (fs: FileSystem.FileSystem, pathname: string) =>
-  fs.readFile(pathname).pipe(Effect.map((bytes) => Buffer.from(bytes).toString("utf8")));
 
 function parseSigningKeys(content: string): ReadonlyArray<SigningKeyJwk> {
   const decoded = JSON.parse(content);
@@ -781,66 +779,6 @@ export function buildFunctionsServeInspectArgs(
   ];
 }
 
-const readDotEnvFile = Effect.fnUntraced(function* (pathname: string, optional: boolean) {
-  const fs = yield* FileSystem.FileSystem;
-  const contents = yield* readFileUtf8(fs, pathname).pipe(
-    Effect.catch((error) =>
-      optional && Predicate.isTagged(error.reason, "NotFound")
-        ? Effect.void
-        : nativePlatformFailure(error, pathname),
-    ),
-    Effect.mapError((failure) =>
-      nativeFailure(
-        new Error(`failed to load environment file: ${pathname} (${failure.message})`, {
-          cause: failure.cause,
-        }),
-      ),
-    ),
-  );
-  if (contents === undefined) {
-    return {};
-  }
-  return yield* Effect.try({
-    try: () => parseDotEnv(contents),
-    catch: (cause) => nativeFailure(sanitizeDotEnvParseError(pathname, cause)),
-  });
-});
-
-const filterCustomEnv = Effect.fnUntraced(function* (env: Readonly<Record<string, string>>) {
-  const output = yield* Output;
-  const filtered: Array<[string, string]> = [];
-  for (const [name, value] of Object.entries(env)) {
-    if (name.startsWith("SUPABASE_")) {
-      yield* output.raw(`Env name cannot start with SUPABASE_, skipping: ${name}\n`, "stderr");
-      continue;
-    }
-    filtered.push([name, value]);
-  }
-  return Object.fromEntries(filtered);
-});
-
-const parseCustomEnvFile = Effect.fn("functions.serve.parseCustomEnv")(function* (
-  envFileFlag: Option.Option<string>,
-  projectRoot: string,
-  flagCwd: string,
-  configSecrets: Readonly<Record<string, string>>,
-) {
-  const path = yield* Path.Path;
-  const envFilePath = Option.match(envFileFlag, {
-    onNone: () => path.join(projectRoot, "supabase", "functions", ".env"),
-    onSome: (pathname) => normalizeEnvPath(flagCwd, pathname, path),
-  });
-  const parsed = yield* readDotEnvFile(envFilePath, Option.isNone(envFileFlag));
-  const filtered = yield* filterCustomEnv({ ...configSecrets, ...parsed });
-  return Object.entries(filtered).map(([name, value]) => `${name}=${value}`);
-});
-
-const parseFunctionEnvFile = Effect.fn("functions.serve.parseFunctionEnv")(function* (
-  pathname: string,
-) {
-  return yield* readDotEnvFile(pathname, true).pipe(Effect.flatMap(filterCustomEnv));
-});
-
 function toFunctionContainerConfig(
   workdir: string,
   config: ResolvedDeployFunctionConfig,
@@ -995,37 +933,6 @@ function validateDockerMultilineEnvNames(env: ReadonlyArray<readonly [string, st
       throw new Error(`invalid multiline environment variable name for shell export: ${name}`);
     }
   }
-}
-
-function sanitizeDotEnvParseError(path: string, cause: unknown) {
-  if (!(cause instanceof Error)) {
-    return new Error(`failed to parse environment file: ${path}`);
-  }
-  const message = cause.message;
-  if (message.startsWith('unexpected character "')) {
-    const prefix = 'unexpected character "';
-    const start = message.indexOf(prefix);
-    if (start !== -1) {
-      const charStart = start + prefix.length;
-      const charEnd = message.indexOf('"', charStart);
-      if (charEnd !== -1) {
-        const char = message.slice(charStart, charEnd);
-        return new Error(
-          `failed to parse environment file: ${path} (unexpected character '${char}' in variable name)`,
-        );
-      }
-    }
-    return new Error(
-      `failed to parse environment file: ${path} (unexpected character in variable name)`,
-    );
-  }
-  if (message.startsWith("unterminated quoted value")) {
-    return new Error(`failed to parse environment file: ${path} (unterminated quoted value)`);
-  }
-  if (message.includes("\n")) {
-    return new Error(`failed to parse environment file: ${path} (syntax error)`);
-  }
-  return new Error(`failed to load ${path}: ${message}`);
 }
 
 /**
@@ -1205,6 +1112,42 @@ type ServeStartOutcome = Data.TaggedEnum<{
 }>;
 const ServeStartOutcome = Data.taggedEnum<ServeStartOutcome>();
 
+/** How a `functions serve` session ended, as recorded on the command's telemetry event. */
+export type ServeEndReason =
+  | "signal"
+  | "container_stopped"
+  | "container_exited"
+  | "container_removed"
+  | "container_crashed";
+
+const recordServeEnd = (reason: ServeEndReason, exitCode?: number) =>
+  Effect.andThen(
+    Effect.annotateCurrentSpan({
+      "functions.serve.end_reason": reason,
+      ...(exitCode === undefined ? {} : { "container.exit_code": exitCode }),
+    }),
+    recordCommandTelemetry({
+      [PropServeEndReason]: reason,
+      ...(exitCode === undefined ? {} : { [PropEdgeRuntimeExitCode]: exitCode }),
+    }),
+  );
+
+const recordContainerLogsEnd = (reason: ContainerLogsEndReason) =>
+  ContainerLogsEndReason.$match(reason, {
+    ContainerExited: () => recordServeEnd("container_exited", 0),
+    SupervisorTerminated: ({ exitCode }) => recordServeEnd("container_stopped", exitCode),
+    ContainerGone: () => recordServeEnd("container_removed"),
+  });
+
+// A log-stream failure over a clean or supervisor stop is the stream's failure, not a crash.
+const crashedContainerExitCode = (error: unknown): number | undefined => {
+  if (error instanceof EdgeRuntimeContainerCrashedError) return error.exitCode;
+  const exitCode = error instanceof DockerLogsStreamError ? error.containerExitCode : undefined;
+  return exitCode !== undefined && exitCode !== 0 && !externalTerminationExitCodes.has(exitCode)
+    ? exitCode
+    : undefined;
+};
+
 type Spawner = ChildProcessSpawner.ChildProcessSpawner["Service"];
 
 /**
@@ -1368,6 +1311,7 @@ const streamContainerLogs = Effect.fn("functions.serve.streamContainerLogs")(fun
       stderr: trimmedStderr,
       daemonDown: false,
       oomKilled: inspected.success.oomKilled,
+      containerExitCode: inspected.success.exitCode,
     });
   }
 });
@@ -1498,7 +1442,7 @@ const resolveServeFunctionConfigs = Effect.fn("functions.serve.resolveFunctionCo
   supabaseDir: string,
   config: Pick<
     ServeEdgeRuntimeContainerConfig,
-    "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions"
+    "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions" | "configPath"
   >,
   importMapOverride: Option.Option<string>,
   noVerifyJwtOverride: Option.Option<boolean>,
@@ -1517,6 +1461,7 @@ const resolveServeFunctionConfigs = Effect.fn("functions.serve.resolveFunctionCo
     importMapOverride,
     noVerifyJwtOverride,
     quiet,
+    configPath: config.configPath,
   });
 });
 
@@ -1543,7 +1488,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
     supabaseDir: string,
     config: Pick<
       ServeEdgeRuntimeContainerConfig,
-      "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions"
+      "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions" | "configPath"
     >,
     importMapOverride: Option.Option<string>,
     noVerifyJwtOverride: Option.Option<boolean>,
@@ -1700,7 +1645,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       }
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
-          ? yield* parseFunctionEnvFile(path.join(functionsDir, config.slug, ".env"))
+          ? yield* resolveFunctionEnv({ functionsDir, slug: config.slug, warn: true }).pipe(
+              legacyEnvFailure,
+            )
           : {};
       functionsConfig[config.slug] = toFunctionContainerConfig(
         input.projectRoot,
@@ -1725,12 +1672,16 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     yield* ensureDockerNetwork(networkMode, projectId);
 
     const env = [
-      ...(yield* parseCustomEnvFile(
-        input.envFile,
-        input.projectRoot,
-        input.flagCwd,
-        input.config.edgeRuntimeSecrets,
-      )),
+      ...Object.entries(
+        yield* resolveSharedFunctionsEnv({
+          secrets: input.config.edgeRuntimeSecrets,
+          functionsDir,
+          envFile: Option.map(input.envFile, (pathname) =>
+            normalizeEnvPath(input.flagCwd, pathname, path),
+          ),
+          warn: true,
+        }).pipe(legacyEnvFailure),
+      ).map(([name, value]) => `${name}=${value}`),
       "SUPABASE_URL=http://kong:8000",
       `SUPABASE_ANON_KEY=${input.authArtifacts.anonKey}`,
       `SUPABASE_SERVICE_ROLE_KEY=${input.authArtifacts.serviceRoleKey}`,
@@ -1944,6 +1895,7 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
         configDeclaredFunctions: resolved.configDeclaredFunctions,
         configFunctions: resolved.configFunctions,
         rawConfigFunctions: resolved.rawConfigFunctions,
+        configPath: resolved.configPath,
       },
       authArtifacts,
       dbUrl: defaultServeDbUrl,
@@ -2047,7 +1999,11 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
       );
 
       const keepServing = yield* ServeStartOutcome.$match(startOutcome, {
-        Shutdown: () => writeStoppedServingMessage().pipe(Effect.as(false)),
+        Shutdown: () =>
+          recordServeEnd("signal").pipe(
+            Effect.andThen(writeStoppedServingMessage()),
+            Effect.as(false),
+          ),
         Started: ({ started }) =>
           Effect.gen(function* () {
             const outcome = yield* withShutdownGrace(
@@ -2068,6 +2024,12 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
               gracePeriod,
               () => ServeSessionOutcome.Shutdown(),
             ).pipe(
+              Effect.tapError((error) => {
+                const exitCode = crashedContainerExitCode(error);
+                return exitCode === undefined
+                  ? Effect.void
+                  : recordServeEnd("container_crashed", exitCode);
+              }),
               Effect.ensuring(
                 bestEffortRemoveContainer(started.containerId).pipe(
                   Effect.ensuring(started.cleanup),
@@ -2077,8 +2039,16 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
 
             return yield* ServeSessionOutcome.$match(outcome, {
               Restart: () => Effect.succeed(true),
-              Shutdown: () => writeStoppedServingMessage().pipe(Effect.as(false)),
-              Exited: ({ reason }) => writeContainerEndedMessage(reason).pipe(Effect.as(false)),
+              Shutdown: () =>
+                recordServeEnd("signal").pipe(
+                  Effect.andThen(writeStoppedServingMessage()),
+                  Effect.as(false),
+                ),
+              Exited: ({ reason }) =>
+                recordContainerLogsEnd(reason).pipe(
+                  Effect.andThen(writeContainerEndedMessage(reason)),
+                  Effect.as(false),
+                ),
             });
           }),
       });

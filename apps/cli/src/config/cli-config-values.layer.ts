@@ -16,6 +16,7 @@ import {
   Layer,
   Option,
   Path,
+  Ref,
   Result,
 } from "effect";
 
@@ -26,6 +27,8 @@ import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { escapeControlCharacters } from "../shared/output/escape-control-characters.ts";
 import { Output } from "../shared/output/output.service.ts";
+import { PropConfigKey } from "../shared/telemetry/event-catalog.ts";
+import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 import { CLI_CONFIG_FAMILIES, CLI_CONFIG_REMOVED_ENV_NAMES } from "./cli-config-key-annotations.ts";
 import {
   cloneDocumentRecord,
@@ -37,6 +40,7 @@ import {
   sameDocumentValue,
   setDocumentValue,
 } from "./cli-config-document.ts";
+import { cliConfigFailureKey } from "./cli-config-failure-key.ts";
 import { CliConfigFlagInputs, cliConfigFlagConflictError } from "./cli-config-flags.ts";
 import {
   decodingFailedMessage,
@@ -220,6 +224,21 @@ export const cliConfigValuesLayer = Layer.effect(
       return output.raw(line, "stderr");
     };
 
+    // The latest config load or lookup decides `config_key`, so a recovered failure cannot label
+    // a later one; only changes are recorded.
+    const recordedFailureKey = yield* Ref.make<string | undefined>(undefined);
+    const settleFailureKey = (key: string | undefined) =>
+      Ref.getAndSet(recordedFailureKey, key).pipe(
+        Effect.flatMap((previous) =>
+          previous === key ? Effect.void : recordCommandTelemetry({ [PropConfigKey]: key }),
+        ),
+      );
+    const tracksConfigFailureKey = <A, E, R>(self: Effect.Effect<A, E, R>) =>
+      self.pipe(
+        Effect.tapError((error) => settleFailureKey(cliConfigFailureKey(error))),
+        Effect.tap(() => settleFailureKey(undefined)),
+      );
+
     const parsedDocuments = yield* Cache.makeWith(
       (workdir: string) => withPlatform(parseCliConfigDocumentFile(workdir, { search: false })),
       {
@@ -237,6 +256,17 @@ export const cliConfigValuesLayer = Layer.effect(
         : yield* Cache.get(parsedDocuments, target.workdir);
       for (const deprecatedPath of parsed?.deprecatedPaths ?? []) {
         yield* printOnce(deprecatedKeyLine(deprecatedPath));
+      }
+      if (parsed !== null) {
+        const displayPath = (filePath: string) =>
+          path.relative(target.workdir, filePath).replaceAll("\\", "/");
+        const used = displayPath(parsed.path);
+        for (const ignoredPath of parsed.ignoredPaths) {
+          const ignored = displayPath(ignoredPath);
+          yield* warnOnce(
+            `Ignoring ${ignored} because ${used} takes precedence. Delete the file you don't use.`,
+          );
+        }
       }
       const rawDocument = parsed?.rawDocument ?? {};
 
@@ -534,7 +564,7 @@ export const cliConfigValuesLayer = Layer.effect(
           const picked = pickCliConfigKey(key, sources);
           if (Result.isFailure(picked)) return yield* picked.failure;
           return picked.success;
-        });
+        }).pipe(tracksConfigFailureKey);
 
       for (const message of overrideWarnings) yield* warnOnce(message);
       if (Option.isSome(debugLogger)) {
@@ -600,7 +630,7 @@ export const cliConfigValuesLayer = Layer.effect(
             tolerateUnreadableLinkedRef: target.tolerateUnreadableLinkedRef === true,
             tolerateInvalid: target.tolerateInvalid === true,
           }),
-        ),
+        ).pipe(tracksConfigFailureKey),
       writeThrough: (write) => Effect.ensuring(write, invalidate),
       invalidate,
     });

@@ -1,5 +1,5 @@
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { stringify as stringifyToml } from "smol-toml";
@@ -7,7 +7,7 @@ import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 
 import { withEnvVar, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
-import { readDbToml } from "./db-config.toml-read.ts";
+import { readDbConfig } from "./db-config.read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
@@ -17,7 +17,7 @@ const stringifyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
  * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
- * pipelines — D (`readDbToml`, Effect/raw-TOML) and L (`resolveLocalConfigValues`,
+ * pipelines — D (`readDbConfig`, Effect/raw-TOML) and L (`resolveLocalConfigValues`,
  * `@supabase/config`-decoded) — and asserts they fail with the same error-message substring,
  * since both route through the single `validateResolvedConfig`. A third caller, the
  * storage-credentials resolver (S), shares the `api.port`/`api.tls` presence branches and the
@@ -25,7 +25,7 @@ const stringifyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  * that pipeline.
  *
  * D's harness replicates the `withConfig`/`read`/`failsWith` pattern from
- * `db-config.toml-read.unit.test.ts` (file-local there, not exported). L's harness replicates
+ * `db-config.read.unit.test.ts` (file-local there, not exported). L's harness replicates
  * the `baseConfig`/`WORKDIR` pattern from `local-config-values.unit.test.ts`.
  */
 
@@ -37,14 +37,16 @@ const withConfig = (content: string) =>
     yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
     yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
     return dir;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const readD = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* readDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(Layer.merge(BunServices.layer, cliConfigValuesTestLayer)));
+    return yield* readDbConfig(fs, path, workdir);
+  }).pipe(
+    Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer, cliConfigValuesTestLayer)),
+  );
 
 /** Drives D's real pipeline and asserts the failure message contains `message`. */
 function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
@@ -77,7 +79,7 @@ function failsWithL(
       resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
     );
     expect(error.message).toContain(message);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 }
 
 interface ParityScenario {
@@ -344,6 +346,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
             unusedStackServices,
             cliConfigValuesTestLayer,
             BunServices.layer,
+            BunCrypto.layer,
             runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),
             // Local-path parity only — the remote branch (and with it the

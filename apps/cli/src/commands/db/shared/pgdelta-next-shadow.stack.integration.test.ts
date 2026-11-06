@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
@@ -22,7 +22,7 @@ import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts"
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { pgDeltaNextShadowLayer } from "./pgdelta-next-shadow.layer.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
-import type { DbTomlValues } from "../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 
 const toml = {
   projectEnv: {},
@@ -54,7 +54,8 @@ const toml = {
   seed: { enabled: false, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-} satisfies DbTomlValues;
+  configFile: { format: "toml", path: "supabase/config.toml" },
+} satisfies DbConfigValues;
 
 const fakeDocker = Layer.succeed(DockerRun, {
   run: () => Effect.die("Docker is not used by the native stack backend"),
@@ -96,7 +97,7 @@ describe("pg-delta next stack shadow provisioning", () => {
         const output = mockOutput().layer;
         const apiLayer = stackApiLayer.pipe(
           Layer.provide(FetchHttpClient.layer),
-          Layer.provide(BunServices.layer),
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
         );
         const shadowLayer = pgDeltaNextShadowLayer.pipe(
           Layer.provide(apiLayer),
@@ -113,7 +114,7 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.provide(Layer.succeed(CliArgs, { args: [] })),
           // Without a reachable container engine, automatic selection keeps the shadows native.
           Layer.provide(engines.hidingLayer),
-          Layer.provide(BunServices.layer),
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
         );
         const services = Layer.mergeAll(
           FetchHttpClient.layer,

@@ -44,7 +44,7 @@ export const configDiffHandler = (flags: ConfigDiffFlags) =>
 
 export const configDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
-    "Shows configuration differences between supabase/config.toml and a remote project or branch. Read-only: never modifies local or remote configuration.",
+    "Shows configuration differences between the project config file and a remote project or branch. Read-only: never modifies local or remote configuration.",
   ),
   Command.withShortDescription("Diff local config against a remote project"),
   Command.withExamples([

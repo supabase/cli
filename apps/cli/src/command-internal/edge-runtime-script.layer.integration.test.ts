@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
@@ -58,6 +58,7 @@ function makeCliSettings(workdir = "/nonexistent-workdir") {
     workdir,
     explicitWorkdir: false,
     userAgent: "test",
+    apiMaxRetries: Option.none(),
   });
 }
 
@@ -224,7 +225,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
         yield* runScript().pipe(Effect.provide(Layer.merge(layer, projectStateModeLayer("stack"))));
 
         expect(docker.lastOpts?.image).toContain("edge-runtime:v1.99.0");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect(
@@ -271,7 +272,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
         expect(docker.lastOpts?.image).toBe(lockedImage);
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
         Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
       ),
   );

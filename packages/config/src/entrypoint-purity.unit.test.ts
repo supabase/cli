@@ -392,6 +392,7 @@ describe("src/index.ts export surface", () => {
     expect(Object.keys(defaultEntrypoint).sort()).toMatchInlineSnapshot(`
       [
         "CLI_CONFIG_SCHEMA_URL",
+        "CliConfigFileConflictError",
         "CliConfigParseError",
         "CliConfigRemovedKeyError",
         "CliConfigSchema",
@@ -432,6 +433,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
     expect(Object.keys(effectEntrypoint).sort()).toMatchInlineSnapshot(`
       [
         "CLI_CONFIG_SCHEMA_URL",
+        "CliConfigFileConflictError",
         "CliConfigParseError",
         "CliConfigRemovedKeyError",
         "CliConfigSchema",
@@ -518,9 +520,11 @@ describe("src/internal.ts export surface", () => {
         "CliConfigWriteError",
         "DEFAULT_MIGRATION_CHECK_SEVERITY",
         "ENV_CAPTURE_REGEX",
+        "JsoncSyntaxError",
         "MIGRATION_CHECK_RULES",
         "PROVIDER_SIGNUP_ALIASES",
         "applyConfigEdits",
+        "cliConfigFormatForPath",
         "decodeCliConfigDocumentForValidationEffect",
         "decodeMergedCliConfig",
         "dualScopeProjectConfigPaths",
@@ -529,6 +533,7 @@ describe("src/internal.ts export surface", () => {
         "mergeParsedCliConfig",
         "parseCliConfigDocument",
         "parseCliConfigDocumentFile",
+        "parseJsonc",
         "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
         "remoteNameForProjectRef",
@@ -536,6 +541,7 @@ describe("src/internal.ts export surface", () => {
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "unmappedSecretApiPaths",
+        "withoutSafeIntegerBounds",
         "writeCliConfigDocumentText",
       ]
     `);

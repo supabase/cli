@@ -2,10 +2,9 @@ import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
   Config,
-  Crypto,
   Data,
   Deferred,
-  type Duration,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -20,6 +19,7 @@ import {
   Sink,
   Stream,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { StackFailureKind } from "../FailureKind.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
@@ -133,6 +133,18 @@ const engineKind = (
         : portAllocated(message)
           ? "port-allocation"
           : undefined;
+
+/** Names the stalled engine subcommand and its latest stderr, never the full argv. */
+const commandTimedOut = (
+  args: ReadonlyArray<string>,
+  timeout: Duration.Input,
+  stderr: string,
+): Cause.TimeoutError => {
+  const tail = stderr.trim().slice(-2000);
+  return new Cause.TimeoutError(
+    `Engine command '${args[0] ?? "command"}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}`,
+  );
+};
 
 const errorFor = (operation: string, cause: unknown): ContainerError => {
   const message = cause instanceof Error ? cause.message : String(cause);
@@ -403,20 +415,23 @@ export const makeHostGateway: Effect.Effect<HostGateway, never, Scope.Scope> = E
             state === undefined ? [undefined, fresh] : [state, state],
           );
           if (current !== undefined) return current;
-          // Starting immediately installs `onExit` before a closed scope can interrupt the fiber.
-          yield* probe.pipe(
-            Effect.onExit((exit) => {
-              const failure = Exit.isFailure(exit)
-                ? Cause.findErrorOption(exit.cause)
-                : Option.none();
-              if (Option.isSome(failure)) return Deferred.fail(fresh, failure.value);
-              const probed = Exit.isSuccess(exit) ? exit.value : undefined;
-              return (probed === undefined ? Ref.set(target, undefined) : Effect.void).pipe(
-                Effect.andThen(Deferred.succeed(fresh, probed)),
-              );
-            }),
+          const settle = (exit: Exit.Exit<string | undefined, ContainerError>) => {
+            const failure = Exit.isFailure(exit)
+              ? Cause.findErrorOption(exit.cause)
+              : Option.none();
+            if (Option.isSome(failure)) return Deferred.fail(fresh, failure.value);
+            const probed = Exit.isSuccess(exit) ? exit.value : undefined;
+            return (probed === undefined ? Ref.set(target, undefined) : Effect.void).pipe(
+              Effect.andThen(Deferred.succeed(fresh, probed)),
+            );
+          };
+          const fiber = yield* probe.pipe(
+            Effect.onExit(settle),
             Effect.forkIn(scope, { startImmediately: true }),
           );
+          // A closed scope interrupts the fiber before it starts, so its `onExit` never runs.
+          const exited = fiber.pollUnsafe();
+          if (exited !== undefined && !(yield* Deferred.isDone(fresh))) yield* settle(exited);
           return fresh;
         }),
       );
@@ -493,14 +508,14 @@ export const makeContainerRuntime = (options: {
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | Path.Path
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | Scope.Scope
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const stackRoot = path.resolve(options.root);
     // An owned directory for per-launch environment files, never the real system temp directory.
     const containerEnvRoot = path.join(stackRoot, CONTAINER_ENV_DIRNAME);
@@ -527,19 +542,25 @@ export const makeContainerRuntime = (options: {
         "process.arg_count": args.length,
         "container.command": args[0] ?? "",
       });
+      const stderrSoFar = yield* Ref.make("");
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawner.spawn(command(args));
-          const tail = (stream: typeof child.stdout) =>
+          const tail = (stream: typeof child.stdout, progress?: Ref.Ref<string>) =>
             stream.pipe(
               Stream.decodeText,
-              Stream.runFold(
+              Stream.runFoldEffect(
                 () => "",
-                (text, chunk) => (text + chunk).slice(-65536),
+                (text, chunk) => {
+                  const next = (text + chunk).slice(-65536);
+                  return progress === undefined
+                    ? Effect.succeed(next)
+                    : Ref.set(progress, next).pipe(Effect.as(next));
+                },
               ),
             );
           const [stdout, stderr, code] = yield* Effect.all(
-            [tail(child.stdout), tail(child.stderr), child.exitCode],
+            [tail(child.stdout), tail(child.stderr, stderrSoFar), child.exitCode],
             { concurrency: "unbounded" },
           );
           yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
@@ -551,10 +572,22 @@ export const makeContainerRuntime = (options: {
           return stdout.trim();
         }),
       ).pipe(
-        (effect) =>
-          commandOptions.timeout === undefined
+        (effect) => {
+          const timeout = commandOptions.timeout;
+          return timeout === undefined
             ? effect
-            : effect.pipe(Effect.timeout(commandOptions.timeout)),
+            : effect.pipe(
+                Effect.timeoutOrElse({
+                  duration: timeout,
+                  orElse: () =>
+                    Ref.get(stderrSoFar).pipe(
+                      Effect.flatMap((stderr) =>
+                        Effect.fail(commandTimedOut(args, timeout, stderr)),
+                      ),
+                    ),
+                }),
+              );
+        },
         Effect.mapError((cause) => errorFor(args[0] ?? "command", cause)),
       );
     });
@@ -657,9 +690,7 @@ export const makeContainerRuntime = (options: {
     const readProbeHosts = (image: string, spec: ContainerSpec, addHost: ReadonlyArray<string>) =>
       Effect.gen(function* () {
         const testRunLabel = yield* testRunLabelArgs;
-        const token = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => errorFor("token", cause)),
-        );
+        const token = yield* crypto.uuidV4();
         // Not an instance container: no instance label, so it is never mistaken for one.
         const { name } = identifyContainer(spec, token, true);
         const hosts = yield* run(
@@ -777,9 +808,7 @@ export const makeContainerRuntime = (options: {
           { mode: 0o600 },
         )
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
-      const token = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => errorFor("token", cause)),
-      );
+      const token = yield* crypto.uuidV4();
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const hostAlias = yield* hostAliasTarget(image, spec);
       const testRunLabel = yield* testRunLabelArgs;

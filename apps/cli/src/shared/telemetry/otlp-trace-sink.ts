@@ -9,7 +9,8 @@ import {
   Redacted,
   Semaphore,
 } from "effect";
-import type { Crypto, Scope, Tracer } from "effect";
+import type { Scope, Tracer } from "effect";
+import type { SecureRandom } from "effect/crypto";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/http";
 import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpSerialization from "effect/observability/OtlpSerialization";
@@ -42,7 +43,11 @@ export const makeOtlpTracer = (options: {
   readonly url: string;
   readonly headers: Redacted.Redacted<Readonly<Record<string, string>>>;
   readonly resource: OtlpTraceResource;
-}): Effect.Effect<Tracer.Tracer, never, HttpClient.HttpClient | Crypto.Crypto | Scope.Scope> =>
+}): Effect.Effect<
+  Tracer.Tracer,
+  never,
+  HttpClient.HttpClient | SecureRandom.SecureRandom | Scope.Scope
+> =>
   OtlpTracer.make({
     url: options.url,
     headers: Redacted.value(options.headers),

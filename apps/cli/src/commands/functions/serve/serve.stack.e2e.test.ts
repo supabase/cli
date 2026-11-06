@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   create as createStack,
@@ -72,6 +72,9 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
       databaseUrl: Deno.env.get("SUPABASE_DB_URL") ?? null,
     }));`,
   );
+  /* serve re-reads this file, so it must hold the member's saved env. */
+  if (included)
+    yield* fs.writeFileString(path.join(functionsRoot, ".env"), "CUSTOM_VALUE=original\n");
   yield* fs.writeFileString(path.join(root, "override.env"), "CUSTOM_VALUE=overridden\n");
   yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
   yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
@@ -109,6 +112,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
               functionsRoot,
               jwtSecret,
               verifyJwt: true,
+              functions: {},
               env: { CUSTOM_VALUE: "original" },
             },
             endpoints: { http: { port: "auto" as const } },
@@ -200,7 +204,7 @@ const payload = Effect.fn("FunctionsServeE2e.payload")(function* (
   return yield* Schema.decodeUnknownEffect(Payload)(yield* response.json);
 });
 
-const layer = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
+const layer = Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer);
 
 /**
  * Follows a service's statuses from the first one it delivers and returns a fiber that resolves
