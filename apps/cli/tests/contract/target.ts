@@ -41,6 +41,9 @@ import { mockAnalytics, mockOutput, mockTty } from "../helpers/mocks.ts";
 import { stackArtifactCacheRoot } from "../helpers/stack-artifacts.ts";
 import { destroyTestStacks } from "../helpers/stack-cleanup.ts";
 
+/** Only the configured invite template carries this, so a mail holding it proves the fetch. */
+export const inviteTemplateMarker = "contract invite template marker";
+
 /** Host ports a legacy project binds; stack projects leave them out and get automatic ports. */
 interface LegacyPorts {
   readonly api: number;
@@ -64,6 +67,10 @@ sql_paths = ["./seeds/zz.sql", "./seeds/*.sql"]
 
 [auth.email]
 enable_confirmations = true
+
+[auth.email.template.invite]
+subject = "Contract invite"
+content_path = "./supabase/templates/invite.html"
 
 [local_smtp]
 enabled = true
@@ -128,6 +135,8 @@ insert into public.contract_log (source) select format('migration 0 sees auth=%s
   "buckets/public/nested/b.txt": "nested object\n",
   "functions/echo/index.ts": `Deno.serve(() => Response.json({ ok: true }));
 `,
+  "templates/shared/invite.html": `<p>${inviteTemplateMarker}</p><a href="{{ .ConfirmationURL }}">Accept</a>
+`,
 });
 
 /** Writes the one project every contract setup starts. */
@@ -143,6 +152,8 @@ const writeContractProject = Effect.fn("Contract.writeProject")(function* (
     yield* fs.makeDirectory(path.dirname(file), { recursive: true });
     yield* fs.writeFileString(file, content);
   }
+  /* The invite template is an in-root symlink, which every setup serves like legacy. */
+  yield* fs.symlink("shared/invite.html", path.join(root, "supabase", "templates/invite.html"));
 });
 
 const ContractEnv = Schema.StructWithRest(
@@ -308,6 +319,45 @@ const realtimeServerListening = Effect.fn("Contract.realtimeServerListening")(fu
     });
 });
 
+/* Works around a legacy start gap: Auth fetches its templates before Kong's template server listens,
+   keeps its built-in invite, and refetches every few seconds. Wait for a refetch that succeeded. */
+const authInviteTemplateLoaded = Effect.fn("Contract.authInviteTemplateLoaded")(function* (
+  projectId: string,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const loaded = yield* spawnContainerCli(
+    spawner,
+    ["logs", "--follow", serviceContainerName("auth", projectId)],
+    { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+  ).pipe(
+    Effect.flatMap((logs) =>
+      Stream.merge(logs.stdout, logs.stderr).pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.filter((line) => line.includes('"mail_type":"invite"')),
+        Stream.mapAccum(
+          () => false,
+          (failed, line) => {
+            const reloaded = line.includes("templatemailer_reloader_template_update");
+            return [reloaded ? false : line.includes("_error"), [reloaded && !failed]];
+          },
+        ),
+        Stream.filter((ok) => ok),
+        Stream.runHead,
+      ),
+    ),
+    Effect.scoped,
+    Effect.mapError(
+      (cause) => new ContractTargetError({ message: "reading Auth logs failed", cause }),
+    ),
+  );
+  if (Option.isNone(loaded))
+    return yield* new ContractTargetError({
+      message: "Auth logs ended before its invite template loaded",
+      cause: undefined,
+    });
+});
+
 /** Starts the legacy Docker stack in-process and removes everything labelled with its project id. */
 export const legacyTarget = Layer.effectContext(
   Effect.gen(function* () {
@@ -342,6 +392,7 @@ export const legacyTarget = Layer.effectContext(
     yield* start({ exclude: [], ignoreHealthCheck: false, preview: false }).pipe(
       Effect.provide(context),
       Effect.andThen(realtimeServerListening(projectId)),
+      Effect.andThen(authInviteTemplateLoaded(projectId)),
       guardStart,
     );
     const env = yield* startedEnv(output, ContractEnv);

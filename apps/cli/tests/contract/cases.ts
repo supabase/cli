@@ -3,7 +3,12 @@ import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
 import { Data, Deferred, Effect, Layer, Option, Random, Schema, type Scope, Stream } from "effect";
 import { FetchHttpClient, HttpClient, type HttpClientError } from "effect/http";
 import * as Socket from "effect/socket/Socket";
-import { ContractReset, ContractTarget, type ContractTargetError } from "./target.ts";
+import {
+  ContractReset,
+  ContractTarget,
+  type ContractTargetError,
+  inviteTemplateMarker,
+} from "./target.ts";
 
 /** One consumer behavior, run unchanged against every setup's {@link ContractTarget}. */
 interface ContractCase {
@@ -119,9 +124,10 @@ const decodeEvent = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const mailError = (message: string, cause?: unknown) =>
   new ContractCallError({ message: `Mailpit ${message}`, cause });
 
-/** Signs `email` up while subscribed to Mailpit's events, then returns the link mailed to it. */
-const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(function* (
+/** Runs `send` while subscribed to Mailpit's events, then returns the mail it sent `email`. */
+const mailedTo = Effect.fn("Contract.mailedTo")(function* <E, R>(
   email: string,
+  send: Effect.Effect<unknown, E, R>,
 ) {
   const { MAILPIT_URL } = yield* ContractTarget;
   const events = new URL("/api/events", MAILPIT_URL);
@@ -130,7 +136,7 @@ const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(func
     Effect.flatMap(Socket.readerString),
     Effect.mapError((cause) => mailError("events socket", cause)),
   );
-  yield* signUp(email);
+  yield* send;
   const mail = yield* Stream.fromEffectRepeat(
     Effect.mapError(pull, (cause) => mailError("events socket", cause)),
   ).pipe(
@@ -142,7 +148,14 @@ const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(func
   );
   if (Option.isNone(mail)) return yield* mailError("event stream ended");
   const response = yield* HttpClient.get(`${MAILPIT_URL}/api/v1/message/${mail.value.Data.ID}`);
-  const { Text, HTML } = yield* Schema.decodeUnknownEffect(MailBody)(yield* response.json);
+  return yield* Schema.decodeUnknownEffect(MailBody)(yield* response.json);
+});
+
+/** Signs `email` up, then returns the link mailed to it. */
+const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(function* (
+  email: string,
+) {
+  const { Text, HTML } = yield* mailedTo(email, signUp(email));
   const link = `${Text}\n${HTML}`
     .replaceAll("&amp;", "&")
     .match(/https?:\/\/[^\s"'<>]+\/verify\?[^\s"'<>]+/);
@@ -172,6 +185,19 @@ const authCases: ReadonlyArray<ContractCase> = [
       const { data, error } = yield* signIn(email);
       expect(error).toBeNull();
       expect(data.user?.email).toBe(email);
+    }),
+  },
+  {
+    name: "Auth mails an invite through the configured content_path template",
+    run: Effect.gen(function* () {
+      const email = `${yield* unique("invited")}@example.com`;
+      const admin = (yield* contractClient("SECRET_KEY")).auth.admin;
+      const { HTML } = yield* mailedTo(
+        email,
+        sdk("invite", () => admin.inviteUserByEmail(email)),
+      );
+      expect(HTML).toContain(inviteTemplateMarker);
+      expect(HTML).toMatch(/\/verify\?token=/u);
     }),
   },
 ];

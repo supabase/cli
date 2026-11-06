@@ -122,11 +122,14 @@ const managedBindings: ReadonlyArray<{
   },
 ];
 
-/** Inputs the composition derives, each from its shared API endpoint or a sibling member kind. */
+/**
+ * Inputs the composition derives, each from its shared API endpoint or a sibling member kind;
+ * `api` also covers a value it generates for that endpoint.
+ */
 const derivedInputs: Partial<
   Record<ServiceCreation["service"], Readonly<Record<string, "api" | ServiceCreation["service"]>>>
 > = {
-  auth: { externalApiUrl: "api" },
+  auth: { externalApiUrl: "api", templateBaseUrl: "api", templateToken: "api" },
   studio: {
     apiUrl: "api",
     publicApiUrl: "api",
@@ -189,6 +192,7 @@ export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
     from: "host" | "runtime",
   ) => Effect.Effect<string, E>;
   readonly output: (id: string, name: string) => Effect.Effect<string, E>;
+  readonly randomToken: Effect.Effect<string, E>;
   readonly updateCreation: (
     id: string,
     inputs: Record<string, string | undefined>,
@@ -775,7 +779,15 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           Effect.gen(function* () {
             const extra: Record<string, string> =
               entry.creation.service === "auth" && apiHostUrl !== undefined
-                ? { externalApiUrl: `${apiHostUrl}/auth/v1` }
+                ? {
+                    externalApiUrl: `${apiHostUrl}/auth/v1`,
+                    ...(apiRuntimeUrl === undefined || !entry.creation.config.templates?.length
+                      ? {}
+                      : {
+                          templateBaseUrl: apiRuntimeUrl,
+                          templateToken: yield* operations.randomToken,
+                        }),
+                  }
                 : entry.creation.service === "studio" &&
                     apiHostUrl !== undefined &&
                     apiRuntimeUrl !== undefined

@@ -42,6 +42,9 @@ export const serviceNames = [
   "pooler",
 ] as const;
 
+/* Auth answers with its built-in email when a template fetch fails, so only this proves the fetch. */
+export const recoveryTemplateMarker = "whole-stack recovery template";
+
 export type Runtime = "native" | ContainerEngine;
 export type WholeStack = Readonly<{
   readonly stack: Stack;
@@ -122,14 +125,20 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         `Whole-stack ${runtime} scenarios need SUPABASE_STACK_TEST_ENGINE=${runtime}`,
       );
     const fs = yield* FileSystem.FileSystem;
-    const root = yield* fs.makeTempDirectoryScoped({
-      prefix: `stack-whole-${runtime}-`,
-      ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
-    });
+    const root = yield* fs.realPath(
+      yield* fs.makeTempDirectoryScoped({
+        prefix: `stack-whole-${runtime}-`,
+        ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
+      }),
+    );
     const functionsRoot = `${root}/functions`;
     const storageRoot = `${root}/storage`;
     yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
     yield* fs.makeDirectory(storageRoot, { recursive: true });
+    yield* fs.writeFileString(
+      `${root}/recovery.html`,
+      `<p>${recoveryTemplateMarker}</p><a href="{{ .ConfirmationURL }}">Reset</a>`,
+    );
     yield* fs.writeFileString(
       `${functionsRoot}/hello/index.ts`,
       "Deno.serve(async (request) => { const authorization = request.headers.get('authorization') ?? ''; const input = await request.json(); const response = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/whole_stack_items?id=eq.${input.id}`, { headers: { authorization, apikey: authorization.replace('Bearer ', '') } }); return new Response(await response.text(), { status: response.status, headers: { 'content-type': 'application/json' } }); });",
@@ -177,7 +186,10 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         {
           service: "auth",
           pin: selection.auth,
-          config: { jwtSecret: secret },
+          config: {
+            jwtSecret: secret,
+            templates: [{ id: "recovery", path: `${root}/recovery.html`, root }],
+          },
           endpoints: { http: endpoint("auto") },
         },
         {
