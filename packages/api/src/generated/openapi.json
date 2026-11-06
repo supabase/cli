@@ -10218,6 +10218,74 @@
         "x-endpoint-owners": ["infra", "control-plane"],
         "x-fga-permissions": [["database_config_write"]],
         "x-oauth-scope": "database:write"
+      },
+      "patch": {
+        "operationId": "v1-patch-postgres-config",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePostgresConfigBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostgresConfigResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden action"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "description": "Failed to update project's Postgres config"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Partially updates project's Postgres config",
+        "tags": ["Database"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["infra", "control-plane"],
+        "x-fga-permissions": [["database_config_write"]],
+        "x-oauth-scope": "database:write"
       }
     },
     "/v1/projects/{ref}/config/realtime": {
@@ -32791,9 +32859,22 @@
           "token_type": {
             "type": "string",
             "enum": ["Bearer"]
+          },
+          "scope": {
+            "description": "Space-delimited scopes granted to the token. Omitted when no scopes were granted.",
+            "example": "projects:read projects:write",
+            "type": "string"
+          },
+          "project_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Project refs the token is limited to. `null` means all projects.",
+            "nullable": true
           }
         },
-        "required": ["access_token", "expires_in", "token_type"]
+        "required": ["access_token", "expires_in", "token_type", "project_refs"]
       },
       "OAuthRevokeTokenBody": {
         "type": "object",
