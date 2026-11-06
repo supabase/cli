@@ -60,6 +60,7 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-test": ["local-dev"],
   "supabase-unlink": ["local-dev"],
   "supabase-vanity-subdomains": ["management-api"],
+  "supabase-warehouse": ["management-api"],
   "supabase-whoami": ["management-api"],
 };
 
@@ -144,6 +145,7 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-storage-cp content-type": "auto-detect",
   "supabase-storage-cp jobs": "1",
   "supabase-test-new template": "pgtap",
+  "supabase-warehouse-enable timeout": "15m",
 };
 
 /**
@@ -208,6 +210,7 @@ export const DOCS_REQUIRED: ReadonlySet<string> = new Set([
   "supabase-sso-add type",
   "supabase-vanity-subdomains-activate desired-subdomain",
   "supabase-vanity-subdomains-check-availability desired-subdomain",
+  "supabase-warehouse-enable schema",
 ]);
 
 export const DOCS_INFO_DESCRIPTION =

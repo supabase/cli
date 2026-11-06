@@ -31999,6 +31999,363 @@
         "summary": "Retry delivery",
         "description": "Retry delivering the same event again.\n\nAutomatic retries are not applicable to manual retries - if the delivery fails, there won't be any automatic retries attempted.\n\nThis endpoint is heavy rate-limited to allow for 10 request within 60 seconds."
       }
+    },
+    "/v2/projects/{ref}/warehouse/setups": {
+      "post": {
+        "description": "Rejects stale previews and different existing selections. Safe to retry the same selection. Acceptance does not imply initial synchronization has completed. Does not install the Warehouse FDW.",
+        "operationId": "v2-enable-warehouse",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2WarehouseSetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseSetupAcceptedResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Empty or unsupported selection"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Stale preview, existing selection or lifecycle conflict"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse setup unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Enable Warehouse for a confirmed source selection",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Enterprise", "Pro", "Team"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_write"]],
+        "x-oauth-scope": "database:write"
+      }
+    },
+    "/v2/projects/{ref}/warehouse/setups/current": {
+      "get": {
+        "description": "Reads replication and routing state without inspecting the project FDW. A null table state means no replication observation is available. Complete indicates initial copy and configured routing, not verified query connectivity.",
+        "operationId": "v2-get-warehouse-setup",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseSetupStatusResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse status unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get Warehouse initial synchronization status",
+        "tags": ["Projects Warehouse"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_read"]],
+        "x-oauth-scope": "database:read"
+      }
+    },
+    "/v2/projects/{ref}/warehouse/setups/preview": {
+      "post": {
+        "description": "Resolves currently eligible source tables without creating resources. Schema selection does not include future tables. Selected partitioned tables retain their logical identity and include current and future partitions. Return the selected identities as confirmed_tables when enabling.",
+        "operationId": "v2-preview-warehouse-setup",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2WarehouseSetupPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseSetupPreviewResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Empty or unsupported selection"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Existing selection or lifecycle conflict"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse setup unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Preview the source tables for Warehouse enablement",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Enterprise", "Pro", "Team"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_write"]],
+        "x-oauth-scope": "database:write"
+      }
     }
   },
   "components": {
@@ -46760,6 +47117,258 @@
           }
         },
         "required": ["code", "message"]
+      },
+      "V2WarehouseSetupPreviewResponse_Output": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "selected_tables": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "exclusiveMinimum": true,
+                          "maximum": 4294967295,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "name": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "schema": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["id", "name", "schema"],
+                      "type": "object"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": ["selected_tables"],
+                "type": "object"
+              },
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["warehouse_setup_preview"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "id", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
+      },
+      "V2WarehouseSetupPreviewRequest": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "schema": {
+                    "maxLength": 63,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "table": {
+                    "maxLength": 63,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": ["schema"],
+                "type": "object"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["warehouse_setup"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
+      },
+      "V2WarehouseSetupStatusResponse_Output": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "replication_state": {
+                    "type": "string"
+                  },
+                  "setup_status": {
+                    "type": "string"
+                  },
+                  "tables": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "exclusiveMinimum": true,
+                          "maximum": 4294967295,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "name": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "schema": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "state": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["id", "name", "schema", "state"],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": ["replication_state", "setup_status", "tables"],
+                "type": "object"
+              },
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["warehouse_setup"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "id", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
+      },
+      "V2WarehouseSetupAcceptedResponse_Output": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "accepted": {
+                    "enum": [true],
+                    "type": "boolean"
+                  },
+                  "selected_tables": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "exclusiveMinimum": true,
+                          "maximum": 4294967295,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "name": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "schema": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["id", "name", "schema"],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": ["accepted", "selected_tables"],
+                "type": "object"
+              },
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["warehouse_setup"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "id", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
+      },
+      "V2WarehouseSetupRequest": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "confirmed_tables": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "exclusiveMinimum": true,
+                          "maximum": 4294967295,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "name": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "schema": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": ["id", "name", "schema"],
+                      "type": "object"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "schema": {
+                    "maxLength": 63,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "table": {
+                    "maxLength": 63,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": ["confirmed_tables", "schema"],
+                "type": "object"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["warehouse_setup"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
       }
     }
   }

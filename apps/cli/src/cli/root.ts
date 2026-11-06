@@ -56,6 +56,7 @@ import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
+import { warehouseCommand } from "../commands/warehouse/warehouse.command.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { machineErrorContextLayer } from "../shared/output/machine-error-context.layer.ts";
@@ -203,6 +204,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       unlinkCommand,
       vanitySubdomainsCommand,
       whoamiCommand,
+      warehouseCommand,
     ]),
     Command.provide(
       Layer.unwrap(
