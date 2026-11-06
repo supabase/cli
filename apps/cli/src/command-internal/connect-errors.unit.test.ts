@@ -438,6 +438,8 @@ describe("isCertificateVerificationFailure", () => {
       realSqlConnectError(Object.assign(new Error("failure"), { code }));
     expect(isCertificateVerificationFailure(withCode("SELF_SIGNED_CERT_IN_CHAIN"))).toBe(true);
     expect(isCertificateVerificationFailure(withCode("CERT_HAS_EXPIRED"))).toBe(true);
+    expect(isCertificateVerificationFailure(withCode("ERR_TLS_CERT_ALTNAME_INVALID"))).toBe(true);
+    expect(isCertificateVerificationFailure(withCode("OUT_OF_MEM"))).toBe(false);
     expect(isCertificateVerificationFailure(withCode("ECONNREFUSED"))).toBe(false);
     expect(isCertificateVerificationFailure(withCode("ECONNRESET"))).toBe(false);
     expect(isCertificateVerificationFailure(authFailedError())).toBe(false);

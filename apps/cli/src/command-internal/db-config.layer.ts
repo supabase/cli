@@ -37,7 +37,7 @@ import {
   type ConnectSuggestionContext,
   SUGGEST_CA_VERIFICATION,
   SUGGEST_ENV_VAR,
-  SUGGEST_NETWORK_RESTRICTIONS,
+  suggestNetworkRestrictions,
 } from "./connect-errors.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
@@ -332,6 +332,7 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   conn: PgConnInput,
   dnsResolver: "native" | "https",
   removeNetworkBans: boolean,
+  dashboardUrl: string,
 ) {
   const dbConn = yield* DbConnection;
   const debug = yield* DebugLogger;
@@ -356,7 +357,7 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
           return Effect.fail(
             new Errors.DbConfigConnectTempRoleError({
               message: `failed to connect as temp role: ${cause.message}`,
-              suggestion: SUGGEST_NETWORK_RESTRICTIONS,
+              suggestion: suggestNetworkRestrictions(dashboardUrl),
             }),
           );
         }
@@ -551,6 +552,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   ignoreSavedUrl = false,
   resolveVaultSecrets = true,
   removeNetworkBans: boolean,
+  dashboardUrl: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -585,7 +587,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   const withRole = yield* initLoginRole(ref, poolerConn);
   const finalUser = originalUser.endsWith(`.${ref}`) ? `${withRole.user}.${ref}` : withRole.user;
   const tempConn = { ...withRole, user: finalUser };
-  yield* waitForTempRole(ref, tempConn, dnsResolver, removeNetworkBans);
+  yield* waitForTempRole(ref, tempConn, dnsResolver, removeNetworkBans, dashboardUrl);
   return Option.some(tempConn);
 });
 
@@ -613,6 +615,8 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   options: {
     /** Whether the temp-role retry may clear listed bans; only a `--yes` approval sets it. */
     readonly removeNetworkBans: boolean;
+    /** The active profile's dashboard, linked from the network restrictions hint. */
+    readonly dashboardUrl: string;
     readonly adHocProjectRef?: boolean;
     readonly resolveVaultSecrets?: boolean;
     /** The pooler URL the link recorded for `ref`, used when the direct host is unreachable. */
@@ -633,6 +637,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     fetchPoolerFromApi = false,
     hasPasswordFlag = false,
     removeNetworkBans,
+    dashboardUrl,
     poolerUrl = Option.none<string>(),
   } = options;
   const dbPassword = yield* resolveLinkedPassword(ref, workdir, explicitPassword, hasPasswordFlag);
@@ -690,6 +695,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     adHocProjectRef,
     resolveVaultSecrets,
     removeNetworkBans,
+    dashboardUrl,
   );
   if (Option.isNone(poolerConn)) {
     return yield* new Errors.DbConfigIpv6Error({
@@ -922,6 +928,7 @@ export const dbConfigResolverLayer = Layer.effect(
             hasPasswordFlag: options.hasPasswordFlag,
             removeNetworkBans: options.removeNetworkBans,
             poolerUrl: options.poolerUrl,
+            dashboardUrl: cliSettings.dashboardUrl,
           },
         );
       });
@@ -1020,6 +1027,7 @@ export const dbConfigResolverLayer = Layer.effect(
             !target.matchesLinkedRef,
             input.resolveVaultSecrets ?? true,
             canRemoveNetworkBans(input),
+            cliSettings.dashboardUrl,
           );
         }).pipe(
           Effect.provide(

@@ -39,8 +39,17 @@ describe("pinSupabaseTls host matching", () => {
     expect(pinSupabaseTls(input, "supabase")).toBe(input);
   });
 
-  it("leaves a connection that chose its own TLS settings unchanged", () => {
+  it("leaves a connection that chose its own sslmode unchanged", () => {
     const input = conn("db.ref.supabase.co", { sslmode: "disable" });
     expect(pinSupabaseTls(input, "supabase")).toBe(input);
+  });
+
+  it("requires TLS verified against a root CA set without sslmode", () => {
+    const pinned = pinSupabaseTls(
+      conn("db.ref.supabase.co", { sslrootcert: "/ca.pem" }),
+      "supabase",
+    );
+    expect(pinned).toMatchObject({ sslmode: "require", sslrootcert: "/ca.pem" });
+    expect(pinned.sslrootcertInline).toBeUndefined();
   });
 });

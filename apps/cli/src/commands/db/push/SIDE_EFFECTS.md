@@ -149,17 +149,17 @@ project ref and its environment.
   An invalid mode or `PGCONNECT_TIMEOUT`, an unknown `PGSERVICE`, or a lone `PGSSLCERT`/`PGSSLKEY`
   outside `sslmode=disable` fails with `invalid libpq environment` on either route.
   **Supabase CA pin (every remote-project connection, shared by all commands that resolve a linked
-  database):** when neither `sslmode` nor `sslrootcert` is set (query, `pg_service.conf`,
-  `PGSSLMODE` or `PGSSLROOTCERT`) and the host is a `db.<ref>.<project_host>` direct host or a
+  database):** when `sslmode` is not set (query, `pg_service.conf` or `PGSSLMODE`) and the host
+  is a `db.<ref>.<project_host>` direct host or a
   pooler host of the `supabase`, `supabase-staging` or `snap` built-in profile, the connection uses
   `sslmode=require` with the bundled Supabase root CA, which the driver verifies as `verify-ca`
-  (chain checked, hostname not). This covers the temp-role probe through the pooler and the
+  (chain checked, hostname not). A root cert set without `sslmode` (`PGSSLROOTCERT`, query or
+  service) replaces the bundled CA but keeps `sslmode=require`, so it is verified the same way. This covers the temp-role probe through the pooler and the
   container pooler fallback. A server certificate that fails verification ends the temp-role probe
   at once, without its retries, and suggests setting `PGSSLROOTCERT` or `PGSSLMODE=require`. So
   does a pooler rejection of the caller's IP (`Address not in tenant allow_list`), which suggests
-  checking Network Restrictions and Network Bans. Any
-  explicit setting, `disable` and `verify-full` with the user's own root cert included, is passed
-  through unchanged. `supabase-local` and YAML profiles are
+  checking Network Restrictions and Network Bans and links the dashboard's database settings. Any
+  explicit `sslmode`, `disable` and `verify-full` included, is passed through unchanged. `supabase-local` and YAML profiles are
   never pinned.
   `sslmode=disable` dials plaintext and reads no CA or client-cert file; otherwise those PEM files
   are read when set and a missing one fails the connection, and a `pg_service.conf` is read

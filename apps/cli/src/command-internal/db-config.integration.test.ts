@@ -2112,7 +2112,11 @@ describe("resolveLinkedConn libpq TLS", () => {
           "supabase.com",
           "native",
           opts.password ?? Option.some("secret"),
-          { removeNetworkBans: false, poolerUrl: Option.fromNullishOr(opts.poolerUrl) },
+          {
+            removeNetworkBans: false,
+            poolerUrl: Option.fromNullishOr(opts.poolerUrl),
+            dashboardUrl: "https://supabase.com/dashboard",
+          },
         );
       }),
     ).pipe(Effect.scoped);
@@ -2249,14 +2253,13 @@ describe("resolveLinkedConn libpq TLS", () => {
       }).pipe(Effect.provide(linkedConnLayer)),
     );
 
-    it.effect("keeps a PGSSLROOTCERT with no sslmode", () =>
+    it.effect("verifies against a PGSSLROOTCERT with no sslmode instead of the bundled CA", () =>
       Effect.gen(function* () {
         const conn = yield* linkedConn(
           { PGSSLROOTCERT: "/ca.pem" },
           { projectHost: "supabase.co" },
         );
-        expect(conn).toMatchObject({ sslrootcert: "/ca.pem" });
-        expect(conn.sslmode).toBeUndefined();
+        expect(conn).toMatchObject({ sslmode: "require", sslrootcert: "/ca.pem" });
         expect(conn.sslrootcertInline).toBeUndefined();
       }).pipe(Effect.provide(linkedConnLayer)),
     );
@@ -2851,7 +2854,7 @@ describe("dbConfigResolver.resolveConnection", () => {
             expect.objectContaining({
               _tag: "DbConfigConnectTempRoleError",
               message: expect.stringContaining("Address not in tenant allow_list"),
-              suggestion: SUGGEST_NETWORK_RESTRICTIONS,
+              suggestion: `${SUGGEST_NETWORK_RESTRICTIONS}\nhttps://supabase.com/dashboard/project/_/database/settings`,
             }),
           ),
         );

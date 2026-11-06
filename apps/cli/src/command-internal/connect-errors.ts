@@ -85,7 +85,7 @@ export const SUGGEST_NETWORK_RESTRICTIONS =
  * allow-listing. Shared by both the always-remote `Address not in tenant allow_list` branch
  * and the non-local `ECONNREFUSED`/`connection refused` branch in `connectSuggestion`.
  */
-function suggestNetworkRestrictions(dashboardUrl: string): string {
+export function suggestNetworkRestrictions(dashboardUrl: string): string {
   return `${SUGGEST_NETWORK_RESTRICTIONS}\n${dashboardUrl}/project/_/database/settings`;
 }
 
@@ -232,6 +232,12 @@ const TLS_ERROR_CODES = new Set([
   "HOSTNAME_MISMATCH",
 ]);
 
+const CERT_VERIFICATION_CODES: ReadonlySet<string> = new Set([
+  ...[...TLS_ERROR_CODES].filter((code) => code !== "OUT_OF_MEM"),
+  // Node and Bun's `checkServerIdentity` failure, which `verify-full` raises on a hostname mismatch.
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
 /**
  * Whether the remote pooler rejected the caller's IP for project network restrictions. Only
  * the allow-list changing can fix it, so it sets `DbConnectError.networkRestricted`, which the
@@ -248,7 +254,7 @@ export function isNetworkRestrictionFailure(error: unknown): boolean {
  */
 export function isCertificateVerificationFailure(error: unknown): boolean {
   const cause = deepestConnectCause(error);
-  return hasStringCode(cause) && TLS_ERROR_CODES.has(cause.code);
+  return hasStringCode(cause) && CERT_VERIFICATION_CODES.has(cause.code);
 }
 // node-postgres' own message when the server answers `N` to SSLRequest
 // (`pg/lib/connection.js`); rendered as `tls error (server refused TLS connection)`.
