@@ -125,12 +125,12 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         `Whole-stack ${runtime} scenarios need SUPABASE_STACK_TEST_ENGINE=${runtime}`,
       );
     const fs = yield* FileSystem.FileSystem;
-    const root = yield* fs.realPath(
-      yield* fs.makeTempDirectoryScoped({
-        prefix: `stack-whole-${runtime}-`,
-        ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
-      }),
-    );
+    const root = yield* fs.makeTempDirectoryScoped({
+      prefix: `stack-whole-${runtime}-`,
+      ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
+    });
+    /* Template containment compares canonical paths; the rest of the fixture keeps `root` as created. */
+    const templateRoot = yield* fs.realPath(root);
     const functionsRoot = `${root}/functions`;
     const storageRoot = `${root}/storage`;
     yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
@@ -188,7 +188,7 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
           pin: selection.auth,
           config: {
             jwtSecret: secret,
-            templates: [{ id: "recovery", path: `${root}/recovery.html`, root }],
+            templates: [{ id: "recovery", path: `${templateRoot}/recovery.html`, root: templateRoot }],
           },
           endpoints: { http: endpoint("auto") },
         },
