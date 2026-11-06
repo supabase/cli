@@ -90,7 +90,7 @@ import {
   mapTargetError,
   rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
+} from "../../../../command-internal/stack-target.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";

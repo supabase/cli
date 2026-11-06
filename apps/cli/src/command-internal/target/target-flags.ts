@@ -6,7 +6,7 @@ import { REMOTE_FLAG_NAME } from "./remote-vocabulary.ts";
 import type { ResolvedTarget } from "./resolve-target.ts";
 import { remoteFlagText } from "./target-deprecation.ts";
 
-type TargetSubject = "database" | "Storage API";
+type TargetSubject = "database" | "Storage API" | "log source";
 
 interface TargetFlagOptions {
   readonly subject: TargetSubject;

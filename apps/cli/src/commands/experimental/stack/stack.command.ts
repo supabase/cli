@@ -20,7 +20,7 @@ import { stackRestartCommand as stackRestartCommandBase } from "./restart/restar
 import { stackInstallCommand as stackInstallCommandBase } from "./install/install.command.ts";
 import { stackOutdatedCommand as stackOutdatedCommandBase } from "./outdated/outdated.command.ts";
 import { stackUpdateCommand as stackUpdateCommandBase } from "./update/update.command.ts";
-import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
+import { stackApiLayer, stackTargetResolverLayer } from "../../../command-internal/stack-target.ts";
 import { configureLoopbackProxyBypass } from "../../../command-internal/hostname.ts";
 
 const stackCommandSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
@@ -40,9 +40,6 @@ export const stackRuntimeLayer = Layer.mergeAll(
   telemetryStateLayer,
 );
 
-// Same static `HttpClient`/Management-API-factory requirement as `dbResetRuntimeLayer` in
-// `commands/db/reset/reset.layers.ts`; scoped to `start` so sibling stack subcommands don't
-// pick up its `--dns-resolver` requirement.
 const startCliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const startHttpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 const startCredentials = commandCredentialsLayer.pipe(

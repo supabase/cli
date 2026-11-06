@@ -5,17 +5,14 @@ import {
   type StackError,
 } from "@supabase/stack/effect";
 import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
-import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CommandSettings } from "../config/command-settings.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
-import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
-import {
-  recordStackRuntimeTelemetry,
-  type StackRuntime,
-} from "../../../command-internal/stack-runtime.ts";
+} from "../shared/telemetry/error-actionability.ts";
+import { StackApi, stackApiLayer } from "./stack-api.ts";
+import { recordStackRuntimeTelemetry, type StackRuntime } from "./stack-runtime.ts";
 
 export { StackApi, stackApiLayer };
 

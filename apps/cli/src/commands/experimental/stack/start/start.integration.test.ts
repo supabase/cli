@@ -88,7 +88,11 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
-import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  StackTargetResolver,
+} from "../../../../command-internal/stack-target.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";

@@ -26,7 +26,7 @@ import {
   mapTargetError,
   rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
+} from "../../../../command-internal/stack-target.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 import { encodeStackEnv, stackEnvOverrides, stackEnvValues } from "./status.env.ts";

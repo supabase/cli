@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ColorStream } from "./colors.ts";
-import { aqua, bold, green, red, yellow } from "./colors.ts";
+import { aqua, bold, green, red, yellow, inverse } from "./colors.ts";
 
 // Bun's `util.styleText` ignores `validateStream`, so `colors.ts` implements the colour gate
 // itself. These tests pin that gate deterministically with fake streams and stubbed env vars.
@@ -25,6 +25,7 @@ afterEach(() => {
 describe("colors TTY gating (termenv parity)", () => {
   it("styles on a colour-capable TTY", () => {
     expect(aqua("supabase", colorTty)).toBe("\u001b[36msupabase\u001b[39m");
+    expect(inverse("selected", colorTty)).toBe("\u001b[7mselected\u001b[27m");
     expect(bold("text", colorTty)).toBe("\u001b[1mtext\u001b[22m");
     expect(yellow("warning", colorTty)).toBe("\u001b[33mwarning\u001b[39m");
     expect(red("error", colorTty)).toBe("\u001b[31merror\u001b[39m");
@@ -33,6 +34,7 @@ describe("colors TTY gating (termenv parity)", () => {
 
   it("renders plain on a piped stream (no hasColors), like lipgloss's Ascii profile", () => {
     expect(aqua("supabase", piped)).toBe("supabase");
+    expect(inverse("selected", piped)).toBe("selected");
     expect(bold("text", piped)).toBe("text");
     expect(yellow("warning", piped)).toBe("warning");
     expect(red("error", piped)).toBe("error");
@@ -47,6 +49,7 @@ describe("colors TTY gating (termenv parity)", () => {
     vi.stubEnv("NO_COLOR", "1");
     vi.stubEnv("CLICOLOR_FORCE", "1");
     expect(aqua("supabase", colorTty)).toBe("supabase");
+    expect(inverse("selected", colorTty)).toBe("selected");
   });
 
   it("CLICOLOR=0 disables colour on a capable TTY", () => {

@@ -1,5 +1,6 @@
+import { Effect } from "effect";
+import { Output } from "../../../../shared/output/output.service.ts";
 import { Command, Flag } from "effect/cli";
-import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -48,11 +49,9 @@ const config = {
   ),
 } as const;
 
-export type StackLogsFlags = CliCommand.Command.Config.Infer<typeof config>;
-
 export const stackLogsCommand = Command.make("logs", config).pipe(
   Command.withDescription(
-    "Print retained service logs and exit; with --follow, keep streaming new lines. History is readable while the stack is stopped.",
+    "Deprecated; removed in v4. Use supabase logs instead. Print retained service logs and exit; with --follow, keep streaming new lines. History is readable while the stack is stopped.",
   ),
   Command.withShortDescription("Show managed local stack logs"),
   Command.withExamples([
@@ -74,7 +73,13 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
     noApiEffectFlags: ["stack", "stack-id", "service", "follow", "tail", "since"],
   }),
   Command.withHandler((flags) =>
-    stackLogs(flags).pipe(
+    Effect.gen(function* () {
+      yield* (yield* Output).raw(
+        "Warning: stack logs is deprecated and will be removed in v4. Use supabase logs instead.\n",
+        "stderr",
+      );
+      yield* stackLogs(flags);
+    }).pipe(
       withCommandTelemetry({ flags, config, aliases: { f: "follow" } }),
       withJsonErrorHandling,
     ),

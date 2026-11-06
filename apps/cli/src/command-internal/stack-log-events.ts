@@ -5,7 +5,10 @@ import type { StreamEvent } from "../shared/output/types.ts";
 export type LogSource = "history" | "live";
 
 /** The `log-entry` or `log-marker` event of a record. */
-export const logEvent = (record: StackLogRecord, source: LogSource): StreamEvent => {
+export const logEvent = (
+  record: StackLogRecord,
+  source: LogSource,
+): Extract<StreamEvent, { readonly type: "log-entry" | "log-marker" }> => {
   const subject = { service: record.service, instance_id: record.instanceId };
   if (record.kind === "stdout" || record.kind === "stderr")
     return {
