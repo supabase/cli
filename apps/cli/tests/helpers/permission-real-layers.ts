@@ -41,6 +41,8 @@ import {
 export function realLinkedProjectCache(opts: {
   readonly httpClient: Layer.Layer<HttpClient.HttpClient>;
   readonly cliSettings: Layer.Layer<CommandSettings>;
+  /** Defaults to the real lazy factory over `httpClient`. */
+  readonly platformApiFactory?: Layer.Layer<CommandPlatformApiFactory>;
 }): Layer.Layer<LinkedProjectCache> {
   const analytics = mockAnalytics();
   const identityStitch = identityStitchLayer.pipe(
@@ -49,7 +51,7 @@ export function realLinkedProjectCache(opts: {
     Layer.provide(BunServices.layer),
   );
   return linkedProjectCacheLayer.pipe(
-    Layer.provide(realPlatformApiFactory),
+    Layer.provide(opts.platformApiFactory ?? realPlatformApiFactory),
     Layer.provide(opts.httpClient),
     Layer.provide(opts.cliSettings),
     Layer.provide(mockCommandCredentialsLayer),

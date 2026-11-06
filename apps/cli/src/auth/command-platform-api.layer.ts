@@ -6,6 +6,7 @@ import { CLI_VERSION } from "../shared/cli/version.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
+import { ManagementApiGuard } from "../command-internal/command-contract/management-api-guard.ts";
 import { validateAccessToken } from "./access-token.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";
 import { AccessTokenRequiredError } from "./errors.ts";
@@ -22,16 +23,19 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
   // the shared service, rather than building one here, keeps its `stitchAttempted` guard shared
   // with the raw advisor GETs and the linked-project cache.
   const { stitch: stitchIdentityFromResponse } = yield* IdentityStitch;
+  // Present only under `withContract`; it checks each request before the debug log and send.
+  const guard = yield* Effect.serviceOption(ManagementApiGuard);
 
   const transformClient = (client: HttpClient.HttpClient) => {
     const debugClient = HttpClient.mapRequestEffect(client, (request) =>
       debugLogger.http(request.method, request.url).pipe(Effect.as(request)),
     );
+    const stitched = HttpClient.transform(debugClient, (requestEffect) =>
+      requestEffect.pipe(Effect.tap((response) => stitchIdentityFromResponse(response))),
+    );
 
     return Effect.succeed(
-      HttpClient.transform(debugClient, (requestEffect) =>
-        requestEffect.pipe(Effect.tap((response) => stitchIdentityFromResponse(response))),
-      ),
+      Option.match(guard, { onNone: () => stitched, onSome: (g) => g.guard(stitched) }),
     );
   };
 

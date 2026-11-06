@@ -25,9 +25,9 @@ Rejected: `config push` (731-line handler plus 1,628 lines of encoders hide the 
 ## Shared Work
 
 - [x] Define the annotations other than configuration on Effect CLI commands (`Command.annotate`, read with `Context.getOption`), building on `withPermissions`.
-- [ ] Guarded Management API client: matches each request to an operation, checks the declared target, counts writes, refuses unknown requests.
+- [x] Guarded Management API client: matches each request to an operation, checks the declared target, counts writes, refuses unknown requests. `ManagementApiGuard` (`apps/cli/src/command-internal/command-contract/management-api-guard.ts`) wraps the client in `makeCommandPlatformApi`; `withContract` provides it per run. Prompt answers count as input through a wrapped `Output`.
 - [ ] Remove the raw `HttpClient.HttpClient` from `ManagementApiServices` (`apps/cli/src/command-internal/management-api-runtime.layer.ts:112-123`) so an undeclared call fails to compile.
-- [ ] Run the guarded client over `mockCommandPlatformApi` (`apps/cli/tests/helpers/command-mocks.ts:562`) so the runtime checks run in integration tests.
+- [ ] (Partly: `branches delete` guard tests build the real client under the guard; other tests still call handlers without it.) Run the guarded client over `mockCommandPlatformApi` (`apps/cli/tests/helpers/command-mocks.ts:562`) so the runtime checks run in integration tests.
 - [ ] Generators: `--help`, the docs-spec entry and a `describe` JSON, each read from annotations alone.
 - [ ] Decide how the filesystem side writes (`linked-project.json`, `telemetry.json`) are declared, or record them as out of scope for this boundary.
 - [ ] Measure startup across the full command tree with the annotations loaded.
@@ -38,8 +38,8 @@ Status: in progress. Contract annotated (`apps/cli/src/commands/branches/delete/
 
 - [x] Annotate the five declarations other than configuration.
 - [ ] Generate `--help`, docs-spec entry and `describe` JSON; diff against current output.
-- [ ] Route API calls through the guarded client.
-- [ ] Tests that must fail: undeclared operation (compile time), delete of an ID the lookup didn't return, a second delete, an unmatched request.
+- [x] Route API calls through the guarded client.
+- [ ] Tests that must fail: undeclared operation (compile time), delete of an ID the lookup didn't return, a second delete, an unmatched request. Runtime refusals of an undeclared operation, an unsourced target and a second delete are covered; an unmatched request is not. The compile-time check is deferred to SDK generation (see below).
 - [ ] Record handler changes needed.
 
 ## `secrets set`
@@ -106,15 +106,31 @@ The boundary needs every Management API request a command makes to go through on
 - **Left: the `sso` profile override.** `sso add` and `sso update` pass a reconciled profile (`LinkedProjectCacheProfile`, with its own API URL and token) to `cache(...)`, and the cache builds a separate client for it, because the factory can't take a profile. The fix is a factory that accepts a profile.
 - **Left: raw `HttpClient` callers.** Sixteen non-test files take `HttpClient` directly (for example `apps/cli/src/commands/domains/create/create.handler.ts` and `apps/cli/src/shared/services/services.shared.ts`). Not yet audited for which ones call the Management API rather than other hosts.
 
+## Compile-Time Operation Checks
+
+The full implementation moves to the SDK generation work, because most of its blast radius is generator output. Until then the runtime guard enforces declared operations for commands with a contract.
+
+- **Probed.** `apps/cli/src/command-internal/command-contract/management-api-operation-types.unit.test.ts` types each client method as requiring `ApiOperation<Id>`, where `Id` is the spec's operation id derived from `openApiOperationIdMap`. Providing the declared union removes those requirements, so an undeclared call fails to compile with `Property 'undeclaredOperations' is missing ... { readonly undeclaredOperations: "supabase/api/operation/v1-list-all-organizations"; }`. All 225 generated methods map to an operation id, a typo in a declared id fails against the spec's ids, and the probe adds about 0.3% to the CLI's type instantiations.
+- **Not probed.** The check inside `withContract` on a real handler, and a contract with dozens of operations.
+
+Requirements for SDK generation:
+
+- **Operation in `R`.** Each generated method returns `Effect<Output, Error, ApiOperation<Id>>` and yields that service at runtime, so the requirement is real and needs no cast.
+- **Raw requests.** `executeRaw` (17 non-test callers) takes an operation id, or its calls stay runtime-only.
+- **Shared services.** Services such as `LinkedProjectCache` call the client inside their implementation and expose `R = never`, so their operations never reach the command. Decide whether service signatures carry `ApiOperation` requirements or leave those calls to the runtime guard.
+- **Commands without a contract.** The root and test runtime helpers provide an allow-all `ApiOperation`, the same wildcard approach as `Reads<string>`, so the 87 files that use the client keep compiling.
+- **Literal declarations.** `OperationEntry.operationId` (`apps/cli/src/command-internal/command-permissions/model.ts:78`) becomes the spec's id union, and `block`/`compose` keep literal ids in their types so `withContract` can provide the declared union.
+
 ## Open Questions
 
 - How should shared code contribute its errors to a contract? The declared lists grow with the shared code a command composes, not with what the command does: 36 errors for `branches delete`, 41 for `secrets set` and 92 for `db reset`. Repeating them in every contract makes them the bulk of each declaration and copies the compiler's output by hand. One option is error fragments contributed by shared code and combined per command, the way permissions use `block(...)` and `compose(...)`; the compile-time check would then compare `E` against the composed list. Settle this before annotating a third command.
 
 ## Decision Log
 
-| Date       | Decision                                                                                                 | Reason                                                                                                                                                         |
-| ---------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-11-06 | Spike on `branches delete`, `secrets set`, `branches get`                                                | `branches delete` tests the boundary; the other two cover configuration, variable write counts, docs retirement and output modes that it doesn't.              |
-| 2026-11-06 | Contract references `CliConfigKeys` and `CommandSettings` fields; `EnvVar` reverted                      | Follows the canonical config paths and the documented rule that process env isn't a service; settings stay unchecked until a runtime-settings registry exists. |
-| 2026-11-06 | Drop `configuration` from the contract; record the prerequisite                                          | Only compile-time checks count, and a compile-time config check needs every read behind a key first (about 150 files), which is config work outside this POC.  |
-| 2026-11-06 | `LinkedProjectCache` uses `CommandPlatformApiFactory`; one client per command is a boundary prerequisite | Gives the guard one insertion point for `branches delete` and the compile-time check one client type; the `sso` override and raw `HttpClient` callers remain.  |
+| Date       | Decision                                                                                                 | Reason                                                                                                                                                               |
+| ---------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-11-06 | Spike on `branches delete`, `secrets set`, `branches get`                                                | `branches delete` tests the boundary; the other two cover configuration, variable write counts, docs retirement and output modes that it doesn't.                    |
+| 2026-11-06 | Contract references `CliConfigKeys` and `CommandSettings` fields; `EnvVar` reverted                      | Follows the canonical config paths and the documented rule that process env isn't a service; settings stay unchecked until a runtime-settings registry exists.       |
+| 2026-11-06 | Drop `configuration` from the contract; record the prerequisite                                          | Only compile-time checks count, and a compile-time config check needs every read behind a key first (about 150 files), which is config work outside this POC.        |
+| 2026-11-06 | `LinkedProjectCache` uses `CommandPlatformApiFactory`; one client per command is a boundary prerequisite | Gives the guard one insertion point for `branches delete` and the compile-time check one client type; the `sso` override and raw `HttpClient` callers remain.        |
+| 2026-11-06 | Defer compile-time operation checks to SDK generation; keep the runtime guard                            | A type probe shows the mechanism works; the rest is generator output (typed methods, `executeRaw`, the 87-file client swap) that a CLI-side wrapper would duplicate. |

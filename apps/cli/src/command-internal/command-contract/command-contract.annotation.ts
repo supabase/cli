@@ -3,6 +3,10 @@ import type { Schema } from "effect";
 import { Command, type GlobalFlag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import type { Output } from "../../shared/output/output.service.ts";
+import { readPermissions } from "../command-permissions/command-permissions.annotation.ts";
+import { managementApiGuardLayer } from "./management-api-guard.ts";
+
 type ErrorClass = abstract new (...args: never) => unknown;
 type InstanceOf<C> = C extends abstract new (...args: never) => infer I ? I : never;
 type InputKey<Input> = Extract<keyof Input, string>;
@@ -109,7 +113,8 @@ export class CommandContractAnnotation extends Context.Service<
 >()("supabase/CommandContract") {}
 
 /**
- * Attaches a contract to a command and sets its help examples. Apply it last in the pipe: a command whose input differs from
+ * Attaches a contract to a command, sets its help examples, and guards its Management API
+ * requests at runtime. Apply it last in the pipe: a command whose input differs from
  * the contract's, whose handler can fail with an error the contract doesn't list, or whose
  * required global flags differ from the declared ones fails to compile.
  */
@@ -124,7 +129,7 @@ export const withContract =
   <Name extends string, ContextInput, E extends InstanceOf<Errors[number]["error"]>, R>(
     self: Command.Command<Name, CliCommand.Command.Config.Infer<Input>, ContextInput, E, R> &
       GlobalFlagCheck<R, GlobalFlags>,
-  ): Command.Command<Name, CliCommand.Command.Config.Infer<Input>, ContextInput, E, R> => {
+  ): Command.Command<Name, CliCommand.Command.Config.Infer<Input>, ContextInput, E, R | Output> => {
     // `keyof Input` makes `CommandContract` invariant in `Input`; rebuilding it checks each field.
     const stored: CommandContract = {
       input: contract.input,
@@ -134,7 +139,9 @@ export const withContract =
       writes: contract.writes,
       presentation: contract.presentation,
     };
+    const permissions = readPermissions(self);
     return self.pipe(
+      Command.provide((input) => managementApiGuardLayer(stored, permissions, input)),
       Command.withExamples(contract.presentation.examples),
       Command.annotate(CommandContractAnnotation, stored),
     );
