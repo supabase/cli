@@ -1,6 +1,6 @@
 import { Effect, Option, Path } from "effect";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import { initProject } from "../../shared/init/project-init.ts";
+import { initProject, resolveInitMigrationChecks } from "../../shared/init/project-init.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { resolveExperimentalFeature } from "../../shared/config/experimental-feature.ts";
 import { WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
@@ -17,6 +17,7 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
     feature: "stack",
     configValue: Effect.succeed(false),
   });
+  const migrationChecks = yield* resolveInitMigrationChecks;
 
   const result = yield* initProject({
     cwd: Option.isSome(workdir) ? path.resolve(runtimeInfo.cwd, workdir.value) : runtimeInfo.cwd,
@@ -29,12 +30,14 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
     withVscodeSettings: flags.withVscodeWorkspace || flags.withVscodeSettings,
     withIntellijSettings: flags.withIntellijSettings,
     experimentalStack,
+    migrationChecks,
   });
   yield* Effect.annotateCurrentSpan({
     "init.created": result.created,
     "init.force": flags.force,
     "init.use_orioledb": flags.useOrioledb,
     "init.experimental_stack": experimentalStack,
+    "init.migration_checks": migrationChecks,
   });
 
   if (!result.created) {
