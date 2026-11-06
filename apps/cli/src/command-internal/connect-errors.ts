@@ -56,6 +56,13 @@ export const SUGGEST_ENV_VAR =
   "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD";
 
 /**
+ * Hint shown when the server certificate does not verify against the CA the connection trusts,
+ * which on a hosted project is the bundled Supabase CA unless the user chose a trust setting.
+ */
+export const SUGGEST_CA_VERIFICATION =
+  "The server certificate did not verify against the trusted CA (the bundled Supabase CA on a hosted project). Behind a TLS-inspecting proxy, set PGSSLROOTCERT to a CA bundle that trusts it, or set PGSSLMODE=require to skip certificate verification.";
+
+/**
  * Shown instead of the remote-only "Network Restrictions" hint when `ctx.isLocal` is true — a
  * refused `--local` connection (Docker/Postgres not running) needs a different fix than an
  * actual network-restricted remote connection. See `connectSuggestion`.
@@ -70,13 +77,16 @@ export function localStackSuggestion(linkedCheckout: boolean | undefined): strin
     : SUGGEST_LOCAL_STACK;
 }
 
+export const SUGGEST_NETWORK_RESTRICTIONS =
+  "Make sure your local IP is allowed in Network Restrictions and Network Bans.";
+
 /**
  * Remote-only "Network Restrictions" hint, shown for a connection refused or blocked by IP
  * allow-listing. Shared by both the always-remote `Address not in tenant allow_list` branch
  * and the non-local `ECONNREFUSED`/`connection refused` branch in `connectSuggestion`.
  */
-function suggestNetworkRestrictions(dashboardUrl: string): string {
-  return `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${dashboardUrl}/project/_/database/settings`;
+export function suggestNetworkRestrictions(dashboardUrl: string): string {
+  return `${SUGGEST_NETWORK_RESTRICTIONS}\n${dashboardUrl}/project/_/database/settings`;
 }
 
 /** Context the connect-suggestion needs but cannot derive from the error alone. */
@@ -221,6 +231,31 @@ const TLS_ERROR_CODES = new Set([
   "CERT_REJECTED",
   "HOSTNAME_MISMATCH",
 ]);
+
+const CERT_VERIFICATION_CODES: ReadonlySet<string> = new Set([
+  ...[...TLS_ERROR_CODES].filter((code) => code !== "OUT_OF_MEM"),
+  // Node and Bun's `checkServerIdentity` failure, which `verify-full` raises on a hostname mismatch.
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+/**
+ * Whether the remote pooler rejected the caller's IP for project network restrictions. Only
+ * the allow-list changing can fix it, so it sets `DbConnectError.networkRestricted`, which the
+ * temp-role probe keys off to stop retrying.
+ */
+export function isNetworkRestrictionFailure(error: unknown): boolean {
+  return collectConnectErrorText(error).includes("Address not in tenant allow_list");
+}
+
+/**
+ * Whether a connect failure is an X509 certificate-verification rejection. It is deterministic:
+ * the same server certificate fails the same way on every attempt. Sets
+ * `DbConnectError.certificateRejected`, which the temp-role probe keys off to stop retrying.
+ */
+export function isCertificateVerificationFailure(error: unknown): boolean {
+  const cause = deepestConnectCause(error);
+  return hasStringCode(cause) && CERT_VERIFICATION_CODES.has(cause.code);
+}
 // node-postgres' own message when the server answers `N` to SSLRequest
 // (`pg/lib/connection.js`); rendered as `tls error (server refused TLS connection)`.
 const SERVER_REFUSED_SSL = "The server does not support SSL connections";
@@ -378,7 +413,7 @@ export function connectSuggestion(
   const text = collectConnectErrorText(error);
   // "Address not in tenant allow_list" only ever comes from the remote pooler rejecting the
   // caller's IP, so it always means network restrictions.
-  if (text.includes("Address not in tenant allow_list")) {
+  if (isNetworkRestrictionFailure(error)) {
     return suggestNetworkRestrictions(ctx.dashboardUrl);
   }
   // Don't send the user to the dashboard's Network Restrictions page for a --local connection.
@@ -387,6 +422,7 @@ export function connectSuggestion(
       ? localStackSuggestion(ctx.linkedCheckout)
       : suggestNetworkRestrictions(ctx.dashboardUrl);
   }
+  if (isCertificateVerificationFailure(error)) return SUGGEST_CA_VERIFICATION;
   if (
     text.includes("SCRAM exchange: Wrong password") ||
     text.includes("failed SASL auth") ||

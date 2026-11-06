@@ -10,6 +10,8 @@ import { to as pgCopyTo } from "pg-copy-streams";
 import {
   connectFailureMessage,
   connectSuggestion,
+  isCertificateVerificationFailure,
+  isNetworkRestrictionFailure,
   isDialFailure,
   isIPv6ConnectivityErrorCause,
   isSqlState,
@@ -660,6 +662,8 @@ export const toConnectError = (
     }${connectFailureMessage(cfg, error)}`,
     ...(suggestion === undefined ? {} : { suggestion }),
     ...(isDialFailure(error) ? { retryable: true } : {}),
+    ...(isCertificateVerificationFailure(error) ? { certificateRejected: true } : {}),
+    ...(isNetworkRestrictionFailure(error) ? { networkRestricted: true } : {}),
     ...(isIPv6ConnectivityErrorCause(error) ? { ipv6Unreachable: true } : {}),
   });
 };
