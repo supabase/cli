@@ -44,7 +44,11 @@ Status: not started
 
 ## `secrets set`
 
-Status: not started
+Status: contract annotated (`apps/cli/src/commands/secrets/set/set.contract.ts`); `writes` left empty.
+
+- The compile check found 33 undeclared errors on the first pass with `errors: []`, including six `LinkBranch*` errors from `branchResolution` and five config-load errors.
+- `configKeys` is empty. The handler reads `[edge_runtime.secrets]` as a subtree through `resolveCliSubtree`, and the registry has no key for `edge_runtime.secrets` or any `remotes.*` path. A contract can't name a subtree read with `CliConfigKey` references.
+- `writes` can't express the cap: `max` is a number, and the handler sends ceil(n/100) `v1-bulk-create-secrets` batches.
 
 - [ ] Annotate all six declarations, including the config keys and settings it reads.
 - [ ] Declare a write cap that depends on input count; record whether the declaration format supports it or needs a change.

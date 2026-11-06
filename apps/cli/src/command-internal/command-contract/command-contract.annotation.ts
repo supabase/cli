@@ -128,7 +128,7 @@ export class CommandContractAnnotation extends Context.Service<
 >()("supabase/CommandContract") {}
 
 /**
- * Attaches a contract to a command. Apply it last in the pipe: a command whose input differs from
+ * Attaches a contract to a command and sets its help examples. Apply it last in the pipe: a command whose input differs from
  * the contract's, whose handler can fail with an error the contract doesn't list, or whose
  * required global flags differ from the declared ones fails to compile.
  */
@@ -154,7 +154,10 @@ export const withContract =
       writes: contract.writes,
       presentation: contract.presentation,
     };
-    return self.pipe(Command.annotate(CommandContractAnnotation, stored));
+    return self.pipe(
+      Command.withExamples(contract.presentation.examples),
+      Command.annotate(CommandContractAnnotation, stored),
+    );
   };
 
 /** The contract declared on `command` with {@link withContract}, or none. */
