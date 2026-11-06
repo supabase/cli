@@ -6,7 +6,7 @@ Both commands default to the local stack. `--remote` selects the linked project;
 
 - Shared settings and target resolvers read the CLI profile, project config, environment files, and `supabase/.temp/project-ref` with normal CLI precedence.
 - Hosted reads resolve credentials from `SUPABASE_ACCESS_TOKEN`, the native keyring, or `<SUPABASE_HOME or ~/.supabase>/access-token`. Local reads do not resolve hosted credentials.
-- `--file <path>` reads one UTF-8 SQL file relative to the resolved workdir. `--file -` reads non-TTY stdin and rejects terminal stdin immediately. These and `--sql` are mutually exclusive SQL inputs. Only `--file -` consumes stdin; local and filtered commands leave it untouched. `--file` has no `-f` alias. Empty SQL, missing files, and failed stdin reads produce `LogsInputError` with actionable guidance.
+- `--file <path>` reads one UTF-8 SQL file relative to the resolved workdir. `--file -` reads non-TTY stdin and rejects terminal stdin immediately. These and `--sql` are mutually exclusive SQL inputs. Known SQL/filter/target incompatibilities and hosted time ranges are validated before SQL input or hosted target resolution. Only `--file -` consumes stdin; local and filtered commands leave it untouched. `--file` has no `-f` alias. Empty SQL, missing files, and failed stdin reads produce `LogsInputError` with actionable guidance.
 - Local reads use the stack catalog and retained log files under `<SUPABASE_HOME or ~/.supabase>/stacks/`. Each load captures the selected segment generations and byte lengths before reading. Incomplete lines and later appends wait for another load. Local reads never launch, install, or mutate services.
 
 ## Files written
@@ -22,7 +22,7 @@ Both commands default to the local stack. `--remote` selects the linked project;
 | GET    | `/v1/projects`                                | Bearer | Shared interactive project picker.                                                                                                        |
 | GET    | `/v1/projects/{parent}/branches`              | Bearer | Shared branch-name resolution.                                                                                                            |
 | GET    | `/v1/branches/{id}`                           | Bearer | Shared branch UUID resolution.                                                                                                            |
-| GET    | `/v1/projects/{ref}`                          | Bearer | Best-effort linked-project cache finalization.                                                                                            |
+| GET    | `/v1/projects/{ref}`                          | Bearer | Best-effort interactive project-name lookup (two-second timeout, no retries) and linked-project cache finalization.                       |
 
 Each hosted load sends explicit UTC bounds. Hosted ranges cannot exceed 24 hours; local ranges have no 24-hour cap. `--to` alone selects the hour ending at that timestamp. SQL uses GET without a POST fallback or local SQL engine. `sources` makes no analytics request, though target resolution may use the picker or branch routes.
 
@@ -52,7 +52,7 @@ A failed interactive load opens a wrapped, scrollable error panel. Up/down scrol
 
 `--output-format text|json|stream-json` selects native output. `-o/--output` is rejected before reads or target resolution.
 
-Interactive text requires an omitted `--output-format`, terminal stdin and stdout, and interaction allowed. Explicit `--output-format text` reads once. CI disables the browser unless `CI` is empty, `0`, or `false` (case-insensitive); `TERM=dumb` also disables it. The browser reserves two header rows for count/status and the requested window. It shows compact UTC timestamps, service names, and messages. Color settings apply; a selection marker remains visible without color. Up/down selects rows, Enter opens scrollable details, Escape returns, C copies, L loads more logs, and q exits. Resize preserves selection. Selection and viewport stay stable after a reload where retention permits. Open details stay pinned to their record.
+Interactive text requires an omitted `--output-format`, terminal stdin and stdout, and interaction allowed. Explicit `--output-format text` reads once. CI disables the browser unless `CI` is empty, `0`, or `false` (case-insensitive); `TERM=dumb` also disables it. The browser reserves four header rows for count/status, target identity, active filters, and the requested window. Hosted identity shows project name and ref when available; the ref is the fallback. Local identity shows the selected stack. It shows compact UTC timestamps, service names, and messages. Color settings apply; a selection marker remains visible without color. Up/down selects rows, Enter opens scrollable details, Escape returns, C copies, L loads more logs, and q exits. Resize preserves selection. Selection and viewport stay stable after a reload where retention permits. Open details stay pinned to their record.
 
 Filtered reads retain up to 1000 rows and approximately 8 MiB, with visible discarded-row counts. A single oversized record remains complete and is marked oversized. SQL preserves returned row order. Empty results keep the interactive browser open for another load. Raw input, resize listeners, cursor, screen, and background work are scoped to the viewer and restored on exit or failure.
 
@@ -60,7 +60,7 @@ Filtered reads retain up to 1000 rows and approximately 8 MiB, with visible disc
 
 Noninteractive reads finish after one pass. JSON returns a two-space-indented array. SQL stream JSON returns a `result` event. Filtered stream JSON emits `log-entry` and `log-marker` events with full records in `data`. Hosted records preserve IDs, source, severity, attributes, derived level, and timestamps. Their `service` is the catalog selector name; their raw table identifier remains in `source`. Local records preserve instance IDs, launch IDs, positions, and loss markers. Sources preserve their capability records in JSON output.
 
-Text wraps to terminal width, or 80 columns when unavailable. SQL uses tables or wrapped vertical records. Diagnostics use stderr. Text strips terminal control sequences from log fields.
+Filtered text wraps to terminal width on a TTY. Piped filtered text does not hard-wrap and escapes embedded carriage returns and newlines, preserving one event per line. SQL uses tables or wrapped vertical records. Page loading and rate-limit wait/retry-time notices appear in the browser footer; finite reads emit diagnostics to stderr. Text strips terminal control sequences from log fields.
 
 ## Clipboard
 

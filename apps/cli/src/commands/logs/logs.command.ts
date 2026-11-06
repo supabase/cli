@@ -139,8 +139,27 @@ export const logsCommandFor = () =>
   Command.make("logs", config).pipe(
     Command.annotate(OptionalSubcommand, true),
     Command.withDescription(
-      "Browse local or hosted logs. Arrows select, Enter details, C copies, L loads more logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once.",
+      "Browse local or hosted logs. Arrows select, Enter details, C copies, L loads more logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once. Explicit --output-format text disables the viewer. Use --output-format json|stream-json for structured output; -o/--output is unsupported.",
     ),
+    Command.withExamples([
+      {
+        command: "supabase logs --remote --service postgres --level error --since 30m",
+        description: "Browse hosted Postgres errors",
+      },
+      {
+        command:
+          'supabase logs --remote --service auth --search "invalid token" --output-format text',
+        description: "Read plain text once",
+      },
+      {
+        command: "supabase logs --remote --service postgres --output-format json",
+        description: "Export full records as JSON",
+      },
+      {
+        command: "cat errors.sql | supabase logs --remote --file - --output-format json",
+        description: "Query hosted logs with SQL from stdin",
+      },
+    ]),
     withPermissions(readPermissions(logsReadFlags)),
     Command.withHandler((flags) =>
       logs(flags).pipe(
@@ -163,7 +182,7 @@ export const logsCommandFor = () =>
     Command.withSubcommands([
       Command.make("sources", sourcesConfig).pipe(
         Command.withDescription(
-          "List supported sources and filters. Hosted entries describe capabilities and do not imply that rows exist. Local entries list retained stack instances.",
+          "List supported sources and filters. Hosted entries describe capabilities and do not imply that rows exist. Local entries list retained stack instances. Use --output-format json|stream-json for structured output; -o/--output is unsupported.",
         ),
         withPermissions(
           compose(

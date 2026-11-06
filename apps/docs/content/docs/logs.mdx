@@ -21,9 +21,9 @@ Use the up and down arrows to select a row. Enter opens its full details, and Es
 
 Press `L` to load newer logs through the current time. The browser keeps your selection and viewport. It does not poll in the background. A failed load opens the full error in a scrollable panel. Use the arrows to scroll, Escape to return to the previous list or details, or `L` to retry. The browser preserves your rows, selection, window, and detail scroll. `C` is inactive while the error panel is open.
 
-Hosted filtered refreshes read up to five pages of 1000 rows per load. If more rows remain, the header shows `more pending`. Press `L` to continue toward the same captured end. The next load advances the end once that range is complete. A rate-limited page retries once after at least 60 seconds, or longer when `Retry-After` requires it. You can quit during the wait.
+Hosted filtered refreshes read up to five pages of 1000 rows per load. If more rows remain, the header shows `more pending`. Press `L` to continue toward the same captured end. The next load advances the end once that range is complete. The footer reports the page being loaded. A rate-limited page shows its wait duration and UTC retry time, then retries once after at least 60 seconds, or longer when `Retry-After` requires it. You can quit during the wait.
 
-The `Window:` header shows the requested time range, including its captured end. A successful load can extend that end; pending hosted pages keep the same end until the range is complete. For filtered logs, the browser retains up to 1000 rows and approximately 8 MiB, with a visible notice when older rows are discarded. Open details stay pinned to their record. `NO_COLOR` preserves the selection marker without styling.
+The header shows the hosted project name and ref, or the selected local stack, plus active filters. If the project name cannot be resolved, it shows the ref. The `Window:` header shows the requested time range, including its captured end. A successful load can extend that end; pending hosted pages keep the same end until the range is complete. For filtered logs, the browser retains up to 1000 rows and approximately 8 MiB, with a visible notice when older rows are discarded. Open details stay pinned to their record. `NO_COLOR` preserves the selection marker without styling.
 
 Copying uses your system clipboard and reports success or failure in the footer. On Linux, install `wl-clipboard`, `xclip`, or `xsel` if no clipboard tool is available.
 
@@ -65,9 +65,12 @@ Queries use the Management API GET endpoint. Server query limits, retention, and
 Without an interactive terminal, `supabase logs` performs one finite read and exits.
 
 ```sh
-supabase logs --output-format json
+supabase logs --remote --service postgres --level error --output-format text
+supabase logs --remote --service postgres --output-format json
 supabase logs --remote --service postgres --output-format stream-json
 ```
+
+Piped filtered text keeps one event per line without hard wrapping and escapes embedded carriage returns and newlines. Progress and retry diagnostics use stderr.
 
 JSON output returns an indented array of full records. Stream JSON emits one compact event per line. Filtered reads emit `log-entry` or `log-marker` events with the full record in `data`. SQL reads emit a `result` event with the array. Local records retain instance IDs, launch IDs, positions, and loss markers. Hosted records retain IDs, severity, attributes, and timestamps. Their `service` uses the selector name, such as `postgres`, while `source` keeps the original value, such as `postgres_logs`.
 
