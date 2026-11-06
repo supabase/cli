@@ -41,7 +41,12 @@ it.live("enables Warehouse through the compiled CLI and keeps JSON stdout clean"
                     data: {
                       type: "warehouse_setup",
                       id: ref,
-                      attributes: { accepted: true, selected_tables: tables },
+                      attributes: {
+                        accepted: true,
+                        selected_tables: tables,
+                        pipeline_id: "101",
+                        tables: [],
+                      },
                     },
                   },
                   { status: 202 },
@@ -53,7 +58,19 @@ it.live("enables Warehouse through the compiled CLI and keeps JSON stdout clean"
                   attributes: {
                     setup_status: "complete",
                     replication_state: "streaming",
-                    tables: tables.map((table) => ({ ...table, state: "following_wal" })),
+                    tables: tables.map((table) => ({
+                      ...table,
+                      state: "live",
+                      replication_state: "following_wal",
+                      copy_name: "public.orders",
+                    })),
+                    dns: {
+                      status: "ready",
+                      hostname: "warehouse.example.com",
+                      region: "eu-west-1",
+                    },
+                    steps: [],
+                    fdw_status: null,
                   },
                 },
               });

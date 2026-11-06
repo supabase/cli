@@ -73,8 +73,12 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
     yield* Effect.annotateCurrentSpan("project.ref", ref);
     return yield* Effect.gen(function* () {
       const selection = {
-        schema: flags.schema,
-        ...(Option.isSome(flags.table) ? { table: flags.table.value } : {}),
+        mode: "enable" as const,
+        targets: [
+          Option.isSome(flags.table)
+            ? { type: "table" as const, schema: flags.schema, name: flags.table.value }
+            : { type: "schema" as const, schema: flags.schema },
+        ],
       };
       const preview = yield* api.v2
         .previewWarehouseSetup({ ref, data: { type: "warehouse_setup", attributes: selection } })
@@ -114,7 +118,9 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
       }
       const waiting = yield* output.task("Waiting for initial synchronization...");
       const poll = Effect.gen(function* () {
-        const response = yield* api.v2.getWarehouseSetup({ ref }).pipe(Effect.catch(mapError));
+        const response = yield* api.v2
+          .getWarehouseSetup({ ref, inspect_fdw: "false" })
+          .pipe(Effect.catch(mapError));
         const status = response.data.attributes;
         if (
           ["error", "disabled", "disabling", "deletion_failed"].includes(status.setup_status) ||
@@ -142,10 +148,13 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
           });
         const complete =
           status.setup_status === "complete" &&
+          status.dns?.status === "ready" &&
           ["started", "streaming"].includes(status.replication_state) &&
           status.tables.length === tables.length &&
           status.tables.every(
-            (table) => table.state === "copied_table" || table.state === "following_wal",
+            (table) =>
+              table.replication_state === "copied_table" ||
+              table.replication_state === "following_wal",
           );
         yield* Effect.annotateCurrentSpan("synchronization.complete", complete);
         return { status, complete };

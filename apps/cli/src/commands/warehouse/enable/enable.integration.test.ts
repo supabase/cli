@@ -26,17 +26,27 @@ const accepted = {
   data: {
     type: "warehouse_setup",
     id: VALID_REF,
-    attributes: { accepted: true, selected_tables: tables },
+    attributes: { accepted: true, selected_tables: tables, pipeline_id: "101", tables: [] },
   },
 };
-const status = (setup = "complete", state: string | null = "following_wal") => ({
+const status = (setup = "complete", state: string | null = "following_wal", routing = true) => ({
   data: {
     type: "warehouse_setup",
     id: VALID_REF,
     attributes: {
       setup_status: setup,
       replication_state: "streaming",
-      tables: tables.map((table) => ({ ...table, state })),
+      tables: tables.map((table) => ({
+        ...table,
+        state: state === "following_wal" ? "live" : state === "error" ? "error" : "syncing",
+        replication_state: state,
+        copy_name: "public.orders",
+      })),
+      ...(routing
+        ? { dns: { status: "ready", hostname: "warehouse.example.com", region: "eu-west-1" } }
+        : {}),
+      steps: [],
+      fdw_status: null,
     },
   },
 });
@@ -106,12 +116,22 @@ describe("warehouse enable", () => {
       yield* warehouseEnable({ ...flags, table: Option.some("orders") });
       expect(test.api.requests.map((request) => request.method)).toEqual(["POST", "POST"]);
       expect(test.api.requests[0]?.body).toEqual({
-        data: { type: "warehouse_setup", attributes: { schema: "public", table: "orders" } },
+        data: {
+          type: "warehouse_setup",
+          attributes: {
+            mode: "enable",
+            targets: [{ type: "table", schema: "public", name: "orders" }],
+          },
+        },
       });
       expect(test.api.requests[1]?.body).toEqual({
         data: {
           type: "warehouse_setup",
-          attributes: { schema: "public", table: "orders", confirmed_tables: tables },
+          attributes: {
+            mode: "enable",
+            targets: [{ type: "table", schema: "public", name: "orders" }],
+            confirmed_tables: tables,
+          },
         },
       });
       expect(test.out.stdoutText).toContain("accepted");
@@ -137,6 +157,7 @@ describe("warehouse enable", () => {
           }),
         );
         expect(test.out.stdoutText).not.toContain("Selected source tables");
+        expect(test.api.requests.at(-1)?.urlParams).toContain("inspect_fdw=false");
       }).pipe(Effect.provide(test.layer));
     });
   }
@@ -160,26 +181,27 @@ describe("warehouse enable", () => {
     }).pipe(Effect.provide(test.layer));
   });
 
-  it.effect(
-    "does not treat unavailable table observations as synchronized and bounds polling",
-    () =>
-      Effect.gen(function* () {
-        const seen = yield* Deferred.make<void>();
-        const test = setup({ statusBody: status("complete", null), statusSeen: seen });
-        const fiber = yield* warehouseEnable({ ...flags, wait: true, timeout: "3s" }).pipe(
-          Effect.provide(test.layer),
-          Effect.forkScoped,
-        );
-        yield* Deferred.await(seen);
-        yield* TestClock.adjust("3 seconds");
-        const exit = yield* Fiber.await(fiber);
-        expect(Exit.findErrorOption(exit)).toEqual(
-          Option.some(expect.objectContaining({ _tag: "WarehouseEnableTimeoutError" })),
-        );
-        expect(test.out.stdoutText).not.toContain("Warehouse enabled");
-        expect(test.api.requests.filter((request) => request.method === "POST")).toHaveLength(2);
-        expect(test.telemetry.flushed).toBe(true);
-      }),
+  it.effect.each([
+    { name: "unavailable table observations", response: status("complete", null) },
+    { name: "missing routing readiness", response: status("complete", "following_wal", false) },
+  ])("does not declare synchronization complete with $name and bounds polling", ({ response }) =>
+    Effect.gen(function* () {
+      const seen = yield* Deferred.make<void>();
+      const test = setup({ statusBody: response, statusSeen: seen });
+      const fiber = yield* warehouseEnable({ ...flags, wait: true, timeout: "3s" }).pipe(
+        Effect.provide(test.layer),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(seen);
+      yield* TestClock.adjust("3 seconds");
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.findErrorOption(exit)).toEqual(
+        Option.some(expect.objectContaining({ _tag: "WarehouseEnableTimeoutError" })),
+      );
+      expect(test.out.stdoutText).not.toContain("Warehouse enabled");
+      expect(test.api.requests.filter((request) => request.method === "POST")).toHaveLength(2);
+      expect(test.telemetry.flushed).toBe(true);
+    }),
   );
 
   it.effect.each(["error", "deletion_failed"])(

@@ -12,14 +12,16 @@ Best-effort linked-project caching runs after target resolution, including failu
 
 All requests use the selected profile's Management API and bearer token.
 
-| Method | Path                                                           | Purpose                                                                                                          |
-| ------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| POST   | `/v2/projects/{ref}/warehouse/setups/preview`                  | Read-only selection resolution before consent; returns table OIDs, schemas and names.                            |
-| POST   | `/v2/projects/{ref}/warehouse/setups`                          | After consent, sends the selection and confirmed identities; creates or resumes managed replication and routing. |
-| GET    | `/v2/projects/{ref}/warehouse/setups/current`                  | Only with `--wait`; polls initial synchronization, routing and replication state every two seconds.              |
-| GET    | `/v1/projects`, `/v1/projects/{ref}`, branch-resolution routes | Standard project picker, target resolution and best-effort linked-project cache.                                 |
+| Method | Path                                                            | Purpose                                                                                                          |
+| ------ | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| POST   | `/v2/projects/{ref}/warehouse/setups/preview`                   | Read-only selection resolution before consent; returns table OIDs, schemas and names.                            |
+| POST   | `/v2/projects/{ref}/warehouse/setups`                           | After consent, sends the selection and confirmed identities; creates or resumes managed replication and routing. |
+| GET    | `/v2/projects/{ref}/warehouse/setups/current?inspect_fdw=false` | Only with `--wait`; polls initial synchronization, routing and replication state every two seconds.              |
+| GET    | `/v1/projects`, `/v1/projects/{ref}`, branch-resolution routes  | Standard project picker, target resolution and best-effort linked-project cache.                                 |
 
 Enablement does not install the FDW. Existing selections must match. Preview and consent refusal make no hosted writes. Setup is not rolled back on request failure or timeout; retrying the same selection is safe.
+
+The command uses explicit `mode: "enable"` with a single schema/table target and confirmed preview identities. Status keeps UI table states separate from raw `replication_state`; completion requires copied/following-WAL observations, a started pipeline, and ready DNS. FDW inspection is disabled.
 
 ## Environment
 
