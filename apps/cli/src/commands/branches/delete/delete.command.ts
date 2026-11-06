@@ -1,5 +1,4 @@
-import { Argument, Command } from "effect/cli";
-import type * as CliCommand from "effect/cli/Command";
+import { Command } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
@@ -10,21 +9,18 @@ import { linkedProjectCache } from "../../../telemetry/linked-project-cache.laye
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import {
+  type ContractInput,
+  withContract,
+} from "../../../command-internal/command-contract/command-contract.annotation.ts";
+import { branchesDeleteContract } from "./delete.contract.ts";
 import { branchesDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
 
-const config = {
-  name: Argument.String("name").pipe(
-    Argument.withDescription("Branch name or ID to delete."),
-    Argument.optional,
-  ),
-  ...projectTargetFlags({ parent: true }),
-} as const;
-export type BranchesDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type BranchesDeleteFlags = ContractInput<typeof branchesDeleteContract>;
 
-export const branchesDeleteCommand = Command.make("delete", config).pipe(
+export const branchesDeleteCommand = Command.make("delete", branchesDeleteContract.input).pipe(
   Command.withDescription("Delete a preview branch by its name or ID."),
   Command.withShortDescription("Delete a preview branch"),
   withPermissions(
@@ -42,4 +38,5 @@ export const branchesDeleteCommand = Command.make("delete", config).pipe(
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "delete"])),
   withTargetPolicy({ group: "hosted", consent: "no" }),
+  withContract(branchesDeleteContract),
 );
