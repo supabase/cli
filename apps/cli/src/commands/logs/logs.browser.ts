@@ -114,6 +114,7 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
       };
       let copying = false;
       let loading = false;
+      let hasLoaded = false;
       const load = Effect.fn("Logs.browser.load")(function* (end: number) {
         if (loading) return;
         loading = true;
@@ -183,7 +184,8 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
                 },
               };
             } else {
-              const initial = state.window === undefined;
+              const initial = !hasLoaded;
+              hasLoaded = true;
               const loadedCount = event.result.value.rows.length + event.result.value.dropped;
               state = applyBrowserBatch(state, event.result.value, session.mode);
               state = {

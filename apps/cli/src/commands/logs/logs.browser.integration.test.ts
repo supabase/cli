@@ -69,9 +69,11 @@ it.effect(
       const listeners = process.stdout.listenerCount("resize");
       const ui = yield* setup({
         mode: "append",
-        load: (_end, emit) =>
+        load: (_end, emit, progress) =>
           Effect.gen(function* () {
             calls++;
+            if (calls === 1 && progress !== undefined)
+              yield* progress({ message: "Loading page 1…", window });
             if (calls === 3)
               return yield* Deferred.succeed(pending, undefined).pipe(
                 Effect.andThen(Effect.never),
@@ -83,7 +85,9 @@ it.effect(
             return window;
           }),
       });
-      expect(yield* ui.frame(" | ready")).toContain("row-19");
+      const initialReady = yield* ui.frame(" | ready");
+      expect(initialReady).toContain("row-19");
+      expect(initialReady).toContain("↑/↓ select · Enter details");
       yield* Queue.offer(ui.input, key("up"));
       yield* ui.frame("> Jan 01 - 00:00:00 UTC — row-18");
       yield* Queue.offer(ui.input, key("L"));
