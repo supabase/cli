@@ -11,6 +11,7 @@ import {
   isDialFailure,
   isIPv6ConnectivityError,
   isIPv6ConnectivityErrorCause,
+  isTlsNegotiationFailure,
 } from "./connect-errors.ts";
 
 // The real `@effect/sql` wrapper produced by the connect probe
@@ -528,5 +529,32 @@ describe("isIPv6ConnectivityErrorCause", () => {
         new Error("could not translate host name: no address associated with hostname"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("isTlsNegotiationFailure (sslmode=prefer plaintext fallback gate)", () => {
+  it("is true for a declined SSLRequest, a botched reply, and TLS handshake failures", () => {
+    for (const cause of [
+      new Error("The server does not support SSL connections"),
+      new Error("There was an error establishing an SSL connection"),
+      new Error("Client network socket disconnected before secure TLS connection was established"),
+      Object.assign(new Error("wrong version number"), { code: "ERR_SSL_WRONG_VERSION_NUMBER" }),
+      Object.assign(new Error("write EPROTO wrong version number"), { code: "EPROTO" }),
+      Object.assign(new Error("Socket is closed"), { code: "ERR_SOCKET_CLOSED" }),
+    ]) {
+      expect(isTlsNegotiationFailure(realSqlConnectError(cause))).toBe(true);
+    }
+  });
+
+  it("is false for dial, timeout, authentication and unclassified failures", () => {
+    for (const cause of [
+      dialError("ECONNREFUSED", "127.0.0.1", 5432),
+      new Error("Connection terminated unexpectedly"),
+      new Error("timeout expired"),
+      Object.assign(new Error("password authentication failed"), { code: "28P01" }),
+    ]) {
+      expect(isTlsNegotiationFailure(realSqlConnectError(cause))).toBe(false);
+    }
+    expect(isTlsNegotiationFailure("boom")).toBe(false);
   });
 });
