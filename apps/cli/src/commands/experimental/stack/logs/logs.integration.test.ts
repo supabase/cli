@@ -458,7 +458,8 @@ describe("retained local logs", () => {
         expect(Exit.isSuccess(exit)).toBe(true);
         const windows = screens
           .filter((screen) => screen.includes("Window:") && !screen.includes("resolving…"))
-          .map((screen) => screen.split("\r\n")[1]);
+          .map((screen) => screen.split("\r\n").find((line) => line.startsWith("Window:")));
+        expect(screens.some((screen) => screen.includes("Local stack "))).toBe(true);
         expect(windows.length).toBeGreaterThan(0);
         expect(windows.every((window) => window === expected)).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(live)),
