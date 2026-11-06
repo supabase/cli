@@ -14,16 +14,17 @@ import { domainsGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
   // Kept parsed (and hidden) only so using it produces the removal error instead of an
   // unknown-flag parse error.
-  includeRawOutput: Flag.Boolean("include-raw-output").pipe(
-    Flag.withDescription("Removed: use -o json instead."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
+  includeRawOutput: cliFlag("include-raw-output", Flag.Boolean, {
+    description: "Removed: use -o json instead.",
+    optional: true,
+    hidden: true,
+  }),
 } as const;
 
 const COMMAND_PATH = ["domains", "get"];
@@ -31,9 +32,9 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 
 export type DomainsGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const domainsGetCommand = Command.make("get", config).pipe(
+export const domainsGetCommand = makeCommand("get", config).pipe(
   Command.withDescription(
-    "Retrieve the custom hostname config for your project, as stored in the Supabase platform.",
+    "Checks where custom domain setup stands for your project, including any DNS records you still need to add.",
   ),
   Command.withShortDescription("Get the current custom hostname config"),
   Command.withExamples([

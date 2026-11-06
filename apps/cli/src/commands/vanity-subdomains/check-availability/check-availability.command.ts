@@ -18,26 +18,37 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { vanitySubdomainsCheckAvailability } from "./check-availability.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
   // Optional at parse time so the --experimental gate, login check, and project-ref
   // resolution all run first; required-ness is enforced in the handler after ref
   // resolution.
-  desiredSubdomain: Flag.String("desired-subdomain").pipe(
-    Flag.withDescription("The desired vanity subdomain to use for your Supabase project."),
-    Flag.optional,
-  ),
+  desiredSubdomain: cliFlag("desired-subdomain", Flag.String, {
+    description: "The vanity subdomain to check.",
+    optional: true,
+    docs: { required: true },
+  }),
 } as const;
 
 export type VanitySubdomainsCheckAvailabilityFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const vanitySubdomainsCheckAvailabilityCommand = Command.make(
+export const vanitySubdomainsCheckAvailabilityCommand = makeCommand(
   "check-availability",
   config,
 ).pipe(
-  Command.withDescription("Checks if a desired subdomain is available for use."),
+  Command.withDescription(
+    "Tells you whether a subdomain is free to use. Run it before `supabase vanity-subdomains activate`.",
+  ),
   Command.withShortDescription("Check subdomain availability"),
+  Command.withExamples([
+    {
+      command:
+        "supabase vanity-subdomains check-availability --desired-subdomain my-app --experimental --remote=<project-ref>",
+      description: "Check whether a subdomain is available",
+    },
+  ]),
   withPermissions(
     compose(
       {

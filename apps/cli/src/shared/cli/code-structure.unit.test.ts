@@ -172,7 +172,7 @@ const declaredConfigFlagNames: ReadonlyArray<string> = Object.values(CLI_CONFIG_
 export function findRawConfigFlags(source: string): Array<string> {
   return declaredConfigFlagNames.flatMap((name) =>
     Array.from(
-      source.matchAll(new RegExp(String.raw`\bFlag\.\w+\(\s*["']${name}["']`, "g")),
+      source.matchAll(new RegExp(String.raw`\b(?:Flag\.\w+|cliFlag)\(\s*["']${name}["']`, "g")),
       (m) => m[0],
     ),
   );
@@ -213,7 +213,7 @@ function findConfigLoaderBypasses(source: string): Array<string> {
 }
 
 const RAW_TARGET_FLAG =
-  /\bFlag\.(?:Boolean|String)\(\s*["'](?:local|linked|db-url|project-id)["']/g;
+  /\b(?:Flag\.(?:Boolean|String)|cliFlag)\(\s*["'](?:local|linked|db-url|project-id)["']/g;
 
 /** Raw declarations of the target selector flags, which `target-flags.ts` owns. */
 export function findRawTargetFlags(source: string): Array<string> {
@@ -587,6 +587,7 @@ describe("config precedence guard rules", () => {
   it("flags raw declarations of registry-backed flags", () => {
     for (const name of declaredConfigFlagNames) {
       expect(findRawConfigFlags(`Flag.String("${name}")`)).toHaveLength(1);
+      expect(findRawConfigFlags(`cliFlag("${name}", Flag.String`)).toHaveLength(1);
     }
     expect(findRawConfigFlags('Flag.String("project-id")')).toEqual([]);
   });
@@ -626,6 +627,7 @@ describe("target guard rules", () => {
     for (const name of ["local", "linked", "db-url", "project-id"]) {
       expect(findRawTargetFlags(`Flag.Boolean("${name}")`)).toHaveLength(1);
       expect(findRawTargetFlags(`x: Flag.String(\n  '${name}',\n)`)).toHaveLength(1);
+      expect(findRawTargetFlags(`cliFlag("${name}", Flag.Boolean`)).toHaveLength(1);
     }
     expect(findRawTargetFlags('Flag.String("project-ref")')).toEqual([]);
     expect(findRawTargetFlags('// Flag.Boolean("local")')).toEqual([]);

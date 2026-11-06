@@ -2,6 +2,8 @@ import { languages, type OptionSpec, type OptionValue, type OptionValues } from 
 import { Option } from "effect";
 import { Flag } from "effect/cli";
 
+import { cliFlag, type ParamType } from "../../../shared/cli/cli-params.ts";
+
 /** A user-facing registry option as one CLI flag, merged across the languages that declare it. */
 export interface LanguageFlagSpec {
   readonly name: string;
@@ -53,20 +55,24 @@ export const mergeUserOptions = (
   return [...byName.values()];
 };
 
-const languageFlag = (spec: LanguageFlagSpec): Flag.Flag<GenTypesLanguageFlagValue> => {
-  const help =
-    spec.default === undefined ? spec.help : `${spec.help} (default ${String(spec.default)})`;
+const languageFlagType = (spec: LanguageFlagSpec): ParamType<"flag", string | boolean> => {
   switch (spec.kind) {
     case "boolean":
-      return Flag.Boolean(spec.name).pipe(Flag.withDescription(help), Flag.optional);
+      return Flag.Boolean;
     case "choice":
-      return Flag.Literals(spec.name, spec.choices ?? []).pipe(
-        Flag.withDescription(help),
-        Flag.optional,
-      );
+      return (name) => Flag.Literals(name, spec.choices ?? []);
     case "string":
-      return Flag.String(spec.name).pipe(Flag.withDescription(help), Flag.optional);
+      return Flag.String;
   }
+};
+
+const languageFlag = (spec: LanguageFlagSpec): Flag.Flag<GenTypesLanguageFlagValue> => {
+  const shown = spec.default === undefined ? undefined : String(spec.default);
+  return cliFlag(spec.name, languageFlagType(spec), {
+    description: shown === undefined ? spec.help : `${spec.help} (default ${shown})`,
+    optional: true,
+    ...(shown === undefined ? {} : { docs: { default: shown } }),
+  });
 };
 
 /** Throws when a registry option reuses a flag name the command or the CLI already defines. */
@@ -100,16 +106,6 @@ export const optionValuesFor = (
   return values;
 };
 
-/** Documented defaults keyed the way `DOCS_DEFAULT_OVERRIDES` expects. */
-export const flagDefaultsFor = (
-  specs: ReadonlyArray<LanguageFlagSpec>,
-): Readonly<Record<string, string>> =>
-  Object.fromEntries(
-    specs.flatMap((spec) =>
-      spec.default === undefined ? [] : [[`supabase-gen-types ${spec.name}`, String(spec.default)]],
-    ),
-  );
-
 export const GEN_TYPES_LANGUAGES: ReadonlyArray<string> = languages.map(
   (language) => language.name,
 );
@@ -130,9 +126,6 @@ export const GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES: ReadonlyArray<string> =
 
 export const genTypesLanguageFlags = (reservedFlagNames: Iterable<string>) =>
   languageFlagsFor(GEN_TYPES_LANGUAGE_OPTIONS, reservedFlagNames);
-
-export const genTypesLanguageFlagDefaults = (): Readonly<Record<string, string>> =>
-  flagDefaultsFor(GEN_TYPES_LANGUAGE_OPTIONS);
 
 export const languageOptionValues = (flags: Readonly<Record<string, unknown>>): OptionValues =>
   optionValuesFor(GEN_TYPES_LANGUAGE_OPTIONS, flags);

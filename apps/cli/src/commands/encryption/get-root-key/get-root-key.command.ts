@@ -12,6 +12,7 @@ import { encryptionGetRootKey } from "./get-root-key.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -19,9 +20,17 @@ const config = {
 
 export type EncryptionGetRootKeyFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const encryptionGetRootKeyCommand = Command.make("get-root-key", config).pipe(
-  Command.withDescription("Get the root encryption key of a Supabase project"),
-  Command.withShortDescription("Get root encryption key"),
+export const encryptionGetRootKeyCommand = makeCommand("get-root-key", config).pipe(
+  Command.withDescription(
+    "Print the root encryption key of the project. Treat the output as a secret.",
+  ),
+  Command.withShortDescription("Get the root encryption key"),
+  Command.withExamples([
+    {
+      command: "supabase encryption get-root-key",
+      description: "Print the root encryption key of the linked project",
+    },
+  ]),
   withPermissions(
     compose(
       {

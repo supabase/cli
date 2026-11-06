@@ -12,23 +12,26 @@ import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-ru
 import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageRm } from "./rm.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  files: Argument.String("file").pipe(
-    Argument.withDescription("File paths to remove."),
-    Argument.variadic(),
-  ),
-  recursive: Flag.Boolean("recursive").pipe(
-    Flag.withAlias("r"),
-    Flag.withDescription("Recursively remove a directory."),
-    Flag.withDefault(false),
-  ),
+  files: cliArgument("file", repeated(Argument.String), {
+    description: "Paths of the objects to remove.",
+    docs: { required: true },
+  }),
+  recursive: cliFlag("recursive", Flag.Boolean, {
+    description: "Recursively remove a directory.",
+    alias: "r",
+    default: false,
+  }),
   ...storageTargetFlags,
 } as const;
 
-export const storageRmCommand = Command.make("rm", config).pipe(
-  Command.withDescription("Remove objects by file path."),
-  Command.withShortDescription("Remove objects by file path"),
+export const storageRmCommand = makeCommand("rm", config).pipe(
+  Command.withDescription(
+    "Remove one or more objects from Storage. Pass `-r` to remove directories.\n\nThe command asks for confirmation before deleting. Requires the `--experimental` flag.",
+  ),
+  Command.withShortDescription("Remove objects from Storage"),
   Command.withExamples([
     {
       command: "supabase storage rm -r ss:///bucket/docs",

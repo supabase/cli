@@ -13,40 +13,38 @@ import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand, repeated } from "../../../../../shared/cli/cli-params.ts";
 
 const config = {
-  schema: Flag.String("schema").pipe(
-    Flag.withAlias("s"),
-    Flag.withDescription("Comma separated list of schema to include."),
-    Flag.atLeast(0),
-    // CSV-splits each occurrence so `-s public,auth` includes the two schemas separately, same
-    // as `gen types`/`db lint`'s quoted-comma parsing.
-    Flag.mapTryCatch(
+  schema: cliFlag("schema", repeated(Flag.String, { min: 0 }), {
+    description: "Comma-separated list of schemas to include.",
+    alias: "s",
+    parse: Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
-  ),
-  file: Flag.String("file").pipe(
-    Flag.withAlias("f"),
-    Flag.withDescription("Saves schema diff to a new migration file."),
-    Flag.optional,
-  ),
-  name: Flag.String("name").pipe(
-    Flag.withDescription("Name for the generated migration file."),
-    Flag.optional,
-  ),
+  }),
+  file: cliFlag("file", Flag.String, {
+    description: "Name for the new migration file, used when --name is not set.",
+    alias: "f",
+    optional: true,
+    docs: { default: "declarative_sync" },
+  }),
+  name: cliFlag("name", Flag.String, {
+    description: "Name for the new migration file.",
+    optional: true,
+  }),
   // Mutually exclusive with `--no-apply`, keyed off presence not value, so model with `Option`
   // so `--apply=false --no-apply` still trips the conflict.
-  apply: Flag.Boolean("apply").pipe(
-    Flag.withDescription("Apply the generated migration to the local database without prompting."),
-    Flag.optional,
-  ),
-  noApply: Flag.Boolean("no-apply").pipe(
-    Flag.withDescription(
-      "Generate the migration file without prompting or applying it to the local database.",
-    ),
-    Flag.optional,
-  ),
+  apply: cliFlag("apply", Flag.Boolean, {
+    description: "Apply the new migration to the local database without asking.",
+    optional: true,
+  }),
+  noApply: cliFlag("no-apply", Flag.Boolean, {
+    description:
+      "Write the migration file without asking and without applying it to the local database.",
+    optional: true,
+  }),
 } as const;
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
@@ -56,11 +54,11 @@ export type DbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeo
   readonly strictCoverage: boolean;
 };
 
-export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
+export const dbSchemaDeclarativeSyncCommand = makeCommand("sync", config).pipe(
   Command.withDescription(
-    "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
+    "Compare the migrations baseline with your declarative schema files and write the difference as a new migration. When a legacy export omits known implicit extensions, an interactive run can add their declarations and re-plan before writing. Pass --no-apply to only write the file, or --apply or --yes to also apply it to the local database and update its migration history.",
   ),
-  Command.withShortDescription("Generate a new migration from declarative schema"),
+  Command.withShortDescription("Generate a migration from declarative schema"),
   withPermissions(
     compose({
       operations: [],

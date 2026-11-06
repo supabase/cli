@@ -16,6 +16,7 @@ import {
 import { stackStartCommand } from "../commands/experimental/stack/start/start.command.ts";
 import { stackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
+import { withGlobalParams } from "../shared/cli/cli-params.ts";
 import type { StackBackend } from "../command-internal/stack-backend.ts";
 import { isFunctionsServePath, stackBackendLayer } from "../command-internal/stack-backend.ts";
 import type { ExperimentalFeatureFlagError } from "../shared/config/experimental-feature.ts";
@@ -130,15 +131,15 @@ export const stackStatusAliasCommand = stackStatusCommand.pipe(
 export function rootDescription(version: string): string {
   switch (cliBuildChannel(version)) {
     case "stable":
-      return "Supabase CLI.";
+      return "Develop locally and manage hosted Supabase projects from the terminal.";
     case "beta":
-      return "Supabase CLI (beta channel).";
+      return "Develop locally and manage hosted Supabase projects from the terminal (beta channel).";
     case "next":
-      return "Supabase CLI (next channel).";
+      return "Develop locally and manage hosted Supabase projects from the terminal (next channel).";
     case "preview":
-      return "Supabase CLI (preview build).";
+      return "Develop locally and manage hosted Supabase projects from the terminal (preview build).";
     case "development":
-      return "Supabase CLI (development build).";
+      return "Develop locally and manage hosted Supabase projects from the terminal (development build).";
   }
 }
 
@@ -246,7 +247,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
         }),
       ),
     ),
-    Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
+    withGlobalParams(ROOT_GLOBAL_FLAGS),
   ) satisfies CliRootCommand;
 
 /** Pairs the root with the agent default `runCli` applies before this root parses. */

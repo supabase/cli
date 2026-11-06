@@ -15,6 +15,7 @@ import { branchesUpdate } from "./update.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const BRANCH_STATUSES = [
   "RUNNING_MIGRATIONS",
@@ -25,37 +26,52 @@ const BRANCH_STATUSES = [
 ] as const;
 
 const config = {
-  branchId: Argument.String("name").pipe(
-    Argument.withDescription("Branch name or ID to update."),
-    Argument.optional,
-  ),
+  branchId: cliArgument("name", Argument.String, {
+    description: "Name or ID of the branch to update.",
+    optional: true,
+  }),
   ...projectTargetFlags({ parent: true }),
-  name: Flag.String("name").pipe(Flag.withDescription("Rename the preview branch."), Flag.optional),
-  gitBranch: Flag.String("git-branch").pipe(
-    Flag.withDescription("Change the associated git branch."),
-    Flag.optional,
-  ),
+  name: cliFlag("name", Flag.String, {
+    description: "New name for the preview branch.",
+    optional: true,
+  }),
+  gitBranch: cliFlag("git-branch", Flag.String, {
+    description: "New git branch to associate with the preview branch.",
+    optional: true,
+  }),
   // Optional so the handler can distinguish "explicit false" (demote to
   // ephemeral) from "absent".
-  persistent: Flag.Boolean("persistent").pipe(
-    Flag.withDescription("Switch between ephemeral and persistent branch."),
-    Flag.optional,
-  ),
-  status: Flag.Literals("status", BRANCH_STATUSES).pipe(
-    Flag.withDescription("Override the current branch status."),
-    Flag.optional,
-  ),
-  notifyUrl: Flag.String("notify-url").pipe(
-    Flag.withDescription("URL to notify when branch is active healthy."),
-    Flag.optional,
-  ),
+  persistent: cliFlag("persistent", Flag.Boolean, {
+    description: "Switch the branch between ephemeral and persistent.",
+    optional: true,
+  }),
+  status: cliFlag("status", (name) => Flag.Literals(name, BRANCH_STATUSES), {
+    description: "Override the current branch status.",
+    optional: true,
+  }),
+  notifyUrl: cliFlag("notify-url", Flag.String, {
+    description: "URL to notify when the branch is active and healthy.",
+    optional: true,
+  }),
 } as const;
 
 export type BranchesUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const branchesUpdateCommand = Command.make("update", config).pipe(
-  Command.withDescription("Update a preview branch by its name or ID."),
+export const branchesUpdateCommand = makeCommand("update", config).pipe(
+  Command.withDescription(
+    "Rename a preview branch, change its git branch or notify URL, or switch it between ephemeral and persistent.\n\nAsks for confirmation before changing anything; pass `--yes` in scripts and CI.",
+  ),
   Command.withShortDescription("Update a preview branch"),
+  Command.withExamples([
+    {
+      command: "supabase branches update my-branch --name renamed-branch",
+      description: "Rename a preview branch",
+    },
+    {
+      command: "supabase branches update my-branch --persistent",
+      description: "Switch a branch between ephemeral and persistent",
+    },
+  ]),
   withPermissions(
     compose(
       {

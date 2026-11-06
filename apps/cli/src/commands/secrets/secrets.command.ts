@@ -4,7 +4,9 @@ import { secretsSetCommand } from "./set/set.command.ts";
 import { secretsUnsetCommand } from "./unset/unset.command.ts";
 
 export const secretsCommand = Command.make("secrets").pipe(
-  Command.withDescription("Manage Supabase secrets."),
-  Command.withShortDescription("Manage Supabase secrets"),
+  Command.withDescription(
+    "Set, unset and list the secrets that Edge Functions read as environment variables.",
+  ),
+  Command.withShortDescription("Manage Edge Function secrets"),
   Command.withSubcommands([secretsListCommand, secretsSetCommand, secretsUnsetCommand]),
 );

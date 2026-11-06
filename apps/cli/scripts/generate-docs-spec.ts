@@ -1,38 +1,55 @@
 /**
- * Emits the `clispec 001` CLI reference document for the supabase.com docs site from the Effect
+ * Emits the `clispec 002` CLI reference document for the supabase.com docs site from the Effect
  * command tree plus the content under `apps/cli/docs/`. Run as
- * `bun scripts/generate-docs-spec.ts [version] > cli_v1_commands.yaml`; only the spec YAML goes
- * to stdout, diagnostics go to stderr.
+ * `bun scripts/generate-docs-spec.ts [version] [--prerelease] [--sections <file>] > cli_v3_commands.yaml`;
+ * only the spec YAML goes to stdout, diagnostics go to stderr. `--major <n>` picks the CLI major
+ * the spec documents; it defaults to the version's major, or 3 for `latest`. `--sections` also writes the sidebar sections JSON to `<file>`.
  *
  * The version defaults to `latest` (a leading `v` is stripped); the workspace `package.json`
  * version is a semantic-release placeholder and is never used here.
  */
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Path } from "effect";
+import { Console, Effect, FileSystem } from "effect";
 import process from "node:process";
-import { readDocsContent } from "../src/docs/docs-spec.content.ts";
-import { buildDocsSpec, stringifyDocsSpec } from "../src/docs/docs-spec.ts";
-import { rootCommand } from "../src/cli/root.ts";
+import { parseArgs } from "node:util";
+import { stringifyDocsSections, stringifyDocsSpec } from "../src/docs/docs-spec.ts";
+import { loadDocsBundle } from "./docs-bundle.ts";
+
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    prerelease: { type: "boolean", default: false },
+    sections: { type: "string" },
+    major: { type: "string" },
+  },
+});
 
 function resolveVersion(): string {
-  const argument = process.argv[2];
+  const argument = positionals[0];
   if (argument === undefined || argument === "") return "latest";
   return argument.startsWith("v") ? argument.slice(1) : argument;
 }
 
-const content = await Effect.runPromise(
-  Path.Path.pipe(
-    Effect.flatMap((path) => readDocsContent(path.resolve(import.meta.dir, "../docs"))),
+await Effect.runPromise(
+  Effect.gen(function* () {
+    const majorArgument = values.major ?? /^\d+/.exec(resolveVersion())?.[0] ?? "3";
+    const major = Number(majorArgument);
+    if (!Number.isInteger(major) || major < 1) {
+      yield* Console.error(`--major must be a positive integer such as 3, got "${majorArgument}".`);
+      return yield* Effect.sync(() => process.exit(1));
+    }
+    const bundle = yield* loadDocsBundle({
+      version: resolveVersion(),
+      prerelease: values.prerelease,
+      major,
+    });
+    if (values.sections !== undefined) {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(values.sections, stringifyDocsSections(bundle.sections));
+    }
+    process.stdout.write(stringifyDocsSpec(bundle.spec));
+  }).pipe(
     Effect.provide(BunServices.layer),
     Effect.mapError((error) => error.cause ?? error),
   ),
 );
-
-const spec = buildDocsSpec({
-  root: rootCommand,
-  version: resolveVersion(),
-  overlays: content.overlays,
-  examples: content.examples,
-});
-
-process.stdout.write(stringifyDocsSpec(spec));

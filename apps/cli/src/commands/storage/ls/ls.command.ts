@@ -12,24 +12,27 @@ import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-ru
 import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageLs } from "./ls.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  path: Argument.String("path").pipe(
-    Argument.withDescription("Storage path to list (e.g. ss:///bucket/docs)."),
-    Argument.optional,
-  ),
-  recursive: Flag.Boolean("recursive").pipe(
-    Flag.withAlias("r"),
-    Flag.withDescription("Recursively list a directory."),
-    Flag.withDefault(false),
-  ),
+  path: cliArgument("path", Argument.String, {
+    description: "Storage path to list, such as `ss:///bucket/docs`.",
+    optional: true,
+  }),
+  recursive: cliFlag("recursive", Flag.Boolean, {
+    description: "Recursively list a directory.",
+    alias: "r",
+    default: false,
+  }),
   ...storageTargetFlags,
 } as const;
 
 export type StorageLsFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const storageLsCommand = Command.make("ls", config).pipe(
-  Command.withDescription("List objects by path prefix."),
+export const storageLsCommand = makeCommand("ls", config).pipe(
+  Command.withDescription(
+    "List the objects under a Storage path such as `ss:///bucket/docs`. Without a path, it lists all buckets.\n\nRequires the `--experimental` flag.",
+  ),
   Command.withShortDescription("List objects by path prefix"),
   Command.withExamples([
     {

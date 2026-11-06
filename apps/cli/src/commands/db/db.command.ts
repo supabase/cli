@@ -14,7 +14,9 @@ import { dbRemoteCommand } from "./remote/remote.command.ts";
 import { dbSchemaCommand } from "./schema/schema.command.ts";
 
 export const dbCommand = Command.make("db").pipe(
-  Command.withDescription("Manage Postgres databases."),
+  Command.withDescription(
+    "Work with the Postgres database of your local stack or a hosted project: diff and pull schema changes, push migrations, dump data, lint, query, and reset.",
+  ),
   Command.withShortDescription("Manage databases"),
   Command.withSubcommands([
     dbDiffCommand,

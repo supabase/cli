@@ -18,25 +18,34 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { vanitySubdomainsActivate } from "./activate.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
   // Optional at parse time so the --experimental gate, login check, and project-ref
   // resolution all run first; required-ness is enforced in the handler after ref
   // resolution.
-  desiredSubdomain: Flag.String("desired-subdomain").pipe(
-    Flag.withDescription("The desired vanity subdomain to use for your Supabase project."),
-    Flag.optional,
-  ),
+  desiredSubdomain: cliFlag("desired-subdomain", Flag.String, {
+    description: "The vanity subdomain to use for the project.",
+    optional: true,
+    docs: { required: true },
+  }),
 } as const;
 
 export type VanitySubdomainsActivateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const vanitySubdomainsActivateCommand = Command.make("activate", config).pipe(
+export const vanitySubdomainsActivateCommand = makeCommand("activate", config).pipe(
   Command.withDescription(
-    "Activate a vanity subdomain for your Supabase project. This reconfigures your Supabase project to respond to requests on your vanity subdomain. After the vanity subdomain is activated, your project's auth services will no longer function on the {project-ref}.{supabase-domain} hostname.",
+    "Makes your project respond to requests on the vanity subdomain you choose. After activation, your project's auth services no longer work on the `{project-ref}.{supabase-domain}` hostname.",
   ),
   Command.withShortDescription("Activate a vanity subdomain"),
+  Command.withExamples([
+    {
+      command:
+        "supabase vanity-subdomains activate --desired-subdomain my-app --experimental --remote=<project-ref>",
+      description: "Activate a vanity subdomain for a project",
+    },
+  ]),
   withPermissions(
     compose(
       {

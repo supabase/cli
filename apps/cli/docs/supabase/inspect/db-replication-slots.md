@@ -1,8 +1,8 @@
 # db-replication-slots
 
-This command shows information about [logical replication slots](https://www.postgresql.org/docs/current/logical-replication.html) that are setup on the database. It shows if the slot is active, the state of the WAL sender process ('startup', 'catchup', 'streaming', 'backup', 'stopping') the replication client address and the replication lag in GB.
+Show the [logical replication slots](https://www.postgresql.org/docs/current/logical-replication.html) on the database. For each slot it shows whether it is active, the state of the WAL sender process (`startup`, `catchup`, `streaming`, `backup` or `stopping`), the client address, and the replication lag in GB.
 
-This command is useful to check that the amount of replication lag is as low as possible, replication lag can occur due to network latency issues, slow disk I/O, long running transactions or lack of ability for the subscriber to consume WAL fast enough.
+Use it to check that replication lag stays low. Lag can come from network latency, slow disk I/O, long-running transactions, or a subscriber that cannot consume WAL fast enough.
 
 ```
                        NAME                    │ ACTIVE │ STATE   │ REPLICATION CLIENT ADDRESS │ REPLICATION LAG GB

@@ -19,6 +19,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -26,9 +27,15 @@ const config = {
 
 export type PostgresConfigGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const postgresConfigGetCommand = Command.make("get", config).pipe(
-  Command.withDescription("Get the current Postgres database config overrides."),
+export const postgresConfigGetCommand = makeCommand("get", config).pipe(
+  Command.withDescription("Shows the custom Postgres settings you have set for your project."),
   Command.withShortDescription("Get Postgres database config"),
+  Command.withExamples([
+    {
+      command: "supabase postgres-config get --experimental --remote=<project-ref>",
+      description: "Show the Postgres config overrides of a project",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [] },

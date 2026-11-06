@@ -1,8 +1,10 @@
 # db-toast-sizes
 
-This command displays TOAST table sizes and dead chunk counts for every ordinary user table that has a TOAST relation (materialized views and partitioned parents are not listed). When a row exceeds ~2 kB, Postgres compresses and/or moves its largest variable-length values (TEXT, JSONB, bytea) out-of-line into a companion TOAST table. TOAST Size includes the TOAST index; Total Size also includes the table's own indexes. Autovacuum runs on the TOAST table independently from the main heap, so it can accumulate dead chunks even when the parent table looks healthy by its own dead-tuple count.
+Show TOAST table sizes and dead chunk counts for each ordinary user table that has a TOAST relation. Materialized views and partitioned parents are not listed.
 
-A table that appears fine by `vacuum-stats` or `bloat` alone can still have significant TOAST bloat that wastes disk space and slows reads. High `TOAST Dead %` values indicate that autovacuum is not keeping up with the TOAST table and a manual `VACUUM` may be needed.
+When a row exceeds about 2 kB, Postgres compresses or moves its largest variable-length values (such as `text`, `jsonb` and `bytea`) into a companion TOAST table. TOAST Size includes the TOAST index, and Total Size also includes the table's own indexes.
+
+Autovacuum runs on the TOAST table separately from the main heap, so a table that looks healthy in `vacuum-stats` or `bloat` can still have TOAST bloat. A high `TOAST Dead %` means autovacuum is not keeping up, and you may need to run `VACUUM` manually.
 
 ```
          TABLE          │ TOTAL SIZE │ HEAP SIZE │ TOAST SIZE │ TOAST LIVE CHUNKS │ TOAST DEAD CHUNKS │ TOAST DEAD % │  LAST AUTOVACUUM   │ LAST VACUUM

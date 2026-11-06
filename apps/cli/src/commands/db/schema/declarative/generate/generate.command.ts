@@ -23,42 +23,40 @@ import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.la
 import { branchResolution } from "../../../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand, repeated } from "../../../../../shared/cli/cli-params.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
-  overwrite: Flag.Boolean("overwrite").pipe(
-    Flag.withDescription("Overwrite declarative schema files without confirmation."),
-    Flag.withDefault(false),
-  ),
+  overwrite: cliFlag("overwrite", Flag.Boolean, {
+    description: "Overwrite existing declarative schema files without asking.",
+    default: false,
+  }),
   // Not named `--output`/`-o`: that's reserved for the global machine-format flag
   // (`OutputFlag`), and a leaf string flag would shadow it — `generate -o json` would write a
   // directory literally named `json` instead of requesting JSON output.
-  outputDir: Flag.String("output-dir").pipe(
-    Flag.withDescription(
-      "Write the generated declarative schema to this directory without changing the configured declarative schema path.",
-    ),
-    Flag.optional,
-  ),
-  reset: Flag.Boolean("reset").pipe(
-    Flag.withDescription("Reset local database before generating (local data will be lost)."),
-    Flag.withDefault(false),
-  ),
-  schema: Flag.String("schema").pipe(
-    Flag.withAlias("s"),
-    Flag.withDescription("Comma separated list of schema to include."),
-    Flag.atLeast(0),
-    // CSV-splits each occurrence so `-s public,auth` includes the two schemas separately, same
-    // as `gen types`/`db lint`'s quoted-comma parsing.
-    Flag.mapTryCatch(
+  outputDir: cliFlag("output-dir", Flag.String, {
+    description:
+      "Write the generated declarative schema to this directory instead of the configured declarative schema path.",
+    optional: true,
+  }),
+  reset: cliFlag("reset", Flag.Boolean, {
+    description:
+      "Reset the local database from your migrations before generating, which discards local data.",
+    default: false,
+  }),
+  schema: cliFlag("schema", repeated(Flag.String, { min: 0 }), {
+    description: "Comma-separated list of schemas to include.",
+    alias: "s",
+    parse: Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
-  ),
+  }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description:
-      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+      "Database password for the project selected with --remote; ignored for the local database and database URLs.",
   }),
 } as const;
 
@@ -69,11 +67,21 @@ export type DbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<t
   readonly strictCoverage: boolean;
 };
 
-export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
+export const dbSchemaDeclarativeGenerateCommand = makeCommand("generate", config).pipe(
   Command.withDescription(
-    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. Generates from the local database unless --remote selects another.",
+    "Export the schema of a live database as a complete tree of declarative SQL files, the starting point for declarative mode. It replaces declarative files only and does not create migrations or update migration history. It exports from the local database unless --remote selects another.",
   ),
   Command.withShortDescription("Generate declarative schema from a database"),
+  Command.withExamples([
+    {
+      command: "supabase db schema declarative generate",
+      description: "Export the local database as declarative schema files",
+    },
+    {
+      command: "supabase db schema declarative generate --remote --overwrite",
+      description: "Replace the declarative files with the schema of the linked project",
+    },
+  ]),
   withPermissions(
     compose(
       {

@@ -16,6 +16,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPush } from "./push.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -31,11 +32,11 @@ const configPushHandler = (flags: ConfigPushFlags) =>
     withJsonErrorHandling,
   );
 
-export const configPushCommand = Command.make("push", config).pipe(
+export const configPushCommand = makeCommand("push", config).pipe(
   Command.withDescription(
-    "Pushes the properties your local config file declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview. Shows the exact diff for every changed resource, then asks once before anything is written (the default answer is no). Piped answers are not read: non-interactive and JSON runs need --yes or a SUPABASE_YES set in the shell. Run `supabase config diff` first to review the changes.",
+    "Update the linked project, or one of its branches, with the properties your local config file declares. Properties the file does not declare are left unchanged.\n\nIt shows the diff for every changed resource, then asks once before writing anything. Run `supabase config diff` first to preview the changes.",
   ),
-  Command.withShortDescription("Push local config to linked project"),
+  Command.withShortDescription("Push local config to a project"),
   Command.withExamples([
     {
       command: "supabase config push",

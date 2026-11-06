@@ -14,6 +14,7 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 /**
  * `db query` needs its own `--output`/`-o` (`json|table|csv`), but Effect CLI keeps one global
@@ -22,29 +23,44 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
  * defaults by agent mode (JSON for agents, table for humans) when unset. See SIDE_EFFECTS.md.
  */
 const config = {
-  sql: Argument.String("sql").pipe(
-    Argument.withDescription("SQL query to execute."),
-    Argument.optional,
-  ),
+  sql: cliArgument("sql", Argument.String, {
+    description: "SQL statement to execute.",
+    optional: true,
+  }),
   ...targetFlags({ subject: "database", dbUrl: true }),
-  file: Flag.String("file").pipe(
-    Flag.withAlias("f"),
-    Flag.withDescription("Path to a SQL file to execute."),
-    Flag.optional,
-  ),
-  readOnly: Flag.Boolean("read-only").pipe(
-    Flag.withDescription(
-      "Runs the statement in a read-only transaction; a hosted target needs no confirmation.",
-    ),
-    Flag.withDefault(false),
-  ),
+  file: cliFlag("file", Flag.String, {
+    description: "Path to a SQL file to execute.",
+    alias: "f",
+    optional: true,
+  }),
+  readOnly: cliFlag("read-only", Flag.Boolean, {
+    description:
+      "Run the statement in a read-only transaction; a hosted target needs no confirmation.",
+    default: false,
+  }),
 } as const;
 
 export type DbQueryFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const dbQueryCommand = Command.make("query", config).pipe(
-  Command.withDescription("Execute a SQL query against the database."),
-  Command.withShortDescription("Execute a SQL query against the database"),
+export const dbQueryCommand = makeCommand("query", config).pipe(
+  Command.withDescription(
+    "Run a SQL statement, passed inline or from a file, and print the result. Use it for quick checks and scripts without a separate Postgres client.",
+  ),
+  Command.withShortDescription("Run a SQL query against a database"),
+  Command.withExamples([
+    {
+      command: 'supabase db query "select count(*) from auth.users"',
+      description: "Run a query against the local database",
+    },
+    {
+      command: 'supabase db query --remote --read-only "select now()"',
+      description: "Run a read-only query against the linked project",
+    },
+    {
+      command: "supabase db query --file ./report.sql",
+      description: "Run the statements in a SQL file",
+    },
+  ]),
   withPermissions(
     compose(
       {

@@ -12,6 +12,7 @@ import { branchesCreate } from "./create.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const BRANCH_REGIONS = [
   "ap-east-1",
@@ -56,44 +57,56 @@ const BRANCH_SIZES = [
 ] as const;
 
 const config = {
-  name: Argument.String("name").pipe(
-    Argument.withDescription("Name for the new branch."),
-    Argument.optional,
-  ),
+  name: cliArgument("name", Argument.String, {
+    description: "Name for the new branch.",
+    optional: true,
+  }),
   ...projectTargetFlags({ parent: true }),
-  region: Flag.Literals("region", BRANCH_REGIONS).pipe(
-    Flag.withDescription("Select a region to deploy the branch database."),
-    Flag.optional,
-  ),
-  size: Flag.Literals("size", BRANCH_SIZES).pipe(
-    Flag.withDescription("Select a desired instance size for the branch database."),
-    Flag.optional,
-  ),
+  region: cliFlag("region", (name) => Flag.Literals(name, BRANCH_REGIONS), {
+    description: "Region to deploy the branch database in.",
+    optional: true,
+  }),
+  size: cliFlag("size", (name) => Flag.Literals(name, BRANCH_SIZES), {
+    description: "Instance size of the branch database.",
+    optional: true,
+  }),
   // Optional so the handler can distinguish "flag explicitly set false" from "flag absent":
   // `--persistent`/`--no-persistent` set `Option.some(true|false)`; absent stays `Option.none()`.
-  persistent: Flag.Boolean("persistent").pipe(
-    Flag.withDescription("Whether to create a persistent branch."),
-    Flag.optional,
-  ),
-  withData: Flag.Boolean("with-data").pipe(
-    Flag.withDescription("Whether to clone production data to the branch database."),
-    Flag.optional,
-  ),
-  notifyUrl: Flag.String("notify-url").pipe(
-    Flag.withDescription("URL to notify when branch is active healthy."),
-    Flag.optional,
-  ),
-  gitBranch: Flag.String("git-branch").pipe(
-    Flag.withDescription("Associate a git branch with the new preview branch."),
-    Flag.optional,
-  ),
+  persistent: cliFlag("persistent", Flag.Boolean, {
+    description: "Create a persistent branch instead of an ephemeral one.",
+    optional: true,
+  }),
+  withData: cliFlag("with-data", Flag.Boolean, {
+    description: "Clone production data into the branch database.",
+    optional: true,
+  }),
+  notifyUrl: cliFlag("notify-url", Flag.String, {
+    description: "URL to notify when the branch is active and healthy.",
+    optional: true,
+  }),
+  gitBranch: cliFlag("git-branch", Flag.String, {
+    description: "Git branch to associate with the new preview branch.",
+    optional: true,
+  }),
 } as const;
 
 export type BranchesCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const branchesCreateCommand = Command.make("create", config).pipe(
-  Command.withDescription("Create a preview branch for the linked project."),
+export const branchesCreateCommand = makeCommand("create", config).pipe(
+  Command.withDescription(
+    "Create a preview branch of the linked project, optionally tied to a git branch.\n\nPass `--with-data` to clone production data into the branch database.",
+  ),
   Command.withShortDescription("Create a preview branch"),
+  Command.withExamples([
+    {
+      command: "supabase branches create my-branch",
+      description: "Create a preview branch",
+    },
+    {
+      command: "supabase branches create my-branch --git-branch feature/login --persistent",
+      description: "Create a persistent branch tied to a git branch",
+    },
+  ]),
   withPermissions(
     compose(
       {

@@ -6,13 +6,17 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryEnable } from "./enable.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {};
 export type TelemetryEnableFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const telemetryEnableCommand = Command.make("enable", config).pipe(
-  Command.withDescription("Enable CLI telemetry."),
-  Command.withShortDescription("Enable telemetry"),
+export const telemetryEnableCommand = makeCommand("enable", config).pipe(
+  Command.withDescription("Turn on anonymous CLI usage telemetry for this machine."),
+  Command.withShortDescription("Enable CLI telemetry"),
+  Command.withExamples([
+    { command: "supabase telemetry enable", description: "Turn telemetry on" },
+  ]),
   withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
     // `cli_command_executed` fires based on the consent value read at layer-construction

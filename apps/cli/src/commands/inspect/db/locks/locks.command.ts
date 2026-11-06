@@ -10,10 +10,21 @@ import {
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { makeCommand } from "../../../../shared/cli/cli-params.ts";
 
-export const inspectDbLocksCommand = Command.make("locks", INSPECT_DB_FLAGS).pipe(
+export const inspectDbLocksCommand = makeCommand("locks", INSPECT_DB_FLAGS).pipe(
   Command.withDescription("Show queries which have taken out an exclusive lock on a relation."),
   Command.withShortDescription("Show exclusive locks"),
+  Command.withExamples([
+    {
+      command: "supabase inspect db locks",
+      description: "Show exclusive locks on the local database",
+    },
+    {
+      command: "supabase inspect db locks --remote",
+      description: "Show exclusive locks on the linked project",
+    },
+  ]),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbLocks)),
   Command.provide(inspectDbRuntimeLayer("locks")),

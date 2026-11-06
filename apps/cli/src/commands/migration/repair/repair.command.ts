@@ -14,27 +14,30 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  versions: Argument.String("version").pipe(
-    Argument.withDescription("Migration version(s) to repair."),
-    Argument.variadic(),
-  ),
-  status: Flag.Literals("status", ["applied", "reverted"] as const).pipe(
-    Flag.withDescription("Version status to update."),
-  ),
+  versions: cliArgument("version", repeated(Argument.String), {
+    description: "Migration versions to mark with the given status.",
+  }),
+  status: cliFlag("status", (name) => Flag.Literals(name, ["applied", "reverted"] as const), {
+    description: "Status to record for the given migration versions.",
+    required: true,
+  }),
   ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description:
-      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+      "Database password for the project selected with --remote; ignored for the local database and database URLs.",
   }),
 } as const;
 
-export const migrationRepairCommand = Command.make("repair", config).pipe(
-  Command.withDescription("Repair the migration history table."),
-  Command.withShortDescription("Repair the migration history table"),
+export const migrationRepairCommand = makeCommand("repair", config).pipe(
+  Command.withDescription(
+    "Mark migrations as applied or reverted in the migration history table, without running them. Use it when the local files and the history of a database are out of sync.",
+  ),
+  Command.withShortDescription("Repair the migration history"),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["status"] },

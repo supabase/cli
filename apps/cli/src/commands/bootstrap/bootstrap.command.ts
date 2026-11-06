@@ -17,24 +17,42 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { cliArgument, makeCommand } from "../../shared/cli/cli-params.ts";
 
 const config = {
-  template: Argument.String("template").pipe(
-    Argument.withDescription("Name of the starter template to bootstrap from."),
-    Argument.optional,
-  ),
+  template: cliArgument("template", Argument.String, {
+    description: "Name of the starter template to start from.",
+    optional: true,
+  }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
-    description: "Password to your remote Postgres database.",
+    description: "Password for the new project's Postgres database.",
   }),
 } as const;
 
 export type BootstrapFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const bootstrapCommand = Command.make("bootstrap", config).pipe(
-  Command.withDescription("Bootstrap a Supabase project from a starter template."),
-  Command.withShortDescription("Bootstrap a Supabase project from a starter template"),
+export const bootstrapCommand = makeCommand("bootstrap", config).pipe(
+  Command.withDescription(
+    "Create a new hosted Supabase project from a starter template and link it to a local directory. " +
+      "Use it to go from nothing to a running project with one command.\n\n" +
+      "The command prompts for a working directory, downloads the template, creates the project, links it, " +
+      "writes its connection settings to `.env`, and pushes the template's migrations. " +
+      "It logs you in first if needed.\n\n" +
+      "Creating a project is a hosted change, so the command asks for confirmation before it starts.",
+  ),
+  Command.withShortDescription("Create a project from a starter template"),
+  Command.withExamples([
+    {
+      command: "supabase bootstrap",
+      description: "Pick a starter template interactively",
+    },
+    {
+      command: "supabase bootstrap my-template",
+      description: "Bootstrap from a named starter template",
+    },
+  ]),
   withPermissions(
     compose(
       {

@@ -1,5 +1,6 @@
-import { Argument, Command, Flag, Param } from "effect/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withDocs } from "../../../docs/command-docs.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
   compose,
@@ -36,33 +37,33 @@ import {
   targetFlags,
 } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
   projectId: deprecatedProjectIdFlag,
-  lang: Flag.Literals("lang", GEN_TYPES_LANGUAGES).pipe(
-    Flag.withDescription("Output language of the generated types. (default typescript)"),
-    Flag.withDefault("typescript"),
-  ),
-  schema: Flag.String("schema").pipe(
-    Flag.withAlias("s"),
-    Flag.withDescription("Comma separated list of schema to include."),
-    Flag.atLeast(0),
-    Flag.mapTryCatch(
+  lang: cliFlag("lang", (name) => Flag.Literals(name, GEN_TYPES_LANGUAGES), {
+    description: "Output language of the generated types. (default typescript)",
+    default: "typescript",
+  }),
+  schema: cliFlag("schema", repeated(Flag.String, { min: 0 }), {
+    description: "Comma-separated list of schemas to include.",
+    alias: "s",
+    parse: Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
-  ),
+  }),
   // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints the deprecation line.
-  postgrestV9Compat: Flag.Boolean("postgrest-v9-compat").pipe(
-    Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
-    Flag.withHidden,
-    Flag.withDefault(false),
-  ),
-  queryTimeout: Flag.String("query-timeout").pipe(
-    Flag.withDescription("Maximum timeout allowed for the database query. (default 15s)"),
-    Flag.withDefault("15s"),
-  ),
+  postgrestV9Compat: cliFlag("postgrest-v9-compat", Flag.Boolean, {
+    description: "Generate types compatible with PostgREST v9 and below.",
+    default: false,
+    hidden: true,
+  }),
+  queryTimeout: cliFlag("query-timeout", Flag.String, {
+    description: "Maximum timeout allowed for the database query. (default 15s)",
+    default: "15s",
+  }),
 } as const;
 
 /** Every flag name `gen types` already answers to: its own, the globals, and Effect's built-ins. */
@@ -94,7 +95,7 @@ const flagsConfig = { ...config, ...genTypesLanguageFlags(GEN_TYPES_RESERVED_FLA
 
 const commandConfig = {
   ...flagsConfig,
-  language: Argument.String("language").pipe(Argument.optional, Param.withHidden),
+  language: cliArgument("language", Argument.String, { optional: true, hidden: true }),
 } as const;
 
 /** The registry's language flags are only known at runtime; read them through `languageOptionValues`. */
@@ -117,9 +118,12 @@ const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof commandCo
     withJsonErrorHandling,
   );
 
-export const genTypesCommand = Command.make("types", commandConfig).pipe(
-  Command.withDescription("Generate types from Postgres schema."),
+export const genTypesCommand = makeCommand("types", commandConfig).pipe(
+  Command.withDescription(
+    "Generate typed definitions for the tables, views and functions in your Postgres schema, so your code gets type safety and autocompletion.",
+  ),
   Command.withShortDescription("Generate types from Postgres schema"),
+  withDocs({ category: "generate-types" }),
   Command.withExamples([
     {
       command: "supabase gen types",

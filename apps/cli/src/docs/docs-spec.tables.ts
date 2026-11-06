@@ -1,10 +1,11 @@
+import type { DocsCategory } from "./command-docs.ts";
 import type { DocsFlag } from "./docs-spec.ts";
-import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
 /**
- * Static data the Effect command tree cannot express structurally: docs-site section tags,
- * `--experimental`-required leaves, deprecated commands, and flag defaults that
- * `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
+ * Static data for commands not yet migrated to `withDocs`: docs-site section tags, sidebar
+ * categories, `--experimental`-required leaves and deprecated commands, plus the few flag facts
+ * the parser config cannot carry. `buildDocsSpec` fails the build on stale keys and on a command
+ * described both here and by `withDocs`.
  */
 
 export interface DocsInfoTag {
@@ -63,6 +64,52 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-whoami": ["management-api"],
 };
 
+/**
+ * Sidebar category per top-level command without `withDocs`; descendants inherit it unless they
+ * declare their own.
+ */
+export const DOCS_CATEGORY: Readonly<Record<string, DocsCategory>> = {
+  "supabase-backups": "backups",
+  "supabase-bootstrap": "general",
+  "supabase-branches": "branches",
+  "supabase-completion": "autocompletion-scripts",
+  "supabase-config": "config",
+  "supabase-db": "database",
+  "supabase-domains": "custom-domains",
+  "supabase-encryption": "encryption",
+  "supabase-feedback": "feedback",
+  "supabase-functions": "edge-functions",
+  "supabase-gen": "generate-types",
+  "supabase-init": "general",
+  "supabase-inspect": "inspect",
+  "supabase-issue": "feedback",
+  "supabase-login": "general",
+  "supabase-logout": "general",
+  "supabase-migration": "migrations",
+  "supabase-network-bans": "network-bans",
+  "supabase-network-restrictions": "network-restrictions",
+  "supabase-notebooks": "notebooks",
+  "supabase-orgs": "organizations",
+  "supabase-postgres-config": "postgres-config",
+  "supabase-projects": "projects",
+  "supabase-pull": "general",
+  "supabase-secrets": "secrets",
+  "supabase-seed": "seed",
+  "supabase-services": "services",
+  "supabase-snippets": "sql-snippets",
+  "supabase-ssl-enforcement": "ssl-enforcement",
+  "supabase-sso": "authentication",
+  "supabase-start": "general",
+  "supabase-status": "general",
+  "supabase-stop": "general",
+  "supabase-storage": "storage",
+  "supabase-telemetry": "telemetry",
+  "supabase-test": "testing",
+  "supabase-unlink": "general",
+  "supabase-vanity-subdomains": "vanity-subdomains",
+  "supabase-whoami": "general",
+};
+
 /** Leaves that require `--experimental`. */
 export const DOCS_EXPERIMENTAL: ReadonlySet<string> = new Set([
   "supabase-network-bans-get",
@@ -72,7 +119,6 @@ export const DOCS_EXPERIMENTAL: ReadonlySet<string> = new Set([
   "supabase-postgres-config-delete",
   "supabase-postgres-config-get",
   "supabase-postgres-config-update",
-  "supabase-ssl-enforcement-get",
   "supabase-ssl-enforcement-update",
   "supabase-storage-cp",
   "supabase-storage-ls",
@@ -99,7 +145,6 @@ export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
  * suffix) but excluded from the published reference.
  */
 export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
-  "supabase-inspect-db-cache-hit",
   "supabase-inspect-db-index-sizes",
   "supabase-inspect-db-index-usage",
   "supabase-inspect-db-role-configs",
@@ -109,42 +154,6 @@ export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
   "supabase-inspect-db-table-sizes",
   "supabase-inspect-db-unused-indexes",
 ]);
-
-/**
- * Flag defaults that differ from the primitive type's zero value, keyed
- * `"<doc id> <flag id>"` (root global flags use doc id `supabase`). TS-only
- * flags add entries by hand.
- */
-export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
-  ...genTypesLanguageFlagDefaults(),
-  "supabase agent": "auto",
-  "supabase dns-resolver": "native",
-  "supabase output": "pretty",
-  "supabase output-format": "text",
-  "supabase profile": "supabase",
-  "supabase-db-advisors fail-on": "none",
-  "supabase-db-advisors level": "warn",
-  "supabase-db-advisors type": "all",
-  "supabase-db-lint fail-on": "none",
-  "supabase-db-lint level": "warning",
-  "supabase-db-pull diff-engine": "pg-delta",
-  "supabase-db-schema-declarative-sync file": "declarative_sync",
-  "supabase-functions-deploy jobs": "1",
-  "supabase-functions-new auth": "apikey",
-  "supabase-gen-bearer-jwt payload": "{}",
-  "supabase-gen-bearer-jwt sub": "anonymous",
-  "supabase-gen-bearer-jwt valid-for": "30m0s",
-  "supabase-gen-signing-key algorithm": "ES256",
-  "supabase-gen-types lang": "typescript",
-  "supabase-gen-types query-timeout": "15s",
-  "supabase-inspect-report output-dir": ".",
-  "supabase-login name": "built-in token name generator",
-  "supabase-migration-down last": "1",
-  "supabase-storage-cp cache-control": "max-age=3600",
-  "supabase-storage-cp content-type": "auto-detect",
-  "supabase-storage-cp jobs": "1",
-  "supabase-test-new template": "pgtap",
-};
 
 /**
  * Flag docs injected into specific commands beyond what their Effect config
@@ -183,32 +192,6 @@ export const DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray<string
  * time like the other tables.
  */
 export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([]);
-
-/**
- * Usage argument overrides, keyed by doc id, for commands whose published argument rendering
- * can't be derived from the Effect tree: the parser accepts zero occurrences here
- * (`secrets set --env-file` passes no positionals; `storage rm` validates in the handler), but
- * the documented shape is required.
- */
-export const DOCS_ARG_OVERRIDES: Readonly<Record<string, string>> = {
-  "supabase-secrets-set": "<NAME=VALUE> ...",
-  "supabase-storage-rm": "<file> ...",
-};
-
-/**
- * Flags rendered with a Required badge on the docs site, keyed
- * `"<doc id> <flag id>"`. Effect optionality cannot express this — several
- * of these TS flags are intentionally `Flag.optional` at parse time for
- * validation-ordering reasons unrelated to required-ness.
- */
-export const DOCS_REQUIRED: ReadonlySet<string> = new Set([
-  "supabase-domains-create custom-hostname",
-  "supabase-gen-bearer-jwt role",
-  "supabase-migration-repair status",
-  "supabase-sso-add type",
-  "supabase-vanity-subdomains-activate desired-subdomain",
-  "supabase-vanity-subdomains-check-availability desired-subdomain",
-]);
 
 export const DOCS_INFO_DESCRIPTION =
   "Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform.";

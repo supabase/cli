@@ -6,10 +6,10 @@ import { completionZshCommand } from "./zsh/zsh.command.ts";
 
 export const completionCommand = Command.make("completion").pipe(
   Command.withDescription(
-    "Generate the autocompletion script for supabase for the specified shell.\n" +
-      "See each sub-command's help for details on how to use the generated script.",
+    "Print a shell completion script for `supabase` to stdout. " +
+      "Run the subcommand for your shell and follow its help to load the script.",
   ),
-  Command.withShortDescription("Generate the autocompletion script for the specified shell"),
+  Command.withShortDescription("Generate shell completion scripts"),
   Command.withSubcommands([
     completionBashCommand,
     completionFishCommand,

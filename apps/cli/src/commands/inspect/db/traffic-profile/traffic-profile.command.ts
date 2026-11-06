@@ -10,15 +10,23 @@ import {
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { makeCommand } from "../../../../shared/cli/cli-params.ts";
 
-export const inspectDbTrafficProfileCommand = Command.make(
-  "traffic-profile",
-  INSPECT_DB_FLAGS,
-).pipe(
+export const inspectDbTrafficProfileCommand = makeCommand("traffic-profile", INSPECT_DB_FLAGS).pipe(
   Command.withDescription(
     "Show read/write activity ratio for tables based on block I/O operations.",
   ),
   Command.withShortDescription("Show traffic profile"),
+  Command.withExamples([
+    {
+      command: "supabase inspect db traffic-profile",
+      description: "Show read/write ratios on the local database",
+    },
+    {
+      command: "supabase inspect db traffic-profile --remote",
+      description: "Show read/write ratios on the linked project",
+    },
+  ]),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbTrafficProfile)),
   Command.provide(inspectDbRuntimeLayer("traffic-profile")),
