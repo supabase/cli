@@ -6,6 +6,7 @@
 
 import type { CliConfig } from "@supabase/config";
 import {
+  DEFAULT_ERL_MAX_PORTS,
   DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
   DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
 } from "@supabase/stack/defaults";
@@ -56,6 +57,7 @@ export function buildRealtimeEnv(input: RealtimeEnvInput): Record<string, string
     APP_NAME: "realtime",
     SECRET_KEY_BASE: REALTIME_SECRET_KEY_BASE,
     ERL_AFLAGS: input.ipVersion === "IPv6" ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
+    ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
     // Two literal single-quote characters, not an empty string.
     DNS_NODES: "''",
     RLIMIT_NOFILE: "",
