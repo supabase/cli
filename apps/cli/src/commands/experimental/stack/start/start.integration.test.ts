@@ -768,6 +768,28 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("refuses an unreadable Auth email template before creating a stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-template-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        '[auth.email.template.invite]\ncontent_path = "./supabase/templates/missing.html"\n',
+      );
+      const fixture = fakeStack();
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("auth.email.template.invite.content_path"),
+      });
+      expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect("rejects malformed configuration before creating a stack", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

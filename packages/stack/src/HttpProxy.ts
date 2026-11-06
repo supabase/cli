@@ -41,6 +41,13 @@ export interface HttpRoute {
   readonly upstreamCors?: boolean;
 }
 
+/** Answers plain GET from this process, with no CORS headers or backend; `undefined` is a 404. */
+export interface HttpFileRoute {
+  readonly id: string;
+  readonly prefix: string;
+  readonly file: (url: string) => Effect.Effect<Uint8Array | undefined>;
+}
+
 /** Configures Supabase API-key rewriting for one HTTP route. */
 interface HttpRouteKeyRewrite {
   readonly policy: "bearer" | "query" | "sb-api-key";
@@ -82,7 +89,7 @@ export type HttpAccessSink = (access: HttpAccess) => Effect.Effect<void>;
 export interface HttpProxy {
   readonly host: string;
   readonly port: number;
-  readonly setRoutes: (routes: ReadonlyArray<HttpRoute>) => Effect.Effect<void>;
+  readonly setRoutes: (routes: ReadonlyArray<HttpRoute | HttpFileRoute>) => Effect.Effect<void>;
 }
 
 const hopByHop = new Set([
@@ -217,12 +224,34 @@ interface Sent {
   clientLeft: boolean;
 }
 
-const respond = (response: ServerResponse, sent: Sent, status: number, body?: string) => {
+const respond = (
+  response: ServerResponse,
+  sent: Sent,
+  status: number,
+  body?: string | Uint8Array,
+) => {
   response.statusCode = status;
   // Node sends no body for a HEAD request.
   sent.bytes = body === undefined || response.req.method === "HEAD" ? 0 : Buffer.byteLength(body);
   response.end(body);
 };
+
+const serveFile = Effect.fnUntraced(function* (
+  request: IncomingMessage,
+  response: ServerResponse,
+  sent: Sent,
+  route: HttpFileRoute,
+) {
+  response.setHeader("content-type", "text/plain; charset=utf-8");
+  response.setHeader("x-content-type-options", "nosniff");
+  if (request.method !== "GET") {
+    response.setHeader("allow", "GET");
+    return respond(response, sent, 405, "Method Not Allowed");
+  }
+  const body = yield* route.file(request.url ?? "/");
+  if (body === undefined) return respond(response, sent, 404, "Not Found");
+  respond(response, sent, 200, body);
+});
 
 const responseSettled = (response: ServerResponse) =>
   Effect.callback<void>((resume) => {
@@ -289,7 +318,7 @@ const rewriteQuery = (query: string, route: HttpRoute) => {
 
 const pathnameFor = (url: string) => url.split("?", 1)[0] || "/";
 
-const routeFor = (url: string, routes: ReadonlyArray<HttpRoute>) => {
+const routeFor = (url: string, routes: ReadonlyArray<HttpRoute | HttpFileRoute>) => {
   const pathname = pathnameFor(url);
   return routes.find(
     (route) =>
@@ -665,7 +694,7 @@ export const makeHttpProxy = (options: {
   readonly onAccess?: HttpAccessSink | undefined;
 }): Effect.Effect<HttpProxy, PortError, Scope.Scope> =>
   Effect.gen(function* () {
-    const routes = yield* Ref.make<ReadonlyArray<HttpRoute>>([]);
+    const routes = yield* Ref.make<ReadonlyArray<HttpRoute | HttpFileRoute>>([]);
     // Sockets per upstream stay unbounded so long-lived streamed responses never queue requests.
     // Idle sockets close before an upstream's 5 s keep-alive timeout, the shortest in the stack,
     // can race a reuse.
@@ -700,6 +729,10 @@ export const makeHttpProxy = (options: {
               const route = yield* Ref.get(routes).pipe(
                 Effect.map((current) => routeFor(request.url ?? "/", current)),
               );
+              if (route !== undefined && "file" in route) {
+                yield* serveFile(request, response, sent, route);
+                return;
+              }
               if (request.method === "OPTIONS" && route?.upstreamCors !== true) {
                 setPreflightCors(response, request);
                 respond(response, sent, 200);
@@ -771,7 +804,7 @@ export const makeHttpProxy = (options: {
             Effect.map((current) => routeFor(request.url ?? "/", current)),
           );
           const outcome =
-            route === undefined
+            route === undefined || "file" in route
               ? yield* Effect.sync(() => {
                   socket.destroy();
                   return 404;
@@ -816,7 +849,7 @@ export const makeHttpProxy = (options: {
     return {
       host: address.address,
       port: address.port,
-      setRoutes: (next: ReadonlyArray<HttpRoute>) =>
+      setRoutes: (next: ReadonlyArray<HttpRoute | HttpFileRoute>) =>
         Ref.set(
           routes,
           [...next].sort((a, b) => b.prefix.length - a.prefix.length),

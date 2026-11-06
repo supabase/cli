@@ -116,6 +116,7 @@ it.live(
         const captured = yield* Ref.make<Orchestrator.CompositionConfig | undefined>(undefined);
         const operations: SupabaseCompositionOperations = {
           currentComposition: Effect.succeed({ members: [], dependencies: [] }),
+          randomToken: Effect.succeed("token"),
           get: () => Effect.die("get is unused"),
           status: () => Effect.die("status is unused"),
           create: (creation) => Effect.succeed({ id: idFor(creation.service), creation }),
