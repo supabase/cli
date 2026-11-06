@@ -112,7 +112,9 @@ shell inherits the suppressing variables and is missed.
 - **TLS settings in `pg_dump`.** A remote target (a remote project or branch, or
   `--remote=<url>`) gets the resolved `sslmode` and connect timeout, the root cert only under
   `require`/`verify-ca`/`verify-full`, and the client cert and key unless the key needs
-  `sslpassword` (libpq reads no passphrase from the environment). `system` pins
+  `sslpassword` (libpq reads no passphrase from the environment). The Supabase CA pin that
+  `db push` describes reaches `pg_dump` as `PGSSLMODE=require` only: the inline CA is not
+  forwarded, so `pg_dump` requires TLS without verifying the server. `system` pins
   `verify-full`. Verifying without a root cert, or with `system`, uses the image's trust
   store in a container and the host's CA bundle for a native `pg_dump`, which keeps
   libpq's `~/.postgresql/root.crt` when no root cert is set, keeps `system` on libpq 16+

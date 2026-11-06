@@ -85,8 +85,15 @@ import type { DbConnectionInput } from "./db-config.types.ts";
 import { hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
 import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
+import {
+  SUGGEST_CA_VERIFICATION,
+  SUGGEST_ENV_VAR,
+  SUGGEST_NETWORK_RESTRICTIONS,
+} from "./connect-errors.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
+import { toConnectError } from "./db-connection.sql-pg.layer.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
+import { rootCaBundle } from "./supabase-tls.ts";
 import { StackApi } from "./stack-api.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
 import { selection } from "../../tests/helpers/pins.ts";
@@ -984,6 +991,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
             user: `cli_login_role.${adHocRef}`,
             password: "temporary-role-password",
             database: "postgres",
+            sslmode: "require",
+            sslrootcertInline: rootCaBundle(),
             suggestionContext: {
               dashboardUrl: "https://supabase.com/dashboard",
               profileName: "supabase",
@@ -1008,6 +1017,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
                 user: `cli_login_role.${adHocRef}`,
                 password: "temporary-role-password",
                 database: "postgres",
+                sslmode: "require",
+                sslrootcertInline: rootCaBundle(),
               },
               isLocal: false,
               dnsResolver: "native",
@@ -1149,6 +1160,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
                 user: `cli_login_role.${adHocRef}`,
                 password: "temporary-role-password",
                 database: "postgres",
+                sslmode: "require",
+                sslrootcertInline: rootCaBundle(),
                 suggestionContext: {
                   dashboardUrl: "https://supabase.com/dashboard",
                   profileName: "supabase",
@@ -1173,6 +1186,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
                   user: `cli_login_role.${adHocRef}`,
                   password: "temporary-role-password",
                   database: "postgres",
+                  sslmode: "require",
+                  sslrootcertInline: rootCaBundle(),
                 },
                 isLocal: false,
                 dnsResolver: "native",
@@ -1293,6 +1308,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
               user: `postgres.${linkedRef}`,
               password: "linked-password",
               database: "postgres",
+              sslmode: "require",
+              sslrootcertInline: rootCaBundle(),
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",
                 profileName: "supabase",
@@ -1403,6 +1420,8 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
               user: `postgres.${ref}`,
               password: "ambient-password",
               database: "postgres",
+              sslmode: "require",
+              sslrootcertInline: rootCaBundle(),
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",
                 profileName: "supabase",
@@ -1521,6 +1540,8 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
               user: `postgres.${targetRef}`,
               password: "flag-password",
               database: "postgres",
+              sslmode: "require",
+              sslrootcertInline: rootCaBundle(),
               suggestionContext: {
                 dashboardUrl: "https://supabase.com/dashboard",
                 profileName: "supabase",
@@ -1919,6 +1940,8 @@ describe("dbConfigResolver (container pooler fallback)", () => {
           host: "aws-0-us-east-1.pooler.supabase.com",
           user: `cli_login_role.${ref}`,
           password: "temporary-role-password",
+          sslmode: "require",
+          sslrootcertInline: rootCaBundle(),
         });
       }
       expect(requests).toEqual([
@@ -2073,6 +2096,8 @@ describe("resolveLinkedConn libpq TLS", () => {
       readonly reachable?: boolean;
       readonly password?: Option.Option<string>;
       readonly poolerUrl?: string;
+      readonly profile?: string;
+      readonly projectHost?: string;
     } = {},
   ) =>
     withConfigEnv(
@@ -2082,11 +2107,16 @@ describe("resolveLinkedConn libpq TLS", () => {
         return yield* resolveLinkedConn(
           ref,
           opts.workdir ?? (yield* projectWorkdir([])),
-          "invalid",
+          opts.profile ?? "supabase",
+          opts.projectHost ?? "invalid",
           "supabase.com",
           "native",
           opts.password ?? Option.some("secret"),
-          { removeNetworkBans: false, poolerUrl: Option.fromNullishOr(opts.poolerUrl) },
+          {
+            removeNetworkBans: false,
+            poolerUrl: Option.fromNullishOr(opts.poolerUrl),
+            dashboardUrl: "https://supabase.com/dashboard",
+          },
         );
       }),
     ).pipe(Effect.scoped);
@@ -2167,6 +2197,163 @@ describe("resolveLinkedConn libpq TLS", () => {
       expect(conn.host).toBe(directHost);
     }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
   );
+
+  const pinned = { sslmode: "require", sslrootcertInline: rootCaBundle() };
+  const serviceFileWith = (content: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "cli-linked-service-" });
+      const serviceFile = path.join(dir, "pg_service.conf");
+      yield* fs.writeFileString(serviceFile, content);
+      return { PGSERVICE: "svc", PGSERVICEFILE: serviceFile };
+    });
+  const hostedPoolerUrl = `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`;
+
+  describe("Supabase CA pin", () => {
+    for (const [profile, projectHost] of [
+      ["supabase", "supabase.co"],
+      ["supabase-staging", "supabase.red"],
+      ["snap", "snapcloud.dev"],
+    ] as const) {
+      it.effect(`pins the bundled CA on the ${profile} direct host when TLS is unset`, () =>
+        Effect.gen(function* () {
+          const conn = yield* linkedConn({}, { profile, projectHost });
+          expect(conn).toMatchObject({ host: `db.${ref}.${projectHost}`, ...pinned });
+        }).pipe(Effect.provide(linkedConnLayer)),
+      );
+    }
+
+    it.effect("pins the bundled CA on the direct host before minting a login role", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          {},
+          { projectHost: "supabase.co", password: Option.some("") },
+        );
+        expect(conn).toMatchObject({ user: "cli_login_x", password: "temp", ...pinned });
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("keeps verify-full with the user's own root cert", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          { PGSSLMODE: "verify-full", PGSSLROOTCERT: "/ca.pem" },
+          { projectHost: "supabase.co" },
+        );
+        expect(conn).toMatchObject({ sslmode: "verify-full", sslrootcert: "/ca.pem" });
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("keeps PGSSLMODE=disable", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn({ PGSSLMODE: "disable" }, { projectHost: "supabase.co" });
+        expect(conn.sslmode).toBe("disable");
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("verifies against a PGSSLROOTCERT with no sslmode instead of the bundled CA", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          { PGSSLROOTCERT: "/ca.pem" },
+          { projectHost: "supabase.co" },
+        );
+        expect(conn).toMatchObject({ sslmode: "require", sslrootcert: "/ca.pem" });
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("keeps a service-file sslmode", () =>
+      Effect.gen(function* () {
+        const env = yield* serviceFileWith("[svc]\nsslmode=require\n");
+        const conn = yield* linkedConn(env, { projectHost: "supabase.co" });
+        expect(conn.sslmode).toBe("require");
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("pins the bundled CA on the pooler when TLS is unset", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          {},
+          { reachable: false, poolerUrl: hostedPoolerUrl, password: Option.some("secret") },
+        );
+        expect(conn).toMatchObject({ host: poolerHost, ...pinned });
+      }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("keeps an explicit sslmode in the saved pooler URL", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          {},
+          {
+            reachable: false,
+            poolerUrl: `${hostedPoolerUrl}?sslmode=disable`,
+            password: Option.some("secret"),
+          },
+        );
+        expect(conn.sslmode).toBe("disable");
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+    );
+
+    it.effect("pins the temp-role probe connection through the pooler", () => {
+      const probed: Array<PgConnInput> = [];
+      const probeSession: DbSession = {
+        exec: () => Effect.void,
+        execBatch: () => Effect.void,
+        query: () => Effect.succeed([]),
+        extensionExists: () => Effect.succeed(false),
+        copyToCsv: () => Effect.succeed(new Uint8Array()),
+        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+      };
+      return Effect.gen(function* () {
+        const conn = yield* linkedConn(
+          {},
+          { reachable: false, poolerUrl: hostedPoolerUrl, password: Option.some("") },
+        );
+        expect(probed).toHaveLength(1);
+        expect(probed[0]).toMatchObject({
+          host: poolerHost,
+          user: `cli_login_x.${ref}`,
+          ...pinned,
+        });
+        expect(conn).toMatchObject(pinned);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(DbConnection, {
+          connect: (conn) => {
+            probed.push(conn);
+            return Effect.succeed(probeSession);
+          },
+        }),
+        Effect.provide(linkedConnLayer),
+      );
+    });
+
+    for (const [profile, projectHost] of [
+      ["supabase-local", "supabase.red"],
+      ["my-profile", "supabase.co"],
+    ] as const) {
+      it.effect(`does not pin the ${profile} profile`, () =>
+        Effect.gen(function* () {
+          const conn = yield* linkedConn({}, { profile, projectHost });
+          expect(conn.host).toBe(`db.${ref}.${projectHost}`);
+          expect(conn.sslmode).toBeUndefined();
+          expect(conn.sslrootcertInline).toBeUndefined();
+        }).pipe(Effect.provide(linkedConnLayer)),
+      );
+    }
+
+    it.effect("does not pin a host outside the profile's domains", () =>
+      Effect.gen(function* () {
+        const conn = yield* linkedConn({}, { profile: "supabase", projectHost: "supabase.red" });
+        expect(conn.sslmode).toBeUndefined();
+        expect(conn.sslrootcertInline).toBeUndefined();
+      }).pipe(Effect.provide(linkedConnLayer)),
+    );
+  });
 
   it.effect("names the libpq variables when PGSSLMODE is invalid on a reachable direct host", () =>
     Effect.gen(function* () {
@@ -2497,19 +2684,23 @@ describe("dbConfigResolver.resolveConnection", () => {
         }
         return undefined;
       });
-    const failingConnect = (failures: number) => {
+    const failingConnect = (
+      failures: number,
+      failure: (cfg: PgConnInput) => DbConnectError = () =>
+        new DbConnectError({ message: "password authentication failed" }),
+    ) => {
       const attempts = { count: 0 };
       const layer = Layer.succeed(DbConnection, {
-        connect: () =>
+        connect: (cfg) =>
           Effect.suspend(() => {
             attempts.count += 1;
-            return attempts.count <= failures
-              ? Effect.fail(new DbConnectError({ message: "password authentication failed" }))
-              : Effect.succeed(session);
+            return attempts.count <= failures ? Effect.fail(failure(cfg)) : Effect.succeed(session);
           }),
       });
       return { attempts, layer };
     };
+    const driverFailure = (code: string, message: string) => (cfg: PgConnInput) =>
+      toConnectError(cfg, false, Object.assign(new Error(message), { code }));
     const forkResolve = (
       input: DbConnectionInput,
       connection: Layer.Layer<DbConnection>,
@@ -2568,6 +2759,126 @@ describe("dbConfigResolver.resolveConnection", () => {
         }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
       },
     );
+
+    it.effect(
+      "keeps looking for bans when the dial fails, as a ban surfaces as a dial failure",
+      () => {
+        const requests: Array<{ readonly method: string; readonly path: string }> = [];
+        const connection = failingConnect(
+          Number.POSITIVE_INFINITY,
+          driverFailure("ETIMEDOUT", "connect ETIMEDOUT 203.0.113.9:6543"),
+        );
+        return Effect.gen(function* () {
+          yield* bannedRequests(requests, ["203.0.113.7"]);
+          const { fiber, advance } = yield* forkResolve(
+            inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+            connection.layer,
+          );
+          yield* advance(8);
+          const exit = yield* Fiber.await(fiber);
+          expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
+          expect(connection.attempts.count).toBe(9);
+        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+      },
+    );
+
+    it.effect("fails at once on a rejected server certificate and names the CA setting", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(
+        Number.POSITIVE_INFINITY,
+        driverFailure("SELF_SIGNED_CERT_IN_CHAIN", "self-signed certificate in certificate chain"),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        const exit = yield* Fiber.await(fiber);
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(error).toEqual(
+          Option.some(
+            expect.objectContaining({
+              _tag: "DbConfigConnectTempRoleError",
+              message: expect.stringContaining("tls error (self-signed certificate"),
+              suggestion: SUGGEST_CA_VERIFICATION,
+            }),
+          ),
+        );
+        expect(SUGGEST_CA_VERIFICATION).not.toBe(SUGGEST_ENV_VAR);
+        expect(connection.attempts.count).toBe(1);
+        expect(requests.some((request) => request.path.includes("network-bans"))).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("stops retrying authentication failures once the certificate is rejected", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY, (cfg) =>
+        connection.attempts.count <= 2
+          ? new DbConnectError({ message: "password authentication failed" })
+          : driverFailure("CERT_HAS_EXPIRED", "certificate has expired")(cfg),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, []);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(2);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
+        expect(connection.attempts.count).toBe(3);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("fails at once on an IP rejected by network restrictions and lists no bans", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(
+        Number.POSITIVE_INFINITY,
+        () =>
+          new DbConnectError({
+            message: "failed to connect to postgres: Address not in tenant allow_list",
+            networkRestricted: true,
+          }),
+      );
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        const exit = yield* Fiber.await(fiber);
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(error).toEqual(
+          Option.some(
+            expect.objectContaining({
+              _tag: "DbConfigConnectTempRoleError",
+              message: expect.stringContaining("Address not in tenant allow_list"),
+              suggestion: `${SUGGEST_NETWORK_RESTRICTIONS}\nhttps://supabase.com/dashboard/project/_/database/settings`,
+            }),
+          ),
+        );
+        expect(connection.attempts.count).toBe(1);
+        expect(requests.some((request) => request.path.includes("network-bans"))).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
+
+    it.effect("retries a plain authentication failure to the end and lists no ban", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY);
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, []);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(8);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
+        expect(connection.attempts.count).toBe(9);
+        expect(requests.some((request) => request.method === "DELETE")).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+    });
 
     it.effect("connects without removing bans that are not blocking the caller", () => {
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
