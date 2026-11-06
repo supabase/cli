@@ -360,9 +360,14 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     cursor: LogPosition,
     cached: ReadonlyArray<number> | undefined,
     live: Live | undefined,
+    ends?: ReadonlyMap<number, number>,
   ) {
     const fresh = cached === undefined;
-    const listed = cached ?? (yield* generations(directory));
+    const listed =
+      cached ??
+      (yield* generations(directory)).filter(
+        (generation) => ends === undefined || ends.has(generation),
+      );
     const relist = (partial: boolean): Step => ({
       records: [],
       cursor,
@@ -391,7 +396,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
           atEnd: false,
           partial: false,
         } satisfies Step;
-      const next = yield* readAt(directory, resumeAt, live).pipe(
+      const next = yield* readAt(directory, resumeAt, live, ends?.get(generation)).pipe(
         Effect.map((chunk) => Option.getOrUndefined(chunk)?.records[0]?.timestamp),
         Effect.orElseSucceed(() => undefined),
       );
@@ -413,7 +418,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     });
     if (!listed.includes(cursor.generation))
       return newer !== undefined ? yield* gap(newer) : fresh ? atEnd(false) : relist(false);
-    const chunk = yield* readAt(directory, cursor, live);
+    const chunk = yield* readAt(directory, cursor, live, ends?.get(cursor.generation));
     if (Option.isNone(chunk)) return relist(false);
     if (chunk.value.progressed)
       return {
@@ -501,10 +506,11 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     options: Pick<ReadOptions, "since" | "follow">,
     live: Live | undefined,
     wake: PubSub.Subscription<void> | undefined,
+    ends?: ReadonlyMap<number, number>,
   ): Stream.Stream<LogRecord, LogStoreError> =>
     Stream.paginate(start, (current) =>
       Effect.gen(function* () {
-        const next: Step = yield* step(directory, current.cursor, current.listed, live);
+        const next: Step = yield* step(directory, current.cursor, current.listed, live, ends);
         const resume = Option.some({ cursor: next.cursor, listed: next.listed });
         if (!next.atEnd) return page(next.records, resume);
         if (!options.follow || live === undefined || wake === undefined)
@@ -560,71 +566,22 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     );
   });
 
-  /** Streams a directory's records in file order without an owner. */
-  const records = (directory: string, options: Pick<ReadOptions, "since">, from?: LogPosition) =>
+  const records = (
+    directory: string,
+    options: Pick<ReadOptions, "since">,
+    ends: ReadonlyMap<number, number>,
+    from?: LogPosition,
+  ) =>
     follow(
       directory,
       { cursor: from ?? { generation: 0, byteOffset: 0 }, listed: undefined },
       { ...options, follow: false },
       undefined,
       undefined,
+      ends,
     );
 
-  const snapshot = (
-    directory: string,
-    listed: ReadonlyArray<{ readonly generation: number; readonly size: number }>,
-    from: LogPosition | undefined,
-  ) =>
-    Stream.paginate({ index: 0, byteOffset: 0, gapSent: false }, (state) =>
-      Effect.gen(function* () {
-        const segment = listed[state.index];
-        if (segment === undefined) return [[], Option.none()] as const;
-        const next = Option.some({ index: state.index + 1, byteOffset: 0, gapSent: false });
-        if (from !== undefined && segment.generation < from.generation) return [[], next] as const;
-        const previous = listed[state.index - 1]?.generation;
-        const gap =
-          previous === undefined || previous < (from?.generation ?? 0)
-            ? from !== undefined && from.generation < segment.generation
-            : segment.generation > previous + 1;
-        if (gap && !state.gapSent) {
-          const resumeAt = { generation: segment.generation, byteOffset: 0 };
-          const first = yield* readAt(directory, resumeAt, undefined, segment.size);
-          const timestamp = Option.getOrUndefined(first)?.records[0]?.timestamp ?? (yield* nowIso);
-          return [
-            [{ kind: "lost", timestamp, resumeAt } satisfies LogRecord],
-            Option.some({ ...state, gapSent: true }),
-          ] as const;
-        }
-        const byteOffset = Math.max(
-          state.byteOffset,
-          from?.generation === segment.generation ? from.byteOffset : 0,
-        );
-        if (byteOffset >= segment.size) return [[], next] as const;
-        const chunk = yield* readAt(
-          directory,
-          { generation: segment.generation, byteOffset },
-          undefined,
-          segment.size,
-        );
-        if (Option.isNone(chunk)) {
-          const resumeAt = {
-            generation: listed[state.index + 1]?.generation ?? segment.generation,
-            byteOffset: 0,
-          };
-          return [
-            [{ kind: "lost", timestamp: yield* nowIso, resumeAt } satisfies LogRecord],
-            next,
-          ] as const;
-        }
-        if (!chunk.value.progressed) return [[], next] as const;
-        return [
-          chunk.value.records,
-          Option.some({ index: state.index, byteOffset: chunk.value.byteOffset, gapSent: true }),
-        ] as const;
-      }),
-    );
-
-  return { read, history, records, segments, generations, latestLaunchId, snapshot };
+  return { read, history, records, segments, generations, latestLaunchId };
 };
 
 /** Creates the owner's log store; closing its scope flushes and closes every writer. */
@@ -1189,7 +1146,6 @@ export const streamStackLogs = (options: {
   readonly root: string;
   readonly instances?: ReadonlyArray<string>;
   readonly since?: number;
-  readonly snapshot?: boolean;
   readonly from?: ReadonlyMap<string, LogPosition>;
 }): Stream.Stream<StackLogRecord, LogStoreError, FileSystem.FileSystem | Path.Path> =>
   Stream.unwrap(
@@ -1201,24 +1157,20 @@ export const streamStackLogs = (options: {
       const captured = yield* Effect.forEach(selected, ({ service, instanceId }) =>
         Effect.gen(function* () {
           const directory = path.join(options.root, service, instanceId);
-          const segments = options.snapshot ? yield* reader.segments(directory) : [];
+          const segments = yield* reader.segments(directory);
           return { service, instanceId, directory, segments };
         }),
       );
       return Stream.fromIterable(captured).pipe(
         Stream.flatMap(({ service, instanceId, directory, segments }) =>
-          (options.snapshot
-            ? reader.snapshot(directory, segments, options.from?.get(instanceId))
-            : reader.records(directory, options, options.from?.get(instanceId))
-          ).pipe(
-            Stream.filter(
-              (record) =>
-                !options.snapshot ||
-                options.since === undefined ||
-                Date.parse(record.timestamp) >= options.since,
-            ),
-            Stream.map((record): StackLogRecord => ({ ...record, service, instanceId })),
-          ),
+          reader
+            .records(
+              directory,
+              options,
+              new Map(segments.map(({ generation, size }) => [generation, size])),
+              options.from?.get(instanceId),
+            )
+            .pipe(Stream.map((record): StackLogRecord => ({ ...record, service, instanceId }))),
         ),
       );
     }),
