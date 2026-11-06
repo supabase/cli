@@ -25,7 +25,7 @@ import {
   StackApi,
   stackApiLayer,
   stackTargetResolverLayer,
-} from "../../src/commands/experimental/stack/stack.shared.ts";
+} from "../../src/command-internal/stack-target.ts";
 import { stackStart } from "../../src/commands/experimental/stack/start/start.handler.ts";
 import { start } from "../../src/commands/start/start.handler.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
