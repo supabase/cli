@@ -1,5 +1,7 @@
-import { DateTime, Duration, Effect, Option, Schedule, Schema } from "effect";
+import { Clock, DateTime, Duration, Effect, Option, Schedule, Schema } from "effect";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
+import { CommandTarget } from "../../shared/output/command-target.service.ts";
+import { sanitizeInlineName } from "../../command-internal/http-errors.ts";
 import { queryLogs } from "./logs.api.ts";
 import {
   COMPUTE_LOG_STREAMS,
@@ -10,9 +12,12 @@ import {
 } from "./logs.catalog.ts";
 import { logsWindow } from "./logs.format.ts";
 import { LogsApiError, LogsInputError } from "./logs.errors.ts";
-import type { LogsFlags, LogsSession } from "./logs.session.ts";
+import type { LogsFlags, LogsProgress, LogsSession } from "./logs.session.ts";
 
-const filteredSql = Effect.fnUntraced(function* (flags: LogsFlags, computeEnabled: boolean) {
+export const filteredLogsSql = Effect.fnUntraced(function* (
+  flags: LogsFlags,
+  computeEnabled: boolean,
+) {
   if (Option.isSome(flags.stack) || Option.isSome(flags.stackId))
     return yield* new LogsInputError({ message: "--stack and --stack-id are local selectors." });
   const enabledSources = hostedSources.filter(
@@ -109,10 +114,25 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
   started: number,
   computeEnabled: boolean,
   customSql: string | undefined,
+  interactive = false,
 ) {
   const window = yield* logsWindow(flags, started);
+  const base = customSql === undefined ? yield* filteredLogsSql(flags, computeEnabled) : customSql;
   const api = yield* (yield* CommandPlatformApiFactory).make;
-  const base = customSql === undefined ? yield* filteredSql(flags, computeEnabled) : customSql;
+  let name: string | undefined;
+  if (interactive) {
+    const target = yield* Effect.serviceOption(CommandTarget);
+    const identity = Option.isSome(target)
+      ? Option.getOrUndefined(yield* target.value.json)
+      : undefined;
+    if (identity?.kind === "linked" && identity.project_ref === ref) name = identity.project_name;
+    if (name === undefined)
+      name = yield* api.v1.getProject({ ref }, { retry: { maxRetries: 0 } }).pipe(
+        Effect.map((project) => project.name),
+        Effect.timeout("2 seconds"),
+        Effect.orElseSucceed(() => undefined),
+      );
+  }
   let attempted = false;
   let committedEnd: number | undefined;
   let seen = new Map<string, number>();
@@ -123,6 +143,7 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
   const queryPage = Effect.fn("Logs.remote.page")(function* (
     sql: string,
     requested: { readonly start: string; readonly end: string },
+    progress: (update: LogsProgress) => Effect.Effect<void>,
   ) {
     return yield* queryLogs(api, ref, sql, requested).pipe(
       Effect.retry({
@@ -130,13 +151,18 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
         schedule: Schedule.spaced("60 seconds").pipe(
           Schedule.upTo({ times: 1 }),
           Schedule.setInputType<Effect.Error<ReturnType<typeof queryLogs>>>(),
-          Schedule.modifyDelay(({ input, duration }) =>
-            Effect.succeed(
-              Duration.max(
+          Schedule.modifyDelay(
+            Effect.fnUntraced(function* ({ input, duration }) {
+              const delay = Duration.max(
                 duration,
                 Duration.millis(input._tag === "LogsApiError" ? (input.retryAfterMs ?? 0) : 0),
-              ),
-            ),
+              );
+              const retryAt = iso((yield* Clock.currentTimeMillis) + Duration.toMillis(delay));
+              yield* progress({
+                message: `Rate limited. Retrying in ${Math.ceil(Duration.toMillis(delay) / 1000)}s at ${retryAt}.`,
+              });
+              return delay;
+            }),
           ),
         ),
       }),
@@ -145,6 +171,7 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
   const load = Effect.fn("Logs.remote.load")(function* (
     capturedEnd: number,
     emit: (row: Schema.JsonObject) => Effect.Effect<void>,
+    progress: (update: LogsProgress) => Effect.Effect<void> = () => Effect.void,
   ) {
     const initial = committedEnd === undefined;
     const firstAttempt = !attempted;
@@ -163,6 +190,10 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
           "The refresh window exceeds 24 hours. Restart logs with a narrower --since or --from.",
       });
     const requested = { start: iso(start), end: iso(end) };
+    yield* progress({
+      message: customSql === undefined ? "Loading page 1…" : "Running SQL query…",
+      window: { kind: "range", start: window.start, end: requested.end },
+    });
     if (customSql !== undefined) {
       const rows = yield* queryLogs(api, ref, customSql, requested);
       yield* Effect.forEach(rows, emit, { discard: true });
@@ -186,7 +217,11 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
           ? ""
           : ` and (toUnixTimestamp64Milli(timestamp) > ${cursor.ts_ms} or (toUnixTimestamp64Milli(timestamp) = ${cursor.ts_ms} and id > ${quoteLogValue(cursor.id)}))`;
       const sql = `${base}${condition} order by ts_ms ${initial ? "desc" : "asc"}, id ${initial ? "desc" : "asc"} limit ${initial ? flags.limit : 1000}`;
-      const raw = yield* queryPage(sql, requested);
+      if (pages > 0)
+        yield* progress({
+          message: `Loading page ${pages + 1} (${pages} ${pages === 1 ? "page" : "pages"} received)…`,
+        });
+      const raw = yield* queryPage(sql, requested, progress);
       pages += 1;
       const rows = yield* Schema.decodeUnknownEffect(Schema.Array(logRow))(raw).pipe(
         Effect.mapError(
@@ -258,8 +293,14 @@ export const makeRemoteLogsSession = Effect.fn("Logs.remote.session")(function* 
       ...(pending === undefined ? {} : { pending: true }),
     } satisfies import("./logs.browser.format.ts").LogsBrowserWindow;
   });
+  const displayName = name === undefined ? undefined : sanitizeInlineName(name).trim() || undefined;
+  const shortName =
+    displayName !== undefined && displayName.length > 24
+      ? `${displayName.slice(0, 23)}…`
+      : displayName;
   const session: LogsSession<Effect.Error<ReturnType<typeof load>>> = {
     mode: customSql === undefined ? "append" : "replace",
+    context: shortName === undefined ? `Remote project ${ref}` : `Remote ${shortName} (${ref})`,
     load,
   };
   return session;

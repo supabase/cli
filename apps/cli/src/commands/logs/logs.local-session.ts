@@ -159,7 +159,6 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
       stateRoot,
       stackId,
       instances: selected.map(({ id }) => id),
-      snapshot: true,
       from: resumePositions,
       ...(since.kind === "time" ? { since: since.iso } : {}),
     }).pipe(
@@ -191,5 +190,9 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
       ? { kind: "range" as const, start: since.iso, end: iso(end) }
       : { kind: "launch" as const, end: iso(end) };
   });
-  return { mode: "append", load } satisfies LogsSession<LogsInputError>;
+  return {
+    mode: "append",
+    context: `Local stack ${target.name ?? target.id}`,
+    load,
+  } satisfies LogsSession<LogsInputError>;
 });

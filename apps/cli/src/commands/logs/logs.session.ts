@@ -18,10 +18,17 @@ export interface LogsFlags extends TargetFlagValues {
   readonly limit: number;
 }
 
+export interface LogsProgress {
+  readonly message: string;
+  readonly window?: LogsBrowserWindow;
+}
+
 export interface LogsSession<E = never> {
+  readonly context?: string;
   readonly mode: "append" | "replace";
   readonly load: (
     end: number,
     emit: (row: Schema.JsonObject) => Effect.Effect<void>,
+    progress?: (update: LogsProgress) => Effect.Effect<void>,
   ) => Effect.Effect<LogsBrowserWindow, E>;
 }

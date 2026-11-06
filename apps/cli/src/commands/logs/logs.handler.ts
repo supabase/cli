@@ -1,10 +1,12 @@
 import { hasGatewayLogs } from "../../command-internal/logs/local-sources.ts";
 import { logEvent, markerText } from "../../command-internal/stack-log-events.ts";
-import { Clock, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
+import { Clock, Effect, FileSystem, Option, Path, Result, Schema, Stream } from "effect";
 import { gatewayLog } from "@supabase/stack/effect";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { StackTargetResolver, validateStackTarget } from "../../command-internal/stack-target.ts";
+import { parseTargetSelector } from "../../command-internal/target/target-selector.ts";
+import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
 import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
@@ -21,9 +23,10 @@ import { Tty } from "../../shared/runtime/tty.service.ts";
 import { encodeHtmlSafeJsonIndented } from "../../command-internal/html-safe-json.ts";
 import { renderLogsRows, renderLogsSources, wrapLogsText } from "./logs.display.ts";
 import { hostedSources, severityServices } from "./logs.catalog.ts";
+import { logsWindow } from "./logs.format.ts";
 import { LogsInputError } from "./logs.errors.ts";
 import { browseLogs, useLogsBrowser } from "./logs.browser.ts";
-import { makeRemoteLogsSession } from "./logs.remote-session.ts";
+import { filteredLogsSql, makeRemoteLogsSession } from "./logs.remote-session.ts";
 import { makeLocalLogsSession } from "./logs.local-session.ts";
 import type { LogsFlags, LogsSession } from "./logs.session.ts";
 import type { LogsSourcesFlags } from "./logs.command.ts";
@@ -78,8 +81,6 @@ const emitRows = Effect.fnUntraced(function* (
 });
 
 const sqlInput = Effect.fn("Logs.sqlInput")(function* (flags: LogsFlags) {
-  if (Option.isSome(flags.sql) && Option.isSome(flags.file))
-    return yield* new LogsInputError({ message: "Provide SQL with --sql or --file, not both." });
   let sql = Option.getOrUndefined(flags.sql);
   if (Option.isSome(flags.file)) {
     if (flags.file.value === "-") {
@@ -139,14 +140,11 @@ export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
     yield* rejectLegacyOutput(undefined);
-    const sql = yield* sqlInput(flags);
-    const target = yield* resolveTarget(flags);
-    if (target.kind === "db-url")
-      return yield* new LogsInputError({ message: "Logs do not support database URLs." });
-    if (sql !== undefined && target.kind !== "linked")
-      return yield* new LogsInputError({ message: "Custom log SQL requires --remote." });
+    const hasSql = Option.isSome(flags.sql) || Option.isSome(flags.file);
+    if (Option.isSome(flags.sql) && Option.isSome(flags.file))
+      return yield* new LogsInputError({ message: "Provide SQL with --sql or --file, not both." });
     if (
-      sql !== undefined &&
+      hasSql &&
       (flags.service.length > 0 ||
         flags.level.length > 0 ||
         Option.isSome(flags.resource) ||
@@ -159,21 +157,43 @@ export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
         message:
           "Custom SQL cannot be combined with service, resource, kind, level, search, or stack filters.",
       });
+    const args = yield* Effect.serviceOption(CliArgs);
+    const { selection } = yield* Result.match(
+      parseTargetSelector(flags, {
+        remoteConflict: Option.getOrUndefined(args)?.remoteConflict === true,
+      }),
+      { onFailure: Effect.fail, onSuccess: Effect.succeed },
+    );
+    if (selection._tag === "DbUrl")
+      return yield* new LogsInputError({ message: "Logs do not support database URLs." });
+    const hosted = selection._tag !== "Default" && selection._tag !== "Local";
+    if (hasSql && !hosted)
+      return yield* new LogsInputError({ message: "Custom log SQL requires --remote." });
+    const started = yield* Clock.currentTimeMillis;
+    if (hosted) yield* logsWindow(flags, started);
+    const computeEnabled = hosted && !hasSql ? yield* resolveLogsCompute() : false;
+    if (hosted && !hasSql) yield* filteredLogsSql(flags, computeEnabled);
+    const target = yield* resolveTarget(flags);
+    if (target.kind === "db-url")
+      return yield* new LogsInputError({ message: "Logs do not support database URLs." });
+    const sql = yield* sqlInput(flags);
     if (target.kind === "local" && (yield* currentProjectStateMode) !== "stack")
       return yield* new LogsInputError({
         message:
           "Local logs require the experimental stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml, or use --remote for hosted logs.",
       });
-    const started = yield* Clock.currentTimeMillis;
     const output = yield* Output;
     const interactive = yield* useLogsBrowser();
     const run = Effect.fnUntraced(function* <E>(session: LogsSession<E>) {
-      if (interactive) return yield* browseLogs(session, started);
+      if (interactive) return yield* browseLogs(session, started, flags);
       const rows: Array<Schema.JsonObject> = [];
-      yield* session.load(started, (row) =>
-        Effect.sync(() => {
-          rows.push(row);
-        }),
+      yield* session.load(
+        started,
+        (row) =>
+          Effect.sync(() => {
+            rows.push(row);
+          }),
+        (update) => output.raw(`${update.message}\n`, "stderr"),
       );
       if (sql === undefined && rows.length >= flags.limit)
         yield* output.raw(
@@ -183,6 +203,8 @@ export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
       if (output.format === "json") return yield* logsResult(rows);
       if (sql !== undefined) return yield* emitRows(rows);
       const width = yield* logsWidth();
+      const tty = yield* Effect.serviceOption(Tty);
+      const wrap = Option.isSome(tty) && tty.value.stdoutIsTty;
       for (const row of rows) {
         if (output.format === "stream-json" && Schema.is(localRecord)(row))
           yield* output.event({ ...logEvent(row, "history"), data: row });
@@ -196,7 +218,12 @@ export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
             line: String(row["event_message"] ?? row["text"] ?? ""),
             data: row,
           });
-        else yield* output.raw(`${wrapLogsText(filteredText(row), width)}\n`);
+        else {
+          const text = filteredText(row);
+          yield* output.raw(
+            `${wrap ? wrapLogsText(text, width) : stripControlSequences(text.replaceAll("\r", "\\r").replaceAll("\n", "\\n"))}\n`,
+          );
+        }
       }
     });
     if (target.kind === "linked") {
@@ -206,8 +233,9 @@ export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
           flags,
           target.ref,
           started,
-          sql === undefined ? yield* resolveLogsCompute() : false,
+          computeEnabled,
           sql,
+          interactive,
         );
         yield* run(session);
       }).pipe(Effect.ensuring(cache.cache(target.ref)));

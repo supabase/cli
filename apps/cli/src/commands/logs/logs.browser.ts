@@ -1,5 +1,5 @@
 import { BunTerminal } from "@effect/platform-bun";
-import type { LogsSession } from "./logs.session.ts";
+import type { LogsFlags, LogsProgress, LogsSession } from "./logs.session.ts";
 import { LogsClipboard } from "./logs.clipboard.ts";
 import process from "node:process";
 import { Clock, Effect, Exit, Layer, Option, Queue, Schema, Stream, Terminal } from "effect";
@@ -50,6 +50,7 @@ interface LoadedBatch {
 }
 
 type BrowserEvent<E> =
+  | { readonly kind: "progress"; readonly update: LogsProgress }
   | { readonly kind: "loaded"; readonly result: Exit.Exit<LoadedBatch, E> }
   | { readonly kind: "key"; readonly input: Terminal.UserInput }
   | { readonly kind: "copied"; readonly message: string }
@@ -65,6 +66,7 @@ const encodeClipboardRecord = Schema.encodeEffect(
 export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
   session: LogsSession<E>,
   started: number,
+  flags?: LogsFlags,
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -94,7 +96,22 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
         Effect.andThen(Queue.offer(events, { kind: "closed" })),
         Effect.forkScoped,
       );
-      let state = initialBrowserState;
+      const filters =
+        flags === undefined
+          ? undefined
+          : [
+              ...(session.mode === "replace" ? ["custom SQL"] : []),
+              ...flags.service.map((value) => `service=${value}`),
+              ...flags.level.map((value) => `level=${value}`),
+              ...Option.toArray(flags.resource).map((value) => `resource=${value}`),
+              ...Option.toArray(flags.kind).map((value) => `kind=${value}`),
+              ...Option.toArray(flags.search).map((value) => `search=${value}`),
+            ];
+      let state: BrowserState = {
+        ...initialBrowserState,
+        context: session.context,
+        filters: flags === undefined ? undefined : `Filters: ${filters?.join(" · ") || "all"}`,
+      };
       let copying = false;
       let loading = false;
       const load = Effect.fn("Logs.browser.load")(function* (end: number) {
@@ -112,13 +129,16 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
         };
         let staged: BrowserState = initialBrowserState;
         yield* session
-          .load(end, (row) =>
-            Effect.sync(() => {
-              staged =
-                session.mode === "replace"
-                  ? appendBrowserRow(staged, row)
-                  : stageBrowserRow(staged, row);
-            }),
+          .load(
+            end,
+            (row) =>
+              Effect.sync(() => {
+                staged =
+                  session.mode === "replace"
+                    ? appendBrowserRow(staged, row)
+                    : stageBrowserRow(staged, row);
+              }),
+            (update) => Queue.offer(events, { kind: "progress", update }).pipe(Effect.asVoid),
           )
           .pipe(
             Effect.map((window): LoadedBatch => ({
@@ -141,6 +161,13 @@ export const browseLogs = Effect.fn("Logs.browser")(function* <E>(
         );
         const event = yield* Queue.take(events);
         switch (event.kind) {
+          case "progress":
+            state = {
+              ...state,
+              notice: event.update.message,
+              window: state.window ?? event.update.window,
+            };
+            break;
           case "loaded": {
             loading = false;
             if (Exit.isFailure(event.result)) {

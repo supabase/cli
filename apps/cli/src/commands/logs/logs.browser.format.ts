@@ -4,8 +4,9 @@ import { stripControlSequences } from "../../shared/output/strip-control-sequenc
 import { stringWidth } from "../../command-internal/string-width.ts";
 import { renderLogsRows, wrapLogsText } from "./logs.display.ts";
 
-const browserHeaderRows = 2;
-const browserReservedRows = browserHeaderRows + 1;
+const browserHeaderRows = (state: BrowserState) =>
+  state.context === undefined && state.filters === undefined ? 2 : 4;
+const browserReservedRows = (state: BrowserState) => browserHeaderRows(state) + 1;
 
 export type LogsBrowserWindow =
   | {
@@ -17,6 +18,8 @@ export type LogsBrowserWindow =
   | { readonly kind: "launch"; readonly end: string };
 
 export interface BrowserState {
+  readonly context?: string;
+  readonly filters?: string;
   readonly window: LogsBrowserWindow | undefined;
   readonly rows: ReadonlyArray<Schema.JsonObject>;
   readonly sizes: ReadonlyArray<number>;
@@ -38,7 +41,7 @@ export const initialBrowserState: BrowserState = {
   sizes: [],
   bytes: 0,
   viewport: 0,
-  visibleRows: 24 - browserReservedRows,
+  visibleRows: 21,
   selected: 0,
   detail: undefined,
   scroll: 0,
@@ -49,7 +52,7 @@ export const initialBrowserState: BrowserState = {
 };
 
 export function resizeBrowser(state: BrowserState, height: number): BrowserState {
-  const visibleRows = Math.max(1, Math.floor(height) - browserReservedRows);
+  const visibleRows = Math.max(1, Math.floor(height) - browserReservedRows(state));
   const lastStart = Math.max(0, state.rows.length - visibleRows);
   let viewport = Math.min(state.viewport, lastStart);
   if (state.selected < viewport) viewport = state.selected;
@@ -87,7 +90,7 @@ function insertBrowserRow(
       dropped: state.dropped + dropped,
       selected: Math.max(0, state.selected - dropped),
     },
-    state.visibleRows + browserReservedRows,
+    state.visibleRows + browserReservedRows(state),
   );
 }
 
@@ -210,7 +213,7 @@ export function applyBrowserBatch(
       viewport: anchorIndex >= 0 ? anchorIndex : next.viewport,
     };
   }
-  return resizeBrowser(next, state.visibleRows + browserReservedRows);
+  return resizeBrowser(next, state.visibleRows + browserReservedRows(state));
 }
 
 const clip = (value: string, width: number): string => {
@@ -265,7 +268,7 @@ export function browserKey(
           Math.max(
             0,
             browserDetailLines(state.detail, width).length -
-              Math.max(1, height - browserReservedRows),
+              Math.max(1, height - browserReservedRows(state)),
           ),
           state.scroll + delta,
         ),
@@ -290,7 +293,7 @@ export function renderBrowser(
   state = resizeBrowser(state, rows);
   const width = Math.max(1, Math.floor(columns) - 1);
   const height = Math.max(1, Math.floor(rows));
-  const bodyHeight = Math.max(0, height - browserReservedRows);
+  const bodyHeight = Math.max(0, height - browserReservedRows(state));
   let body: ReadonlyArray<string>;
   if (state.error !== undefined || state.detail !== undefined) {
     const lines =
@@ -329,10 +332,17 @@ export function renderBrowser(
       : state.detail === undefined
         ? `↑/↓ select · Enter details · ${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`
         : `↑/↓ scroll · Esc back · ${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`;
-  const lines = [heading, requestedWindow(state.window), ...body];
+  const metadata =
+    browserHeaderRows(state) === 2
+      ? []
+      : [state.context ?? "Logs", state.filters ?? "Filters: all"].map((value) =>
+          stripControlSequences(value).replaceAll(/\s+/gu, " "),
+        );
+  const lines = [heading, ...metadata, requestedWindow(state.window), ...body];
   while (lines.length < height - 1) lines.push("");
-  const compact =
-    state.error !== undefined
+  const compact = !state.complete
+    ? "q quit"
+    : state.error !== undefined
       ? "Esc back · L retry · q quit"
       : `${mode === "replace" ? "L rerun" : "L load more"} · C copy · q quit`;
   const fullNotice = clip(state.notice, width);
@@ -343,10 +353,10 @@ export function renderBrowser(
     .slice(0, height)
     .map((line, index) => {
       const plain = clip(line, width);
-      const rowIndex = state.viewport + index - browserHeaderRows;
+      const rowIndex = state.viewport + index - browserHeaderRows(state);
       const row =
-        index >= browserHeaderRows &&
-        index < body.length + browserHeaderRows &&
+        index >= browserHeaderRows(state) &&
+        index < body.length + browserHeaderRows(state) &&
         state.detail === undefined &&
         state.error === undefined
           ? state.rows[rowIndex]

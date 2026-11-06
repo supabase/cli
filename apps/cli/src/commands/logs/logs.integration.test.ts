@@ -174,13 +174,16 @@ describe("unified logs", () => {
           ),
           Effect.provide(setup.layer),
         );
-        expect(setup.http.requests[0]?.urlParams).toMatchObject({
+        expect(
+          setup.http.requests.find((request) => request.url.endsWith("/analytics/endpoints/logs"))
+            ?.urlParams,
+        ).toMatchObject({
           iso_timestamp_start: test.start,
           iso_timestamp_end: test.end,
         });
         const headers = screens
           .filter((screen) => screen.includes("Window:") && !screen.includes("resolving…"))
-          .map((screen) => screen.split("\r\n")[1]);
+          .map((screen) => screen.split("\r\n").find((line) => line.startsWith("Window:")));
         expect(headers.length).toBeGreaterThan(0);
         expect(headers.every((header) => header === test.header)).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -250,7 +253,10 @@ describe("unified logs", () => {
           Effect.provideService(Tty, { stdinIsTty, stdoutIsTty: true, stdoutIsPipe: false }),
           Effect.provide(setup.layer),
         );
-        expect(setup.http.requests[0]?.urlParams.sql).toBe(sql);
+        expect(
+          setup.http.requests.find((request) => request.url.endsWith("/analytics/endpoints/logs"))
+            ?.urlParams.sql,
+        ).toBe(sql);
         if (stdinIsTty) {
           expect(
             screens.some((screen) =>
@@ -299,7 +305,10 @@ describe("unified logs", () => {
       expect(decodeRows(setup.out.stdoutText)).toEqual([
         { id: "a", log_attributes: { "user.id": "123", trace_id: "abc" } },
       ]);
-      expect(setup.http.requests[0]?.urlParams).toMatchObject({
+      expect(
+        setup.http.requests.find((request) => request.url.endsWith("/analytics/endpoints/logs"))
+          ?.urlParams,
+      ).toMatchObject({
         sql: "select id, log_attributes from logs limit 2",
         iso_timestamp_start: "2026-11-02T11:00:00.000Z",
         iso_timestamp_end: "2026-11-02T12:00:00.000Z",
@@ -324,6 +333,76 @@ describe("unified logs", () => {
           expect(setup.http.requests).toEqual([]);
         }
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      flags: baseFlags({ sql: Option.none(), file: Option.some("-"), service: ["auth"] }),
+      message: "Custom SQL cannot be combined",
+    },
+    {
+      flags: baseFlags({ remote: Option.none(), file: Option.some("-") }),
+      message: "Custom log SQL requires --remote",
+    },
+    {
+      flags: baseFlags({ file: Option.some("-"), since: Option.some("25h") }),
+      message: "at most 24 hours",
+    },
+    {
+      flags: baseFlags({
+        remote: Option.some({ _tag: "Branch", name: "feature" }),
+        kind: Option.some("requests"),
+      }),
+      message: "--kind requires --service compute",
+    },
+  ])(
+    "rejects invalid combinations before SQL input or authentication: $message",
+    ({ flags, message }) =>
+      Effect.gen(function* () {
+        const repo = yield* makeComputeProject();
+        const setup = yield* prepare({ workdir: repo.dir, routes: {} });
+        const error = yield* logs(flags).pipe(
+          Effect.provideService(Stdin, {
+            isTTY: false,
+            readPipedText: Effect.die("stdin was consumed"),
+            readPipedBytes: Effect.die("stdin was consumed"),
+            pipedBytesStream: Stream.die("stdin was consumed"),
+            readLine: () => Effect.die("stdin was consumed"),
+          }),
+          Effect.provideService(CommandPlatformApiFactory, {
+            make: Effect.die("authentication was invoked"),
+          }),
+          Effect.provide(setup.layer),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({
+          _tag: "LogsInputError",
+          message: expect.stringContaining(message),
+        });
+        expect(setup.http.requests).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keeps a long multiline piped event on one unwrapped line", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const repo = yield* makeComputeProject();
+      const message = `${"long-message-".repeat(20)}\r\nsecond line`;
+      const setup = yield* prepare({
+        workdir: repo.dir,
+        format: "text",
+        routes: {
+          [route]: {
+            status: 200,
+            body: { result: [{ ...row("long"), event_message: message }], error: null },
+          },
+        },
+      });
+      yield* logs(tailFlags()).pipe(Effect.provide(setup.layer));
+      expect(setup.out.stdoutText).toBe(
+        `2026-11-02T11:59:59.000Z postgres ${"long-message-".repeat(20)}\\r\\nsecond line\n`,
+      );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.effect("surfaces HTTP-200 query errors and accepts null empty results", () =>
@@ -370,7 +449,9 @@ describe("unified logs", () => {
         expect(setup.out.stderrText).toContain("History reached --limit; older rows may exist.");
         expect(lines.map((line) => line.id)).toEqual(["old", "new"]);
         expect(lines[0]?.log_attributes).toMatchObject({ trace_id: "correlation" });
-        const sql = setup.http.requests[0]?.urlParams.sql;
+        const sql = setup.http.requests.find((request) =>
+          request.url.endsWith("/analytics/endpoints/logs"),
+        )?.urlParams.sql;
         expect(sql).toContain("source = 'postgres_logs'");
         expect(sql).toContain("positionCaseInsensitiveUTF8(event_message, 'can''t_%\\\\') > 0");
         expect(sql).toContain("parsed.error_severity");
@@ -427,7 +508,10 @@ describe("unified logs", () => {
       yield* runQuery(queryFlags({ sql: Option.none(), file: Option.some("-") })).pipe(
         Effect.provide(setup.layer),
       );
-      expect(setup.http.requests[0]?.urlParams.sql).toBe("select count() from logs");
+      expect(
+        setup.http.requests.find((request) => request.url.endsWith("/analytics/endpoints/logs"))
+          ?.urlParams.sql,
+      ).toBe("select count() from logs");
       const failOnRead = Layer.succeed(Stdin, {
         isTTY: false,
         readPipedText: Effect.die("explicit SQL must not consume stdin"),
@@ -459,7 +543,10 @@ describe("unified logs", () => {
         }),
         Effect.provide(setup.layer),
       );
-      expect(setup.http.requests[0]?.urlParams.sql).toContain("postgres_logs");
+      expect(
+        setup.http.requests.find((request) => request.url.endsWith("/analytics/endpoints/logs"))
+          ?.urlParams.sql,
+      ).toContain("postgres_logs");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

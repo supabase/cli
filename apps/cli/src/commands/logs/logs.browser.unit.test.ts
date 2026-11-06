@@ -54,6 +54,29 @@ const requestCases: ReadonlyArray<{
 ];
 
 describe("log browser formatting", () => {
+  it.each([80, 120])(
+    "shows bounded target and filters without terminal control injection at %s columns",
+    (columns) => {
+      const ref = "abcdefghijklmnopqrst";
+      const screen = renderBrowser(
+        {
+          ...initialBrowserState,
+          context: `Remote project\u001b[31m name\n (${ref})`,
+          filters: "Filters: service=postgres · search=hello\r\nworld",
+          window: { kind: "range", start: "2026-11-03T10:00:00Z", end: "2026-11-03T12:00:00Z" },
+        },
+        columns,
+        12,
+      );
+      const lines = screen.split("\r\n");
+      expect(lines[1]).toBe(`Remote project name (${ref})`);
+      expect(lines[2]).toBe("Filters: service=postgres · search=hello world");
+      expect(lines[3]).toBe("Window: Nov 03 10:00:00–12:00:00 UTC");
+      expect(lines).toHaveLength(12);
+      expect(lines.every((line) => stringWidth(line) < columns)).toBe(true);
+    },
+  );
+
   it.each([
     [{ ts_ms: 0 }, "Jan 01 - 00:00:00 UTC"],
     [{ timestamp: "2026-11-02 12:34:56.123" }, "Nov 02 - 12:34:56 UTC"],

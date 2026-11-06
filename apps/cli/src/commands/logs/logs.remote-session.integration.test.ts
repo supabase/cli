@@ -64,6 +64,92 @@ const prepare = Effect.fnUntraced(function* (
   return { ...setup, session };
 });
 
+it.effect("validates hosted capabilities before acquiring an authenticated API", () =>
+  Effect.gen(function* () {
+    const error = yield* makeRemoteLogsSession(
+      flags({ kind: Option.some("requests") }),
+      COMPUTE_PROJECT_REF,
+      now,
+      false,
+      undefined,
+    ).pipe(
+      Effect.provideService(CommandPlatformApiFactory, {
+        make: Effect.die("authentication was invoked"),
+      }),
+      Effect.flip,
+    );
+    expect(error).toMatchObject({
+      _tag: "LogsInputError",
+      message: "--kind requires --service compute.",
+    });
+  }),
+);
+
+it.effect.each([
+  { interactive: false, status: 403, name: undefined },
+  { interactive: true, status: 403, name: undefined },
+  { interactive: true, status: 200, name: undefined },
+  { interactive: true, status: 200, name: "test-project" },
+])(
+  "resolves viewer identity best effort with interactive=$interactive and project HTTP $status",
+  ({ interactive, status, name }) =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const projectRoute = `GET /v1/projects/${COMPUTE_PROJECT_REF}`;
+      const setup = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [projectRoute]: {
+            status,
+            body: {
+              ref: COMPUTE_PROJECT_REF,
+              id: COMPUTE_PROJECT_REF,
+              name,
+              organization_id: "org",
+              organization_slug: "test-org",
+              region: "us-east-1",
+              created_at: "2026-01-01T00:00:00Z",
+              status: "ACTIVE_HEALTHY",
+              database: {
+                host: "db.example.com",
+                version: "15",
+                postgres_engine: "15",
+                release_channel: "ga",
+              },
+            },
+          },
+          [route]: page([row("readable")]),
+        },
+      });
+      const api = yield* CommandPlatformApi.pipe(Effect.provide(setup.layer));
+      const session = yield* makeRemoteLogsSession(
+        flags(),
+        COMPUTE_PROJECT_REF,
+        now,
+        false,
+        undefined,
+        interactive,
+      ).pipe(Effect.provideService(CommandPlatformApiFactory, { make: Effect.succeed(api) }));
+      expect(session.context).toBe(
+        name === undefined
+          ? `Remote project ${COMPUTE_PROJECT_REF}`
+          : `Remote ${name} (${COMPUTE_PROJECT_REF})`,
+      );
+      const loaded: Schema.JsonObject[] = [];
+      yield* session.load(now, (entry) =>
+        Effect.sync(() => {
+          loaded.push(entry);
+        }),
+      );
+      expect(loaded[0]?.["id"]).toBe("readable");
+      expect(
+        setup.http.requests.filter((request) =>
+          request.url.endsWith(`/v1/projects/${COMPUTE_PROJECT_REF}`),
+        ),
+      ).toHaveLength(interactive ? 1 : 0);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+);
+
 it.effect(
   "drains every refresh page with exact millisecond/id ordering and deduplicates overlap independently of displayed rows",
   () =>
@@ -267,17 +353,28 @@ it.effect("retries only the throttled page after its retry-after delay", () =>
     });
     yield* setup.session.load(now, () => Effect.void);
     const rows: Schema.JsonObject[] = [];
+    const updates: string[] = [];
     const firstPage = yield* Deferred.make<void>();
     const fiber = yield* setup.session
-      .load(now + 10000, (item) =>
-        Effect.gen(function* () {
-          rows.push(item);
-          if (rows.length === 1000) yield* Deferred.succeed(firstPage, undefined);
-        }),
+      .load(
+        now + 10000,
+        (item) =>
+          Effect.gen(function* () {
+            rows.push(item);
+            if (rows.length === 1000) yield* Deferred.succeed(firstPage, undefined);
+          }),
+        (update) =>
+          Effect.sync(() => {
+            updates.push(update.message);
+          }),
       )
       .pipe(Effect.forkScoped);
     yield* Deferred.await(firstPage);
     yield* TestClock.adjust("89 seconds");
+    expect(updates).toContain("Loading page 2 (1 page received)…");
+    expect(
+      updates.some((message) => /Rate limited\. Retrying in 90s at .*Z\./u.test(message)),
+    ).toBe(true);
     expect(setup.http.requests).toHaveLength(3);
     yield* TestClock.adjust("1 second");
     yield* Fiber.join(fiber);
