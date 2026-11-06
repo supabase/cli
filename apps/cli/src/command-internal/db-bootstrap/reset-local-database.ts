@@ -30,7 +30,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { checkDbToml, loadProjectEnvValues, readDbToml } from "../db-config.toml-read.ts";
+import { checkDbConfig, loadProjectEnvValues, readDbConfig } from "../db-config.read.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
@@ -42,10 +42,12 @@ import { stackOpenReadyProject } from "../stack-local-database.ts";
 import {
   classifyStorageCapability,
   describeStorageCapability,
+  enableStorageAdvice,
   StackStorageCapabilityError,
   StackStorageUnavailableError,
   stackStorageEndpointFor,
 } from "../stack-storage.ts";
+import { configFileRefOf } from "../config-advice.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import { readSelectionOrBundled } from "../stack-lock.ts";
 import { catalogDatabaseServices, StackCatalogSetup } from "../stack-catalog-setup.ts";
@@ -116,7 +118,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 
   // Abort on a bad config before wiping the local database.
-  yield* checkDbToml(fs, path, workdir);
+  yield* checkDbConfig(fs, path, workdir);
   yield* Effect.annotateCurrentSpan("stack.backend", backend.kind);
 
   if (backend.kind === "stack") {
@@ -128,7 +130,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     const config = yield* loadStackConfig(workdir, { selection: readSelectionOrBundled }).pipe(
       Effect.mapError((cause) => resetFailed(cause.message, cause)),
     );
-    const toml = yield* readDbToml(fs, path, workdir);
+    const toml = yield* readDbConfig(fs, path, workdir);
     const databaseStatus = yield* opened.value.database.status.pipe(
       Effect.mapError((cause) => resetFailed(`failed to inspect stack: ${cause.message}`)),
     );
@@ -235,18 +237,19 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     yield* Effect.gen(function* () {
       const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
       if (!hasConfiguredBuckets(context.config)) return;
+      const configFile = configFileRefOf(path, workdir, context.resolvedConfig);
       const capability = storage === undefined ? undefined : yield* storage.status;
       const decision = classifyStorageCapability(capability);
       if (decision !== "proceed") {
         yield* skipSeeding(
           describeStorageCapability(capability),
           decision === "disabled"
-            ? "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop followed by supabase stack start without -x storage, then supabase seed buckets."
+            ? `${enableStorageAdvice(configFile)}, run supabase stack stop followed by supabase stack start without -x storage, then supabase seed buckets.`
             : undefined,
         );
         return;
       }
-      const credentials = yield* stackStorageEndpointFor(opened.value.stack);
+      const credentials = yield* stackStorageEndpointFor(opened.value.stack, configFile);
       yield* seedBucketsRun({
         projectRef: "",
         emitSummary: false,
@@ -259,6 +262,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         },
         projectEnvValues: projectEnv,
         workdir,
+        configFile,
       });
     }).pipe(
       Effect.catch((error) => skipSeeding(error.message, suggestionOf(error))),
@@ -354,6 +358,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       resolvedConfig: { config, document: resolvedConfig.loaded.document },
       // The same nested-dotenv walk already resolved for `yes`/`experimental` above.
       projectEnvValues: projectEnv,
+      configFile: configFileRefOf(path, workdir, resolvedConfig),
     }).pipe(
       // An invalid bucket entry (bad name, unparseable `file_size_limit`, …) can't abort here —
       // recreate already dropped/rebuilt the DB — so warn and skip buckets instead.

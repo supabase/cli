@@ -51,7 +51,7 @@ const render = (
 ) => {
   const lock =
     resolution === undefined
-      ? "No supabase/config.toml: using the versions bundled with the CLI; no lock written."
+      ? "No supabase/config.toml, config.json or config.jsonc: using the versions bundled with the CLI; no lock written."
       : resolution.written
         ? `Wrote ${LOCK_FILE}.`
         : `${LOCK_FILE} is up to date.`;

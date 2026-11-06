@@ -1,8 +1,5 @@
 import { Effect, Schema } from "effect";
 import { InvalidGenTypesDurationError } from "./types.errors.ts";
-import caProd2021 from "./templates/prod-ca-2021.ts";
-import caProd2025 from "./templates/prod-ca-2025.ts";
-import caStaging2021 from "./templates/staging-ca-2021.ts";
 
 // Local Docker resource ids are hoisted to `command-internal` so the declarative seam
 // can derive the same `supabase_db_<id>` name when checking the local stack.
@@ -78,8 +75,4 @@ export function parseQueryTimeoutMillis(
 
     return totalMillis;
   });
-}
-
-export function rootCaBundle() {
-  return `${caStaging2021}${caProd2021}${caProd2025}`;
 }

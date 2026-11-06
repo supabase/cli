@@ -226,20 +226,25 @@ commands retain their existing behavior.
 `functions serve` requires a running project stack. It attaches to the existing Functions member,
 waking it when needed. If Functions was excluded, it creates a temporary standalone Functions
 instance on the stack's API listener without changing the saved composition. Ctrl-C destroys that
-temporary instance; an existing member remains available. `--no-verify-jwt` and `--env-file` apply
-for the serving session and the previous configuration is restored on exit. Ordinary code edits
+temporary instance; an existing member remains available. On a running stack, any difference
+between the configuration serve resolves (env files, per-function `.env`, `[functions.<name>]`
+settings, `--env-file`, `--debug`, `--no-verify-jwt`) and the saved one restarts Functions for
+the serving session, and the saved configuration is restored on exit. Edits made while serving
+apply on the next `functions serve`, because the stack backend does not watch files. Ordinary code edits
 are picked up by the next invocation without a runtime restart. Import-map and inspector flags
-and multiline environment values are currently unsupported on this backend. Normal exit owns cleanup; forcibly killing the CLI
+are currently unsupported on this backend. Normal exit owns cleanup; forcibly killing the CLI
 cannot guarantee restoration or removal of its temporary instance. Concurrent override sessions
 for the same Functions instance are unsupported. Cleanup waits for submitted lifecycle operations;
 additional signals do not force it to abandon cleanup. Restoration restores configuration and keeps
 the service running; it does not return it to a sleeping state.
 
-Stack mode reads the shared `supabase/functions/.env` file when creating Functions; `--env-file`
-replaces those custom values for the session. A normal `start` applies changes to the shared file
-and restores default JWT verification on the same Functions instance. Per-function
-`.env` files are not loaded. Reserved
-`SUPABASE_*` values in these files are ignored because the runtime supplies them. With
+Stack mode resolves the Functions env like legacy `start` and `functions serve`: the shared
+`supabase/functions/.env` file overrides `[edge_runtime.secrets]`, and `functions serve` also
+reads each enabled function's own `.env` on every invocation; `--env-file` replaces those files
+for the session. Multiline values are supported. `start` applies changes to the shared file and
+restores default JWT verification only when it creates or replans the stack; a `start` against a
+running stack keeps the current Functions configuration. Reserved `SUPABASE_*`
+values in these files are skipped with a warning because the runtime supplies them. With
 `--output-format stream-json`, readiness emits a result containing the instance ID and URL,
 followed by live log events.
 
@@ -380,8 +385,8 @@ format, or comes from a newer CLI always fails the start. The lock's JSON Schema
 `https://supabase.com/schemas/supabase-lock/v1.json`. A database with initialized data keeps
 its build: any change other than a new `-rN` revision of the same build (a different upstream build,
 release line or major) is refused. The refusal offers to keep the data by pinning the recorded build with
-`[local.services.database] version`, setting `[db] major_version` back when the major differs and removing any
-`[db] orioledb_version` when an OrioleDB build is requested, or to run `supabase stack destroy` and recreate it. `supabase link`
+`local.services.database.version` in your config file, setting `db.major_version` back when the major differs and removing any
+`db.orioledb_version` when an OrioleDB build is requested, or to run `supabase stack destroy` and recreate it. `supabase link`
 and `supabase stack update` warn when the versions they lock would be refused by an existing stack's
 data. A database that never initialized adopts the change. See the [`start` side
 effects](../src/commands/experimental/stack/start/SIDE_EFFECTS.md#service-versions-and-the-lock) for

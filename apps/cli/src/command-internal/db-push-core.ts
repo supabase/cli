@@ -18,7 +18,8 @@ import {
   DbPushRolesError,
 } from "../commands/db/push/push.errors.ts";
 import { aqua, bold } from "./colors.ts";
-import type { DbTomlValues } from "./db-config.toml-read.ts";
+import { configFileName } from "./config-advice.ts";
+import type { DbConfigValues } from "./db-config.read.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { applyMigrations, seedGlobals } from "./migration-apply.ts";
 import { listRemoteMigrations, suggestRevertHistory } from "./migration-history.ts";
@@ -75,8 +76,8 @@ export interface DbPushCoreInput {
   readonly seed: DbSeedPlan;
   readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
-  /** Already loaded + validated `config.toml`, e.g. via `checkDbToml`. */
-  readonly toml: DbTomlValues;
+  /** Already loaded + validated `config.toml`, e.g. via `checkDbConfig`. */
+  readonly toml: DbConfigValues;
   /** Consent the caller already obtained; `None` asks once after the plan (never for local). */
   readonly preapproved: Option.Option<HostedMutationConsent>;
   /**
@@ -127,7 +128,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
       let pending: ReadonlyArray<string> = [];
       if (!toml.migrationsEnabled) {
         yield* output.raw(
-          `Skipping migrations because it is disabled in config.toml for project: ${projectRef}\n`,
+          `Skipping migrations because it is disabled in ${configFileName(toml.configFile.path)} for project: ${projectRef}\n`,
           "stderr",
         );
       } else {
@@ -160,7 +161,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
       if (includeSeed) {
         if (!seed.input.enabled) {
           yield* output.raw(
-            `Skipping seed because it is disabled in config.toml for project: ${projectRef}\n`,
+            `Skipping seed because it is disabled in ${configFileName(toml.configFile.path)} for project: ${projectRef}\n`,
             "stderr",
           );
         } else {
@@ -234,7 +235,7 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
                   ? [
                       `Apply these migrations:\n${confirmPushAll(pending.map((p) => path.basename(p))).trimEnd()}`,
                       ...(includeVault && vaultSecrets.some((secret) => secret.resolved)
-                        ? ["Update vault secrets from config.toml"]
+                        ? [`Update vault secrets from ${configFileName(toml.configFile.path)}`]
                         : []),
                     ]
                   : []),

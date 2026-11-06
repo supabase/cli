@@ -6,6 +6,7 @@ import {
   ConfigProvider,
   Data,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -71,6 +72,19 @@ class DockerTestError extends Data.TaggedError("DockerTestError")<{
 class PublishBarrierError extends Data.TaggedError("PublishBarrierError")<{
   readonly message: string;
 }> {}
+class PhaseStallError extends Data.TaggedError("PhaseStallError")<{
+  readonly message: string;
+}> {}
+
+/** Fails with the stalled phase's name before the test's own timeout hides which step hung. */
+const phaseDeadline =
+  (phase: string, seconds = 5) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    Effect.timeoutOrElse(self, {
+      duration: Duration.seconds(seconds),
+      orElse: () =>
+        Effect.fail(new PhaseStallError({ message: `${phase} did not finish within ${seconds}s` })),
+    });
 
 const dockerStoragePublishLoopFixture = fileURLToPath(
   new URL("../../tests/docker-storage-publish-loop-fixture.ts", import.meta.url),
@@ -1111,7 +1125,9 @@ describe.runIf(testEngine === "docker")(
             const cacheRoot = path.join(root, "cache");
             yield* fs.makeDirectory(instanceRoot, { recursive: true });
             const markerPath = path.join(instanceRoot, ".supabase-database-storage.json");
-            const helperImage = yield* preparedPostgresImage(selection.database);
+            const helperImage = yield* preparedPostgresImage(selection.database).pipe(
+              phaseDeadline("helper image preparation", 10),
+            );
             const storage = yield* makeDockerDatabaseStorage({
               runtime: "docker",
               target: dockerTarget,
@@ -1134,9 +1150,11 @@ describe.runIf(testEngine === "docker")(
             // the global test-run teardown, since a container that mounted it may not yet be
             // reaped by the time that teardown runs.
             yield* Effect.addFinalizer(() =>
-              storage.destroyData(selection.database).pipe(Effect.ignore),
+              storage
+                .destroyData(selection.database)
+                .pipe(Effect.ignore, phaseDeadline("destroyData cleanup"), Effect.orDie),
             );
-            yield* storage.prepare(selection.database);
+            yield* storage.prepare(selection.database).pipe(phaseDeadline("prepare"));
             const before = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
               yield* fs.readFileString(markerPath),
             );
@@ -1160,6 +1178,8 @@ describe.runIf(testEngine === "docker")(
                     : engine(["rm", "--force", ...ids]).pipe(Effect.asVoid);
                 }),
                 Effect.ignore,
+                phaseDeadline(`helper container cleanup for volume ${volume}`),
+                Effect.orDie,
               ),
             );
             // `markInitialized` (below, and inside the killed writer) checks this file through a
@@ -1174,7 +1194,7 @@ describe.runIf(testEngine === "docker")(
               "/bin/sh",
               "-c",
               `set -eu; mkdir -p ${quote(`/store/${before.namespace}/data`)}; printf 17 > ${quote(`/store/${before.namespace}/data/PG_VERSION`)}`,
-            ]);
+            ]).pipe(phaseDeadline(`PG_VERSION seed in volume ${volume}`));
 
             const writer = yield* spawner.spawn(
               ChildProcess.make(
@@ -1223,9 +1243,9 @@ describe.runIf(testEngine === "docker")(
               }),
             );
             yield* Effect.sync(() => process.kill(Number(writer.pid), "SIGKILL"));
-            yield* writer.exitCode.pipe(Effect.ignore);
-            yield* Fiber.join(output);
-            yield* Fiber.join(diagnostics);
+            yield* writer.exitCode.pipe(Effect.ignore, phaseDeadline("killed writer exit"));
+            yield* Fiber.join(output).pipe(phaseDeadline("killed writer stdout close"));
+            yield* Fiber.join(diagnostics).pipe(phaseDeadline("killed writer stderr close"));
 
             // The killed writer never reached the rename: the prior marker is untouched, and only
             // its staging file, never a partial target, is left behind.
@@ -1237,7 +1257,9 @@ describe.runIf(testEngine === "docker")(
               (yield* fs.readDirectory(instanceRoot)).filter((entry) => entry.endsWith(".tmp")),
             ).toHaveLength(1);
 
-            yield* storage.markInitialized(selection.database);
+            yield* storage
+              .markInitialized(selection.database)
+              .pipe(phaseDeadline("markInitialized retry"));
             const afterRetry = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
               yield* fs.readFileString(markerPath),
             );

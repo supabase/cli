@@ -6,7 +6,7 @@ import { ConfigEnvPins } from "../../tests/helpers/config-env-pins.ts";
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
-import { checkDbToml } from "./db-config.toml-read.ts";
+import { checkDbConfig } from "./db-config.read.ts";
 
 const TARGET_REF = "abcdefghijklmnopqrst";
 const OTHER_REF = "zyxwvutsrqponmlkjihg";
@@ -213,7 +213,7 @@ describe("db toml reader precedence goldens", () => {
         }
         pinShellEnv(shell);
 
-        const outcome = yield* checkDbToml(fs, path, workdir, fixture.ref).pipe(
+        const outcome = yield* checkDbConfig(fs, path, workdir, fixture.ref).pipe(
           Effect.provide(cliConfigValuesTestLayer),
           Effect.provideService(ConfigEnvPins, shell),
           Effect.provideService(

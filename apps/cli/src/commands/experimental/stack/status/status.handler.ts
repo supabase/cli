@@ -9,7 +9,7 @@ import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts
 import type { StackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import { readLockedSelection } from "../../../../command-internal/stack-lock.ts";
-import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
+import { withProjectFunctionsConfig } from "../../../../command-internal/stack-functions-env.ts";
 import { bold, gray, green, red, yellow } from "../../../../command-internal/colors.ts";
 import {
   connectionEnv,
@@ -318,12 +318,14 @@ const projectConfigUnavailable = (error: { readonly message: string }) =>
   Effect.succeed(unavailableDrift(`Project configuration could not be compared: ${error.message}`));
 
 const configDrift = Effect.fn("experimental.stack.status.configDrift")(
-  function* (stack: Stack, projectRoot: string, functionsIsMember: boolean) {
+  function* (stack: Stack, projectRoot: string, functionsIsMember: boolean, debug: boolean) {
     const loaded = yield* loadStackConfig(projectRoot, { selection: readLockedSelection });
     const creations = yield* loaded.creations(stack.id);
     // Drift ignores non-members, so a Functions dotenv only matters when Functions is a member.
     const requested = functionsIsMember
-      ? yield* Effect.forEach(creations, withProjectFunctionsEnv)
+      ? yield* Effect.forEach(creations, (creation) =>
+          withProjectFunctionsConfig(creation, { warn: false, debug }),
+        )
       : creations;
     return driftFrom(yield* stack.composition.plan(requested));
   },
@@ -332,7 +334,7 @@ const configDrift = Effect.fn("experimental.stack.status.configDrift")(
       Effect.catchTags({
         StackConfigError: projectConfigUnavailable,
         LockResolutionError: projectConfigUnavailable,
-        StackFunctionsEnvError: projectConfigUnavailable,
+        FunctionsEnvError: projectConfigUnavailable,
         StackError: (error) =>
           Effect.succeed(
             unavailableDrift(`Saved configuration could not be compared: ${error.message}`),
@@ -424,12 +426,18 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       else yield* output.result(values);
       return;
     }
+    const functionsMember = observed.observed.find(
+      ({ instance }) => memberIds.has(instance.id) && instance.service === "functions",
+    );
+    /* Debug is a start flag, not project config, so the saved mode is requested back. */
+    const savedFunctions = target.definition.instances.find(
+      ({ id }) => id === functionsMember?.instance.id,
+    )?.creation;
     const config = yield* configDrift(
       stack,
       target.definition.identity.projectRoot,
-      observed.observed.some(
-        ({ instance }) => memberIds.has(instance.id) && instance.service === "functions",
-      ),
+      functionsMember !== undefined,
+      savedFunctions?.service === "functions" && savedFunctions.config.debug === true,
     );
     const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
     const connections = stackConnections(members);

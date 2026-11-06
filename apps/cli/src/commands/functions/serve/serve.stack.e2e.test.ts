@@ -72,6 +72,9 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
       databaseUrl: Deno.env.get("SUPABASE_DB_URL") ?? null,
     }));`,
   );
+  /* serve re-reads this file, so it must hold the member's saved env. */
+  if (included)
+    yield* fs.writeFileString(path.join(functionsRoot, ".env"), "CUSTOM_VALUE=original\n");
   yield* fs.writeFileString(path.join(root, "override.env"), "CUSTOM_VALUE=overridden\n");
   yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
   yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
@@ -109,6 +112,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
               functionsRoot,
               jwtSecret,
               verifyJwt: true,
+              functions: {},
               env: { CUSTOM_VALUE: "original" },
             },
             endpoints: { http: { port: "auto" as const } },

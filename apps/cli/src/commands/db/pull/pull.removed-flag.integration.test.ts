@@ -25,7 +25,7 @@ const testRoot = Command.make("supabase").pipe(
 );
 
 const USE_PG_DELTA_SUGGESTION =
-  "Use --declarative to pull the declarative schema. The diff engine is chosen with --diff-engine or [experimental.pgdelta] enabled in config.toml.";
+  "Use --declarative to pull the declarative schema. The diff engine is chosen with --diff-engine or experimental.pgdelta.enabled in the config file.";
 const EXPERIMENTAL_MESSAGE = "The --experimental structured-dump mode of db pull was removed.";
 const EXPERIMENTAL_SUGGESTION =
   "Use --declarative to pull per-object schema files, or pass --experimental=false (or unset SUPABASE_EXPERIMENTAL) for a migration pull.";

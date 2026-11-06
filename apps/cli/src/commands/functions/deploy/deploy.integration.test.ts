@@ -64,6 +64,7 @@ import { functionsLocalConfigLoader } from "../../../command-internal/functions-
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionImportMapSyntaxError,
+  FunctionsDeployFailedError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "../../../shared/functions/deploy.errors.ts";
@@ -853,7 +854,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.effect("reports a malformed deno.json with the schema decoder's message", () => {
+  it.effect("reports a malformed deno.json with the parse reason and position", () => {
     const { api, layer } = apiDeployHarness(deployedHelloWorld);
 
     return Effect.gen(function* () {
@@ -869,7 +870,10 @@ describe("functions deploy", () => {
       const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(FunctionImportMapSyntaxError);
-      expect(error).toMatchObject({ name: "SyntaxError", message: "Expected a valid JSON string" });
+      expect(error).toMatchObject({
+        name: "SyntaxError",
+        message: "Close brace expected (line 1, column 2)",
+      });
       expect(api.requests.some((request) => request.method === "POST")).toBe(false);
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
@@ -997,6 +1001,49 @@ describe("functions deploy", () => {
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
+
+    it.effect("uploads the files a commented deno.jsonc import map points at", () => {
+      const uploaded: Array<{ importMapPath: string; fileNames: Array<string> }> = [];
+      const { layer } = apiDeployHarness((request, recorded) => {
+        if (Predicate.isTagged(request.body, "FormData")) {
+          const metadata = request.body.formData.get("metadata");
+          if (typeof metadata === "string") {
+            uploaded.push({
+              importMapPath: JSON.parse(metadata).import_map_path,
+              fileNames: request.body.formData
+                .getAll("file")
+                .flatMap((part) => (part instanceof File ? [part.name] : [])),
+            });
+          }
+        }
+        return deployedHelloWorld(request, recorded);
+      });
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* fs.remove(`${functionDir("hello-world")}/deno.json`);
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase/shared`, { recursive: true });
+        yield* fs.writeFileString(`${tempRoot.current}/supabase/shared/helper.ts`, "export {}\n");
+        yield* fs.writeFileString(
+          `${functionDir("hello-world")}/deno.jsonc`,
+          `{
+  // shared helper
+  "imports": {
+    "helper": "../../shared/helper.ts", /* trailing comma follows */
+  },
+}
+`,
+        );
+
+        yield* functionsDeploy(baseFlags);
+
+        expect(uploaded).toHaveLength(1);
+        expect(uploaded[0]?.importMapPath).toBe("supabase/functions/hello-world/deno.jsonc");
+        expect(uploaded[0]?.fileNames).toContain("supabase/shared/helper.ts");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.effect("deploys with deno.json when the function directory has both files", () => {
       const { importMapPaths, layer } = harnessRecordingImportMapPaths();
@@ -2083,7 +2130,7 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
         expect(error).toMatchObject({
           message: 'unexpected deploy status 409: {"message":"rejected bye-world"}',
         });
@@ -2121,6 +2168,7 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(withAdvancingClock, Effect.flip);
 
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
         expect(error).toMatchObject({
           message: 'unexpected bulk update status 500: {"message":"bulk update rejected"}',
         });
@@ -2141,6 +2189,7 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
         expect(error).toMatchObject({
           message: [
             'unexpected deploy status 409: {"message":"rejected hello-world"}',

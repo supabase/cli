@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Fiber, FileSystem, Latch, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { TestClock } from "effect/testing";
 
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -59,6 +60,9 @@ interface SetupOpts {
   //   "notGated"  → entitlement says auth.saml_2 has_access=true
   //   undefined   → no extra handlers wired; project lookup 404s
   upgradeGate?: "gated" | "notGated";
+  projectStatus?: string;
+  stallProviders?: boolean;
+  apiMaxRetries?: Option.Option<number>;
 }
 
 function jsonResponse(
@@ -84,16 +88,20 @@ function setup(opts: SetupOpts = {}) {
   const status = opts.status ?? 200;
   const body = opts.body ?? { items: [PROVIDER_ITEM] };
   const gate = opts.upgradeGate;
+  const providersStalled = Latch.makeUnsafe(false);
 
   const api = mockCommandPlatformApi({
     network: opts.network,
     handler: (request) => {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers")) {
+        if (opts.stallProviders === true) {
+          return Effect.andThen(providersStalled.open, Effect.never);
+        }
         return Effect.succeed(jsonResponse(request, status, body));
       }
       if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        if (gate === undefined) {
+        if (gate === undefined && opts.projectStatus === undefined) {
           return Effect.succeed(jsonResponse(request, 404, {}));
         }
         return Effect.succeed(
@@ -105,7 +113,7 @@ function setup(opts: SetupOpts = {}) {
             name: "Test",
             region: "us-east-1",
             created_at: "2023-01-01T00:00:00Z",
-            status: "ACTIVE_HEALTHY",
+            status: opts.projectStatus ?? "ACTIVE_HEALTHY",
             database: {
               host: "db.example.com",
               version: "15",
@@ -136,6 +144,7 @@ function setup(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     projectId: opts.projectId,
+    apiMaxRetries: opts.apiMaxRetries ?? Option.some(0),
   });
   const layer = buildTestRuntime({
     out,
@@ -147,7 +156,7 @@ function setup(opts: SetupOpts = {}) {
     outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
-  return { layer, out, api, analytics, telemetry, cache };
+  return { layer, out, api, analytics, telemetry, cache, providersStalled };
 }
 
 describe("sso list integration", () => {
@@ -369,6 +378,61 @@ describe("sso list integration", () => {
         expect(dump).toContain("SsoListUnexpectedStatusError");
         expect(dump).toContain("unexpected error listing identity providers");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("warns about the project status when listing fails on an inactive project", () => {
+    const { layer, out } = setup({ status: 500, body: {}, projectStatus: "INACTIVE" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        ssoList({ remote: Option.none(), projectRef: Option.none() }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(out.messages).toContainEqual({
+        type: "warn",
+        message: `Project ${VALID_REF} status is INACTIVE instead of ACTIVE_HEALTHY. SSO providers can only be managed on an active, healthy project.`,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails a stalled list within two attempts and warns about the project status", () => {
+    const { layer, out, api, providersStalled } = setup({
+      stallProviders: true,
+      projectStatus: "INACTIVE",
+      apiMaxRetries: Option.none(),
+    });
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() })),
+      );
+      // Request timeouts are scheduled only once the handler's real filesystem work is done.
+      yield* providersStalled.await;
+      for (let second = 0; second < 30 && fiber.pollUnsafe() === undefined; second++) {
+        yield* TestClock.adjust("1 second");
+      }
+      const exit = yield* Fiber.join(fiber);
+
+      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain("SsoListNetworkError");
+      expect(api.requests.filter((r) => r.url.includes("/sso/providers"))).toHaveLength(2);
+      expect(out.messages.some((m) => m.type === "warn" && m.message.includes("INACTIVE"))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not look up project health on a 4xx", () => {
+    const { layer, out } = setup({ status: 404, body: {}, projectStatus: "INACTIVE" });
+    return Effect.gen(function* () {
+      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
+      expect(out.messages.some((m) => m.type === "warn")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not warn when the failing project is healthy", () => {
+    const { layer, out } = setup({ status: 500, body: {}, projectStatus: "ACTIVE_HEALTHY" });
+    return Effect.gen(function* () {
+      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
+      expect(out.messages.some((m) => m.type === "warn")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

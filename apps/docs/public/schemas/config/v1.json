@@ -3316,7 +3316,7 @@
                 }
               },
               "additionalProperties": false,
-              "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". When migrations run against --db-url, this section is read only from the local config.toml."
+              "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". When migrations run against --db-url, this section is read only from the local config file."
             }
           },
           "additionalProperties": false
@@ -7908,7 +7908,7 @@
                               }
                             },
                             "additionalProperties": false,
-                            "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". When migrations run against --db-url, this section is read only from the local config.toml."
+                            "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". When migrations run against --db-url, this section is read only from the local config file."
                           }
                         },
                         "additionalProperties": false

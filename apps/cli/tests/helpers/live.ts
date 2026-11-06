@@ -4,7 +4,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
-import { rootCaBundle } from "../../src/commands/gen/types/types.shared.ts";
+import { rootCaBundle } from "../../src/command-internal/supabase-tls.ts";
 import {
   type CliRunError,
   requireCliSuccess,

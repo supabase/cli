@@ -30,7 +30,7 @@ import type {
 } from "../../config/cli-config.errors.ts";
 import type { ProjectRefReadError } from "../../shared/config/legacy-project-state.service.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
-import { checkDbToml } from "../db-config.toml-read.ts";
+import { checkDbConfig } from "../db-config.read.ts";
 import { CLI_PROJECT_LABEL, localDbContainerId } from "../docker-ids.ts";
 import { DockerRun, type DockerRunOpts } from "../docker-run.service.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
@@ -851,10 +851,10 @@ export const startSetupLocalDatabase = (
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
 
-    // `warnOnUnresolvedEnv: false`: the caller's own handler already ran an earlier `checkDbToml`
+    // `warnOnUnresolvedEnv: false`: the caller's own handler already ran an earlier `checkDbConfig`
     // pass before reaching this fresh-volume setup, which already printed any unresolved-env
     // warning. Without this, this module's own duplicate config-load pass would print it twice.
-    const toml = yield* checkDbToml(fs, path, workdir, undefined, {
+    const toml = yield* checkDbConfig(fs, path, workdir, undefined, {
       warnOnUnresolvedEnv: false,
     });
 
@@ -874,6 +874,7 @@ export const startSetupLocalDatabase = (
       pgDeltaEnabled: toml.pgDelta.enabled,
       schemaPaths: toml.schemaPaths,
       localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+      configFile: toml.configFile,
     });
   });
 

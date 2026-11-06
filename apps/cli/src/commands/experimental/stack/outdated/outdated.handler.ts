@@ -88,7 +88,8 @@ export const stackOutdated = Effect.fn("experimental.stack.outdated")(function* 
     if (rows === undefined)
       return yield* new StackCommandOutdatedError({
         reason: "invalid-config",
-        message: "No supabase/config.toml in this project, so there is no lock to inspect.",
+        message:
+          "No supabase/config.toml, config.json or config.jsonc in this project, so there is no lock to inspect.",
         suggestion: "Run supabase init, then supabase start to create supabase/supabase.lock.",
       });
 

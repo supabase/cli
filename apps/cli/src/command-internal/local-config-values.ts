@@ -28,6 +28,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { resolveApiExternalUrl } from "./api-url.ts";
+import { configFileName } from "./config-advice.ts";
 import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import {
   apiTlsCertReadErrorMessage,
@@ -773,6 +774,8 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
    * (not the always-defaulted decoded value). `undefined` callers skip those checks.
    */
   document?: Readonly<Record<string, unknown>>,
+  /** The loaded config file's path, so messages name it; `undefined` reads as `config.toml`. */
+  configPath?: string,
 ) {
   const resolvedProjectId = config.project_id ?? "";
 
@@ -954,6 +957,7 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
     edgeRuntimeDenoVersion: denoVersion,
     analytics: analyticsInput,
     experimental: experimentalInput,
+    configFileName: configPath === undefined ? undefined : configFileName(configPath),
   };
   yield* attempt(() => validateResolvedConfig(input));
   if (authEnabled) {

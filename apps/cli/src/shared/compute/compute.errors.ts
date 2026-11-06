@@ -132,18 +132,6 @@ export class ComputeDirectoryExistsError extends Data.TaggedError("ComputeDirect
   }
 }
 
-/** A compute scaffold cannot safely edit a JSON-authoritative project config. */
-export class ComputeJsonConfigUnsupportedError extends Data.TaggedError(
-  "ComputeJsonConfigUnsupportedError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
-
 export class ComputeSourceMissingError extends Data.TaggedError("ComputeSourceMissingError")<{
   readonly detail: string;
   readonly suggestion: string;

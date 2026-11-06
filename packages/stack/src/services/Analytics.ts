@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { DEFAULT_ERL_MAX_PORTS } from "../Defaults.ts";
 import { ServiceError } from "../Service.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, requiredInput } from "./ServiceConfig.ts";
@@ -94,6 +95,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         // Logflare waits this period after SIGTERM before stopping (a load-balancer drain delay),
         // longer than the stack's stop grace.
         ERL_AFLAGS: "-eval application:set_env(logflare,sigterm_shutdown_grace_period_ms,0).",
+        ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
       };
     }),
   args: () => Effect.succeed(["start"]),

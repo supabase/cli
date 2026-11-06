@@ -33,7 +33,12 @@ import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
-import { type ConnectSuggestionContext, SUGGEST_ENV_VAR } from "./connect-errors.ts";
+import {
+  type ConnectSuggestionContext,
+  SUGGEST_CA_VERIFICATION,
+  SUGGEST_ENV_VAR,
+  suggestNetworkRestrictions,
+} from "./connect-errors.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
 import {
@@ -49,7 +54,7 @@ import {
   redactConnectionString,
 } from "./db-config.parse.ts";
 import { DbConfigResolver, type DbConfigError } from "./db-config.service.ts";
-import { loadProjectEnvValues, readDbToml } from "./db-config.toml-read.ts";
+import { loadProjectEnvValues, readDbConfig } from "./db-config.read.ts";
 import type { DbConnectionInput } from "./db-config.types.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
@@ -57,6 +62,7 @@ import { mapHttpError } from "./http-errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
+import { pinSupabaseTls } from "./supabase-tls.ts";
 import { block, type OperationEntry } from "./command-permissions/model.ts";
 import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.ts";
 import { isCheckoutLinked } from "../shared/config/link-snapshot.ts";
@@ -316,12 +322,17 @@ const NO_BANS: BanState = { listed: [], failure: Option.none() };
 
 // Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look
 // for network bans on the project: with approval they are removed and a failed removal is what the
-// run reports if the retries run out; without it the last listing is reported instead.
+// run reports if the retries run out; without it the last listing is reported instead. A rejected
+// server certificate or an IP rejected by the project's network restrictions ends the loop at
+// once: neither changes between attempts, and bans do not cause them. Every other failure keeps
+// retrying, dial failures included, because a ban surfaces as a dial failure and only the retry
+// path lists bans.
 const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   ref: string,
   conn: PgConnInput,
   dnsResolver: "native" | "https",
   removeNetworkBans: boolean,
+  dashboardUrl: string,
 ) {
   const dbConn = yield* DbConnection;
   const debug = yield* DebugLogger;
@@ -334,6 +345,22 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
     Effect.scoped(dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid)).pipe(
       Effect.ensuring(Effect.annotateCurrentSpan("retry.attempt_count", n)),
       Effect.catch((cause) => {
+        if (cause.certificateRejected === true) {
+          return Effect.fail(
+            new Errors.DbConfigConnectTempRoleError({
+              message: `failed to connect as temp role: ${cause.message}`,
+              suggestion: SUGGEST_CA_VERIFICATION,
+            }),
+          );
+        }
+        if (cause.networkRestricted === true) {
+          return Effect.fail(
+            new Errors.DbConfigConnectTempRoleError({
+              message: `failed to connect as temp role: ${cause.message}`,
+              suggestion: suggestNetworkRestrictions(dashboardUrl),
+            }),
+          );
+        }
         // 8 retries after the initial attempt allows 9 total attempts. `n` is 1-based, so give
         // up only after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
         if (n > MAX_RETRIES) {
@@ -512,6 +539,7 @@ const fetchApiPoolerUrl = Effect.fn("DbConfig.fetchApiPoolerUrl")(
 const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   ref: string,
   workdir: string,
+  profile: string,
   poolerHost: string,
   dnsResolver: "native" | "https",
   password: string,
@@ -524,6 +552,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   ignoreSavedUrl = false,
   resolveVaultSecrets = true,
   removeNetworkBans: boolean,
+  dashboardUrl: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -531,7 +560,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   // on the main linked branch rather than validating base config. For an ad-hoc `--project-ref`,
   // skip the saved workdir pooler URL because it belongs to the linked project, not necessarily
   // the explicit ref.
-  yield* readDbToml(fs, path, workdir, ref, {
+  yield* readDbConfig(fs, path, workdir, ref, {
     resolveVaultSecrets,
   });
   let connectionString = ignoreSavedUrl ? undefined : Option.getOrUndefined(savedPoolerUrl);
@@ -551,14 +580,14 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
     }
   }
   if (Option.isNone(pooler)) return Option.none<PgConnInput>();
-  const poolerConn = pooler.value;
+  const poolerConn = pinSupabaseTls(pooler.value, profile);
   if (password.length > 0) return Option.some({ ...poolerConn, password });
   // Mint a temp role; preserve Supavisor's `<user>.<ref>` tenant suffix.
   const originalUser = poolerConn.user;
   const withRole = yield* initLoginRole(ref, poolerConn);
   const finalUser = originalUser.endsWith(`.${ref}`) ? `${withRole.user}.${ref}` : withRole.user;
   const tempConn = { ...withRole, user: finalUser };
-  yield* waitForTempRole(ref, tempConn, dnsResolver, removeNetworkBans);
+  yield* waitForTempRole(ref, tempConn, dnsResolver, removeNetworkBans, dashboardUrl);
   return Option.some(tempConn);
 });
 
@@ -578,6 +607,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
 export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(function* (
   ref: string,
   workdir: string,
+  profile: string,
   projectHost: string,
   poolerHost: string,
   dnsResolver: "native" | "https",
@@ -585,6 +615,8 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   options: {
     /** Whether the temp-role retry may clear listed bans; only a `--yes` approval sets it. */
     readonly removeNetworkBans: boolean;
+    /** The active profile's dashboard, linked from the network restrictions hint. */
+    readonly dashboardUrl: string;
     readonly adHocProjectRef?: boolean;
     readonly resolveVaultSecrets?: boolean;
     /** The pooler URL the link recorded for `ref`, used when the direct host is unreachable. */
@@ -605,6 +637,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     fetchPoolerFromApi = false,
     hasPasswordFlag = false,
     removeNetworkBans,
+    dashboardUrl,
     poolerUrl = Option.none<string>(),
   } = options;
   const dbPassword = yield* resolveLinkedPassword(ref, workdir, explicitPassword, hasPasswordFlag);
@@ -621,24 +654,28 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   yield* Effect.annotateCurrentSpan("db.direct_reachable", reachable);
   if (reachable) {
     /* Same libpq TLS and timeout precedence as the pooler URL; host, port, role and database stay
-       pinned. The empty `passfile=` skips a `.pgpass` read for a password that is discarded. */
+       pinned. The empty `passfile=` skips a `.pgpass` read for a password that is discarded. Absent an
+       explicit `sslmode`/`sslrootcert`, the Supabase CA is pinned, as on the pooler path. */
     const parsed = yield* parseConnectionString(
       `postgresql://postgres@${host}:${DIRECT_PORT}/postgres?passfile=`,
     );
     if (parsed === undefined) {
       return yield* new Errors.DbConfigLibpqEnvError({ message: LIBPQ_ENV_MESSAGE });
     }
-    const direct = {
-      ...base,
-      ...Struct.pick(parsed, [
-        "sslmode",
-        "sslrootcert",
-        "sslcert",
-        "sslkey",
-        "sslpassword",
-        "connectTimeoutSeconds",
-      ]),
-    };
+    const direct = pinSupabaseTls(
+      {
+        ...base,
+        ...Struct.pick(parsed, [
+          "sslmode",
+          "sslrootcert",
+          "sslcert",
+          "sslkey",
+          "sslpassword",
+          "connectTimeoutSeconds",
+        ]),
+      },
+      profile,
+    );
     if (direct.password.length > 0) return direct;
     return yield* initLoginRole(ref, direct);
   }
@@ -649,6 +686,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   const poolerConn = yield* resolvePoolerConn(
     ref,
     workdir,
+    profile,
     poolerHost,
     dnsResolver,
     base.password,
@@ -657,6 +695,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     adHocProjectRef,
     resolveVaultSecrets,
     removeNetworkBans,
+    dashboardUrl,
   );
   if (Option.isNone(poolerConn)) {
     return yield* new Errors.DbConfigIpv6Error({
@@ -785,7 +824,7 @@ export const dbConfigResolverLayer = Layer.effect(
 
     const resolveDbUrl = (dbUrl: string, localHost: string, resolveVaultSecrets: boolean) =>
       Effect.gen(function* () {
-        const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
+        const tomlValues = yield* readDbConfig(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
         // The project `.env*` files populate the environment that the libpq `PG*` fallbacks
@@ -831,7 +870,7 @@ export const dbConfigResolverLayer = Layer.effect(
 
     const resolveLocalStack = (localHost: string, resolveVaultSecrets: boolean) =>
       Effect.gen(function* () {
-        const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
+        const tomlValues = yield* readDbConfig(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
         const backend = yield* currentStackBackend;
@@ -871,12 +910,13 @@ export const dbConfigResolverLayer = Layer.effect(
       },
     ) =>
       Effect.gen(function* () {
-        yield* readDbToml(fs, path, cliSettings.workdir, ref, {
+        yield* readDbConfig(fs, path, cliSettings.workdir, ref, {
           resolveVaultSecrets: options.resolveVaultSecrets,
         });
         return yield* resolveLinkedConn(
           ref,
           cliSettings.workdir,
+          cliSettings.profile,
           cliSettings.projectHost,
           cliSettings.poolerHost,
           options.dnsResolver,
@@ -888,6 +928,7 @@ export const dbConfigResolverLayer = Layer.effect(
             hasPasswordFlag: options.hasPasswordFlag,
             removeNetworkBans: options.removeNetworkBans,
             poolerUrl: options.poolerUrl,
+            dashboardUrl: cliSettings.dashboardUrl,
           },
         );
       });
@@ -911,7 +952,15 @@ export const dbConfigResolverLayer = Layer.effect(
           target.kind === "local" &&
           (yield* isCheckoutLinked(fs, path, cliSettings.workdir, cliSettings.projectId));
         if (target.kind !== "linked") {
-          yield* rejectTargetPassword(target.kind, input.password, linkedCheckout);
+          yield* rejectTargetPassword(
+            target.kind,
+            input.password,
+            linkedCheckout,
+            cliSettings.workdir,
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          );
         }
         const resolveVaultSecrets = input.resolveVaultSecrets ?? true;
         if (target.kind === "linked") {
@@ -969,6 +1018,7 @@ export const dbConfigResolverLayer = Layer.effect(
           return yield* resolvePoolerConn(
             target.ref,
             cliSettings.workdir,
+            cliSettings.profile,
             cliSettings.poolerHost,
             input.dnsResolver,
             password,
@@ -977,6 +1027,7 @@ export const dbConfigResolverLayer = Layer.effect(
             !target.matchesLinkedRef,
             input.resolveVaultSecrets ?? true,
             canRemoveNetworkBans(input),
+            cliSettings.dashboardUrl,
           );
         }).pipe(
           Effect.provide(

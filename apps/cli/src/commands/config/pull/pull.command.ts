@@ -33,7 +33,7 @@ const config = {
     Flag.withDefault(false),
   ),
   force: Flag.Boolean("force").pipe(
-    Flag.withDescription("Write even when supabase/config.toml has uncommitted changes in git."),
+    Flag.withDescription("Write even when the project config file has uncommitted changes in git."),
     Flag.withDefault(false),
   ),
 } as const;
@@ -54,9 +54,9 @@ const configPullHandler = (flags: ConfigPullFlags) =>
 
 export const configPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Writes configuration from a remote project or branch into supabase/config.toml. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/yes/n/no honored, empty takes the default, anything else declines) — use --dry-run to preview first.",
+    "Writes configuration from a remote project or branch into the project config file. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/yes/n/no honored, empty takes the default, anything else declines) — use --dry-run to preview first.",
   ),
-  Command.withShortDescription("Pull remote config into supabase/config.toml"),
+  Command.withShortDescription("Pull remote config into the project config file"),
   Command.withExamples([
     {
       command: "supabase config pull",
@@ -64,7 +64,7 @@ export const configPullCommand = Command.make("pull", config).pipe(
     },
     {
       command: "supabase config pull --remote=staging",
-      description: "Pull from the 'staging' branch into [remotes.staging]",
+      description: "Pull from the 'staging' branch into remotes.staging",
     },
     {
       command: "supabase config pull --dry-run",

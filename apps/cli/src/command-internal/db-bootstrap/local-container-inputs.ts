@@ -112,9 +112,13 @@ export const buildLocalDbContainerInputs = (
     const document = resolvedConfig.loaded.document ?? {};
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
 
-    const values = yield* resolveLocalConfigValues(config, hostname, workdir, document).pipe(
-      Effect.mapError((cause) => mapError(cause.message)),
-    );
+    const values = yield* resolveLocalConfigValues(
+      config,
+      hostname,
+      workdir,
+      document,
+      resolvedConfig.hasConfigFile ? resolvedConfig.loaded.path : undefined,
+    ).pipe(Effect.mapError((cause) => mapError(cause.message)));
 
     const bootstrapConfig = yield* resolveDbBootstrapConfig(
       fs,
