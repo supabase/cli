@@ -79,10 +79,6 @@ export const secretsSetContract = defineContract({
     ),
   },
   globalFlags: [DebugFlag, DnsResolverFlag, OutputFlag, ProfileFlag, WorkdirFlag, YesFlag],
-  configuration: {
-    configKeys: [],
-    settings: ["accessToken", "profile", "apiMaxRetries", "projectId", "workdir", "supabaseHome"],
-  },
   output: {
     data: SecretsSetResult,
     text: { stream: "stdout", example: "Finished supabase secrets set." },

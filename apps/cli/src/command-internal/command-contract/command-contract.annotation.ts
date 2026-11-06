@@ -3,9 +3,6 @@ import type { Schema } from "effect";
 import { Command, type GlobalFlag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import type { AnyCliConfigKey } from "../../config/cli-config-keys.ts";
-import type { CommandSettings } from "../../config/command-settings.service.ts";
-
 type ErrorClass = abstract new (...args: never) => unknown;
 type InstanceOf<C> = C extends abstract new (...args: never) => infer I ? I : never;
 type InputKey<Input> = Extract<keyof Input, string>;
@@ -30,21 +27,6 @@ type GlobalFlagCheck<R, G extends ReadonlyArray<AnyGlobalFlag>> = [
       readonly undeclaredGlobalFlags: Exclude<GlobalFlagServices<R>, DeclaredGlobalFlags<G>>;
       readonly unusedGlobalFlags: Exclude<DeclaredGlobalFlags<G>, GlobalFlagServices<R>>;
     };
-
-/** A project config key; it carries its own env name and flag binding. */
-export type ContractConfigKey = Pick<AnyCliConfigKey, "path" | "env" | "flagNames">;
-
-/** A runtime setting, named by its `CommandSettings` field. */
-export type ContractSetting = Extract<keyof Context.Service.Shape<typeof CommandSettings>, string>;
-
-/**
- * The configurable values the command reads, through the two canonical paths: project config keys
- * through `CliConfigValues`, and runtime settings through `CommandSettings`.
- */
-export interface ContractConfiguration {
-  readonly configKeys: ReadonlyArray<ContractConfigKey>;
-  readonly settings: ReadonlyArray<ContractSetting>;
-}
 
 /** The result of a successful run in each output mode. */
 export interface ContractOutput {
@@ -88,7 +70,7 @@ export interface ContractPresentation {
 }
 
 /**
- * A command's declared input, global flags, configuration, output, errors, writes and
+ * A command's declared input, global flags, output, errors, writes and
  * presentation. The command is built from `input` with `Command.make`; reads stay in
  * `withPermissions`.
  */
@@ -101,7 +83,6 @@ export interface CommandContract<
   readonly input: Input;
   /** The global flags the command or its layers require as services. */
   readonly globalFlags: GlobalFlags;
-  readonly configuration: ContractConfiguration;
   readonly output: ContractOutput;
   readonly errors: Errors;
   readonly writes: ReadonlyArray<ContractWrite<InputKey<Input>>>;
@@ -148,7 +129,6 @@ export const withContract =
     const stored: CommandContract = {
       input: contract.input,
       globalFlags: contract.globalFlags,
-      configuration: contract.configuration,
       output: contract.output,
       errors: contract.errors,
       writes: contract.writes,
