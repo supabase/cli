@@ -33,6 +33,19 @@ export const StackKeysInput = Schema.Struct({
 });
 export interface StackKeysInput extends Schema.Schema.Type<typeof StackKeysInput> {}
 
+export const ApiTls = Schema.Struct({ cert: Schema.String, key: Schema.String });
+export type ApiTls = Schema.Schema.Type<typeof ApiTls>;
+
+/** The saved pair plus the plain peer rule's engine subnets and the self-check's secret token. */
+const SavedApiTls = Schema.Struct({
+  ...ApiTls.fields,
+  runtime: Schema.String,
+  subnets: Schema.Array(Schema.String),
+  selfCheck: Schema.String,
+  /** Peers the self-check let in, kept for later owners until a start sets TLS again. */
+  learnedPeers: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const StackCredentials = Schema.Struct({
   jwtSecret: Schema.String,
   postgresRootKey: Schema.String,
@@ -71,6 +84,8 @@ export const SavedStack = Schema.Struct({
   ),
   composition: CompositionConfig,
   credentials: Schema.optionalKey(StackCredentials),
+  /** What the shared API port serves HTTPS and peer-filtered plain HTTP with; absent is plain. */
+  apiTls: Schema.optionalKey(SavedApiTls),
 });
 export interface SavedStack extends Schema.Schema.Type<typeof SavedStack> {}
 

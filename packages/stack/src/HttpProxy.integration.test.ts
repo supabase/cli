@@ -1,9 +1,11 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, Queue } from "effect";
+import { Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Queue } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
+import { generateKeyPairSync } from "node:crypto";
+import { connect as tlsConnect } from "node:tls";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
 import { captureLogs } from "../tests/logs.ts";
@@ -2066,4 +2068,318 @@ it.live("records and releases a request whose client resets after the full body 
       expect(yield* Queue.size(accesses)).toBe(0);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const testPair = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const certs = path.join(import.meta.dirname, "..", "tests", "certs");
+  return {
+    cert: yield* fs.readFileString(path.join(certs, "trusted.crt")),
+    key: yield* fs.readFileString(path.join(certs, "localhost.key")),
+  };
+});
+
+/* Writes `head` over plain TCP or TLS to the proxy and answers with every byte it sent back. */
+const exchange = (port: number, head: string, ca?: string) =>
+  Effect.callback<string, HttpProxyTestError>((resume) => {
+    let text = "";
+    const socket =
+      ca === undefined
+        ? new Socket().connect(port, "127.0.0.1", () => socket.write(head))
+        : tlsConnect({ host: "127.0.0.1", port, ca, servername: "localhost" }, () =>
+            socket.write(head),
+          );
+    socket.on("data", (chunk: Buffer) => {
+      text += chunk.toString("latin1");
+    });
+    socket.once("close", () => resume(Effect.succeed(text)));
+    socket.once("error", () => resume(Effect.succeed(text)));
+    return Effect.sync(() => socket.destroy());
+  });
+
+it.live("serves TLS to every peer and plain HTTP on the same port only to admitted peers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { cert, key } = yield* testPair;
+      const seen: Array<string> = [];
+      const learned = new Set<string>();
+      let admit = false;
+      const backend = yield* listen(
+        createServer((incoming, outgoing) =>
+          outgoing.end(
+            `proto=${headerOf(incoming.headers["x-forwarded-proto"])} port=${headerOf(incoming.headers["x-forwarded-port"])}`,
+          ),
+        ),
+      );
+      const proxy = yield* makeHttpProxy({
+        host: "127.0.0.1",
+        port: 0,
+        tls: {
+          cert,
+          key,
+          plainPeer: (peer) => {
+            seen.push(peer);
+            return admit || learned.has(peer);
+          },
+          learn: { path: "/__self_check/secret", add: (peer) => learned.add(peer) },
+        },
+      });
+      yield* proxy.setRoutes([
+        { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backend) },
+        {
+          id: "file",
+          prefix: "/email",
+          file: () => Effect.succeed(new TextEncoder().encode("file marker")),
+        },
+      ]);
+      const at = (host: string, target = "/x", ...lines: Array<string>) =>
+        [`GET ${target} HTTP/1.1`, `Host: ${host}`, ...lines, "Connection: close", "", ""].join(
+          "\r\n",
+        );
+      const local = `127.0.0.1:${proxy.port}`;
+
+      expect(yield* exchange(proxy.port, at(local), cert)).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(yield* exchange(proxy.port, at(local))).toBe("");
+      expect(seen).toEqual(["127.0.0.1"]);
+      expect(yield* exchange(proxy.port, "GET /__self_check/wrong HTTP/1.0\r\n\r\n")).toBe("");
+      expect(learned.size).toBe(0);
+      expect(
+        yield* exchange(proxy.port, `GET /__self_check/secret HTTP/1.0\r\nHost: ${local}\r\n\r\n`),
+      ).toMatch(/^HTTP\/1\.1 404 /u);
+      expect([...learned]).toEqual(["127.0.0.1"]);
+      expect(yield* exchange(proxy.port, at(local, "/api"))).toMatch(
+        new RegExp(`proto=http port=${proxy.port}$`, "u"),
+      );
+      learned.clear();
+
+      admit = true;
+      expect(yield* exchange(proxy.port, at(local, "/api"), cert)).toMatch(
+        new RegExp(`proto=https port=${proxy.port}$`, "u"),
+      );
+      expect(yield* exchange(proxy.port, at("evil.example", "/api"), cert)).toMatch(
+        new RegExp(`proto=https port=${proxy.port}$`, "u"),
+      );
+      expect(yield* exchange(proxy.port, at(local, "/api"))).toMatch(
+        new RegExp(`proto=http port=${proxy.port}$`, "u"),
+      );
+      /* `pg_net` SQL may name the bridge gateway or this host by IP. */
+      expect(yield* exchange(proxy.port, at(`172.17.0.1:${proxy.port}`, "/api"))).toMatch(
+        new RegExp(`proto=http port=${proxy.port}$`, "u"),
+      );
+      const browser = ["Origin: http://evil.example", "Sec-Fetch-Site: cross-site"];
+      expect(yield* exchange(proxy.port, at(local, "/api", ...browser))).toMatch(
+        new RegExp(`proto=http port=${proxy.port}$`, "u"),
+      );
+      expect(yield* exchange(proxy.port, at(local, "/email/invite"))).toContain("file marker");
+      const overTls = yield* exchange(proxy.port, at(local, "/email/invite"), cert);
+      expect(overTls).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(overTls).not.toContain("file marker");
+      for (const head of [
+        at(`evil.example:${proxy.port}`, "/api"),
+        at("127.0.0.1", "/api"),
+        at(`localhost:${proxy.port + 1}`, "/api"),
+        at(`evil.example:${proxy.port}`, "/api", "Upgrade: websocket", "Connection: Upgrade"),
+      ])
+        expect(yield* exchange(proxy.port, head), head).toMatch(/^HTTP\/1\.1 421 /u);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/* A raw connection that sends `head`, collecting what comes back until the proxy closes it. */
+const held = (port: number, head: string | Buffer) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const socket = new Socket().connect(port, "127.0.0.1", () => {
+        if (head.length > 0) socket.write(head);
+      });
+      const received = { text: "" };
+      socket.on("data", (chunk: Buffer) => {
+        received.text += chunk.toString("latin1");
+      });
+      socket.on("error", () => socket.destroy());
+      return { socket, received };
+    }),
+    ({ socket }) => Effect.sync(() => socket.destroy()),
+  );
+
+const closed = (socket: Socket) =>
+  Effect.callback<void>((resume) => {
+    if (socket.destroyed) return resume(Effect.void);
+    const onClose = () => resume(Effect.void);
+    socket.once("close", onClose);
+    return Effect.sync(() => socket.off("close", onClose));
+  });
+
+/* Resolves once `received` holds `count` replies ending in `body`. */
+const replies = (
+  connection: Effect.Success<ReturnType<typeof held>>,
+  body: string,
+  count: number,
+) =>
+  Effect.callback<string>((resume) => {
+    const check = () => {
+      if (connection.received.text.split(body).length - 1 >= count)
+        resume(Effect.succeed(connection.received.text));
+    };
+    connection.socket.on("data", check);
+    check();
+    return Effect.sync(() => connection.socket.off("data", check));
+  });
+
+it.live(
+  "closes a TLS port's silent, stalled and idle connections on the plain listener's clocks",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pair = yield* testPair;
+        const deadlines = { headers: 150, idle: 150 };
+        const admitted = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: { ...pair, deadlines, plainPeer: () => true },
+        });
+        const rejected = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: {
+            ...pair,
+            deadlines,
+            plainPeer: () => false,
+            learn: { path: "/__self_check/secret", add: () => undefined },
+          },
+        });
+        const idle = yield* held(
+          admitted.port,
+          `GET /x HTTP/1.1\r\nHost: 127.0.0.1:${admitted.port}\r\n\r\n`,
+        );
+        const stalled = yield* Effect.all([
+          held(rejected.port, ""),
+          held(admitted.port, "G"),
+          held(admitted.port, `GET /x HTTP/1.1\r\nHost: 127.0.0.1:${admitted.port}\r\n`),
+          held(rejected.port, Buffer.from([0x16])),
+          held(rejected.port, "GET /__self_check/sec"),
+        ]);
+        yield* Effect.forEach([...stalled, idle], ({ socket }) => closed(socket), {
+          concurrency: "unbounded",
+        });
+        for (const { received } of stalled) expect(received.text).toBe("");
+        expect(idle.received.text).toMatch(/^HTTP\/1\.1 404 /u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  10_000,
+);
+
+it.live(
+  "keeps a TLS port's slow, keep-alive and WebSocket connections past the header deadline",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pair = yield* testPair;
+        const slow: Array<ServerResponse> = [];
+        const backend = createServer((incoming, outgoing) =>
+          incoming.url === "/api/slow" ? slow.push(outgoing) : outgoing.end("pong"),
+        );
+        const sockets = new WebSocketServer({ server: backend });
+        sockets.on("connection", (socket) =>
+          socket.on("message", (message) => socket.send(message)),
+        );
+        const backendAddress = yield* listen(backend, {
+          beforeClose: () => {
+            for (const client of sockets.clients) client.terminate();
+          },
+        });
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: { ...pair, deadlines: { headers: 150, idle: 60_000 }, plainPeer: () => true },
+        });
+        yield* proxy.setRoutes([
+          { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backendAddress) },
+        ]);
+        const request = (target: string) =>
+          `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${proxy.port}\r\n\r\n`;
+        const kept = yield* held(proxy.port, request("/api/x"));
+        yield* replies(kept, "pong", 1);
+        const waiting = yield* held(proxy.port, request("/api/slow"));
+        const client = yield* Effect.acquireRelease(
+          Effect.callback<WebSocket, HttpProxyTestError>((resume) => {
+            const socket = new WebSocket(`ws://127.0.0.1:${proxy.port}/api/ws`);
+            socket.once("open", () => resume(Effect.succeed(socket)));
+            socket.once("error", (cause) =>
+              resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+            );
+          }),
+          (socket) => Effect.sync(() => socket.terminate()),
+        );
+        /* A later silent connection closing proves the earlier header timers have run out. */
+        yield* closed((yield* held(proxy.port, "")).socket);
+        expect(slow).toHaveLength(1);
+        for (const response of slow) response.end("late");
+        expect(yield* replies(waiting, "late", 1)).toMatch(/^HTTP\/1\.1 200 /u);
+        kept.socket.write(request("/api/x"));
+        expect(yield* replies(kept, "pong", 2)).toMatch(/^HTTP\/1\.1 200 /u);
+        const echoed = yield* Effect.callback<string>((resume) => {
+          client.once("message", (message) =>
+            resume(Effect.succeed(Buffer.isBuffer(message) ? message.toString() : "")),
+          );
+          client.send("still open");
+        });
+        expect(echoed).toBe("still open");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("fails to listen with a typed error for a certificate and key that are no pair", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const pair = yield* testPair;
+      const other = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey;
+      for (const tls of [
+        { cert: pair.cert, key: other.export({ type: "pkcs8", format: "pem" }).toString() },
+        { cert: pair.cert, key: "not a pem" },
+        { cert: "not a pem", key: pair.key },
+      ]) {
+        const error = yield* Effect.flip(
+          makeHttpProxy({ host: "127.0.0.1", port: 0, tls: { ...tls, plainPeer: () => true } }),
+        );
+        expect(error.message).toMatch(/^api\.tls: invalid certificate or key: /u);
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "records a plain request or upgrade refused for its Host like any other, its token redacted",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const accesses = yield* Queue.unbounded<HttpAccess>();
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          onAccess: (access) => Queue.offer(accesses, access),
+          tls: { ...(yield* testPair), plainPeer: () => true },
+        });
+        const head = `GET /email/invite?token=secret HTTP/1.1\r\nHost: evil.example:${proxy.port}\r\nConnection: close\r\n\r\n`;
+        expect(yield* exchange(proxy.port, head)).toMatch(/^HTTP\/1\.1 421 /u);
+        const access = yield* Queue.take(accesses);
+        expect(access).toMatchObject({ status: 421, target: "/email/invite?token=redacted" });
+        const upgrade = [
+          `GET /socket?token=secret HTTP/1.1`,
+          `Host: evil.example:${proxy.port}`,
+          "Connection: Upgrade",
+          "Upgrade: websocket",
+          "Sec-WebSocket-Version: 13",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "",
+          "",
+        ].join("\r\n");
+        expect(yield* exchange(proxy.port, upgrade)).toMatch(/^HTTP\/1\.1 421 /u);
+        expect(yield* Queue.take(accesses)).toMatchObject({
+          status: 421,
+          target: "/socket?token=redacted",
+        });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -234,7 +234,9 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
     });
     const keys = yield* config.keys;
     const toml = yield* readDbConfig(fs, path, projectRoot);
-    return { config, keys, toml };
+    /* The pair is read and checked here, before a stack or owner exists. */
+    const apiTls = yield* config.apiTls;
+    return { config, keys, toml, apiTls };
   },
   Effect.mapError(
     (error) =>
@@ -878,7 +880,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "A standalone database exists outside the saved stack composition",
         suggestion: "Destroy the standalone database before starting this stack.",
       });
-    const { config, keys, toml } = yield* startConfig;
+    const { config, keys, toml, apiTls } = yield* startConfig;
     // Reuses the creations resolved for a fresh owner's re-plan above instead of reading the
     // Functions dotenv a second time. A new stack has none yet, and a live owner's were resolved
     // silently, so both resolve here with warnings.
@@ -1018,6 +1020,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       .supabase(requested, {
         keys,
         eager: flags.eager,
+        ...(apiTls === undefined ? {} : { apiTls }),
         ...(reuseIds.length === 0 ? {} : { reuseIds }),
       })
       .pipe(
@@ -1133,9 +1136,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             Effect.tapError((error) => starting.fail(error.message)),
             Effect.mapError(stackError),
           );
+          const apiTls = yield* stack.apiTls.get.pipe(Effect.mapError(stackError));
           const credentials = yield* stackStorageCredentialsFor(
             storage,
             stackCredentials.serviceRoleKey,
+            apiTls?.cert,
           ).pipe(Effect.mapError(stackError));
           yield* seedBucketsRun({
             projectRef: "",

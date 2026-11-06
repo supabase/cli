@@ -117,6 +117,7 @@ it.live(
         const operations: SupabaseCompositionOperations = {
           currentComposition: Effect.succeed({ members: [], dependencies: [] }),
           randomToken: Effect.succeed("token"),
+          validated: Effect.void,
           get: () => Effect.die("get is unused"),
           status: () => Effect.die("status is unused"),
           create: (creation) => Effect.succeed({ id: idFor(creation.service), creation }),

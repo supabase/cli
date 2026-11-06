@@ -1308,6 +1308,131 @@ it.live(
   120_000,
 );
 
+/* Counts the start check's container probes and, while `refuse` is set, fails them as a blocked
+   container path would, passing every other engine command through. */
+const probingEngine = (probes: { count: number; refuse: boolean }) =>
+  Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return ChildProcessSpawner.make((command) => {
+        const probe =
+          ChildProcess.isStandardCommand(command) &&
+          command.args.some(
+            (arg) => typeof arg === "string" && arg.includes("__api_tls_self_check"),
+          );
+        if (!probe) return delegate.spawn(command);
+        probes.count += 1;
+        return delegate.spawn(probes.refuse ? ChildProcess.make("false") : command);
+      });
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
+
+it.live(
+  "checks container reach under api.tls after every start and restart, and keeps it on a database recompose",
+  () => {
+    const tlsProbes = { count: 0, refuse: false };
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const certs = `${import.meta.dirname}/../tests/certs`;
+        const apiTls = {
+          cert: yield* fs.readFileString(`${certs}/trusted.crt`),
+          key: yield* fs.readFileString(`${certs}/localhost.key`),
+        };
+        const stackId = `owner-api-tls-${randomUUID().slice(0, 8)}`;
+        const dataRoot = yield* makeDockerDatabaseRoot("stack-owner-api-tls-", stackId);
+        const tempRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-api-tls-" });
+        const stack = initialContainer(stackId);
+        const state = yield* stateFor(`${tempRoot}/state`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({
+          saved: stack,
+          state,
+          root: dataRoot,
+          cacheRoot,
+          engineTarget,
+        });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const database: ServiceCreationInput = {
+          service: "database",
+          pin: selection.database,
+          config: {
+            databasePassword: Redacted.make("owner-api-tls-password"),
+            jwtSecret: Redacted.make("owner-api-tls-jwt-secret-long-enough-to-sign"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        };
+        const rest: ServiceCreationInput = {
+          service: "rest",
+          pin: selection.rest,
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        };
+        const savedTls = state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls));
+
+        const [first] = yield* owner.rpc.supabaseComposition({ services: [database], apiTls });
+        if (first === undefined) return yield* Effect.die("no database was composed");
+        const reuseIds = [first.id];
+        yield* owner.rpc.startComposition();
+        expect(tlsProbes.count).toBe(0);
+        const running = (yield* savedTls)?.selfCheck;
+        const rejected = yield* Effect.flip(
+          owner.rpc.supabaseComposition({ services: [database] }),
+        );
+        expect(rejected.message).toContain("Composition is already configured");
+        expect((yield* savedTls)?.selfCheck).toBe(running);
+        yield* owner.rpc.stopComposition();
+
+        const created = yield* owner.rpc.supabaseComposition({
+          services: [database, rest],
+          reuseIds,
+          apiTls,
+        });
+        const token = (yield* savedTls)?.selfCheck;
+        expect(token).toBeDefined();
+        yield* owner.rpc.supabaseComposition({
+          services: [database],
+          reuseIds,
+          retainMembers: true,
+        });
+        expect((yield* savedTls)?.selfCheck).toBe(token);
+        yield* owner.rpc.startComposition();
+        expect(tlsProbes.count).toBe(1);
+        yield* owner.rpc.restartComposition();
+        expect(tlsProbes.count).toBe(2);
+
+        tlsProbes.refuse = true;
+        const refused = yield* Effect.flip(owner.rpc.restartComposition());
+        expect(refused.message).toContain(
+          `api.tls: containers can't reach the api on ${(yield* savedTls)?.runtime} (`,
+        );
+        expect(refused.message).not.toContain(token);
+        for (const { id } of created)
+          expect((yield* owner.rpc.status({ id })).lifecycle, id).toBe("stopped");
+
+        yield* owner.rpc.supabaseComposition({
+          services: [database, rest],
+          reuseIds: created.map(({ id }) => id),
+        });
+        expect(yield* savedTls).toBeUndefined();
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+          probingEngine(tlsProbes),
+        ),
+      ),
+    );
+  },
+  { timeout: 240_000 },
+);
+
 // The Docker volume backend has no Podman counterpart: Podman keeps database data in host directories.
 describe.runIf(testEngine === "docker")("Docker volume storage", () => {
   it.live(

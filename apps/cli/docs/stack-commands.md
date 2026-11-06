@@ -424,11 +424,13 @@ the selected composition rather than `[api]`/`[api.tls]`: the endpoint is the St
 observed HTTP binding plus `/storage/v1/...`, and the service-role JWT is generated from the
 primary database member's observed JWT secret. The stack is located by the project root
 (workdir realpath) through the `@supabase/stack` API, which reads stack state under
-`SUPABASE_HOME`.
+`SUPABASE_HOME`. A stack started with `[api.tls]` serves that endpoint over HTTPS, and these
+operations trust the certificate saved with the stack at start (the embedded Kong pair by
+default), never the current `config.toml`.
 Neither `storage` nor `seed buckets` ever creates a stack; the legacy `[api]`
 port/external-URL/TLS fields, their `SUPABASE_API_*` overrides, `SUPABASE_AUTH_JWT_SECRET`/
-`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_SERVICES_HOSTNAME`, the Docker daemon hostname, and
-the embedded Kong CA are all legacy-backend only and are not consulted on this path. The
+`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_SERVICES_HOSTNAME` and the Docker daemon hostname
+are legacy-backend only and are not consulted on this path. The
 service-role JWT is never printed or logged.
 
 Storage's capability state gates these operations:

@@ -27,6 +27,7 @@ import {
   stackTargetResolverLayer,
 } from "../../src/commands/experimental/stack/stack.shared.ts";
 import { stackStart } from "../../src/commands/experimental/stack/start/start.handler.ts";
+import { KONG_LOCAL_TLS_CERT } from "../../src/commands/start/templates/kong-local-tls.ts";
 import { start } from "../../src/commands/start/start.handler.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { sanitizeProjectId } from "../../src/shared/config/project-id.ts";
@@ -53,10 +54,25 @@ interface LegacyPorts {
 
 const port = (value: number | undefined) => (value === undefined ? "" : `port = ${value}\n`);
 
-const config = (projectId: string, ports: LegacyPorts | undefined) => `project_id = "${projectId}"
+/** `default` serves `api.tls` with legacy's embedded pair; `custom` with a project pair. */
+type ContractTls = "default" | "custom";
+
+const tlsSection = (tls: ContractTls | undefined) =>
+  tls === undefined
+    ? ""
+    : `[api.tls]
+enabled = true
+${tls === "custom" ? 'cert_path = "certs/api.crt"\nkey_path = "certs/api.key"\n' : ""}`;
+
+const config = (
+  projectId: string,
+  ports: LegacyPorts | undefined,
+  tls?: ContractTls,
+) => `project_id = "${projectId}"
 
 [api]
 ${port(ports?.api)}
+${tlsSection(tls)}
 [db]
 ${port(ports?.db)}
 [db.pooler]
@@ -104,8 +120,8 @@ enabled = false
 /* Migrations and seeds log to contract_log in run order: 0, 10, 2026, 9, skipping notes.sql and nested/,
    then zz once, then aa and mm. 10 creates config-public private, so the last seed mm seeing
    public=false and a public bucket at the end prove config buckets seed after every seed. */
-const projectFiles = (projectId: string, ports: LegacyPorts | undefined) => ({
-  "config.toml": config(projectId, ports),
+const projectFiles = (projectId: string, ports: LegacyPorts | undefined, tls?: ContractTls) => ({
+  "config.toml": config(projectId, ports, tls),
   "migrations/9_after_10.sql": `insert into public.contract_log (source) values ('migration 9');
 `,
   "migrations/20260101000000_contract.sql": `create table public.contract_items (id int primary key, label text not null);
@@ -144,10 +160,11 @@ const writeContractProject = Effect.fn("Contract.writeProject")(function* (
   root: string,
   projectId: string,
   ports?: LegacyPorts,
+  tls?: ContractTls,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  for (const [name, content] of Object.entries(projectFiles(projectId, ports))) {
+  for (const [name, content] of Object.entries(projectFiles(projectId, ports, tls))) {
     const file = path.join(root, "supabase", name);
     yield* fs.makeDirectory(path.dirname(file), { recursive: true });
     yield* fs.writeFileString(file, content);
@@ -167,6 +184,32 @@ const ContractEnv = Schema.StructWithRest(
   }),
   [Schema.Record(Schema.String, Schema.String)],
 );
+
+/** The certificate a client trusts for the setup's HTTPS API, or `undefined` over plain HTTP. */
+export class ContractTrust extends Context.Service<ContractTrust, string | undefined>()(
+  "supabase/tests/ContractTrust",
+) {}
+
+/* A pair standing in for a project's own `cert_path`/`key_path`, valid for 127.0.0.1. */
+const customPair = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const certs = path.join(
+    import.meta.dirname,
+    "..",
+    "..",
+    "..",
+    "..",
+    "packages",
+    "stack",
+    "tests",
+    "certs",
+  );
+  return {
+    cert: yield* fs.readFileString(path.join(certs, "trusted.crt")),
+    key: yield* fs.readFileString(path.join(certs, "localhost.key")),
+  };
+});
 
 /** The env `start` reports for one running local setup, every reported name kept. */
 export class ContractTarget extends Context.Service<ContractTarget, typeof ContractEnv.Type>()(
@@ -237,7 +280,7 @@ const sharedLayers = (output: ReturnType<typeof mockOutput>, args: string[]) => 
 };
 
 /** Starts one stack in-process with automatic ports and destroys it when the scope closes. */
-export const stackTarget = (runtime: "native" | "docker") =>
+export const stackTarget = (runtime: "native" | "docker", tls?: ContractTls) =>
   Layer.effectContext(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -248,7 +291,22 @@ export const stackTarget = (runtime: "native" | "docker") =>
         /* Linux Edge Runtime overlays /tmp with a private worker filesystem, so native functions need a visible host path. */
         ...(runtime === "native" && host.platform === "linux" ? { directory: host.homeDir } : {}),
       });
-      yield* writeContractProject(root, sanitizeProjectId(path.basename(root)));
+      yield* writeContractProject(root, sanitizeProjectId(path.basename(root)), undefined, tls);
+      const trust =
+        tls === undefined
+          ? undefined
+          : tls === "default"
+            ? KONG_LOCAL_TLS_CERT
+            : yield* customPair.pipe(
+                Effect.tap(({ cert, key }) =>
+                  Effect.all([
+                    fs.makeDirectory(path.join(root, "supabase", "certs"), { recursive: true }),
+                    fs.writeFileString(path.join(root, "supabase", "certs", "api.crt"), cert),
+                    fs.writeFileString(path.join(root, "supabase", "certs", "api.key"), key),
+                  ]),
+                ),
+                Effect.map(({ cert }) => cert),
+              );
       const cacheRoot = path.join(root, "cache", "stack");
       yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
       yield* fs.makeDirectory(path.dirname(cacheRoot), { recursive: true });
@@ -283,7 +341,10 @@ export const stackTarget = (runtime: "native" | "docker") =>
       }).pipe(Effect.provide(context), guardStart);
       const { env } = yield* startedEnv(output, Schema.Struct({ env: ContractEnv }));
       const reset = resetOn("stack").pipe(Effect.provide(context));
-      return Context.make(ContractTarget, env).pipe(Context.add(ContractReset, reset));
+      return Context.make(ContractTarget, env).pipe(
+        Context.add(ContractReset, reset),
+        Context.add(ContractTrust, trust),
+      );
     }),
   ).pipe(Layer.provide(hostServices));
 
@@ -397,6 +458,9 @@ export const legacyTarget = Layer.effectContext(
     );
     const env = yield* startedEnv(output, ContractEnv);
     const reset = resetOn("legacy").pipe(Effect.provide(context));
-    return Context.make(ContractTarget, env).pipe(Context.add(ContractReset, reset));
+    return Context.make(ContractTarget, env).pipe(
+      Context.add(ContractReset, reset),
+      Context.add(ContractTrust, undefined),
+    );
   }),
 ).pipe(Layer.provide(hostServices));

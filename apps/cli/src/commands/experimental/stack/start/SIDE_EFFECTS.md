@@ -51,6 +51,27 @@ template mailed and read it there. A changed `content_path` applies after stop a
 sleeps after 60 s idle unless the stack started with `--eager`, and each wake refetches. A replaced
 file reaches mail at the next wake, or once Auth's template cache expires. A deleted file mails
 Auth's cached copy until the next wake, then the built-in template.
+With `[api.tls] enabled`, the API port serves HTTPS with legacy's embedded local pair, or the
+`cert_path`/`key_path` pair under `supabase/`, saved in the stack's state at start; no listener or
+port is added. Only `stack start` reads those files; a configured pair that does not load as a
+matching PEM pair fails it before it creates or starts anything, with `Invalid config for api.tls:
+failed to load TLS key pair from <cert> and <key>: <reason>`. Only `stack start` sets or clears TLS;
+a database-only recompose keeps it. Host URLs (`API_URL`, Auth links, Studio's public URL, and
+Functions' `SUPABASE_INTERNAL_HOST_URL`, which the Functions banner prefers) use
+`https://127.0.0.1:<api>`, and user URL overrides stay as given. Runtime URLs stay
+`http://host.supabase.internal:<api>` for containers and `http://127.0.0.1:<api>` on native, so
+`SUPABASE_URL`, `SUPABASE_INTERNAL_HOST_PORT` and `pg_net` SQL are unchanged. A TLS hello gets HTTPS
+from any peer; plain HTTP answers only this host and its containers, and any other peer is closed
+before any HTTP byte. A plain request needs a stack host alias, `localhost` or an IP address with
+the API port in `Host` (the port may be left out on port 80), or gets 421, WebSocket upgrades
+included, and `/email` templates answer only plain requests. Each request forwards its own
+connection's proto. After every start and restart of a stack with API services, the database
+container calls the API once in plain with a token new on every start and redacted in logs; the peer
+it arrives from is let in and saved with the stack's TLS until the next `stack start`. Without an
+HTTP reply, start fails with `api.tls: containers can't reach the api on <runtime> (<what the probe
+saw>)` and stops the stack's services; if they don't stop, the error says to run `supabase stack
+stop`. Stack `storage` commands trust the saved certificate, never `config.toml`, so editing
+`api.tls` applies at the next start. Without TLS every listener, URL and output is unchanged.
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) is a `local.services.database.version`
 request for that OrioleDB build instead of the stock major, resolved like any other version (see
 "Service versions and the lock"); the two keys must agree when both are set, and `db.major_version`

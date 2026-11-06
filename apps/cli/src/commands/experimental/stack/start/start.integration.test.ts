@@ -372,6 +372,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
         return Effect.succeed(members);
       },
     },
+    apiTls: { get: Effect.undefined },
     credentials: {
       get: Effect.sync(() => savedCredentials),
     },
@@ -787,6 +788,43 @@ describe("experimental stack start", () => {
         message: expect.stringContaining("auth.email.template.invite.content_path"),
       });
       expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("rejects an api.tls pair that does not load before creating a stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-pair-" });
+      yield* fs.makeDirectory(`${root}/supabase/certs`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        '[api.tls]\nenabled = true\ncert_path = "certs/api.crt"\nkey_path = "certs/api.key"\n',
+      );
+      yield* fs.writeFileString(`${root}/supabase/certs/api.crt`, "not a pem");
+      yield* fs.writeFileString(`${root}/supabase/certs/api.key`, "not a pem");
+      let created = false;
+      const fixture = fakeStack();
+      const base = layers(root, fixture, mockOutput(), false);
+      const api = Layer.succeed(StackApi, {
+        create: () =>
+          Effect.sync(() => {
+            created = true;
+            return fixture.stack;
+          }),
+        open: () => Effect.succeed(fixture.stack),
+        discover: () => Effect.succeed([]),
+        find: () => Effect.die("identity not used"),
+        findDeleted: () => Effect.die("identity not used"),
+      });
+      const result = yield* stackStart(flags()).pipe(
+        Effect.flip,
+        Effect.provide(Layer.merge(base, api)),
+      );
+      expect(result).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("Invalid config for api.tls: failed to load TLS key pair"),
+      });
+      expect(created).toBe(false);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 

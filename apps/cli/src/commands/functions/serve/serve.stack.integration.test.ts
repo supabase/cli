@@ -126,6 +126,8 @@ const fixture = (
     readonly projectRoot?: string;
     readonly standaloneProjectRoot?: string;
     readonly realtimeApiPort?: number;
+    /** The stack serves its API port over TLS, so host clients get an `https` origin. */
+    readonly apiTls?: boolean;
     readonly savedFunctions?: Partial<ReturnType<typeof functionsConfig>>;
     readonly savedGotrueJwtKeys?: string;
     readonly savedJwks?: string;
@@ -258,7 +260,10 @@ const fixture = (
                   },
                 ),
               ),
-              credentials: () => Effect.succeed({ apiUrl: `http://127.0.0.1:${realtimeApiPort}` }),
+              credentials: (input) =>
+                Effect.succeed({
+                  apiUrl: `${options.apiTls === true && input?.from === "host" ? "https" : "http"}://127.0.0.1:${realtimeApiPort}`,
+                }),
               start: Effect.void,
               ready: Effect.void,
               stop: Effect.void,
@@ -328,6 +333,7 @@ const fixture = (
           >;
         },
       },
+      apiTls: { get: Effect.undefined },
       credentials: { get: Effect.succeed(stackCredentials) },
       composition: {
         plan: () => Effect.succeed([]),
@@ -600,6 +606,33 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.await(state.started);
       expect(state.createdFunctions?.endpoints?.http?.port).toBe(23848);
       expect(state.createdFunctions?.config.apiUrl).toBe("http://127.0.0.1:23848");
+      expect(state.createdFunctions?.config.hostApiUrl).toBeUndefined();
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("gives standalone Functions the stack's HTTPS host API origin under api.tls", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-api-tls-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-api-tls"\n\n[edge_runtime]\nenabled = true\n',
+      );
+      const state = yield* fixture({
+        standaloneProjectRoot: root,
+        realtimeApiPort: 23849,
+        apiTls: true,
+      });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+      expect(state.createdFunctions?.config.apiUrl).toBe("http://127.0.0.1:23849");
+      expect(state.createdFunctions?.config.hostApiUrl).toBe("https://127.0.0.1:23849");
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),

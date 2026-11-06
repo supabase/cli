@@ -111,7 +111,9 @@ backend — same roles as `storage ls`.
   Storage member observation, and the service-role JWT is generated from the primary database's
   observed JWT secret. The stack is opened by project identity through the `@supabase/stack` API,
   which reads stack state under `SUPABASE_HOME`; `mv` opens saved state without launching
-  the owner or any service member.
+  the owner or any service member. A stack started with `[api.tls]` serves that endpoint over
+  `https`, and the request trusts the certificate saved in the stack's state at start, never
+  `config.toml`, so editing `api.tls` without a restart changes nothing.
 - **Stack backend — capability policy.** Storage excluded from the composition errors with
   `StackStorageCapabilityError` and guidance to enable `[storage]`, then run `supabase start`
   without `--exclude storage`. Failed or manually stopped Storage is unusable. Dormant, starting, and ready Storage

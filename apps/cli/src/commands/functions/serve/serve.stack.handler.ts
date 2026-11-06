@@ -1,4 +1,5 @@
 import { StackError, type ServiceCreation, type Stack } from "@supabase/stack/effect";
+import { functionsHostApiUrl } from "@supabase/stack/internal/composition";
 import {
   DateTime,
   Effect,
@@ -314,6 +315,10 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ? `http://${databaseAddress.hostname}:${port}`
       : (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
+  const hostApiUrl =
+    apiSource === undefined
+      ? undefined
+      : functionsHostApiUrl((yield* apiSource.credentials({ from: "host" })).apiUrl);
   const { jwtSecret: _jwtSecret, ...sourceConfig } = source.config;
   const creation: FunctionsCreation = {
     ...source,
@@ -321,6 +326,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ...sourceConfig,
       jwks,
       apiUrl,
+      ...(hostApiUrl === undefined ? {} : { hostApiUrl }),
       databaseUrl,
       ...(yield* serveEnv(workdir, envFile, config.source, source.config)),
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),

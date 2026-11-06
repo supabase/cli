@@ -754,6 +754,28 @@ describe("stack backend", () => {
     });
   });
 
+  it.effect("lists over HTTPS with the stack's saved certificate after an api.tls edit", () => {
+    /* `config.toml` now names a pair that does not exist; the stack keeps what it started with. */
+    const { layer, out, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n[api.tls]\nenabled = true\ncert_path = "missing.crt"\nkey_path = "missing.key"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageState: "ready", apiTlsCert: "saved-stack-cert" },
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stdoutText).toBe("test/\n");
+      expect(requests).toEqual([
+        expect.objectContaining({
+          url: expect.stringMatching(/^https:\/\/127\.0\.0\.1:59999\//u),
+          ca: "saved-stack-cert",
+        }),
+      ]);
+    });
+  });
+
   it.effect("proceeds to the gateway while Storage is stopping with wake retained", () => {
     const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',

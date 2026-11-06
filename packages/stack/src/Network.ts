@@ -1,5 +1,6 @@
 import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
+import { apiTlsSelfCheckPath, plainPeerAllowed } from "./runtime/ApiTlsSupport.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { makePorts, probeVacant, type PortError } from "./Ports.ts";
@@ -55,6 +56,8 @@ interface NetworkBinding {
   readonly protocol: "tcp" | "http";
   readonly host: string;
   readonly port: number;
+  /** Set on the shared API endpoint's host address while it serves HTTPS. */
+  readonly scheme?: "https";
 }
 
 export interface NetworkNamespace {
@@ -86,6 +89,10 @@ export interface Interface {
     key: string,
     port: number,
   ) => Effect.Effect<boolean, PortError, Scope.Scope>;
+  /** The shared API listener's port while it is open. */
+  readonly apiPort: Effect.Effect<number | undefined>;
+  /** Plain API peers the self-check with this token let in, outside the saved peer rule. */
+  readonly learnedApiPeers: (token: string) => Effect.Effect<ReadonlyArray<string>>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Network") {}
@@ -126,6 +133,8 @@ const makeNetwork = (options: {
           readonly proxy: HttpProxy;
           readonly routes: ReadonlyArray<HttpRoute | HttpFileRoute>;
           readonly scope: Scope.Closeable;
+          /** Whether the open listener serves TLS, which host addresses follow while it lives. */
+          readonly tls: boolean;
         }
       | undefined
     >(undefined);
@@ -135,6 +144,23 @@ const makeNetwork = (options: {
     const listenHost = options.runtime === "native" ? "127.0.0.1" : "0.0.0.0";
     const hostAddress = "127.0.0.1";
     const runtimeAddress = options.runtime === "native" ? "127.0.0.1" : DOCKER_HOST_ALIAS;
+
+    const apiTls = options.state.read(options.stackId).pipe(
+      Effect.map((saved) => saved?.apiTls),
+      Effect.mapError((cause) => errorFor("tls", cause)),
+    );
+
+    /* Owned by this network per self-check token, so a start that sets TLS again starts from its
+       own saved peers rather than an earlier generation's. */
+    const learned = new Map<string, Set<string>>();
+    const learnedFor = (tls: {
+      readonly selfCheck: string;
+      readonly learnedPeers?: ReadonlyArray<string>;
+    }) => {
+      const peers = learned.get(tls.selfCheck) ?? new Set(tls.learnedPeers);
+      learned.set(tls.selfCheck, peers);
+      return peers;
+    };
 
     const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
 
@@ -202,6 +228,11 @@ const makeNetwork = (options: {
                   const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
                   const claimed =
                     endpoint.shared === undefined ? undefined : yield* Ref.get(shared);
+                  const tls =
+                    endpoint.shared !== undefined && claimed === undefined
+                      ? yield* apiTls
+                      : undefined;
+                  const peers = tls === undefined ? undefined : learnedFor(tls);
                   const result = yield* restore(
                     claimed !== undefined
                       ? joinClaim(claimed, endpoint.port)
@@ -221,6 +252,20 @@ const makeNetwork = (options: {
                                     host,
                                     port,
                                     onAccess: options.onAccess,
+                                    tls:
+                                      tls === undefined || peers === undefined
+                                        ? undefined
+                                        : {
+                                            cert: tls.cert,
+                                            key: tls.key,
+                                            plainPeer: (peer) =>
+                                              peers.has(peer) ||
+                                              plainPeerAllowed(tls.subnets)(peer),
+                                            learn: {
+                                              path: apiTlsSelfCheckPath(tls.selfCheck),
+                                              add: (peer) => peers.add(peer),
+                                            },
+                                          },
                                   });
                                   return { proxy };
                                 }
@@ -262,6 +307,7 @@ const makeNetwork = (options: {
                       proxy: result.listener.proxy,
                       routes: seeded,
                       scope: endpointScope,
+                      tls: tls !== undefined,
                     };
                     if (previous !== undefined) yield* Scope.close(endpointScope, Exit.void);
                     else if (seeded.length > 0) yield* Ref.set(pendingJoins, []);
@@ -277,12 +323,17 @@ const makeNetwork = (options: {
                     );
                   }
                   if (endpoint.join !== undefined) yield* installJoin(id, endpoint.join, endpoint);
+                  const https: Pick<NetworkBinding, "scheme"> =
+                    endpoint.shared !== undefined && (yield* Ref.get(shared))?.tls === true
+                      ? { scheme: "https" }
+                      : {};
                   yield* Ref.update(bound, (current) =>
                     new Map(current).set(name, {
                       name,
                       protocol: endpoint.protocol,
                       host: hostAddress,
                       port: result.port,
+                      ...https,
                     }),
                   );
                 }),
@@ -365,12 +416,21 @@ const makeNetwork = (options: {
               : endpoint.port;
           if (port === undefined)
             return yield* errorFor("address", `Endpoint ${name} is not assigned`);
+          /* Under TLS host clients use https, as the open listener serves or the next one will;
+             runtimes keep plain http on the same port. */
+          const active = yield* Ref.get(shared);
+          const secure =
+            from === "host" &&
+            endpoint.shared !== undefined &&
+            (active === undefined ? (yield* apiTls) !== undefined : active.tls);
+          const https: Pick<NetworkBinding, "scheme"> = secure ? { scheme: "https" } : {};
           return {
             name,
             protocol: endpoint.protocol,
             host: from === "host" ? hostAddress : runtimeAddress,
             port,
-          };
+            ...https,
+          } satisfies NetworkBinding;
         }),
       );
       return {
@@ -392,6 +452,8 @@ const makeNetwork = (options: {
       register,
       releaseStack: releaseStack(),
       claimNativePort: (key, port) => ports.claimNative(options.stackId, key, port),
+      apiPort: Ref.get(shared).pipe(Effect.map((current) => current?.claim)),
+      learnedApiPeers: (token) => Effect.sync(() => [...(learned.get(token) ?? [])]),
     } satisfies Interface;
   });
 

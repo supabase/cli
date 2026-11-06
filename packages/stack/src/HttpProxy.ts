@@ -9,7 +9,8 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw HTTP upgrade sockets preserve handshake bytes.
-import { Socket } from "node:net";
+import { createServer as createNetServer, Socket } from "node:net";
+import { createSecureContext, type SecureContext, TLSSocket } from "node:tls";
 import type { Duplex } from "node:stream";
 
 class HttpProxyError extends Data.TaggedError("HttpProxyError")<{
@@ -171,7 +172,7 @@ const upstreamHeadersFor = (request: IncomingMessage, route: HttpRoute) => {
       route.upstreamPrefix === undefined || route.prefix === "/"
         ? undefined
         : (route.forwardedPrefix ?? `${route.prefix}/`);
-    result["x-forwarded-proto"] = "http";
+    result["x-forwarded-proto"] = encrypted(request) ? "https" : "http";
     if (host === undefined) delete result["x-forwarded-host"];
     else result["x-forwarded-host"] = host;
     if (port === undefined) delete result["x-forwarded-port"];
@@ -688,10 +689,156 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
     ),
 );
 
+/* The connection's own proto, so a TLS port also forwards http for its plain peers. */
+const encrypted = (request: IncomingMessage) => request.socket instanceof TLSSocket;
+
+/** Container-facing names plain requests on a TLS port may carry, each with the API port. */
+const RUNTIME_HOSTS = [
+  "host.supabase.internal",
+  "host.docker.internal",
+  "host.containers.internal",
+  "localhost",
+];
+
+/* An IP literal needs no DNS, so it can't be rebound; `pg_net` may call the bridge gateway. */
+const IP_LITERAL = /^(?:(?:\d{1,3}\.){3}\d{1,3}|\[[\da-f:.]+\])$/u;
+
+/**
+ * Whether a plain request's `Host` names a stack host alias, `localhost` or an IP literal with the
+ * API port, so a rebound DNS name never reaches the API in plain; on port 80 the port may be left out.
+ */
+export const plainHostAllowed = (host: string | undefined, port: number): boolean => {
+  const value = host?.toLowerCase() ?? "";
+  const suffix = `:${port}`;
+  const name = value.endsWith(suffix) ? value.slice(0, -suffix.length) : port === 80 ? value : "";
+  return RUNTIME_HOSTS.includes(name) || IP_LITERAL.test(name);
+};
+
+/**
+ * Serves a TLS ClientHello with this PEM pair on the API port; any other first byte is plain HTTP
+ * for `plainPeer` addresses only, and every other connection closes before any HTTP byte.
+ */
+export interface HttpProxyTls {
+  readonly cert: string;
+  readonly key: string;
+  readonly plainPeer: (address: string) => boolean;
+  /** A rejected peer whose first bytes are `GET <path> ` is learned, so `plainPeer` admits it. */
+  readonly learn?: { readonly path: string; readonly add: (address: string) => void };
+  /** The plain listener's clocks unless a test shortens them. */
+  readonly deadlines?: HttpDeadlines;
+}
+
+interface HttpDeadlines {
+  /** From accept until a request's headers, a TLS handshake included. */
+  readonly headers: number;
+  /** From a response until the connection's next request. */
+  readonly idle: number;
+}
+
+/* Advertising 5 s lets clients close idle sockets first; holding them 75 s, like Kong, keeps a
+   client that stalls past its own timer from reusing a closed one. */
+const KEEP_ALIVE_TIMEOUT_BUFFER = 70_000;
+
+/** What Bun 1.4.4's HTTP server gives a plain connection: 12 s for headers, then 75 s idle. */
+const PLAIN_LISTENER_DEADLINES: HttpDeadlines = {
+  headers: 12_000,
+  idle: 5_000 + KEEP_ALIVE_TIMEOUT_BUFFER,
+};
+
+const unmapped = (address: string | undefined) =>
+  address?.startsWith("::ffff:") === true ? address.slice(7) : (address ?? "");
+
+/* Hands each connection to `server` by its first byte, as `HttpProxyTls` describes; a rejected
+   peer is destroyed before `server` sees any of its bytes. */
+const sniffing = (
+  tls: HttpProxyTls,
+  secureContext: SecureContext,
+  server: ReturnType<typeof createServer>,
+  sockets: Set<Socket>,
+  runDeadline: (deadline: Effect.Effect<void>) => Fiber.Fiber<void>,
+) => {
+  const deadlines = tls.deadlines ?? PLAIN_LISTENER_DEADLINES;
+  /* Handed-off sockets lose the HTTP server's own clocks, so each accepted one carries a timer
+     that waits for its next request and destroys the connection when it runs out. */
+  interface Deadline {
+    readonly socket: Socket;
+    timer: Fiber.Fiber<void> | undefined;
+    inFlight: number;
+  }
+  const pending = new WeakMap<object, Deadline>();
+  const disarm = (deadline: Deadline) => {
+    deadline.timer?.interruptUnsafe();
+    deadline.timer = undefined;
+  };
+  const arm = (deadline: Deadline, ms: number) => {
+    disarm(deadline);
+    deadline.timer = runDeadline(
+      Effect.sleep(ms).pipe(Effect.andThen(Effect.sync(() => deadline.socket.destroy()))),
+    );
+  };
+  const handOff = (deadline: Deadline, socket: Socket) => {
+    pending.set(socket, deadline);
+    server.emit("connection", socket);
+  };
+  server.on("request", (request: IncomingMessage, response: ServerResponse) => {
+    const deadline = pending.get(request.socket);
+    if (deadline === undefined) return;
+    deadline.inFlight += 1;
+    disarm(deadline);
+    response.once("close", () => {
+      deadline.inFlight -= 1;
+      if (deadline.inFlight === 0 && !deadline.socket.destroyed) arm(deadline, deadlines.idle);
+    });
+  });
+  server.on("upgrade", (request: IncomingMessage) => {
+    const deadline = pending.get(request.socket);
+    if (deadline !== undefined) disarm(deadline);
+    pending.delete(request.socket);
+  });
+  const learn = tls.learn;
+  const learning = learn === undefined ? undefined : Buffer.from(`GET ${learn.path} `);
+  /* Reads `size` bytes without consuming them, or `undefined` when the peer ends first. */
+  const peek = (socket: Socket, size: number, next: (bytes: Buffer | undefined) => void) => {
+    const bytes: Buffer | null = socket.read(size);
+    if (bytes !== null) {
+      socket.unshift(bytes);
+      next(bytes);
+    } else if (socket.readableEnded || socket.destroyed) next(undefined);
+    else socket.once("readable", () => peek(socket, size, next));
+  };
+  return createNetServer({ pauseOnConnect: true }, (socket) => {
+    const deadline: Deadline = { socket, timer: undefined, inFlight: 0 };
+    arm(deadline, deadlines.headers);
+    sockets.add(socket);
+    socket.once("close", () => {
+      disarm(deadline);
+      sockets.delete(socket);
+    });
+    socket.on("error", () => socket.destroy());
+    const peer = unmapped(socket.remoteAddress);
+    peek(socket, 1, (first) => {
+      if (first === undefined) return socket.destroy();
+      if (first[0] === 0x16) {
+        const secure = new TLSSocket(socket, { isServer: true, secureContext });
+        secure.on("error", () => secure.destroy());
+        return handOff(deadline, secure);
+      }
+      if (tls.plainPeer(peer)) return handOff(deadline, socket);
+      if (learn === undefined || learning === undefined) return socket.destroy();
+      peek(socket, learning.length, (head) => {
+        if (head === undefined || !head.equals(learning)) return socket.destroy();
+        learn.add(peer);
+        handOff(deadline, socket);
+      });
+    });
+  });
+};
+
 export const makeHttpProxy = (options: {
   readonly host: string;
   readonly port: number;
   readonly onAccess?: HttpAccessSink | undefined;
+  readonly tls?: HttpProxyTls | undefined;
 }): Effect.Effect<HttpProxy, PortError, Scope.Scope> =>
   Effect.gen(function* () {
     const routes = yield* Ref.make<ReadonlyArray<HttpRoute | HttpFileRoute>>([]);
@@ -705,9 +852,13 @@ export const makeHttpProxy = (options: {
     const runRequest = yield* FiberSet.makeRuntime();
     const sockets = new Set<Socket>();
     const onAccess = options.onAccess;
-    /* Advertising 5 s lets clients close idle sockets first; holding them 75 s, like Kong, keeps
-       a client that stalls past its own timer from reusing a closed one. */
-    const server = createServer({ keepAliveTimeoutBuffer: 70_000 }, (request, response) => {
+    const tls = options.tls;
+    /* A plain request on the TLS port whose `Host` is no stack alias or loopback is 421. */
+    const misdirected = (request: IncomingMessage) =>
+      tls !== undefined &&
+      !encrypted(request) &&
+      !plainHostAllowed(headerValue(request.headers.host), request.socket.localPort ?? 0);
+    const handler = (request: IncomingMessage, response: ServerResponse) => {
       runRequest(
         Effect.gen(function* () {
           const sent: Sent = { bytes: 0, clientLeft: false };
@@ -726,11 +877,18 @@ export const makeHttpProxy = (options: {
           // The access record waits outside this scope, so it never holds the target's activity.
           yield* Effect.scoped(
             Effect.gen(function* () {
+              if (misdirected(request)) {
+                response.setHeader("content-type", "text/plain; charset=utf-8");
+                respond(response, sent, 421, "Misdirected Request");
+                return;
+              }
               const route = yield* Ref.get(routes).pipe(
                 Effect.map((current) => routeFor(request.url ?? "/", current)),
               );
+              /* Under TLS, Auth templates stay off the encrypted path, which the LAN reaches. */
               if (route !== undefined && "file" in route) {
-                yield* serveFile(request, response, sent, route);
+                if (encrypted(request)) respond(response, sent, 404, "Not Found");
+                else yield* serveFile(request, response, sent, route);
                 return;
               }
               if (request.method === "OPTIONS" && route?.upstreamCors !== true) {
@@ -773,14 +931,15 @@ export const makeHttpProxy = (options: {
           );
         }),
       );
-    });
+    };
+    const server = createServer({ keepAliveTimeoutBuffer: KEEP_ALIVE_TIMEOUT_BUFFER }, handler);
     server.on("connection", (socket) => {
       sockets.add(socket);
       socket.once("close", () => {
         sockets.delete(socket);
       });
     });
-    server.on("upgrade", (request, socket, head) => {
+    server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
       socket.on("error", () => socket.destroy());
       runRequest(
         Effect.gen(function* () {
@@ -803,8 +962,14 @@ export const makeHttpProxy = (options: {
           const route = yield* Ref.get(routes).pipe(
             Effect.map((current) => routeFor(request.url ?? "/", current)),
           );
-          const outcome =
-            route === undefined || "file" in route
+          const outcome = misdirected(request)
+            ? yield* Effect.sync(() => {
+                socket.end(
+                  "HTTP/1.1 421 Misdirected Request\r\nconnection: close\r\ncontent-length: 0\r\n\r\n",
+                );
+                return 421;
+              })
+            : route === undefined || "file" in route
               ? yield* Effect.sync(() => {
                   socket.destroy();
                   return 404;
@@ -828,22 +993,40 @@ export const makeHttpProxy = (options: {
         }),
       );
     });
+    const listener =
+      tls === undefined
+        ? server
+        : sniffing(
+            tls,
+            yield* Effect.try({
+              try: () => createSecureContext({ cert: tls.cert, key: tls.key }),
+              catch: (cause) =>
+                new PortError({
+                  key: "http",
+                  message: `api.tls: invalid certificate or key: ${cause instanceof Error ? cause.message : String(cause)}`,
+                  cause,
+                }),
+            }),
+            server,
+            sockets,
+            yield* FiberSet.makeRuntime<never, void, never>(),
+          );
     yield* Effect.acquireRelease(
       Effect.callback<void, PortError>((resume) => {
         const onError = (cause: Error) =>
           resume(Effect.fail(new PortError({ key: "http", message: cause.message, cause })));
-        server.once("error", onError);
-        server.listen(options.port, options.host, () => resume(Effect.void));
-        return Effect.sync(() => server.off("error", onError));
+        listener.once("error", onError);
+        listener.listen(options.port, options.host, () => resume(Effect.void));
+        return Effect.sync(() => listener.off("error", onError));
       }),
       () =>
         Effect.callback<void, never>((resume) => {
-          server.close(() => resume(Effect.void));
+          listener.close(() => resume(Effect.void));
           for (const socket of sockets) socket.destroy();
           return Effect.sync(() => server.closeAllConnections?.());
         }),
     );
-    const address = server.address();
+    const address = listener.address();
     if (address === null || typeof address === "string")
       return yield* new PortError({ key: "http", message: "HTTP listener has no address" });
     return {

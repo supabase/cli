@@ -299,6 +299,10 @@ export interface Stack {
   readonly credentials: {
     readonly get: Effect.Effect<StackCredentials | undefined, StackError>;
   };
+  /** The certificate the API port serves HTTPS with since the last start, for host clients. */
+  readonly apiTls: {
+    readonly get: Effect.Effect<{ readonly cert: string } | undefined, StackError>;
+  };
   readonly composition: {
     readonly supabase: (
       services: ReadonlyArray<ServiceCreationInput>,
@@ -861,6 +865,14 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         Effect.mapError((cause) => failure("credentials", cause)),
       ),
     },
+    apiTls: {
+      get: state.read(saved.id).pipe(
+        Effect.map((current) =>
+          current?.apiTls === undefined ? undefined : { cert: current.apiTls.cert },
+        ),
+        Effect.mapError((cause) => failure("apiTls", cause)),
+      ),
+    },
     composition: {
       supabase: (
         services: ReadonlyArray<ServiceCreationInput>,
@@ -875,6 +887,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             ...(options?.retainMembers === undefined
               ? {}
               : { retainMembers: options.retainMembers }),
+            ...(options?.apiTls === undefined ? {} : { apiTls: options.apiTls }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
       plan: Effect.fn("Stack.plan")(function* (

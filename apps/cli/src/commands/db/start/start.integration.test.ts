@@ -2161,6 +2161,7 @@ describe("db start stack backend", () => {
               : Effect.fail(new StackError({ operation: "get", message: `unknown ${id}` })),
         list: Effect.sync(() => registered),
       },
+      apiTls: { get: Effect.undefined },
       credentials: {
         get: Effect.succeed({
           jwtSecret: "secret",
