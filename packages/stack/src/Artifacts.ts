@@ -747,7 +747,8 @@ const errorMessage = (cause: unknown): string =>
  * agent sandboxes that allow `*.amazonaws.com`.
  * @see ../../../infra/cli-artifacts/README.md
  */
-const SLIM_NATIVE_SUPABASE_S3_MIRROR = "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
+export const SLIM_NATIVE_SUPABASE_S3_MIRROR =
+  "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
 
 /** ECR Public mirror of every slim image, under the same tags and digests. */
 export const SLIM_IMAGE_SUPABASE_ECR_MIRROR = "public.ecr.aws/supabase/cli/";
