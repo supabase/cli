@@ -27,6 +27,7 @@ import { parseJsonc } from "./jsonc.ts";
 import { findCliProjectPaths } from "./paths.ts";
 import { rejectRemovedConfigKeys } from "./removed-config-keys.ts";
 import { setOwnProperty } from "./sparse.ts";
+import { tomlSchemaDirective } from "./toml-scan.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
 import { validateCliConfig } from "./validate.ts";
 
@@ -819,8 +820,6 @@ const readExistingSchemaRef = Effect.fnUntraced(function* (cwd: string) {
   return getSchemaRef(document);
 });
 
-const SCHEMA_DIRECTIVE_LINE = /^#:schema[ \t]+\S+(?=\r?\n|$)/;
-
 /** Saves `config`; an existing JSON/JSONC file is edited in place so comments survive, and a TOML
  * file keeps its `#:schema` directive. */
 export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: SaveCliConfigOptions) {
@@ -845,7 +844,7 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
     if (format === "json") {
       content = updateJsonDocument(existingText.value, parseJsonc(content)) ?? content;
     } else {
-      const directive = SCHEMA_DIRECTIVE_LINE.exec(existingText.value)?.[0];
+      const directive = tomlSchemaDirective(existingText.value)?.line;
       if (directive !== undefined && !content.startsWith("#:schema")) {
         content = `${directive}\n${content}`;
       }

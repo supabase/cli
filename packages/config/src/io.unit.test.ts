@@ -1208,6 +1208,24 @@ major_version = 16
       }),
     ));
 
+  test("saving TOML keeps a #:schema directive that has trailing whitespace", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
+        const directive = "#:schema https://example.com/config.schema.json";
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(tomlPath, `${directive}  \nproject_id = "old_ref"\n`);
+
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        const written = yield* fs.readFileString(tomlPath);
+        expect(written.split("\n")[0]?.trimEnd()).toBe(directive);
+      }),
+    ));
+
   test("preserves the discovered project format when saving from a nested cwd", () =>
     runConfigEffect(
       Effect.gen(function* () {
