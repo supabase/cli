@@ -1,5 +1,5 @@
 import { NodeCrypto, NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
-import { describe, expect, it } from "@effect/vitest";
+import { beforeAll, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Deferred,
@@ -16,6 +16,7 @@ import {
 import { Digest, SecureRandom } from "effect/crypto";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { prepareNativeArtifact } from "../Artifacts.ts";
 import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
 import { makeFakeNpmRegistry } from "../../tests/fake-npm-registry.ts";
@@ -154,61 +155,77 @@ describe("service catalog", () => {
     { timeout: 120_000 },
   );
 
-  it.live("destroy survives a symlink planted where its runtime directory used to be", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-symlink-" });
-        const stackId = "c".repeat(64);
-        const instanceId = "functions-symlink-instance";
-        const callerRoot = yield* fs.makeTempDirectoryScoped({
-          prefix: "functions-symlink-caller-",
-        });
-        const functionsRoot = `${callerRoot}/user-functions`;
-        yield* fs.makeDirectory(functionsRoot, { recursive: true });
-        yield* fs.writeFileString(`${functionsRoot}/index.ts`, "export default {};");
-        const recipe = yield* makeServiceRecipe(
-          {
-            service: "functions",
-            pin: selection.functions,
-            config: { functionsRoot, databaseUrl: "postgres://functions-db" },
-          },
-          {
-            ...options(root),
-            stackId,
-            instanceId,
-            cacheRoot: testArtifactCacheRoot,
-          },
-        );
-        const config = recipe.creation;
-        yield* recipe.definition.prepare?.(config) ?? Effect.void;
-        const instanceRoot = path.join(root, instanceId);
-        const runtimeDir = path.join(instanceRoot, "runtime");
-        expect(yield* fs.exists(runtimeDir)).toBe(true);
-        const outside = yield* fs.makeTempDirectoryScoped({
-          prefix: "functions-symlink-outside-",
-        });
-        // removeData reaches for `<runtime>/functions` specifically, not the whole runtime
-        // directory; the sentinel sits there so this test proves that previously endangered
-        // data survives, not just the symlink target's top level.
-        const sentinel = path.join(outside, "functions", "sentinel");
-        yield* fs.makeDirectory(path.join(outside, "functions"), { recursive: true });
-        yield* fs.writeFileString(sentinel, "do not remove me");
-        // The planted attack: the recipe's own runtime directory replaced by a symlink.
-        yield* fs.remove(runtimeDir, { recursive: true, force: true });
-        yield* fs.symlink(outside, runtimeDir);
-        const scope = yield* Scope.make();
-        yield* recipe.definition.removeData({ id: instanceId, config, scope });
-        yield* Scope.close(scope, Exit.void);
-        expect(yield* fs.exists(sentinel)).toBe(true);
-      }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+  describe("with a warm Edge Runtime artifact", () => {
+    // A cold download can outlast the test timeout, so it gets its own guard here.
+    beforeAll(
+      () =>
+        prepareNativeArtifact(
+          { service: "functions", pin: selection.functions },
+          testArtifactCacheRoot,
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
+      120_000,
+    );
+
+    it.live("destroy survives a symlink planted where its runtime directory used to be", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-symlink-" });
+          const stackId = "c".repeat(64);
+          const instanceId = "functions-symlink-instance";
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-symlink-caller-",
+          });
+          const functionsRoot = `${callerRoot}/user-functions`;
+          yield* fs.makeDirectory(functionsRoot, { recursive: true });
+          yield* fs.writeFileString(`${functionsRoot}/index.ts`, "export default {};");
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "functions",
+              pin: selection.functions,
+              config: { functionsRoot, databaseUrl: "postgres://functions-db" },
+            },
+            {
+              ...options(root),
+              stackId,
+              instanceId,
+              cacheRoot: testArtifactCacheRoot,
+            },
+          );
+          const config = recipe.creation;
+          yield* recipe.definition.prepare?.(config) ?? Effect.void;
+          const instanceRoot = path.join(root, instanceId);
+          const runtimeDir = path.join(instanceRoot, "runtime");
+          expect(yield* fs.exists(runtimeDir)).toBe(true);
+          const outside = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-symlink-outside-",
+          });
+          // removeData reaches for `<runtime>/functions` specifically, not the whole runtime
+          // directory; the sentinel sits there so this test proves that previously endangered
+          // data survives, not just the symlink target's top level.
+          const sentinel = path.join(outside, "functions", "sentinel");
+          yield* fs.makeDirectory(path.join(outside, "functions"), { recursive: true });
+          yield* fs.writeFileString(sentinel, "do not remove me");
+          // The planted attack: the recipe's own runtime directory replaced by a symlink.
+          yield* fs.remove(runtimeDir, { recursive: true, force: true });
+          yield* fs.symlink(outside, runtimeDir);
+          const scope = yield* Scope.make();
+          yield* recipe.definition.removeData({ id: instanceId, config, scope });
+          yield* Scope.close(scope, Exit.void);
+          expect(yield* fs.exists(sentinel)).toBe(true);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
       ),
-    ),
-  );
+    );
+  });
 
   const ancestors = [
     {
