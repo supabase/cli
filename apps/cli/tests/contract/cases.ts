@@ -3,15 +3,19 @@ import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
 import { Data, Deferred, Effect, Layer, Option, Random, Schema, type Scope, Stream } from "effect";
 import { FetchHttpClient, HttpClient, type HttpClientError } from "effect/http";
 import * as Socket from "effect/socket/Socket";
-import { ContractTarget } from "./target.ts";
+import { ContractReset, ContractTarget, type ContractTargetError } from "./target.ts";
 
 /** One consumer behavior, run unchanged against every setup's {@link ContractTarget}. */
 interface ContractCase {
   readonly name: string;
   readonly run: Effect.Effect<
     void,
-    ContractCallError | HttpClientError.HttpClientError | Schema.SchemaError,
-    ContractTarget | HttpClient.HttpClient | Socket.WebSocketConstructor | Scope.Scope
+    ContractCallError | ContractTargetError | HttpClientError.HttpClientError | Schema.SchemaError,
+    | ContractTarget
+    | ContractReset
+    | HttpClient.HttpClient
+    | Socket.WebSocketConstructor
+    | Scope.Scope
   >;
   readonly timeout?: number;
 }
@@ -314,16 +318,80 @@ const functionsCases: ReadonlyArray<ContractCase> = [
   },
 ];
 
+const appliesInOrder = Effect.gen(function* () {
+  const client = yield* contractClient("SECRET_KEY");
+  const log = yield* sdk("select contract_log", (signal) =>
+    client.from("contract_log").select("source").order("seq").abortSignal(signal),
+  );
+  expect(log.map(({ source }) => source)).toEqual([
+    "migration 0 sees auth=true storage=true realtime=true",
+    "migration 10",
+    "migration 20260101000000",
+    "migration 9",
+    "seed zz",
+    "seed aa",
+    "seed mm sees public=false",
+  ]);
+  const buckets = yield* sdk("list buckets", () => client.storage.listBuckets());
+  expect(Object.fromEntries(buckets.map(({ id, public: open }) => [id, open]))).toMatchObject({
+    "config-public": true,
+    "config-private": false,
+  });
+  for (const [key, text] of Object.entries({
+    "a.txt": "seeded object\n",
+    "nested/b.txt": "nested object\n",
+  })) {
+    const object = yield* sdk(`download seeded ${key}`, (signal) =>
+      client.storage.from("config-public").download(key, {}, { signal }),
+    );
+    expect(yield* call(`read seeded ${key}`, () => object.text())).toBe(text);
+  }
+});
+
+const seedingCases: ReadonlyArray<ContractCase> = [
+  {
+    name: "start applies migrations in byte order, then seeds in sql_paths order, then config buckets",
+    run: appliesInOrder,
+  },
+];
+
+const resetCases: ReadonlyArray<ContractCase> = [
+  {
+    name: "db reset drops data and reapplies migrations, seeds and config buckets in order",
+    run: Effect.gen(function* () {
+      const client = yield* contractClient("PUBLISHABLE_KEY");
+      const id = yield* Random.nextIntBetween(2, 1_000_000_000);
+      yield* sdk("insert marker", (signal) =>
+        client.from("contract_items").insert({ id, label: "before reset" }).abortSignal(signal),
+      );
+      yield* Effect.flatten(ContractReset);
+      const rows = yield* sdk("select marker", (signal) =>
+        client.from("contract_items").select("id").eq("id", id).abortSignal(signal),
+      );
+      expect(rows).toEqual([]);
+      yield* appliesInOrder;
+    }),
+    /* Guards a legacy reset, which recreates the database container and restarts its services. */
+    timeout: 180_000,
+  },
+];
+
 const contractCases: ReadonlyArray<ContractCase> = [
   ...postgrestCases,
   ...authCases,
   ...storageCases,
   ...realtimeCases,
   ...functionsCases,
+  ...seedingCases,
+  /* Last: a legacy reset restarts its services without start's Realtime readiness wait. */
+  ...resetCases,
 ];
 
 /** Runs every contract case against one setup's running stack. */
-export const describeContract = <E>(setup: string, target: Layer.Layer<ContractTarget, E>) =>
+export const describeContract = <E>(
+  setup: string,
+  target: Layer.Layer<ContractTarget | ContractReset, E>,
+) =>
   layer(Layer.mergeAll(target, FetchHttpClient.layer, Socket.layerWebSocketConstructorGlobal), {
     /* Guards the stack start, including first image pulls or native artifact downloads. */
     timeout: "5 minutes",
