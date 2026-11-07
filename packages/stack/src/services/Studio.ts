@@ -56,6 +56,10 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         HOSTNAME: container ? "0.0.0.0" : "127.0.0.1",
         S3_PROTOCOL_ACCESS_KEY_ID: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
         S3_PROTOCOL_ACCESS_KEY_SECRET: DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+        ENABLED_FEATURES_LOGS_ALL: String(
+          creation.config.analyticsUrl !== undefined &&
+            creation.config.analyticsApiKey !== undefined,
+        ),
       };
       if (creation.config.databaseUrl !== undefined) {
         // Studio encrypts a connection string from these for pg-meta; the bootstrap gives the
@@ -71,10 +75,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         values.STUDIO_PG_META_URL = creation.config.pgmetaUrl;
       if (creation.config.analyticsUrl !== undefined)
         values.LOGFLARE_URL = creation.config.analyticsUrl;
-      if (creation.config.analyticsApiKey !== undefined) {
+      if (creation.config.analyticsApiKey !== undefined)
         values.LOGFLARE_PRIVATE_ACCESS_TOKEN = creation.config.analyticsApiKey;
-        values.NEXT_PUBLIC_ENABLE_LOGS = "true";
-      }
       if (creation.config.analyticsBackend !== undefined)
         values.NEXT_ANALYTICS_BACKEND_PROVIDER = creation.config.analyticsBackend;
       if (jwt !== undefined) values.AUTH_JWT_SECRET = jwt;
