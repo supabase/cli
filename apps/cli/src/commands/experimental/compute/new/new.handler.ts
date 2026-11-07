@@ -40,6 +40,14 @@ import {
   type ComputeExposure,
   type ComputeRuntime,
   type ComputeSize,
+  COMPUTE_SECRETS_SCOPE,
+  DEFAULT_COMPUTE_SECRETS_SCOPE,
+  COMPUTE_SECRETS_SCOPE_DESCRIPTIONS,
+  parseComputeSecretsScope,
+  type ComputeSecretsScopeEnum,
+  COMPUTE_SECRETS_SCOPE_ENUM,
+  type ComputeSecretsScope,
+  parseSecretsScopeCustom,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import {
@@ -49,6 +57,7 @@ import {
 import { loadComputeProject, validateComputeName, type ComputeProject } from "../compute.shared.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
+import type { ComputeSecretScope } from "../../../../../../../packages/config/src/compute.ts";
 
 /**
  * `supabase compute new [name]` — scaffold `supabase/compute/<name>/` from the
@@ -200,6 +209,44 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 });
 
 /**
+ */
+const resolveSecretsScope = Effect.fnUntraced(function* (options: {
+  readonly explicit: Option.Option<ComputeSecretsScope>;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
+}) {
+  if (Option.isSome(options.explicit)) {
+    return options.explicit.value;
+  }
+
+  if (options.canPrompt) {
+    const output = yield* Output;
+    const selected = yield* output.promptSelect(
+      "Which secrets should be available for this compute?",
+      defaultFirst([...COMPUTE_SECRETS_SCOPE_ENUM], DEFAULT_COMPUTE_SECRETS_SCOPE as ComputeSecretsScopeEnum).map((scope) => ({
+        value: scope,
+        label: scope,
+        hint: COMPUTE_SECRETS_SCOPE_DESCRIPTIONS[scope],
+      })),
+    );
+
+    let selectedSecretsScope: string | string[] = selected;
+
+    if (selected as ComputeSecretsScopeEnum === "custom") {
+      const customSecretsNames = yield* output.promptText(
+        "Comma separated list of secret names:"
+      )
+
+      selectedSecretsScope = parseSecretsScopeCustom(customSecretsNames);
+    }
+
+    return parseComputeSecretsScope(selectedSecretsScope) ?? DEFAULT_COMPUTE_SECRETS_SCOPE;
+  }
+
+  return DEFAULT_COMPUTE_SECRETS_SCOPE;
+});
+
+/**
  * The instance count to record, and whether to record it at all.
  *
  * Not prompted for, unlike the other dials — nobody knows the right instance
@@ -276,6 +323,8 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
+    const secretsScope = yield* resolveSecretsScope({ explicit: flags.secretsScope, canPrompt });
+
     const instances = recordedInstances(flags.instances);
     // Recorded in `config.toml` rather than applied at push time; see ./SIDE_EFFECTS.md.
     const exclude = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
@@ -287,20 +336,20 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // from `apps/web` means `apps/web/generated`.
     const destination = Option.isSome(flags.source)
       ? yield* resolveComputeSource({
-          projectRoot: project.projectRoot,
-          cwd: runtimeInfo.cwd,
-          raw: flags.source.value,
-        })
+        projectRoot: project.projectRoot,
+        cwd: runtimeInfo.cwd,
+        raw: flags.source.value,
+      })
       : yield* confineComputePath({
-          projectRoot: project.projectRoot,
-          target: path.join(project.computeDir, name),
-          subject: `The default directory for "${name}"`,
-          // The default directory is `supabase/compute/<name>` with a validated
-          // name, so only a symlink escaping the project can reach this
-          // failure — which is what the suggestion names.
-          suggestion:
-            "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
-        });
+        projectRoot: project.projectRoot,
+        target: path.join(project.computeDir, name),
+        subject: `The default directory for "${name}"`,
+        // The default directory is `supabase/compute/<name>` with a validated
+        // name, so only a symlink escaping the project can reach this
+        // failure — which is what the suggestion names.
+        suggestion:
+          "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
+      });
 
     // Nothing here replaces what is already on disk: scaffolding over an existing
     // directory would have to delete it first, which isn't this command's job — it
@@ -335,6 +384,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         runtime,
         size,
         exposure,
+        secrets_scope: secretsScope,
         ...(instances === undefined ? {} : { instances }),
         ...(source === undefined ? {} : { source }),
         ...(exclude.length === 0 ? {} : { exclude }),
@@ -348,6 +398,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       "compute.runtime": runtime,
       "compute.size": size,
       "compute.exposure": exposure,
+      "compute.secrets_scope": secretsScope,
       "compute.starter_file_count": starters.length,
     });
     const destinationExisted = yield* fs.exists(destination);
@@ -384,6 +435,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       size,
       vcpu: vcpuForSize(size),
       exposure,
+      secrets_scope: secretsScope,
       // The count a deploy will use, whether or not it was written down — a
       // payload that omitted it for the default would read as "unknown" rather
       // than "one".
@@ -415,6 +467,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
         ["Access", exposure],
+        ["Secrets Scope", typeof secretsScope === "string" ? secretsScope : secretsScope.join(', ')],
         // `declared`, the way `compute status` labels the same number: nothing
         // is running yet, so a bare count would read as a live tally.
         ["Instances", `${instances ?? DEFAULT_COMPUTE_INSTANCES} declared`],

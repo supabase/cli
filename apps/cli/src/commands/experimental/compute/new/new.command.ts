@@ -9,7 +9,9 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
 import {
   COMPUTE_EXPOSURES,
   COMPUTE_RUNTIMES,
+  COMPUTE_SECRETS_SCOPE,
   COMPUTE_SIZES,
+  parseSecretsScopeCustom,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { commandSettingsLayer } from "../../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../../command-internal/debug-logger.layer.ts";
@@ -43,6 +45,15 @@ const config = {
     ),
     Flag.optional,
   ),
+  secretsScope: Flag.orElse(
+    Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE),
+    () => Flag.String("secrets-scope:custom").pipe(Flag.map(parseSecretsScopeCustom), Flag.withMetavar("SECRET_NAMES")))
+    .pipe(
+      Flag.withDescription(
+        "Controls whether secrets are available, recorded as `secrets_scope` in the project config file. Prompted when omitted.",
+      ),
+      Flag.optional,
+    ),
   instances: Flag.Int("instances").pipe(
     // Bounded at the parser, the same way `push --instances` and the config
     // schema's own `instances` are.
@@ -107,7 +118,7 @@ export const computeNewCommand = Command.make("new", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["runtime", "size", "exposure", "instances", "source"],
+    noApiEffectFlags: ["runtime", "size", "exposure", "secrets-scope", "instances", "source"],
   }),
   Command.withHandler((flags) =>
     computeNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
