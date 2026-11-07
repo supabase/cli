@@ -240,15 +240,22 @@ describe("respondToComplete", () => {
   });
 
   describe("required-flag short-circuit", () => {
-    it("offers exactly the one required flag and nothing else for a command with a single required flag", () => {
-      const result = respondToComplete(rootCommand, ["__complete", "domains", "create", ""]);
+    it.each([
+      {
+        command: ["domains", "create"],
+        name: "--custom-hostname",
+        description: "The custom hostname to use for your Supabase project.",
+      },
+      {
+        command: ["warehouse", "enable"],
+        name: "--schema",
+        description:
+          "Source PostgreSQL schema. Without --table, selects only its currently existing eligible tables; new tables must be added to replication separately.",
+      },
+    ])("offers only the required $name for $command", ({ command, name, description }) => {
+      const result = respondToComplete(rootCommand, ["__complete", ...command, ""]);
       expect(result).toEqual({
-        candidates: [
-          {
-            name: "--custom-hostname",
-            description: "The custom hostname to use for your Supabase project.",
-          },
-        ],
+        candidates: [{ name, description }],
         directive: CompletionDirective.Default,
       });
     });
