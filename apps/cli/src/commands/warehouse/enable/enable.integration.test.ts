@@ -29,27 +29,36 @@ const accepted = {
     attributes: { accepted: true, selected_tables: tables, pipeline_id: "101", tables: [] },
   },
 };
-const status = (setup = "complete", state: string | null = "following_wal", routing = true) => ({
-  data: {
-    type: "warehouse_setup",
-    id: VALID_REF,
-    attributes: {
-      setup_status: setup,
-      replication_state: "streaming",
-      tables: tables.map((table) => ({
-        ...table,
-        state: state === "following_wal" ? "live" : state === "error" ? "error" : "syncing",
-        replication_state: state,
-        copy_name: "public.orders",
-      })),
-      ...(routing
-        ? { dns: { status: "ready", hostname: "warehouse.example.com", region: "eu-west-1" } }
-        : {}),
-      steps: [],
-      fdw_status: null,
+const status = (setup = "complete", state: string | null = "following_wal", routing = true) => {
+  let tableState = "syncing";
+  if (state === "following_wal") {
+    tableState = "live";
+  } else if (state === "error") {
+    tableState = "error";
+  }
+
+  return {
+    data: {
+      type: "warehouse_setup",
+      id: VALID_REF,
+      attributes: {
+        setup_status: setup,
+        replication_state: "streaming",
+        tables: tables.map((table) => ({
+          ...table,
+          state: tableState,
+          replication_state: state,
+          copy_name: "public.orders",
+        })),
+        ...(routing
+          ? { dns: { status: "ready", hostname: "warehouse.example.com", region: "eu-west-1" } }
+          : {}),
+        steps: [],
+        fdw_status: null,
+      },
     },
-  },
-});
+  };
+};
 const flags: WarehouseEnableFlags = {
   remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
   projectRef: Option.none(),

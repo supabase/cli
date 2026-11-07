@@ -29,15 +29,19 @@ const mapError = mapHttpError({
   networkMessage: (cause) => `Warehouse request failed: ${cause}`,
   statusMessage: (status, body) => {
     const envelope = errorEnvelope(body);
-    if (Option.isNone(envelope)) return `Warehouse request failed (${status}): ${body}`;
+    if (Option.isNone(envelope)) {
+      return `Warehouse request failed (${status}): ${body}`;
+    }
     const { code, message } = envelope.value.error;
-    const guidance =
-      code === "warehouse_selection_conflict"
-        ? " Use warehouse replication add/remove to change the existing selection."
-        : code === "warehouse_preview_stale"
-          ? " Run this command again to review the changed selection."
-          : "";
-    return `${sanitizeInlineName(message)}${guidance}`;
+    const sanitizedMessage = sanitizeInlineName(message);
+    switch (code) {
+      case "warehouse_selection_conflict":
+        return `${sanitizedMessage} Use warehouse replication add/remove to change the existing selection.`;
+      case "warehouse_preview_stale":
+        return `${sanitizedMessage} Run this command again to review the changed selection.`;
+      default:
+        return sanitizedMessage;
+    }
   },
 });
 
@@ -50,14 +54,16 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
   const cache = yield* LinkedProjectCache;
   const telemetry = yield* TelemetryState;
   const run = Effect.gen(function* () {
-    if (Option.isSome(outputFlag))
+    if (Option.isSome(outputFlag)) {
       return yield* new WarehouseEnableInputError({
         message: unsupportedOutputFlagMessage("warehouse enable"),
       });
-    if (!flags.schema.length || (Option.isSome(flags.table) && !flags.table.value.length))
+    }
+    if (!flags.schema.length || (Option.isSome(flags.table) && !flags.table.value.length)) {
       return yield* new WarehouseEnableInputError({
         message: "--schema and --table must not be empty.",
       });
+    }
     const timeout = yield* Effect.try({
       try: () => parseDuration(flags.timeout) / 1_000_000,
       catch: () =>
@@ -65,10 +71,11 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
           message: "--timeout must be a positive duration, for example 15m.",
         }),
     });
-    if (timeout <= 0 || timeout > 2_147_483_647)
+    if (timeout <= 0 || timeout > 2_147_483_647) {
       return yield* new WarehouseEnableInputError({
         message: "--timeout must be positive and no longer than 596h.",
       });
+    }
     const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
     yield* Effect.annotateCurrentSpan("project.ref", ref);
     return yield* Effect.gen(function* () {
@@ -85,8 +92,13 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
         .pipe(Effect.catch(mapError), Effect.withSpan("warehouse.enable.preview"));
       const tables = preview.data.attributes.selected_tables;
       yield* Effect.annotateCurrentSpan("table.count", tables.length);
+      const selectedTableNames = tables.map((table) => {
+        const schema = sanitizeInlineName(JSON.stringify(table.schema));
+        const name = sanitizeInlineName(JSON.stringify(table.name));
+        return `  ${schema}.${name}`;
+      });
       yield* output.raw(
-        `Selected source tables:\n${tables.map((table) => `  ${sanitizeInlineName(JSON.stringify(table.schema))}.${sanitizeInlineName(JSON.stringify(table.name))}`).join("\n")}\nNew schema tables are not automatically included. Selected partitioned tables include future partitions.\n`,
+        `Selected source tables:\n${selectedTableNames.join("\n")}\nNew schema tables are not automatically included. Selected partitioned tables include future partitions.\n`,
         "stderr",
       );
       yield* requireHostedMutationConsent({ action: "Enable Warehouse and start replication" });
@@ -109,8 +121,9 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
           synchronization_complete: false,
           selected_tables: tables,
         };
-        if (output.format !== "text")
+        if (output.format !== "text") {
           return yield* output.success("Warehouse setup accepted", payload);
+        }
         yield* output.raw(
           "Warehouse setup accepted. Initial synchronization is not yet confirmed.\nRun the same command with --wait to wait for completion.\n",
         );
@@ -122,40 +135,45 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
           .getWarehouseSetup({ ref, inspect_fdw: "false" })
           .pipe(Effect.catch(mapError));
         const status = response.data.attributes;
-        if (
-          ["error", "disabled", "disabling", "deletion_failed"].includes(status.setup_status) ||
-          status.tables.some((table) => table.state === "error")
-        )
+        const setupStopped = ["error", "disabled", "disabling", "deletion_failed"].includes(
+          status.setup_status,
+        );
+        const hasTableError = status.tables.some((table) => table.state === "error");
+        if (setupStopped || hasTableError) {
           return yield* new WarehouseEnableIncompleteError({
             message: `Warehouse setup is ${status.setup_status}; initial synchronization did not complete.`,
             suggestion: "Inspect Warehouse in the dashboard before retrying.",
           });
-        if (
-          status.tables.length &&
-          (status.tables.length !== tables.length ||
-            !tables.every((table) =>
-              status.tables.some(
-                (observed) =>
-                  observed.id === table.id &&
-                  observed.schema === table.schema &&
-                  observed.name === table.name,
-              ),
-            ))
-        )
+        }
+        const hasSameTableCount = status.tables.length === tables.length;
+        const hasSameSelection =
+          hasSameTableCount &&
+          tables.every((table) =>
+            status.tables.some(
+              (observed) =>
+                observed.id === table.id &&
+                observed.schema === table.schema &&
+                observed.name === table.name,
+            ),
+          );
+        if (status.tables.length > 0 && !hasSameSelection) {
           return yield* new WarehouseEnableIncompleteError({
             message: "The Warehouse replication selection changed while waiting.",
             suggestion: "Review the current selection before retrying.",
           });
+        }
+        const pipelineStarted = ["started", "streaming"].includes(status.replication_state);
+        const allTablesCopied = status.tables.every(
+          (table) =>
+            table.replication_state === "copied_table" ||
+            table.replication_state === "following_wal",
+        );
         const complete =
           status.setup_status === "complete" &&
           status.dns?.status === "ready" &&
-          ["started", "streaming"].includes(status.replication_state) &&
-          status.tables.length === tables.length &&
-          status.tables.every(
-            (table) =>
-              table.replication_state === "copied_table" ||
-              table.replication_state === "following_wal",
-          );
+          pipelineStarted &&
+          hasSameTableCount &&
+          allTablesCopied;
         yield* Effect.annotateCurrentSpan("synchronization.complete", complete);
         return { status, complete };
       });
@@ -180,13 +198,14 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
         Effect.withSpan("warehouse.enable.wait"),
       );
       yield* waiting.clear;
-      if (output.format !== "text")
+      if (output.format !== "text") {
         return yield* output.success("Warehouse enabled", {
           project_ref: ref,
           accepted: true,
           synchronization_complete: true,
           ...result.status,
         });
+      }
       yield* output.raw(
         `Initial synchronization: ${tables.length}/${tables.length} tables complete.\nReplication: ${sanitizeInlineName(result.status.replication_state)}.\nWarehouse enabled.\n`,
       );
