@@ -4672,6 +4672,18 @@ content_path = "./supabase/templates/custom_notice.html"
     );
   });
 
+  it.effect("hides Studio's Logs pages when Logflare is excluded", () =>
+    Effect.gen(function* () {
+      const { layer, child } = yield* setup();
+
+      yield* start(flags({ exclude: ["logflare"] })).pipe(Effect.provide(layer));
+      const studioCreate = child.spawned.find(
+        (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_studio_"),
+      );
+      expect(studioCreate?.env["ENABLED_FEATURES_LOGS_ALL"]).toBe("false");
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   describe("linked service version pins", () => {
     it.effect(
       "resolves a supabase/.temp/storage-version pin into the pulled/created storage image tag",
