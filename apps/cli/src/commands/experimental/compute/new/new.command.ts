@@ -118,7 +118,7 @@ export const computeNewCommand = Command.make("new", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["runtime", "size", "exposure", "instances", "source"],
+    noApiEffectFlags: ["runtime", "size", "exposure", "secrets-scope", "instances", "source"],
   }),
   Command.withHandler((flags) =>
     computeNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
