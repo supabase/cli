@@ -51,6 +51,7 @@ function flags(overrides: Partial<ComputeNewFlags> = {}): ComputeNewFlags {
     exposure: Option.none(),
     instances: Option.none(),
     source: Option.none(),
+    secretsScope: Option.none(),
     ...overrides,
   };
 }
@@ -93,7 +94,7 @@ describe("compute new", () => {
         const computeDir = path.join(repo.dir, "supabase", "compute", "api");
         expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         expect(yield* repo.config).toBe(
-          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine(
+          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\nsecrets_scope = "all"\n${excludeLine(
             "node",
           )}`,
         );
@@ -200,7 +201,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("prompts for runtime, size and exposure when none is given", () =>
+  it.effect("prompts for runtime, size, exposure and secrets scope when none is given", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -217,6 +218,7 @@ describe("compute new", () => {
           "Which runtime should this compute use?",
           "Which instance size should this compute use?",
           "Should this compute be reachable from the internet?",
+          "Which secrets should be available for this compute?",
         ]);
         expect(yield* repo.config).toContain('runtime = "node"');
         expect(yield* repo.config).toContain('size = "4gb"');
@@ -340,6 +342,48 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  // Written even when it is the default, the same way `runtime` and `size
+  it.effect("records the default secrets scope when nothing names one", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ name: Option.some("api") }));
+
+        expect(yield* repo.config).toContain('secrets_scope = "all"');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // The count a scaffold cannot guess: `--secrets-scope` has no prompt, so it is
+  // recorded when given and left out when not.
+  it.effect("records a secrets scope that differs from the default", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ secretsScope: Option.some("supabase") }));
+
+        expect(yield* repo.config).toContain('secrets_scope = "supabase"');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("records custom secrets scope as array", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ secretsScope: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]) }));
+
+        expect(yield* repo.config).toContain('secrets_scope = ["STRIPE_KEY", "ANTHROPIC_KEY"]');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   // Written into config.toml rather than applied invisibly at push time, so the list is
   // visible and editable and `push` needs no built-in defaults of its own.
   describe("the chosen runtime's default exclude patterns", () => {
@@ -409,6 +453,7 @@ describe("compute new", () => {
         expect(yield* repo.config).toContain('runtime = "deno"');
         expect(yield* repo.config).toContain('size = "2gb"');
         expect(yield* repo.config).toContain('exposure = "public"');
+        expect(yield* repo.config).toContain('secrets_scope = "all"');
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -442,6 +487,7 @@ describe("compute new", () => {
             runtime: Option.some("deno"),
             size: Option.some("4gb"),
             exposure: Option.some("public"),
+            secretsScope: Option.some("all"),
           }),
         );
         const recorded = yield* repo.config;
@@ -604,7 +650,7 @@ describe("compute new", () => {
         const computeDir = path.join(created.dir, "supabase", "compute", "api");
         expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         expect(yield* fs.readFileString(path.join(created.dir, "supabase", "config.toml"))).toBe(
-          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine("node")}`,
+          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\nsecrets_scope = "all"\n${excludeLine("node")}`,
         );
         // An EXPLICIT --workdir has no cwd-relative reading, so the success
         // message names the absolute path rather than a project-root-relative one.
@@ -713,6 +759,7 @@ describe("compute new", () => {
           size: "2gb",
           vcpu: 1,
           exposure: "public",
+          secrets_scope: "all",
           instances: 1,
         });
       }).pipe(Effect.provide(layer));
@@ -722,7 +769,7 @@ describe("compute new", () => {
   // The count and the exposure are recorded sparsely — `instances` is left out
   // of config.toml at the default — so the payload is the only place a caller
   // can read what this scaffold will actually deploy as.
-  it.effect("reports the chosen exposure and count under -o json", () =>
+  it.effect("reports the chosen exposure, secrets scope and count under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir, outputFlag: "json" });
@@ -732,6 +779,7 @@ describe("compute new", () => {
           flags({
             runtime: Option.some("node"),
             exposure: Option.some("private"),
+            secretsScope: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]),
             instances: Option.some(3),
           }),
         );
@@ -740,13 +788,14 @@ describe("compute new", () => {
           yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(out.stdoutText),
         ).toMatchObject({
           exposure: "private",
+          secrets_scope: ["STRIPE_KEY", "ANTHROPIC_KEY"],
           instances: 3,
         });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("shows the exposure and declared count in the details block", () =>
+  it.effect("shows the exposure, secrets scope and declared count in the details block", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir });
@@ -756,6 +805,7 @@ describe("compute new", () => {
           flags({
             runtime: Option.some("node"),
             exposure: Option.some("private"),
+            secretsScope: Option.some("none"),
             instances: Option.some(3),
           }),
         );
@@ -763,6 +813,11 @@ describe("compute new", () => {
         // `Access`, the way `compute status` and `push` label the same field.
         expect(out.stdoutText).toContain("Access");
         expect(out.stdoutText).toContain("private");
+
+        // `Secrets Scope`, the way `compute status` and `push` label the same field.
+        expect(out.stdoutText).toContain("Secrets Scope");
+        expect(out.stdoutText).toContain("none");
+
         // `declared`, because nothing is running yet — a bare count would read as
         // a live tally.
         expect(out.stdoutText).toContain("3 declared");
@@ -879,8 +934,8 @@ describe("compute new", () => {
             writeFileString: (target, data, options) =>
               path.basename(target) === "config.toml"
                 ? fs
-                    .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
-                    .pipe(Effect.andThen(writeDenied(target)))
+                  .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
+                  .pipe(Effect.andThen(writeDenied(target)))
                 : fs.writeFileString(target, data, options),
           }),
           Effect.flip,
@@ -975,7 +1030,7 @@ describe("compute new", () => {
 
         // The workdir got both the entry and the scaffold it points at.
         expect(yield* fs.readFileString(path.join(workdir, "supabase", "config.toml"))).toBe(
-          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine("node")}`,
+          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\nsecrets_scope = "all"\n${excludeLine("node")}`,
         );
         expect(
           yield* fs.exists(path.join(workdir, "supabase", "compute", "api", "index.mjs")),
@@ -1108,11 +1163,13 @@ describe("compute new", () => {
           exposure: Option.none(),
           instances: Option.none(),
           source: Option.none(),
+          secretsScope: Option.none()
         });
 
         expect(yield* repo.config).toContain(`runtime = "deno"`);
         expect(yield* repo.config).toContain(`size = "2gb"`);
         expect(yield* repo.config).toContain(`exposure = "public"`);
+        expect(yield* repo.config).toContain(`secrets_scope = "all"`);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
