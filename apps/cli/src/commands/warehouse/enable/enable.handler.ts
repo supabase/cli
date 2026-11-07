@@ -97,10 +97,14 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
         const name = sanitizeInlineName(JSON.stringify(table.name));
         return `  ${schema}.${name}`;
       });
-      yield* output.raw(
-        `Selected source tables:\n${selectedTableNames.join("\n")}\nNew schema tables are not automatically included. Selected partitioned tables include future partitions.\n`,
-        "stderr",
-      );
+      yield* output.raw(`Selected source tables:\n${selectedTableNames.join("\n")}\n`, "stderr");
+      if (Option.isNone(flags.table)) {
+        yield* output.raw(
+          "Schema selection includes only the eligible tables that exist now.\nTables created later are not replicated automatically; add them to Warehouse replication separately.\n",
+          "stderr",
+        );
+      }
+      yield* output.raw("Selected partitioned tables include future partitions.\n", "stderr");
       yield* requireHostedMutationConsent({ action: "Enable Warehouse and start replication" });
       const task = yield* output.task("Enabling Warehouse...");
       const accepted = yield* api.v2

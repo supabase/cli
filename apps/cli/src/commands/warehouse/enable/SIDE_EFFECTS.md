@@ -31,6 +31,8 @@ Uses standard `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`
 
 Supports `--output-format text|json|stream-json`. The legacy `--output` flag is rejected. Selection, confirmation and progress go to stderr. Structured success goes to stdout and distinguishes `accepted` from `synchronization_complete`.
 
+Before confirmation, schema selection prints a reminder that only currently existing eligible tables are included. Tables created later are not replicated automatically and must be added to Warehouse replication separately. This reminder is omitted when `--table` selects one table; the partition-inclusion note applies to both selections.
+
 Exit 0 means setup was accepted, or initial synchronization completed when `--wait` is set. Exit 1 covers invalid inputs, authentication and authorization failures, missing entitlement, declined or missing consent, stale previews, selection/lifecycle conflicts, network/response errors, replication failure, and wait timeout. Unavailable observations remain pending until the timeout.
 
 ## Telemetry and tracing

@@ -1,6 +1,6 @@
 # supabase-warehouse-enable
 
-Enable Warehouse replication for the currently eligible tables in `--schema`, or select one table with `--table`. A partitioned table keeps its logical table identity and includes its current and future partitions. New tables in the schema are not automatically included.
+Enable Warehouse replication for the currently eligible tables in `--schema`, or select one table with `--table`. Schema selection includes only the eligible tables that exist when you run this command. Tables created later are not replicated automatically; add them to Warehouse replication separately. A partitioned table keeps its logical table identity and includes its current and future partitions.
 
 The command resolves the hosted project, prints the selected tables, and asks for confirmation with a default answer of no. Pass `--remote=<ref|branch>` to select a project or branch; otherwise it uses the linked project. Scripts and machine output require `--yes` or `SUPABASE_YES` in the shell.
 

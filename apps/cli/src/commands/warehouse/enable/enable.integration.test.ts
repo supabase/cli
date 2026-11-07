@@ -145,6 +145,7 @@ describe("warehouse enable", () => {
       });
       expect(test.out.stdoutText).toContain("accepted");
       expect(test.out.stdoutText).not.toContain("Warehouse enabled.");
+      expect(test.out.stderrText).not.toContain("Schema selection includes");
       expect(test.out.stderrText).toContain('"public"."orders"');
       expect(test.cache.cached).toBe(true);
       expect(test.telemetry.flushed).toBe(true);
@@ -166,6 +167,9 @@ describe("warehouse enable", () => {
           }),
         );
         expect(test.out.stdoutText).not.toContain("Selected source tables");
+        expect(test.out.stderrText).toContain(
+          "Schema selection includes only the eligible tables that exist now.\nTables created later are not replicated automatically; add them to Warehouse replication separately.",
+        );
         expect(test.api.requests.at(-1)?.urlParams).toContain("inspect_fdw=false");
       }).pipe(Effect.provide(test.layer));
     });
