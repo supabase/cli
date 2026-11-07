@@ -72,6 +72,7 @@ const root = useTempWorkdir("warehouse-enable-");
 function setup(
   options: {
     format?: "text" | "json" | "stream-json";
+    previewBody?: unknown;
     statusBody?: unknown;
     applyStatus?: number;
     statusSeen?: Deferred.Deferred<void>;
@@ -81,7 +82,7 @@ function setup(
   const api = mockCommandPlatformApi({
     handler: (request) => {
       if (request.url.endsWith("/preview"))
-        return Effect.succeed(jsonResponse(request, 200, preview));
+        return Effect.succeed(jsonResponse(request, 200, options.previewBody ?? preview));
       if (request.method === "POST")
         return Effect.succeed(
           jsonResponse(
@@ -153,26 +154,33 @@ describe("warehouse enable", () => {
   });
 
   for (const format of ["json", "stream-json"] as const) {
-    it.effect(`emits structured synchronization completion in ${format}`, () => {
-      const test = setup({ format });
-      return Effect.gen(function* () {
-        yield* warehouseEnable({ ...flags, wait: true });
-        expect(test.out.messages).toContainEqual(
-          expect.objectContaining({
-            data: expect.objectContaining({
-              accepted: true,
-              synchronization_complete: true,
-              replication_state: "streaming",
+    it.effect.each([false, true])(
+      `emits the confirmed selection in ${format} with wait=%s`,
+      (wait) => {
+        const test = setup({ format });
+        return Effect.gen(function* () {
+          yield* warehouseEnable({ ...flags, wait });
+          expect(test.out.messages).toContainEqual(
+            expect.objectContaining({
+              data: {
+                project_ref: VALID_REF,
+                accepted: true,
+                synchronization_complete: wait,
+                selected_tables: tables,
+                ...(wait ? { status: status().data.attributes } : {}),
+              },
             }),
-          }),
-        );
-        expect(test.out.stdoutText).not.toContain("Selected source tables");
-        expect(test.out.stderrText).toContain(
-          "Schema selection includes only the eligible tables that exist now.\nTables created later are not replicated automatically; add them to Warehouse replication separately.",
-        );
-        expect(test.api.requests.at(-1)?.urlParams).toContain("inspect_fdw=false");
-      }).pipe(Effect.provide(test.layer));
-    });
+          );
+          expect(test.out.stdoutText).not.toContain("Selected source tables");
+          expect(test.out.stderrText).toContain(
+            "Schema selection includes only the eligible tables that exist now.\nTables created later are not replicated automatically; add them to Warehouse replication separately.",
+          );
+          if (wait) {
+            expect(test.api.requests.at(-1)?.urlParams).toContain("inspect_fdw=false");
+          }
+        }).pipe(Effect.provide(test.layer));
+      },
+    );
   }
 
   it.effect("reports a selection conflict without success and still flushes bookkeeping", () => {
@@ -184,13 +192,67 @@ describe("warehouse enable", () => {
           expect.objectContaining({
             _tag: "WarehouseEnableStatusError",
             status: 409,
-            message: expect.stringContaining("replication add/remove"),
+            message: expect.stringContaining("dashboard"),
           }),
         ),
       );
       expect(test.out.stdoutText).not.toContain("accepted");
       expect(test.cache.cached).toBe(true);
       expect(test.telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(test.layer));
+  });
+
+  it.effect("rejects an empty preview before requiring consent or enabling replication", () => {
+    const test = setup({
+      previewBody: {
+        data: { ...preview.data, attributes: { selected_tables: [] } },
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        warehouseEnable(flags).pipe(Effect.provideService(YesFlag, false)),
+      );
+      expect(Exit.findErrorOption(exit)).toEqual(
+        Option.some(
+          expect.objectContaining({
+            _tag: "WarehouseEnableInputError",
+            message: expect.stringContaining("No eligible source tables"),
+          }),
+        ),
+      );
+      expect(test.api.requests.map((request) => request.url)).toEqual([
+        expect.stringContaining("/preview"),
+      ]);
+      expect(test.cache.cached).toBe(true);
+      expect(test.telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(test.layer));
+  });
+
+  it.effect("identifies failed tables safely when overall setup is complete", () => {
+    const failedTable = { id: 1234, schema: 'public"sales', name: "orders\u001b[31m\n" };
+    const response = status("complete", "error");
+    response.data.attributes.tables = response.data.attributes.tables.map((table) => ({
+      ...table,
+      ...failedTable,
+    }));
+    const test = setup({
+      previewBody: {
+        data: { ...preview.data, attributes: { selected_tables: [failedTable] } },
+      },
+      statusBody: response,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(warehouseEnable({ ...flags, wait: true }));
+      expect(Exit.findErrorOption(exit)).toEqual(
+        Option.some(
+          expect.objectContaining({
+            _tag: "WarehouseEnableIncompleteError",
+            message:
+              'Warehouse replication failed for: "public\\"sales"."orders\\u001b[31m\\n". Initial synchronization did not complete.',
+          }),
+        ),
+      );
+      expect(test.out.stdoutText).not.toContain("Warehouse enabled");
     }).pipe(Effect.provide(test.layer));
   });
 
@@ -220,11 +282,16 @@ describe("warehouse enable", () => {
   it.effect.each(["error", "deletion_failed"])(
     "surfaces %s without waiting for the timeout",
     (state) => {
-      const test = setup({ statusBody: status(state, state === "error" ? "error" : null) });
+      const test = setup({ statusBody: status(state, null) });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(warehouseEnable({ ...flags, wait: true }));
         expect(Exit.findErrorOption(exit)).toEqual(
-          Option.some(expect.objectContaining({ _tag: "WarehouseEnableIncompleteError" })),
+          Option.some(
+            expect.objectContaining({
+              _tag: "WarehouseEnableIncompleteError",
+              message: `Warehouse setup is ${state}; initial synchronization did not complete.`,
+            }),
+          ),
         );
         expect(test.api.requests).toHaveLength(3);
       }).pipe(Effect.provide(test.layer));

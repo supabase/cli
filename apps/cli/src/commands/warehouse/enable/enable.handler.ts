@@ -36,7 +36,7 @@ const mapError = mapHttpError({
     const sanitizedMessage = sanitizeInlineName(message);
     switch (code) {
       case "warehouse_selection_conflict":
-        return `${sanitizedMessage} Use warehouse replication add/remove to change the existing selection.`;
+        return `${sanitizedMessage} Change the Warehouse replication selection in the dashboard.`;
       case "warehouse_preview_stale":
         return `${sanitizedMessage} Run this command again to review the changed selection.`;
       default:
@@ -44,6 +44,12 @@ const mapError = mapHttpError({
     }
   },
 });
+
+function formatTableName(table: { schema: string; name: string }): string {
+  const schema = sanitizeInlineName(JSON.stringify(table.schema));
+  const name = sanitizeInlineName(JSON.stringify(table.name));
+  return `${schema}.${name}`;
+}
 
 export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
   flags: WarehouseEnableFlags,
@@ -92,11 +98,13 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
         .pipe(Effect.catch(mapError), Effect.withSpan("warehouse.enable.preview"));
       const tables = preview.data.attributes.selected_tables;
       yield* Effect.annotateCurrentSpan("table.count", tables.length);
-      const selectedTableNames = tables.map((table) => {
-        const schema = sanitizeInlineName(JSON.stringify(table.schema));
-        const name = sanitizeInlineName(JSON.stringify(table.name));
-        return `  ${schema}.${name}`;
-      });
+      if (tables.length === 0) {
+        return yield* new WarehouseEnableInputError({
+          message:
+            "No eligible source tables were found for this selection. Choose a schema or table with eligible tables.",
+        });
+      }
+      const selectedTableNames = tables.map((table) => `  ${formatTableName(table)}`);
       yield* output.raw(`Selected source tables:\n${selectedTableNames.join("\n")}\n`, "stderr");
       if (Option.isNone(flags.table)) {
         yield* output.raw(
@@ -139,11 +147,17 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
           .getWarehouseSetup({ ref, inspect_fdw: "false" })
           .pipe(Effect.catch(mapError));
         const status = response.data.attributes;
+        const failedTables = status.tables.filter((table) => table.state === "error");
+        if (failedTables.length > 0) {
+          return yield* new WarehouseEnableIncompleteError({
+            message: `Warehouse replication failed for: ${failedTables.map(formatTableName).join(", ")}. Initial synchronization did not complete.`,
+            suggestion: "Inspect the failed tables in the dashboard before retrying.",
+          });
+        }
         const setupStopped = ["error", "disabled", "disabling", "deletion_failed"].includes(
           status.setup_status,
         );
-        const hasTableError = status.tables.some((table) => table.state === "error");
-        if (setupStopped || hasTableError) {
+        if (setupStopped) {
           return yield* new WarehouseEnableIncompleteError({
             message: `Warehouse setup is ${status.setup_status}; initial synchronization did not complete.`,
             suggestion: "Inspect Warehouse in the dashboard before retrying.",
@@ -207,7 +221,8 @@ export const warehouseEnable = Effect.fn("warehouse.enable")(function* (
           project_ref: ref,
           accepted: true,
           synchronization_complete: true,
-          ...result.status,
+          selected_tables: tables,
+          status: result.status,
         });
       }
       yield* output.raw(

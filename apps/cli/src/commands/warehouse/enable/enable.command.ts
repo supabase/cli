@@ -38,7 +38,7 @@ export type WarehouseEnableFlags = CliCommand.Command.Config.Infer<typeof config
 
 export const warehouseEnableCommand = Command.make("enable", config).pipe(
   Command.withDescription(
-    "Enable Warehouse for the currently eligible tables in a source schema, or one table with --table. Preview the resolved selection before confirmation. Schema selection includes only the eligible tables that exist when you run this command. Tables created later are not replicated automatically; add them to Warehouse replication separately. Selected partitioned tables include their current and future partitions. Repeating the same selection is safe; use warehouse replication add/remove to change an enabled Warehouse's selection. Without --wait, success means setup was accepted. Use --output-format json for structured output.",
+    "Enable Warehouse for the currently eligible tables in a source schema, or one table with --table. Preview the resolved selection before confirmation. Schema selection includes only the eligible tables that exist when you run this command. Tables created later are not replicated automatically; add them to Warehouse replication separately. Selected partitioned tables include their current and future partitions. Repeating the same selection is safe; use the dashboard to change an enabled Warehouse's replication selection. Without --wait, success means setup was accepted. Use --output-format json for structured output.",
   ),
   Command.withShortDescription("Enable Warehouse replication"),
   Command.withExamples([

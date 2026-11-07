@@ -118,7 +118,8 @@ it.live("enables Warehouse through the compiled CLI and keeps JSON stdout clean"
       project_ref: ref,
       accepted: true,
       synchronization_complete: true,
-      replication_state: "streaming",
+      selected_tables: tables,
+      status: { replication_state: "streaming" },
     });
     expect(result.stderr).toContain('"public"."orders"');
     expect(requests).toEqual([

@@ -334,6 +334,7 @@ const COMPLETION_REQUIRED_FLAGS: ReadonlySet<string> = new Set([
   "sso add:type",
   "vanity-subdomains activate:desired-subdomain",
   "vanity-subdomains check-availability:desired-subdomain",
+  "warehouse enable:schema",
 ]);
 
 function isRequiredCompletionFlag(matchedPath: ReadonlyArray<string>, flagName: string): boolean {
