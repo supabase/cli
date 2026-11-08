@@ -7,12 +7,6 @@ const tags = ["compute"];
 // Management API's own validation.
 const computeName = Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/u));
 
-export enum ComputeSecretScope {
-  All = "all",
-  Supabase = "supabase",
-  None = "none"
-}
-
 const computeEntry = Schema.Struct({
   runtime: Schema.optionalKey(
     Schema.String.annotate({
@@ -51,16 +45,15 @@ const computeEntry = Schema.Struct({
     }),
   ),
   secrets_scope: Schema.optionalKey(
-    Schema.Union([Schema.Enum(ComputeSecretScope), Schema.Array(Schema.String)]).annotate({
+    Schema.Union([Schema.String, Schema.Array(Schema.String)])).annotate({
       description: dedent`
-        Controls whether secrets are available: \`all\` gives access to all defined secrets,
-        \`supabase\` exposes only the \`SUPABASE_*\` defaults, \`none\` will complete hide any
+        controls whether secrets are available: \`all\` gives access to all defined secrets,
+        \`supabase\` exposes only the \`supabase_*\` defaults, \`none\` will complete hide any
         secret, \`string[]\` gives only the secrets named in the list.
       `,
-      examples: [['STRIPE_KEY', 'LLM_APIKEY'], ComputeSecretScope.None],
+      examples: ["all", ['STRIPE_KEY', 'LLM_APIKEY']],
       tags,
     }),
-  ),
   instances: Schema.optionalKey(
     // Bounded to match the Management API's input schema; an out-of-range value would
     // be dropped rather than sent, deploying a different count than the config asked for.

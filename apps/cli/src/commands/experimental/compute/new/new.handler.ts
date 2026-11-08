@@ -40,7 +40,6 @@ import {
   type ComputeExposure,
   type ComputeRuntime,
   type ComputeSize,
-  COMPUTE_SECRETS_SCOPE,
   DEFAULT_COMPUTE_SECRETS_SCOPE,
   COMPUTE_SECRETS_SCOPE_DESCRIPTIONS,
   parseComputeSecretsScope,
@@ -57,7 +56,6 @@ import {
 import { loadComputeProject, validateComputeName, type ComputeProject } from "../compute.shared.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
-import type { ComputeSecretScope } from "../../../../../../../packages/config/src/compute.ts";
 
 /**
  * `supabase compute new [name]` — scaffold `supabase/compute/<name>/` from the
