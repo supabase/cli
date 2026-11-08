@@ -47,6 +47,7 @@ import {
   COMPUTE_SECRETS_SCOPE_ENUM,
   type ComputeSecretsScope,
   parseSecretsScopeCustom,
+  formatSecretsScope,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import {
@@ -465,7 +466,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
         ["Access", exposure],
-        ["Secrets Scope", typeof secretsScope === "string" ? secretsScope : secretsScope.join(', ')],
+        ["Secrets Scope", formatSecretsScope(secretsScope)],
         // `declared`, the way `compute status` labels the same number: nothing
         // is running yet, so a bare count would read as a live tally.
         ["Instances", `${instances ?? DEFAULT_COMPUTE_INSTANCES} declared`],

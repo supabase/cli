@@ -174,6 +174,10 @@ export function parseSecretsScopeCustom(secretsNames: string) {
   return secretsNames.split(',').map(secretName => secretName.trim())
 }
 
+export function formatSecretsScope(secretsScope: string | string[]) {
+  return typeof secretsScope === "string" ? secretsScope : secretsScope.join(', ')
+}
+
 const VCPU_FOR_SIZE: Record<ComputeSize, number> = { "2gb": 1, "4gb": 2 };
 
 /** The vCPU count that comes with `size` — not independently choosable. */
