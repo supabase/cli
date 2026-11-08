@@ -86,15 +86,28 @@ export interface ComputeUploadSlot {
   readonly expiresAt: string;
 }
 
+const COMPUTE_SECRETS_SCOPE = ["all", "supabase", "none"] as const;
+type ComputeSecretsScope = (typeof COMPUTE_SECRETS_SCOPE)[number];
+
 /** The `spec` a deploy sends. Mirrors the API's own field names exactly. */
 export interface ComputeDeploySpec {
   readonly runtime?: string;
   readonly size: string;
   readonly exposure: string;
-  readonly secrets_scope?: "all" | "supabase" | "none" | {
+  readonly secrets_scope?: ComputeSecretsScope | {
     readonly secret_name: string;
   }[];
   readonly instances: number;
+}
+
+export function parseComputeSecretsScopeToAPIFormat(value: string | string[]): ComputeDeploySpec['secrets_scope'] | undefined {
+  if (typeof value === 'string' && COMPUTE_SECRETS_SCOPE.includes(value as ComputeSecretsScope)) {
+    return value as ComputeSecretsScope;
+  }
+
+  if (Array.isArray(value) && value.every(i => typeof i === 'string')) {
+    return value.map((secret_name) => ({ secret_name }))
+  }
 }
 
 function toComputeRecord(data: ComputeResourceData): ComputeRecord {
