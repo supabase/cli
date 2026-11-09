@@ -4,14 +4,16 @@ import { Context, Data, Deferred, Effect, Fiber, FileSystem, Hash, Layer, Path, 
 import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
+import * as Tls from "node:tls";
 import { createServer, type RequestListener } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpBody, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import type { HttpAccess, HttpAccessSink } from "./HttpProxy.ts";
+import { makeHttpProxy, type HttpAccess, type HttpAccessSink } from "./HttpProxy.ts";
 import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
+import { plainPeerAllowed, type ApiTlsNetwork } from "./runtime/ApiTlsSupport.ts";
 import { emailTemplateFile, freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
 import { readResolvedFile } from "./namespace/drivers/FileSystem.ts";
 import type { ServiceCreation } from "./services/Catalog.ts";
@@ -769,7 +771,11 @@ const authWith = (
 });
 
 /** An Auth shared route over a real project directory holding `invite.html`, beside `outside/`. */
-const emailTemplates = (runtime: Network.NetworkRuntime, onAccess?: HttpAccessSink) =>
+const emailTemplates = (
+  runtime: Network.NetworkRuntime,
+  onAccess?: HttpAccessSink,
+  apiTls?: NonNullable<StackNamespace.SavedStack["apiTls"]>,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -784,7 +790,7 @@ const emailTemplates = (runtime: Network.NetworkRuntime, onAccess?: HttpAccessSi
     yield* fs.writeFileString(invite, "invite marker");
     const stackId = `email-${randomUUID()}`;
     const state = yield* makeTestState(path.join(base, "state"));
-    yield* state.save(stack(stackId));
+    yield* state.save({ ...stack(stackId), ...(apiTls === undefined ? {} : { apiTls }) });
     const backendCalls = { count: 0 };
     const target = yield* backendWith((_request, response) => {
       backendCalls.count += 1;
@@ -810,13 +816,35 @@ const emailTemplates = (runtime: Network.NetworkRuntime, onAccess?: HttpAccessSi
     const [binding] = yield* namespace.bind;
     if (binding === undefined) return yield* new FixtureError({ message: "no binding" });
     yield* Effect.addFinalizer(() => network.releaseStack.pipe(Effect.ignore));
-    return { root, outside, invite, creation, backendCalls, port: binding.port };
+    return {
+      root,
+      outside,
+      invite,
+      creation,
+      backendCalls,
+      port: binding.port,
+      namespace,
+      network,
+      state,
+      stackId,
+    };
   });
 
-/** Sends bytes as written, so a client never normalizes the path, and answers with the raw reply. */
-const raw = (port: number, head: string, host = "127.0.0.1", connection = "close") =>
+/** Sends a request head verbatim, Host included, over plain TCP or TLS, and answers the raw reply. */
+const rawHead = (
+  port: number,
+  lines: ReadonlyArray<string>,
+  options: { readonly host?: string; readonly ca?: string } = {},
+) =>
   Effect.callback<string, FixtureError>((resume) => {
-    const socket = Net.connect({ host, port });
+    const host = options.host ?? "127.0.0.1";
+    const head = `${lines.join("\r\n")}\r\n\r\n`;
+    const socket =
+      options.ca === undefined
+        ? Net.connect({ host, port }, () => socket.write(head))
+        : Tls.connect({ host, port, ca: options.ca, servername: "localhost" }, () =>
+            socket.write(head),
+          );
     let received = "";
     socket.on("data", (chunk) => {
       received += chunk.toString();
@@ -825,13 +853,14 @@ const raw = (port: number, head: string, host = "127.0.0.1", connection = "close
       resume(Effect.fail(new FixtureError({ message: cause.message }))),
     );
     socket.once("close", () => resume(Effect.succeed(received)));
-    socket.once("connect", () =>
-      socket.write(`${head}\r\nHost: stack\r\nConnection: ${connection}\r\n\r\n`),
-    );
     return Effect.sync(() => {
       socket.destroy();
     });
   });
+
+/** Sends bytes as written, so a client never normalizes the path, and answers with the raw reply. */
+const raw = (port: number, head: string, host = "127.0.0.1", connection = "close") =>
+  rawHead(port, [head, "Host: stack", `Connection: ${connection}`], { host });
 
 const invite = "/email/invite?token=template-token";
 
@@ -1300,3 +1329,235 @@ it.live("warns once about a template that keeps failing, and again after it reco
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureLogs(["Warn"])(warnings))));
 });
+
+/* A self-signed pair for localhost and 127.0.0.1, standing in for `[api.tls]`'s local one. */
+const localTls = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const certs = path.join(import.meta.dirname, "..", "tests", "certs");
+  return {
+    cert: yield* fs.readFileString(path.join(certs, "trusted.crt")),
+    key: yield* fs.readFileString(path.join(certs, "localhost.key")),
+  };
+});
+
+const savedTls = (tls: { readonly cert: string; readonly key: string }) => ({
+  ...tls,
+  networks: [],
+  selfCheck: "self-check-token",
+});
+
+for (const runtime of ["docker", "native"] as const)
+  it.live(`serves the ${runtime} API over TLS and runtimes plain HTTP on the same port`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tls = yield* localTls;
+        const { port, namespace } = yield* emailTemplates(runtime, undefined, savedTls(tls));
+        const host = yield* namespace.address("http", "host");
+        const inside = yield* namespace.address("http", "runtime");
+        expect(host).toMatchObject({ host: "127.0.0.1", port, scheme: "https" });
+        expect(inside).toMatchObject({
+          host: runtime === "native" ? "127.0.0.1" : DOCKER_HOST_ALIAS,
+          port,
+        });
+        expect(inside.scheme).toBeUndefined();
+
+        const get = (path: string, ...lines: Array<string>) => [
+          `GET ${path} HTTP/1.1`,
+          ...lines,
+          "Connection: close",
+        ];
+        const at = `Host: host.supabase.internal:${port}`;
+        const secure = yield* rawHead(port, get("/auth/v1/health", `Host: localhost:${port}`), {
+          ca: tls.cert,
+        });
+        expect(secure).toMatch(/^HTTP\/1\.1 200 /u);
+        expect(secure).toContain("backend");
+        expect(
+          yield* rawHead(port, get(invite, `Host: localhost:${port}`), { ca: tls.cert }),
+        ).toMatch(/^HTTP\/1\.1 404 /u);
+
+        expect(yield* rawHead(port, get("/auth/v1/health", at))).toMatch(/^HTTP\/1\.1 200 /u);
+        expect(yield* rawHead(port, get(invite, at))).toContain("invite marker");
+        /* A function forwarding a browser's headers to the runtime URL keeps working. */
+        expect(
+          yield* rawHead(
+            port,
+            get(
+              "/auth/v1/health",
+              at,
+              "Origin: http://localhost:3000",
+              "Sec-Fetch-Site: cross-site",
+            ),
+          ),
+        ).toMatch(/^HTTP\/1\.1 200 /u);
+        for (const head of [`Host: evil.example:${port}`, "Host: 127.0.0.1"])
+          expect(yield* rawHead(port, get("/auth/v1/health", head)), head).toMatch(
+            /^HTTP\/1\.1 421 /u,
+          );
+        /* The external address is this host's own, so a host client there stays admitted. */
+        const lan = yield* externalAddress;
+        if (runtime === "docker")
+          expect(yield* rawHead(port, get("/auth/v1/health", at), { host: lan })).toMatch(
+            /^HTTP\/1\.1 200 /u,
+          );
+        else yield* Effect.flip(rawHead(port, get("/auth/v1/health", at), { host: lan }));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+it.live("keeps every listener, URL and scheme of the API without TLS", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { port, namespace } = yield* emailTemplates("docker");
+      expect(yield* namespace.address("http", "host")).toEqual({
+        name: "http",
+        protocol: "http",
+        host: "127.0.0.1",
+        port,
+      });
+      expect(
+        yield* rawHead(port, [
+          "GET /auth/v1/health HTTP/1.1",
+          "Host: anything",
+          "Connection: close",
+        ]),
+      ).toMatch(/^HTTP\/1\.1 200 /u);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("admits the plain peers an earlier owner's self-check saved with the stack's TLS", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const tls = yield* localTls;
+      const { network } = yield* emailTemplates("docker", undefined, {
+        ...savedTls(tls),
+        learnedPeers: ["10.9.8.7"],
+      });
+      expect(yield* network.learnedApiPeers("self-check-token")).toEqual(["10.9.8.7"]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("refuses an earlier TLS generation's learned peer once a start sets TLS again", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const tls = yield* localTls;
+      const { network, namespace, state, stackId } = yield* emailTemplates("docker", undefined, {
+        ...savedTls(tls),
+        learnedPeers: ["10.9.8.7"],
+      });
+      expect(yield* network.learnedApiPeers("self-check-token")).toEqual(["10.9.8.7"]);
+      yield* namespace.close;
+      yield* state.save({
+        ...stack(stackId),
+        apiTls: { ...savedTls(tls), selfCheck: "next-start" },
+      });
+      yield* namespace.bind;
+      expect(yield* network.learnedApiPeers("next-start")).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("advertises the scheme the open API listener serves, not the saved TLS", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const tls = yield* localTls;
+      const { namespace, state, stackId } = yield* emailTemplates(
+        "docker",
+        undefined,
+        savedTls(tls),
+      );
+      expect(yield* namespace.address("http", "host")).toMatchObject({ scheme: "https" });
+      yield* state.save(stack(stackId));
+      expect(yield* namespace.address("http", "host")).toMatchObject({ scheme: "https" });
+      expect((yield* namespace.bindings).find(({ name }) => name === "http")?.scheme).toBe("https");
+      yield* namespace.close;
+      expect((yield* namespace.address("http", "host")).scheme).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "refuses plain HTTP from a peer outside the rule and serves it over TLS on the same port",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tls = yield* localTls;
+        const lan = yield* externalAddress;
+        /* The real rule, with this host's addresses left out so its LAN address stands in for a
+         routed peer connecting to it. */
+        const listener = (networks: ReadonlyArray<ApiTlsNetwork>) =>
+          makeHttpProxy({
+            host: "0.0.0.0",
+            port: 0,
+            tls: { ...tls, plainPeer: plainPeerAllowed(networks, () => new Set()) },
+          }).pipe(Effect.map(({ port }) => port));
+        const get = (port: number) => [
+          "GET / HTTP/1.1",
+          `Host: host.supabase.internal:${port}`,
+          "Connection: close",
+        ];
+        const plain = (port: number, host: string) =>
+          rawHead(port, get(port), { host }).pipe(Effect.orElseSucceed(() => ""));
+
+        const outside = yield* listener([]);
+        expect(yield* plain(outside, lan)).toBe("");
+        expect(yield* rawHead(outside, get(outside), { host: lan, ca: tls.cert })).toMatch(
+          /^HTTP\/1\.1 404 /u,
+        );
+        expect(yield* plain(outside, "127.0.0.1")).toMatch(/^HTTP\/1\.1 404 /u);
+
+        const subnet = `${lan}/32`;
+        expect(yield* plain(yield* listener([{ subnet, gateway: lan }]), lan)).toMatch(
+          /^HTTP\/1\.1 404 /u,
+        );
+        expect(yield* plain(yield* listener([{ subnet, gateway: "127.0.0.1" }]), lan)).toBe("");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "reads the saved TLS before a shared API bind owns any scope, so it stays interruptible",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "network-tls-read-" });
+        const state = yield* makeTestState(path.join(base, "state"));
+        const stackId = `tls-read-${randomUUID()}`;
+        yield* state.save(stack(stackId));
+        const reading = yield* Deferred.make<void>();
+        let stalled = false;
+        const network = yield* makeTestNetwork({
+          stackId,
+          runtime: "docker",
+          state: {
+            ...state,
+            read: (id) =>
+              Effect.suspend(() =>
+                stalled
+                  ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Effect.never))
+                  : state.read(id),
+              ),
+          },
+        });
+        yield* Effect.addFinalizer(() => network.releaseStack.pipe(Effect.ignore));
+        const target = yield* backendWith((_request, response) => response.end("backend"));
+        const namespace = yield* network.register({
+          id: "rest",
+          endpoints: {
+            http: { ...endpoint(target, Effect.succeed(false)), shared: [{ prefix: "/rest/v1" }] },
+          },
+        });
+        stalled = true;
+        const binding = yield* Effect.forkChild(namespace.bind);
+        yield* Deferred.await(reading);
+        yield* Fiber.interrupt(binding);
+        stalled = false;
+        expect(yield* namespace.bind).toHaveLength(1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
