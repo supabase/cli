@@ -45,22 +45,20 @@ const config = {
     ),
     Flag.optional,
   ),
-  secretsScope: Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE)
-    .pipe(
-      Flag.withDescription(
-        "Controls whether secrets are available, overriding `secrets_scope` in the project config file for this deploy. Falls back to the recorded value, then all.",
-      ),
-      Flag.optional,
+  secretsScope: Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE).pipe(
+    Flag.withDescription(
+      "Controls whether secrets are available, overriding `secrets_scope` in the project config file for this deploy. Falls back to the recorded value, then all.",
     ),
-  secretsScopeCustom: Flag.String("secrets-scope:custom")
-    .pipe(
-      Flag.map(parseSecretsScopeCustom),
-      Flag.withMetavar("SECRET_NAMES"),
-      Flag.withDescription(
-        "Controls whether secrets are available, overriding `secrets_scope` with a comma separed list of allowed secret names. Falls back to the recorded value, then all.",
-      ),
-      Flag.optional,
+    Flag.optional,
+  ),
+  secretsScopeCustom: Flag.String("secrets-scope:custom").pipe(
+    Flag.map(parseSecretsScopeCustom),
+    Flag.withMetavar("SECRET_NAMES"),
+    Flag.withDescription(
+      "Controls whether secrets are available, overriding `secrets_scope` with a comma separed list of allowed secret names. Falls back to the recorded value, then all.",
     ),
+    Flag.optional,
+  ),
   instances: Flag.Int("instances").pipe(
     // Bounded at the parser, the same way `push --instances` and the config
     // schema's own `instances` are.

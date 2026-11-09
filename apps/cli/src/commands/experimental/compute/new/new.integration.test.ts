@@ -376,7 +376,9 @@ describe("compute new", () => {
       const { layer } = setupCompute({ workdir: repo.dir });
 
       return yield* Effect.gen(function* () {
-        yield* computeNew(flags({ secretsScopeCustom: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]) }));
+        yield* computeNew(
+          flags({ secretsScopeCustom: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]) }),
+        );
 
         expect(yield* repo.config).toContain('secrets_scope = ["STRIPE_KEY", "ANTHROPIC_KEY"]');
       }).pipe(Effect.provide(layer));
@@ -933,8 +935,8 @@ describe("compute new", () => {
             writeFileString: (target, data, options) =>
               path.basename(target) === "config.toml"
                 ? fs
-                  .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
-                  .pipe(Effect.andThen(writeDenied(target)))
+                    .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
+                    .pipe(Effect.andThen(writeDenied(target)))
                 : fs.writeFileString(target, data, options),
           }),
           Effect.flip,
