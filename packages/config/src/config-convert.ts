@@ -21,10 +21,10 @@ import {
 import { deepEqualValue } from "./config-edit.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
+import { SCHEMA_DIRECTIVE_LINE } from "./schema-version.ts";
 import {
   scanScalarArrayLayout,
   scanTomlDocument,
-  tomlSchemaDirective,
   type TomlArrayLayout,
   type TomlHeaderToken,
   type TomlKeyToken,
@@ -256,6 +256,28 @@ function arrayDecor(
   };
 }
 
+/** Index of the `#:schema` comment among the leading comments and blank lines, matching the loader. */
+function leadingSchemaDirectiveIndex(tokens: ReadonlyArray<TomlToken>, text: string): number {
+  for (const [index, token] of tokens.entries()) {
+    if (token.kind === "blank") {
+      continue;
+    }
+    if (token.kind !== "comment") {
+      return -1;
+    }
+    if (schemaDirectiveRef(text, token) !== undefined) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function schemaDirectiveRef(text: string, token: TomlToken | undefined): string | undefined {
+  return token === undefined
+    ? undefined
+    : SCHEMA_DIRECTIVE_LINE.exec(text.slice(token.start, token.end))?.[1];
+}
+
 const convertDocument = Effect.fnUntraced(function* (text: string) {
   const parsed = yield* Effect.try({
     try: () => SmolToml.parse(text),
@@ -283,8 +305,12 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
   };
   const commentAt = (offset: number) => comment(text.slice(offset).split(/\r?\n|\r/, 1)[0] ?? "");
 
-  const directive = Object.hasOwn(parsed, "$schema") ? undefined : tomlSchemaDirective(text);
-  const firstTokenIndex = directive === undefined ? 0 : 1;
+  const directiveIndex = leadingSchemaDirectiveIndex(tokens, text);
+  const directive =
+    directiveIndex < 0 ? undefined : schemaDirectiveRef(text, tokens[directiveIndex]);
+  const firstTokenIndex = directiveIndex === 0 ? 1 : 0;
+  const isComment = (index: number) =>
+    tokens[index]?.kind === "comment" && index !== directiveIndex;
 
   const root = newTable();
   const rootLead: Array<string> = [];
@@ -391,15 +417,15 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
   }
 
   tokens.forEach((token, index) => {
-    if (token.kind !== "comment" || index < firstTokenIndex) {
+    if (!isComment(index)) {
       return;
     }
     const previous = index > firstTokenIndex ? tokens[index - 1] : undefined;
-    if (previous?.kind === "comment") {
+    if (isComment(index - 1)) {
       return;
     }
     let end = index;
-    while (tokens[end]?.kind === "comment") {
+    while (isComment(end)) {
       end++;
     }
     const rawLines = tokens.slice(index, end).map((entry) => text.slice(entry.start, entry.end));
@@ -469,12 +495,18 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
     if (keyed.kind !== "leaf" || typeof keyed.value !== "string") {
       return yield* refusal("unsupported_value", "`$schema` must be a string");
     }
+    if (directive !== undefined && directive !== keyed.value) {
+      return yield* refusal(
+        "unsupported_value",
+        `the schema is declared twice, as \`#:schema ${directive}\` and as \`$schema = "${keyed.value}"\`; keep one and rerun`,
+      );
+    }
     schemaRef = keyed.value;
     schemaSource = "key";
     root.entries.delete("$schema");
     root.entries = new Map([["$schema", keyed], ...root.entries]);
   } else {
-    schemaRef = directive?.ref ?? CLI_CONFIG_SCHEMA_URL;
+    schemaRef = directive ?? CLI_CONFIG_SCHEMA_URL;
     schemaSource = directive === undefined ? "default" : "directive";
     const entry: LeafNode = {
       kind: "leaf",

@@ -49,6 +49,7 @@ export {
   type ParseMergeCliConfigOptions,
   remoteNameForProjectRef,
   remoteProjectIdEntries,
+  createCliConfigDocumentText,
   writeCliConfigDocumentText,
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,

@@ -464,17 +464,6 @@ export function scanTomlDocument(source: string): TomlScanResult | TomlScanError
   return { source, tokens, headers, newline, endsWithNewline: source.endsWith("\n") };
 }
 
-const TOML_SCHEMA_DIRECTIVE = /^#:schema[ \t]+(\S+)[ \t]*(?=\r?\n|$)/;
-
-/** Returns the leading `#:schema <url>` line of a TOML document and its URL, if present. */
-export function tomlSchemaDirective(
-  source: string,
-): { readonly line: string; readonly ref: string } | undefined {
-  const match = TOML_SCHEMA_DIRECTIVE.exec(source);
-  const ref = match?.[1];
-  return match === null || ref === undefined ? undefined : { line: match[0], ref };
-}
-
 export interface TomlArrayLayout {
   readonly items: ReadonlyArray<{
     readonly leading: ReadonlyArray<TomlSpan>;

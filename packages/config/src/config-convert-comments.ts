@@ -241,6 +241,25 @@ function placeBlock(
     : 0;
 }
 
+/** Resolves a commented dotted key to the deepest existing table on its path, so uncommenting it
+ * adds a sibling instead of a duplicate member that would replace that table. */
+function deepestTable(
+  table: CommentHost,
+  path: ReadonlyArray<string>,
+): { readonly host: CommentHost; readonly path: ReadonlyArray<string> } {
+  let host = table;
+  let depth = 0;
+  while (depth < path.length - 1) {
+    const child = host.entries.get(path[depth] ?? "");
+    if (child?.kind !== "table") {
+      break;
+    }
+    host = child;
+    depth++;
+  }
+  return { host, path: path.slice(depth) };
+}
+
 /**
  * Translates one run of consecutive source comments. Keys up to the last one before any header
  * land in `effective`, the table in effect at that point; each commented header lands at its path;
@@ -258,25 +277,30 @@ export function translateGroup(
   const headerAt = classified.findIndex((line) => line.kind === "header");
   const leading = classified.slice(0, headerAt < 0 ? undefined : headerAt);
   const kept = leading.map((line) => line.kind).lastIndexOf("kv") + 1;
-  let carried = 0;
+  let carried = kept;
   let pending = leading.slice(kept);
+  const keyedLines: Array<string> = [];
+  let prose: Array<string> = [];
+  for (const line of leading.slice(0, kept)) {
+    if (line.kind !== "kv") {
+      prose.push(toJsoncComment(line.raw));
+      continue;
+    }
+    const { host, path } = deepestTable(effective, line.path);
+    const lines = [...prose, ...placedLines({ kind: "kv", path, value: line.value })];
+    prose = [];
+    if (host === effective) {
+      keyedLines.push(...lines);
+    } else {
+      host.placed.push({ at: first, lines, blankBefore: false });
+    }
+  }
   const keyed: PlacedComment | undefined =
-    kept === 0
+    keyedLines.length === 0
       ? undefined
-      : {
-          at: first,
-          lines: leading
-            .slice(0, kept)
-            .flatMap((line) =>
-              line.kind === "kv"
-                ? placedLines({ kind: "kv", path: line.path, value: line.value })
-                : [toJsoncComment(line.raw)],
-            ),
-          blankBefore: options.blankBefore,
-        };
+      : { at: first, lines: keyedLines, blankBefore: options.blankBefore };
   if (keyed !== undefined) {
     effective.placed.push(keyed);
-    carried += kept;
   }
   if (headerAt < 0) {
     const prose = pending.map((line) => toJsoncComment(line.raw));

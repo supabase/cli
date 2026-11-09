@@ -827,11 +827,7 @@ const resolveSaveTarget = Effect.fnUntraced(function* (
 
 const DEFAULT_CLI_CONFIG_FILE_MODE = 0o644;
 
-const writeFileAtomic = Effect.fnUntraced(function* (
-  filePath: string,
-  content: string,
-  createMode: number = DEFAULT_CLI_CONFIG_FILE_MODE,
-) {
+const writeFileAtomic = Effect.fnUntraced(function* (filePath: string, content: string) {
   const fs = yield* FileSystem.FileSystem;
   const now = yield* Clock.currentTimeMillis;
   const tmpPath = `${filePath}.tmp.${now}.${randomBytes(3).toString("hex")}`;
@@ -841,7 +837,7 @@ const writeFileAtomic = Effect.fnUntraced(function* (
       Effect.map((info) => info.mode & 0o7777),
       Effect.catchTag("PlatformError", (error) =>
         Predicate.isTagged(error.reason, "NotFound")
-          ? Effect.succeed(createMode)
+          ? Effect.succeed(DEFAULT_CLI_CONFIG_FILE_MODE)
           : Effect.fail(error),
       ),
     );
@@ -939,14 +935,49 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
   } satisfies LoadedCliConfig;
 });
 
-/** Atomically replaces text while applying the target mode at creation to protect sensitive files;
- * `createMode` applies only when the target does not exist yet. */
+/** Atomically publishes a new file with `mode`; succeeds with `false`, leaving the target untouched,
+ * when it already exists. */
+export const createCliConfigDocumentText = Effect.fn("CliConfig.createDocument")(function* (
+  filePath: string,
+  content: string,
+  mode: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const now = yield* Clock.currentTimeMillis;
+  const tmpPath = `${filePath}.tmp.${now}.${randomBytes(3).toString("hex")}`;
+
+  const created = yield* Effect.gen(function* () {
+    yield* fs.writeFileString(tmpPath, content, { mode });
+    return yield* fs.link(tmpPath, filePath).pipe(
+      Effect.as(true),
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "AlreadyExists")
+          ? Effect.succeed(false)
+          : Effect.fail(error),
+      ),
+    );
+  }).pipe(
+    Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)),
+    Effect.catchTag("PlatformError", (cause) =>
+      Effect.fail(
+        new CliConfigWriteError({
+          path: filePath,
+          cause,
+          message: `Failed to write ${filePath}: ${cause.message}`,
+        }),
+      ),
+    ),
+  );
+  yield* Effect.annotateCurrentSpan("config.created", created);
+  return created;
+});
+
+/** Atomically replaces text while applying the target mode at creation to protect sensitive files. */
 export const writeCliConfigDocumentText = Effect.fn("CliConfig.writeDocument")(function* (
   filePath: string,
   content: string,
-  options?: { readonly createMode?: number },
 ) {
-  yield* writeFileAtomic(filePath, content, options?.createMode).pipe(
+  yield* writeFileAtomic(filePath, content).pipe(
     Effect.catchTag("PlatformError", (cause) =>
       Effect.fail(
         new CliConfigWriteError({

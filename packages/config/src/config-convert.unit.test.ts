@@ -124,23 +124,34 @@ describe("convertCliConfigTomlToJsonc: schema", () => {
     expect(outcome.schemaSource).toBe("default");
   });
 
-  test("keeps an explicit $schema key first and turns a directive into a plain comment", () => {
-    const outcome = converted(
+  test("refuses a #:schema directive and a different $schema key", () => {
+    const error = refusal(
       '#:schema https://example.com/a.json\nproject_id = "demo"\n"$schema" = "https://example.com/b.json"\n',
     );
-    expect(outcome.schemaSource).toBe("key");
-    expect(outcome.schemaRef).toBe("https://example.com/b.json");
-    expect(outcome.text).toBe(
-      [
-        "{",
-        '  "$schema": "https://example.com/b.json",',
-        "",
-        "  //:schema https://example.com/a.json",
-        '  "project_id": "demo"',
-        "}",
-        "",
-      ].join("\n"),
+    expect(error.reason).toBe("unsupported_value");
+    expect(error.detail).toContain("#:schema https://example.com/a.json");
+  });
+
+  test("keeps a $schema key that repeats the directive, without repeating the directive", () => {
+    const outcome = converted(
+      '#:schema https://example.com/a.json\nproject_id = "demo"\n"$schema" = "https://example.com/a.json"\n',
     );
+    expect(outcome.schemaSource).toBe("key");
+    expect(outcome.text).toBe(
+      '{\n  "$schema": "https://example.com/a.json",\n  "project_id": "demo"\n}\n',
+    );
+  });
+
+  test("reads a #:schema directive below leading comments, as the loader does", () => {
+    const outcome = converted(
+      '# Project settings.\n\n  #:schema https://example.com/s.json\n# More notes.\nproject_id = "demo"\n',
+    );
+    expect(outcome.schemaRef).toBe("https://example.com/s.json");
+    expect(outcome.schemaSource).toBe("directive");
+    expect(outcome.text).not.toContain("#:schema");
+    expect(outcome.text).not.toContain("//:schema");
+    expect(outcome.text).toContain("// Project settings.");
+    expect(outcome.text).toContain("// More notes.");
   });
 
   test("reads a #:schema directive that has trailing whitespace", () => {
@@ -395,6 +406,28 @@ describe("convertCliConfigTomlToJsonc: commented-out examples", () => {
       $schema: CLI_CONFIG_SCHEMA_URL,
       api: { port: 1, enabled: true, max_rows: 5 },
     });
+  });
+
+  test("a dotted commented key joins the existing table on its path", () => {
+    const source =
+      "[auth]\nhook.send_sms.enabled = true\n# hook.custom_access_token.enabled = true\n";
+    const { text } = converted(source);
+    const uncommented = text.replace('// "custom_access_token"', '"custom_access_token"');
+    expect(parseJsonc(uncommented)).toMatchObject({
+      auth: { hook: { send_sms: { enabled: true }, custom_access_token: { enabled: true } } },
+    });
+    expectExamplesUncommentAtTomlPaths(source);
+  });
+
+  test("a dotted commented key under a table declared by header joins it", () => {
+    const source =
+      "[auth]\nenabled = true\n# Use a custom hook.\n# hook.b.enabled = true\n\n[auth.hook.a]\nenabled = true\n";
+    const { text } = converted(source);
+    expect(text).toContain(
+      ["      // Use a custom hook.", '      // "b": { "enabled": true },'].join("\n"),
+    );
+    expectExamplesUncommentAtTomlPaths(source);
+    expectEachCommentOnce(source, text);
   });
 
   test("a dotted commented key becomes a nested inline object", () => {

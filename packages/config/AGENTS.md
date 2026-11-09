@@ -47,8 +47,8 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
   `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
   `updateJsonDocument` (comment-preserving JSON/JSONC rewrite), `convertCliConfigTomlToJsonc` (`supabase config convert`: a pure, verified `config.toml` → `config.jsonc` converter that carries comments over; an Effect failing with `CliConfigConvertError`) with its `MovedTomlComment` type, `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
-  `remoteProjectIdEntries`, the atomic single-file writer `writeCliConfigDocumentText`/
-  `CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
+  `remoteProjectIdEntries`, the atomic single-file writers `writeCliConfigDocumentText` (replace) and
+  `createCliConfigDocumentText` (create, never replacing)/`CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
   `parseCliConfigDocumentFile` (discover and parse) with `mergeParsedCliConfig` (merge the
   `[remotes.*]` block a caller-supplied `selectRemote` picks) and `decodeMergedCliConfig` (interpolate `env()` against a caller-supplied
   env record, then decode and validate, optionally on an overlaid document) — kept off `./effect`'s public surface deliberately (no consumer outside

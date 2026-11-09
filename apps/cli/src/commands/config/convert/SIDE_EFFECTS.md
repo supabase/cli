@@ -11,12 +11,12 @@
 
 ## Files Written
 
-| Path                              | Format | When                                                                                                 |
-| --------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then rename, with the mode of `config.toml`                            |
-| `<workdir>/supabase/config.toml`  | —      | deleted after `config.jsonc` is written; kept when conversion is refused or the file changed on disk |
-| `<workdir>/.vscode/settings.json` | JSONC  | unless `--dry-run`; only when it exists and lacks the schema trusted domain; comments are preserved  |
-| `~/.supabase/telemetry.json`      | JSON   | always (telemetry state)                                                                             |
+| Path                              | Format | When                                                                                                    |
+| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then hard link, never replacing an existing file; mode of `config.toml`   |
+| `<workdir>/supabase/config.toml`  | —      | deleted after `config.jsonc` is written; kept when conversion is refused or either file changed on disk |
+| `<workdir>/.vscode/settings.json` | JSONC  | unless `--dry-run`; only when it exists and lacks the schema trusted domain; comments are preserved     |
+| `~/.supabase/telemetry.json`      | JSON   | always (telemetry state)                                                                                |
 
 ## API Routes
 
@@ -33,18 +33,18 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                 |
-| ---- | ----------------------------------------------------------------------------------------- |
-| `0`  | converted (or `--dry-run` printed the document); warnings never change the exit code      |
-| `0`  | only `config.json[c]` exists: nothing to convert, nothing written                         |
-| `1`  | `-o/--output` passed                                                                      |
-| `1`  | `--workdir` is not a directory                                                            |
-| `1`  | no project config found, or it cannot be parsed                                           |
-| `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                     |
-| `1`  | conversion refused (invalid TOML, a TOML date, a non-finite float, failed re-parse check) |
-| `1`  | `config.toml` changed while the command ran; the new `config.jsonc` is removed            |
-| `1`  | `config.toml` could not be re-read after the write; the new `config.jsonc` is removed     |
-| `1`  | `config.jsonc` could not be written, or `config.toml` could not be removed afterwards     |
+| Code | Condition                                                                                                            |
+| ---- | -------------------------------------------------------------------------------------------------------------------- |
+| `0`  | converted (or `--dry-run` printed the document); warnings never change the exit code                                 |
+| `0`  | only `config.json[c]` exists: nothing to convert, nothing written                                                    |
+| `1`  | `-o/--output` passed                                                                                                 |
+| `1`  | `--workdir` is not a directory                                                                                       |
+| `1`  | no project config found, or it cannot be parsed                                                                      |
+| `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                |
+| `1`  | conversion refused (invalid TOML, a TOML date, a non-finite float, failed re-parse check)                            |
+| `1`  | `config.toml` changed or `config.jsonc` appeared while the command ran; an existing `config.jsonc` is never replaced |
+| `1`  | `config.toml` could not be re-read after the write; the new `config.jsonc` is removed                                |
+| `1`  | `config.jsonc` could not be written, or `config.toml` could not be removed afterwards                                |
 
 ## Output
 

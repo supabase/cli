@@ -15,7 +15,11 @@ import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { configConvert } from "./convert.handler.ts";
-import { CONFIG_JSONC_MIN_CLI_VERSION, MIN_VERSION_WARNING } from "./convert.format.ts";
+import {
+  CONFIG_JSONC_MIN_CLI_VERSION,
+  JSONC_APPEARED_MESSAGE,
+  MIN_VERSION_WARNING,
+} from "./convert.format.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-convert-");
 
@@ -89,17 +93,24 @@ const denied = (method: string, pathOrDescriptor: string) =>
     pathOrDescriptor,
   });
 
-const failingConfigTomlFsLayer = (failure: "reread" | "remove") =>
+type FsFailure = "reread" | "remove" | "reread-and-jsonc-stuck" | "jsonc-appears";
+
+const failingConfigTomlFsLayer = (failure: FsFailure) =>
   Layer.effect(
     FileSystem.FileSystem,
     Effect.gen(function* () {
       const real = yield* FileSystem.FileSystem;
       const target = yield* configTomlPath;
       const jsonc = yield* projectPath("supabase", "config.jsonc");
+      const rereadFails = failure === "reread" || failure === "reread-and-jsonc-stuck";
       return FileSystem.FileSystem.of({
         ...real,
+        stat: (path) =>
+          failure === "jsonc-appears" && path === target
+            ? real.writeFileString(jsonc, "{}\n").pipe(Effect.andThen(real.stat(path)))
+            : real.stat(path),
         readFileString: (path, encoding) =>
-          failure === "reread" && path === target
+          rereadFails && path === target
             ? real
                 .exists(jsonc)
                 .pipe(
@@ -111,7 +122,8 @@ const failingConfigTomlFsLayer = (failure: "reread" | "remove") =>
                 )
             : real.readFileString(path, encoding),
         remove: (path, options) =>
-          failure === "remove" && path === target
+          (failure === "remove" && path === target) ||
+          (failure === "reread-and-jsonc-stuck" && path === jsonc)
             ? Effect.fail(denied("remove", path))
             : real.remove(path, options),
       });
@@ -537,6 +549,43 @@ describe("config convert integration", () => {
       expect(error.message).toContain("PermissionDenied");
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("leaves a config.jsonc that appears mid-run in place and keeps config.toml", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+
+      const error = yield* run().pipe(
+        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("jsonc-appears"), layer)),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("ConfigConvertFileChangedError");
+      expect(error.message).toBe(JSONC_APPEARED_MESSAGE);
+      expect(yield* readFile("supabase", "config.jsonc")).toBe("{}\n");
+      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("says config.jsonc remains when the rollback cannot remove it", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+
+      const error = yield* run().pipe(
+        Effect.provide(
+          Layer.provideMerge(failingConfigTomlFsLayer("reread-and-jsonc-stuck"), layer),
+        ),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("ConfigConvertWriteError");
+      expect(error.message).toContain("Could not remove the new supabase/config.jsonc");
+      expect(error.message).not.toContain("Removed supabase/config.jsonc");
+      expect(yield* exists("supabase", "config.jsonc")).toBe(true);
+      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
     }).pipe(Effect.provide(BunServices.layer));
   });
 

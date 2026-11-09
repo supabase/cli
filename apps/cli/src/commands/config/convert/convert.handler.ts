@@ -1,7 +1,7 @@
 import {
   convertCliConfigTomlToJsonc,
   parseCliConfigDocumentFile,
-  writeCliConfigDocumentText,
+  createCliConfigDocumentText,
 } from "@supabase/config/internal";
 import { CliConfigParseError } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
@@ -39,6 +39,9 @@ import {
   jsonPrecedenceMessage,
   refusalMessage,
   REMOVED_MESSAGE,
+  JSONC_APPEARED_MESSAGE,
+  JSONC_REMOVED_NOTE,
+  jsoncRemovalFailureNote,
   tomlRemovalFailureMessage,
   trustedDomainMessage,
   vscodeFailureWarning,
@@ -180,26 +183,36 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
             }),
         ),
       );
-      yield* writeCliConfigDocumentText(jsoncPath, outcome.text, { createMode: tomlMode }).pipe(
+      const created = yield* createCliConfigDocumentText(jsoncPath, outcome.text, tomlMode).pipe(
         Effect.catchTag(
           "CliConfigWriteError",
           (cause) => new ConfigConvertWriteError({ message: cause.message }),
         ),
       );
+      if (!created) {
+        return yield* new ConfigConvertFileChangedError({ message: JSONC_APPEARED_MESSAGE });
+      }
+      const rollback = fs.remove(jsoncPath, { force: true }).pipe(
+        Effect.as(JSONC_REMOVED_NOTE),
+        Effect.catchTag("PlatformError", (cause) =>
+          Effect.succeed(jsoncRemovalFailureNote(cause.message)),
+        ),
+      );
       const current = yield* fs.readFileString(parsed.path).pipe(
-        Effect.tapError(() => fs.remove(jsoncPath, { force: true }).pipe(Effect.ignore)),
-        Effect.mapError(
-          (cause) =>
-            new ConfigConvertWriteError({
-              message: `Could not re-read supabase/config.toml to confirm it is unchanged: ${cause.message}. Removed supabase/config.jsonc; nothing was converted.`,
-            }),
+        Effect.catchTag("PlatformError", (cause) =>
+          Effect.flatMap(rollback, (note) =>
+            Effect.fail(
+              new ConfigConvertWriteError({
+                message: `Could not re-read supabase/config.toml to confirm it is unchanged: ${cause.message}. ${note}`,
+              }),
+            ),
+          ),
         ),
       );
       if (current !== parsed.rawText) {
-        yield* fs.remove(jsoncPath, { force: true }).pipe(Effect.ignore);
+        const note = yield* rollback;
         return yield* new ConfigConvertFileChangedError({
-          message:
-            "supabase/config.toml changed on disk while config convert was running; rerun the command to convert the current file.",
+          message: `supabase/config.toml changed on disk while config convert was running. ${note}`,
         });
       }
       yield* fs

@@ -36,6 +36,7 @@ import {
   remoteNameForProjectRef,
   remoteProjectIdEntries,
   saveCliConfig,
+  createCliConfigDocumentText,
   writeCliConfigDocumentText,
 } from "./io.ts";
 import { loadCliConfig as loadCliConfigFromNode } from "./node.ts";
@@ -3144,6 +3145,48 @@ describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
   });
 });
 
+describe("createCliConfigDocumentText", () => {
+  function targetIn() {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const dir = join(yield* makeTempProject(), "supabase");
+      yield* fs.makeDirectory(dir, { recursive: true });
+      return { dir, filePath: join(dir, "config.jsonc") };
+    });
+  }
+
+  test("creates the file with the requested mode and no temp file left behind", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+
+        const created = yield* createCliConfigDocumentText(filePath, "{}\n", 0o600);
+
+        expect(created).toBe(true);
+        expect(yield* fs.readFileString(filePath)).toBe("{}\n");
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+
+  test("returns false and leaves an existing file untouched", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+        yield* fs.writeFileString(filePath, '{ "kept": true }\n');
+
+        const created = yield* createCliConfigDocumentText(filePath, "{}\n", 0o600);
+
+        expect(created).toBe(false);
+        expect(yield* fs.readFileString(filePath)).toBe('{ "kept": true }\n');
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+});
+
 describe("writeCliConfigDocumentText", () => {
   function tempFileTargets() {
     return Effect.gen(function* () {
@@ -3209,35 +3252,6 @@ describe("writeCliConfigDocumentText", () => {
 
         const info = yield* fs.stat(filePath);
         expect(info.mode & 0o777).toBe(0o600);
-      }),
-    ));
-
-  test("creates a missing target with the requested createMode", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const { filePath } = yield* tempFileTargets();
-
-        yield* writeCliConfigDocumentText(filePath, 'project_id = "new"\n', { createMode: 0o600 });
-
-        const info = yield* fs.stat(filePath);
-        expect(info.mode & 0o777).toBe(0o600);
-      }),
-    ));
-
-  test("keeps an existing target's mode over createMode", () =>
-    runConfigEffect(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const { filePath } = yield* tempFileTargets();
-
-        yield* fs.writeFileString(filePath, 'project_id = "old"\n');
-        yield* fs.chmod(filePath, 0o640);
-
-        yield* writeCliConfigDocumentText(filePath, 'project_id = "new"\n', { createMode: 0o600 });
-
-        const info = yield* fs.stat(filePath);
-        expect(info.mode & 0o777).toBe(0o640);
       }),
     ));
 

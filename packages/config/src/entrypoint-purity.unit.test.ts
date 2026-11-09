@@ -529,6 +529,7 @@ describe("src/internal.ts export surface", () => {
         "applyConfigEdits",
         "cliConfigFormatForPath",
         "convertCliConfigTomlToJsonc",
+        "createCliConfigDocumentText",
         "decodeCliConfigDocumentForValidationEffect",
         "decodeMergedCliConfig",
         "dualScopeProjectConfigPaths",

@@ -36,6 +36,16 @@ export function refusalMessage(error: CliConfigConvertError): string {
   return `cannot convert supabase/config.toml${location}: ${error.detail}. supabase/config.toml was not changed.`;
 }
 
+export const JSONC_APPEARED_MESSAGE =
+  "supabase/config.jsonc appeared while config convert was running, so it was left as is and supabase/config.toml is unchanged. Check which file you want to keep; another conversion may have finished first.";
+
+export const JSONC_REMOVED_NOTE =
+  "Removed supabase/config.jsonc and kept supabase/config.toml; rerun the command to convert the current file.";
+
+export function jsoncRemovalFailureNote(cause: string): string {
+  return `Could not remove the new supabase/config.jsonc (${cause}); it takes precedence over supabase/config.toml, so delete it before rerunning the command.`;
+}
+
 export function tomlRemovalFailureMessage(cause: string): string {
   return `Wrote supabase/config.jsonc but could not remove supabase/config.toml: ${cause}. config.jsonc takes precedence; delete config.toml yourself.`;
 }
