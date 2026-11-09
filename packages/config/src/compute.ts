@@ -48,7 +48,7 @@ const computeEntry = Schema.Struct({
     Schema.Union([Schema.String, Schema.Array(Schema.String)])).annotate({
       description: dedent`
         controls whether secrets are available: \`all\` gives access to all defined secrets,
-        \`supabase\` exposes only the \`supabase_*\` defaults, \`none\` will complete hide any
+        \`supabase\` exposes only the \`SUPABASE_*\` defaults, \`none\` will complete hide any
         secret, \`string[]\` gives only the secrets named in the list.
       `,
       examples: ["all", ['STRIPE_KEY', 'LLM_APIKEY']],

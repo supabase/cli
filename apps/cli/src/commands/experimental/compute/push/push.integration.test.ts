@@ -79,6 +79,7 @@ function flags(overrides: Partial<ComputePushFlags> = {}): ComputePushFlags {
     noWait: false,
     remote: Option.none(),
     projectRef: Option.none(),
+    secretsScope: Option.none(),
     ...overrides,
   };
 }
