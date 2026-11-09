@@ -65,20 +65,85 @@ function placedLines(line: CommentedLine): Array<string> {
     : commentOut(withComma(commentedKvLines(line.path, line.value, ""), ","));
 }
 
+type CommentedMember =
+  | CommentedLine
+  | { readonly kind: "child"; readonly key: string; readonly node: CommentedNode };
+
+/** Orders a node's members, nesting dotted keys under a shared object when a sibling key or a
+ * commented table already uses their first segment, so uncommenting never yields duplicate keys. */
+function commentedMembers(node: CommentedNode): Array<CommentedMember> {
+  const counts = new Map<string, number>();
+  for (const line of node.own) {
+    if (line.kind === "kv" && line.path.length > 1) {
+      const key = line.path[0] ?? "";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  const extra = new Map<string, Array<CommentedLine>>();
+  const groups = new Map<string, CommentedNode>();
+  const members: Array<CommentedMember> = [];
+  for (const line of node.own) {
+    const key = line.kind === "kv" && line.path.length > 1 ? (line.path[0] ?? "") : undefined;
+    const child = key === undefined ? undefined : node.children.get(key);
+    if (
+      line.kind !== "kv" ||
+      key === undefined ||
+      child?.elements !== undefined ||
+      (child === undefined && (counts.get(key) ?? 0) < 2)
+    ) {
+      members.push(line);
+      continue;
+    }
+    const rest: CommentedLine = { kind: "kv", path: line.path.slice(1), value: line.value };
+    if (child !== undefined) {
+      extra.set(key, [...(extra.get(key) ?? []), rest]);
+      continue;
+    }
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = newCommentedNode(node.at);
+      groups.set(key, group);
+      members.push({ kind: "child", key, node: group });
+    }
+    group.own.push(rest);
+  }
+  for (const [key, child] of node.children) {
+    const added = extra.get(key);
+    members.push({
+      kind: "child",
+      key,
+      node: added === undefined ? child : { ...child, own: [...child.own, ...added] },
+    });
+  }
+  return members;
+}
+
+function placedBlockLines(lines: ReadonlyArray<CommentedLine>): Array<string> {
+  const node = newCommentedNode(0);
+  node.own.push(...lines);
+  return commentedMembers(node).flatMap((member) =>
+    member.kind === "child"
+      ? [
+          ...member.node.lead,
+          ...commentOut(withComma(commentedChild(member.key, member.node, ""), ",")),
+        ]
+      : placedLines(member),
+  );
+}
+
 function commentedBody(node: CommentedNode, indent: string): Array<string> {
-  const members = [
-    ...node.own.map((line) =>
-      line.kind === "prose"
-        ? { data: false, lines: [`${indent}${line.text}`] }
-        : { data: true, lines: commentedKvLines(line.path, line.value, indent) },
-    ),
-    ...[...node.children].flatMap(([key, child]) => [
-      ...(child.lead.length > 0
-        ? [{ data: false, lines: child.lead.map((line) => `${indent}${line}`) }]
-        : []),
-      { data: true, lines: commentedChild(key, child, indent) },
-    ]),
-  ];
+  const members = commentedMembers(node).flatMap((member) =>
+    member.kind === "prose"
+      ? [{ data: false, lines: [`${indent}${member.text}`] }]
+      : member.kind === "kv"
+        ? [{ data: true, lines: commentedKvLines(member.path, member.value, indent) }]
+        : [
+            ...(member.node.lead.length > 0
+              ? [{ data: false, lines: member.node.lead.map((line) => `${indent}${line}`) }]
+              : []),
+            { data: true, lines: commentedChild(member.key, member.node, indent) },
+          ],
+  );
   const lastData = members.map((member) => member.data).lastIndexOf(true);
   return members.flatMap((member, index) =>
     member.data && index < lastData ? withComma(member.lines, ",") : member.lines,
@@ -156,7 +221,7 @@ function mergeCommented(
   at: number,
   lead: ReadonlyArray<string>,
   own: ReadonlyArray<CommentedLine>,
-): boolean {
+): CommentedNode | undefined {
   let node = forest;
   let leadNode: CommentedNode | undefined;
   for (const [index, segment] of missing.entries()) {
@@ -173,13 +238,13 @@ function mergeCommented(
       node = child;
     } else if (last && isArray) {
       if (existing.elements === undefined) {
-        return false;
+        return undefined;
       }
       leadNode = newCommentedNode(at);
       existing.elements.push(leadNode);
       node = existing;
     } else if (last && existing.elements !== undefined) {
-      return false;
+      return undefined;
     } else {
       node = existing;
     }
@@ -191,7 +256,35 @@ function mergeCommented(
     leadNode.lead.push(...lead);
     target.own.push(...own);
   }
-  return true;
+  return target;
+}
+
+/** Where the keys of a commented table example go, so a later group separated from it only by
+ * blank lines continues the same example. */
+export type OpenBlock =
+  | { readonly kind: "table"; readonly host: CommentHost }
+  | { readonly kind: "forest"; readonly node: CommentedNode }
+  | { readonly kind: "verbatim"; readonly host: CommentHost };
+
+function toCommentedLine(line: CommentLine): CommentedLine {
+  return line.kind === "kv"
+    ? { kind: "kv", path: line.path, value: line.value }
+    : { kind: "prose", text: toJsoncComment(line.raw) };
+}
+
+function continueBlock(block: OpenBlock, lines: ReadonlyArray<CommentLine>, at: number): void {
+  if (block.kind === "forest") {
+    block.node.own.push(...lines.map(toCommentedLine));
+    return;
+  }
+  block.host.placed.push({
+    at,
+    lines:
+      block.kind === "table"
+        ? placedBlockLines(lines.map(toCommentedLine))
+        : lines.map((line) => toJsoncComment(line.raw)),
+    blankBefore: true,
+  });
 }
 
 function placeBlock(
@@ -200,10 +293,10 @@ function placeBlock(
   lead: ReadonlyArray<CommentLine>,
   body: ReadonlyArray<CommentLine>,
   at: number,
-): number {
+): { readonly stored: number; readonly open?: OpenBlock } {
   const hasKeys = body.some((line) => line.kind === "kv");
   if (!hasKeys && header.path.length === 1) {
-    return 0;
+    return { stored: 0 };
   }
   let table = root;
   let depth = 0;
@@ -213,32 +306,30 @@ function placeBlock(
       break;
     }
     if (child.kind !== "table") {
-      return 0;
+      return { stored: 0 };
     }
     table = child;
     depth++;
   }
   const leadText = lead.map((line) => toJsoncComment(line.raw));
-  const own = body.map((line): CommentedLine =>
-    line.kind === "kv"
-      ? { kind: "kv", path: line.path, value: line.value }
-      : { kind: "prose", text: toJsoncComment(line.raw) },
-  );
+  const own = body.map(toCommentedLine);
   const stored = lead.length + body.length + 1;
   if (depth === header.path.length) {
     if (header.isArray || !hasKeys) {
-      return 0;
+      return { stored: 0 };
     }
-    table.placed.push({
-      at,
-      lines: [...leadText, ...own.flatMap(placedLines)],
-      blankBefore: true,
-    });
-    return stored;
+    table.placed.push({ at, lines: [...leadText, ...placedBlockLines(own)], blankBefore: true });
+    return { stored, open: { kind: "table", host: table } };
   }
-  return mergeCommented(table.forest, header.path.slice(depth), header.isArray, at, leadText, own)
-    ? stored
-    : 0;
+  const node = mergeCommented(
+    table.forest,
+    header.path.slice(depth),
+    header.isArray,
+    at,
+    leadText,
+    own,
+  );
+  return node === undefined ? { stored: 0 } : { stored, open: { kind: "forest", node } };
 }
 
 /** Resolves a commented dotted key to the deepest existing table on its path, so uncommenting it
@@ -262,54 +353,90 @@ function deepestTable(
 
 /**
  * Translates one run of consecutive source comments. Keys up to the last one before any header
- * land in `effective`, the table in effect at that point; each commented header lands at its path;
- * `tail` is the prose left over for the caller to attach, and `carried` counts the source lines
- * stored.
+ * land in `effective`, the table in effect at that point, or in `continues`, the commented example
+ * the previous run left open; each commented header lands at its path; `tail` is the prose left
+ * over for the caller to attach, and `carried` counts the source lines stored.
  */
 export function translateGroup(
   root: CommentHost,
   effective: CommentHost,
   rawLines: ReadonlyArray<string>,
   first: number,
-  options: { readonly blankBefore: boolean; readonly leadsNextMember: boolean },
-): { readonly carried: number; readonly tail: Array<string> } {
+  options: {
+    readonly blankBefore: boolean;
+    readonly leadsNextMember: boolean;
+    readonly continues?: OpenBlock | undefined;
+  },
+): { readonly carried: number; readonly tail: Array<string>; readonly open?: OpenBlock } {
   const classified = rawLines.map(classifyComment);
   const headerAt = classified.findIndex((line) => line.kind === "header");
   const leading = classified.slice(0, headerAt < 0 ? undefined : headerAt);
   const kept = leading.map((line) => line.kind).lastIndexOf("kv") + 1;
-  let carried = kept;
-  let pending = leading.slice(kept);
-  const keyedLines: Array<string> = [];
-  let prose: Array<string> = [];
+  if (options.continues !== undefined && kept > 0) {
+    const taken = headerAt < 0 && !options.leadsNextMember ? leading.length : kept;
+    continueBlock(options.continues, leading.slice(0, taken), first);
+    if (headerAt < 0) {
+      return {
+        carried: taken,
+        tail: leading.slice(taken).map((line) => toJsoncComment(line.raw)),
+        open: options.continues,
+      };
+    }
+    return translateHeaders(root, effective, classified, headerAt, first, options, {
+      carried: taken,
+      pending: leading.slice(taken),
+    });
+  }
+  const byHost = new Map<CommentHost, Array<CommentedLine>>();
+  let prose: Array<CommentedLine> = [];
   for (const line of leading.slice(0, kept)) {
     if (line.kind !== "kv") {
-      prose.push(toJsoncComment(line.raw));
+      prose.push(toCommentedLine(line));
       continue;
     }
     const { host, path } = deepestTable(effective, line.path);
-    const lines = [...prose, ...placedLines({ kind: "kv", path, value: line.value })];
+    byHost.set(host, [
+      ...(byHost.get(host) ?? []),
+      ...prose,
+      { kind: "kv", path, value: line.value },
+    ]);
     prose = [];
+  }
+  let keyed: PlacedComment | undefined;
+  for (const [host, lines] of byHost) {
     if (host === effective) {
-      keyedLines.push(...lines);
+      keyed = { at: first, lines: placedBlockLines(lines), blankBefore: options.blankBefore };
+      effective.placed.push(keyed);
     } else {
-      host.placed.push({ at: first, lines, blankBefore: false });
+      host.placed.push({ at: first, lines: placedBlockLines(lines), blankBefore: false });
     }
   }
-  const keyed: PlacedComment | undefined =
-    keyedLines.length === 0
-      ? undefined
-      : { at: first, lines: keyedLines, blankBefore: options.blankBefore };
-  if (keyed !== undefined) {
-    effective.placed.push(keyed);
-  }
+  const pending = leading.slice(kept);
   if (headerAt < 0) {
-    const prose = pending.map((line) => toJsoncComment(line.raw));
+    const tail = pending.map((line) => toJsoncComment(line.raw));
     if (keyed !== undefined && !options.leadsNextMember) {
-      keyed.lines.push(...prose);
-      return { carried: carried + prose.length, tail: [] };
+      keyed.lines.push(...tail);
+      return { carried: kept + tail.length, tail: [] };
     }
-    return { carried, tail: prose };
+    return { carried: kept, tail };
   }
+  return translateHeaders(root, effective, classified, headerAt, first, options, {
+    carried: kept,
+    pending,
+  });
+}
+
+function translateHeaders(
+  root: CommentHost,
+  effective: CommentHost,
+  classified: ReadonlyArray<CommentLine>,
+  headerAt: number,
+  first: number,
+  options: { readonly leadsNextMember: boolean },
+  state: { readonly carried: number; readonly pending: ReadonlyArray<CommentLine> },
+): { readonly carried: number; readonly tail: Array<string>; readonly open?: OpenBlock } {
+  let { carried, pending } = state;
+  let open: OpenBlock | undefined;
   const rest = classified.slice(headerAt);
   const starts = rest.flatMap((line, offset) => (line.kind === "header" ? [offset] : []));
   for (const [position, start] of starts.entries()) {
@@ -327,14 +454,16 @@ export function translateGroup(
     const lead = pending;
     pending = section.slice(bodyLength);
     const at = first + headerAt + start;
-    const stored = placeBlock(root, header, lead, body, at);
-    if (stored > 0) {
-      carried += stored;
+    const placed = placeBlock(root, header, lead, body, at);
+    if (placed.stored > 0) {
+      carried += placed.stored;
+      open = placed.open;
     } else {
       const lines = [...lead, header, ...body].map((line) => toJsoncComment(line.raw));
       effective.placed.push({ at, lines, blankBefore: true });
       carried += lines.length;
+      open = { kind: "verbatim", host: effective };
     }
   }
-  return { carried, tail: pending.map((line) => toJsoncComment(line.raw)) };
+  return { carried, tail: pending.map((line) => toJsoncComment(line.raw)), open };
 }

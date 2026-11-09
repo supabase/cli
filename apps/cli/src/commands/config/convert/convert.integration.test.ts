@@ -18,6 +18,7 @@ import { configConvert } from "./convert.handler.ts";
 import {
   CONFIG_JSONC_MIN_CLI_VERSION,
   JSONC_APPEARED_MESSAGE,
+  JSONC_CHANGED_NOTE,
   MIN_VERSION_WARNING,
 } from "./convert.format.ts";
 
@@ -93,7 +94,7 @@ const denied = (method: string, pathOrDescriptor: string) =>
     pathOrDescriptor,
   });
 
-type FsFailure = "reread" | "remove" | "reread-and-jsonc-stuck" | "jsonc-appears";
+type FsFailure = "reread" | "remove" | "reread-and-jsonc-stuck" | "jsonc-appears" | "both-edited";
 
 const failingConfigTomlFsLayer = (failure: FsFailure) =>
   Layer.effect(
@@ -110,17 +111,29 @@ const failingConfigTomlFsLayer = (failure: FsFailure) =>
             ? real.writeFileString(jsonc, "{}\n").pipe(Effect.andThen(real.stat(path)))
             : real.stat(path),
         readFileString: (path, encoding) =>
-          rereadFails && path === target
+          failure === "both-edited" && path === target
             ? real
                 .exists(jsonc)
                 .pipe(
                   Effect.flatMap((written) =>
                     written
-                      ? Effect.fail(denied("readFileString", path))
+                      ? real
+                          .writeFileString(jsonc, '{ "edited": true }\n')
+                          .pipe(Effect.as('project_id = "edited"\n'))
                       : real.readFileString(path, encoding),
                   ),
                 )
-            : real.readFileString(path, encoding),
+            : rereadFails && path === target
+              ? real
+                  .exists(jsonc)
+                  .pipe(
+                    Effect.flatMap((written) =>
+                      written
+                        ? Effect.fail(denied("readFileString", path))
+                        : real.readFileString(path, encoding),
+                    ),
+                  )
+              : real.readFileString(path, encoding),
         remove: (path, options) =>
           (failure === "remove" && path === target) ||
           (failure === "reread-and-jsonc-stuck" && path === jsonc)
@@ -565,6 +578,23 @@ describe("config convert integration", () => {
       expect(error._tag).toBe("ConfigConvertFileChangedError");
       expect(error.message).toBe(JSONC_APPEARED_MESSAGE);
       expect(yield* readFile("supabase", "config.jsonc")).toBe("{}\n");
+      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("keeps a config.jsonc edited mid-run instead of rolling it back", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+
+      const error = yield* run().pipe(
+        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("both-edited"), layer)),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("ConfigConvertFileChangedError");
+      expect(error.message).toContain(JSONC_CHANGED_NOTE);
+      expect(yield* readFile("supabase", "config.jsonc")).toBe('{ "edited": true }\n');
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
     }).pipe(Effect.provide(BunServices.layer));
   });

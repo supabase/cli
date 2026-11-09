@@ -3171,6 +3171,49 @@ describe("createCliConfigDocumentText", () => {
       }),
     ));
 
+  test("applies the requested mode exactly, whatever the umask", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { filePath } = yield* targetIn();
+
+        yield* createCliConfigDocumentText(filePath, "{}\n", 0o666);
+
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o666);
+      }),
+    ));
+
+  test("creates the file exclusively when the filesystem has no hard links", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+        const noLinks: FileSystem.FileSystem = {
+          ...fs,
+          link: (from) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "link",
+                pathOrDescriptor: from,
+                description: "operation not supported",
+              }),
+            ),
+        };
+        const create = (content: string) =>
+          createCliConfigDocumentText(filePath, content, 0o600).pipe(
+            Effect.provideService(FileSystem.FileSystem, noLinks),
+          );
+
+        expect(yield* create("{}\n")).toBe(true);
+        expect(yield* create('{ "second": true }\n')).toBe(false);
+        expect(yield* fs.readFileString(filePath)).toBe("{}\n");
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+
   test("returns false and leaves an existing file untouched", () =>
     runConfigEffect(
       Effect.gen(function* () {

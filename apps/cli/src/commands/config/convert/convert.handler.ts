@@ -4,7 +4,7 @@ import {
   createCliConfigDocumentText,
 } from "@supabase/config/internal";
 import { CliConfigParseError } from "@supabase/config/effect";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -40,6 +40,7 @@ import {
   refusalMessage,
   REMOVED_MESSAGE,
   JSONC_APPEARED_MESSAGE,
+  JSONC_CHANGED_NOTE,
   JSONC_REMOVED_NOTE,
   jsoncRemovalFailureNote,
   tomlRemovalFailureMessage,
@@ -192,10 +193,18 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       if (!created) {
         return yield* new ConfigConvertFileChangedError({ message: JSONC_APPEARED_MESSAGE });
       }
-      const rollback = fs.remove(jsoncPath, { force: true }).pipe(
-        Effect.as(JSONC_REMOVED_NOTE),
+      const rollback = fs.readFileString(jsoncPath).pipe(
+        Effect.flatMap((written) =>
+          written === outcome.text
+            ? fs.remove(jsoncPath).pipe(Effect.as(JSONC_REMOVED_NOTE))
+            : Effect.succeed(JSONC_CHANGED_NOTE),
+        ),
         Effect.catchTag("PlatformError", (cause) =>
-          Effect.succeed(jsoncRemovalFailureNote(cause.message)),
+          Effect.succeed(
+            Predicate.isTagged(cause.reason, "NotFound")
+              ? JSONC_REMOVED_NOTE
+              : jsoncRemovalFailureNote(cause.message),
+          ),
         ),
       );
       const current = yield* fs.readFileString(parsed.path).pipe(

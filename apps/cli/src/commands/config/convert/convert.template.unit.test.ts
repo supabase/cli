@@ -32,8 +32,11 @@ function commentedMembers(lines: ReadonlyArray<string>): Array<readonly [number,
     let end = start;
     if (/[{[]$/.test(match[2] ?? "")) {
       const close = new RegExp(`^${match[1]}// [}\\]],$`);
-      while (!close.test(lines[end] ?? "")) {
+      while (end < lines.length && !close.test(lines[end] ?? "")) {
         end++;
+      }
+      if (end === lines.length) {
+        throw new Error(`No closing delimiter for the commented member on line ${start + 1}`);
       }
     }
     members.push([start, end]);

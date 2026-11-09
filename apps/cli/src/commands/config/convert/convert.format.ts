@@ -42,6 +42,9 @@ export const JSONC_APPEARED_MESSAGE =
 export const JSONC_REMOVED_NOTE =
   "Removed supabase/config.jsonc and kept supabase/config.toml; rerun the command to convert the current file.";
 
+export const JSONC_CHANGED_NOTE =
+  "supabase/config.jsonc changed after config convert wrote it, so it was left as is alongside supabase/config.toml; supabase/config.jsonc takes precedence, so check which file you want to keep.";
+
 export function jsoncRemovalFailureNote(cause: string): string {
   return `Could not remove the new supabase/config.jsonc (${cause}); it takes precedence over supabase/config.toml, so delete it before rerunning the command.`;
 }

@@ -57,8 +57,11 @@ function commentedMembers(lines: ReadonlyArray<string>): Array<readonly [number,
     let end = start;
     if (/[{[],?$/.test(match[2] ?? "") && !/[}\]],?$/.test(match[2] ?? "")) {
       const close = new RegExp(`^${match[1]}// [}\\]],?$`);
-      while (!close.test(lines[end] ?? "")) {
+      while (end < lines.length && !close.test(lines[end] ?? "")) {
         end++;
+      }
+      if (end === lines.length) {
+        throw new Error(`No closing delimiter for the commented member on line ${start + 1}`);
       }
     }
     members.push([start, end]);
@@ -427,6 +430,37 @@ describe("convertCliConfigTomlToJsonc: commented-out examples", () => {
       ["      // Use a custom hook.", '      // "b": { "enabled": true },'].join("\n"),
     );
     expectExamplesUncommentAtTomlPaths(source);
+    expectEachCommentOnce(source, text);
+  });
+
+  test("commented dotted keys sharing a parent become one commented object", () => {
+    const source =
+      '[auth]\nenabled = true\n# [auth.hook]\n# send_sms.enabled = true\n# send_sms.uri = "pg-functions://x"\n';
+    const { text } = converted(source);
+    expect(text.match(/"send_sms"/g)).toHaveLength(1);
+    expect(uncommented(text)).toMatchObject({
+      auth: { hook: { send_sms: { enabled: true, uri: "pg-functions://x" } } },
+    });
+    expectEachCommentOnce(source, text);
+  });
+
+  test("commented dotted keys in an active table share one commented object", () => {
+    const source = '[auth]\nenabled = true\n# hook.a.enabled = true\n# hook.a.uri = "x"\n';
+    const { text } = converted(source);
+    expect(text.match(/"hook"/g)).toHaveLength(1);
+    expect(uncommented(text)).toMatchObject({
+      auth: { enabled: true, hook: { a: { enabled: true, uri: "x" } } },
+    });
+  });
+
+  test("a blank line inside a commented table example keeps the later keys in that example", () => {
+    const source = '[auth]\nenabled = true\n# [auth.hook.a]\n# enabled = true\n\n# uri = "x"\n';
+    const { text } = converted(source);
+    const parsed = uncommented(text);
+    expect(parsed).toMatchObject({
+      auth: { enabled: true, hook: { a: { enabled: true, uri: "x" } } },
+    });
+    expect(parsed).not.toHaveProperty("auth.uri");
     expectEachCommentOnce(source, text);
   });
 

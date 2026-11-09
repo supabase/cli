@@ -5,6 +5,7 @@ import {
   commentedChild,
   commentOut,
   newCommentedNode,
+  type OpenBlock,
   type PlacedComment,
   translateGroup,
 } from "./config-convert-comments.ts";
@@ -416,6 +417,8 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
     effective[index] = current;
   }
 
+  let open: OpenBlock | undefined;
+  let openEnd = -1;
   tokens.forEach((token, index) => {
     if (!isComment(index)) {
       return;
@@ -432,10 +435,18 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
     const blankBefore = previous === undefined || previous.kind === "blank";
     const next = tokens[end];
     const leadTarget = isMember(next) ? (implicitParents.get(end) ?? members[end]) : undefined;
-    const { carried, tail } = translateGroup(root, effective[index - 1] ?? root, rawLines, index, {
+    const continues =
+      open !== undefined && tokens.slice(openEnd, index).every((entry) => entry.kind === "blank")
+        ? open
+        : undefined;
+    const translated = translateGroup(root, effective[index - 1] ?? root, rawLines, index, {
       blankBefore,
       leadsNextMember: leadTarget !== undefined,
+      continues,
     });
+    open = translated.open;
+    openEnd = end;
+    const { carried, tail } = translated;
     commentCount += carried + tail.length;
     if (tail.length === 0) {
       return;

@@ -116,7 +116,9 @@ function mergeJsonSettingsFile(pathname: string, template: string) {
 const SCHEMA_TRUST_KEY = "json.schemaDownload.trustedDomains";
 const SCHEMA_TRUST_DOMAIN = "https://supabase.com/schemas/";
 
-/** Adds the hosted schema domain to an existing `.vscode/settings.json` unless it already lists it; resolves to whether the file changes (or would, with `dryRun`). */
+/** Adds the hosted schema domain to an existing `.vscode/settings.json` unless it already lists it,
+ * failing rather than dropping the file's comments; resolves to whether the file changes (or would,
+ * with `dryRun`). */
 export const trustSupabaseSchemaDomain = Effect.fnUntraced(function* (
   cwd: string,
   options?: { readonly dryRun?: boolean },
@@ -129,17 +131,33 @@ export const trustSupabaseSchemaDomain = Effect.fnUntraced(function* (
     return false;
   }
   const before = yield* fs.readFileString(settingsPath);
+  let after = VSCODE_SCHEMA_TRUST_TEMPLATE;
   if (before.trim().length > 0) {
-    const trusted = (yield* parseJsonObject(settingsPath, before))[SCHEMA_TRUST_KEY];
+    const existing = yield* parseJsonObject(settingsPath, before);
+    const trusted = existing[SCHEMA_TRUST_KEY];
     if (Predicate.isObject(trusted) && Object.hasOwn(trusted, SCHEMA_TRUST_DOMAIN)) {
       return false;
     }
+    const merged = mergeJsonObjects(
+      existing,
+      yield* parseJsonObject(settingsPath, VSCODE_SCHEMA_TRUST_TEMPLATE),
+    );
+    const edited = updateJsonDocument(before, merged);
+    if (edited === undefined) {
+      return yield* new InitParseSettingsError({
+        detail: `${settingsPath} could not be edited without dropping its comments, so it was left unchanged`,
+        suggestion: `Add "${SCHEMA_TRUST_DOMAIN}": true under "${SCHEMA_TRUST_KEY}" in ${settingsPath}.`,
+      });
+    }
+    after = edited;
   }
-  if (options?.dryRun === true) {
-    return true;
+  if (after === before) {
+    return false;
   }
-  yield* mergeJsonSettingsFile(settingsPath, VSCODE_SCHEMA_TRUST_TEMPLATE);
-  return (yield* fs.readFileString(settingsPath)) !== before;
+  if (options?.dryRun !== true) {
+    yield* fs.writeFileString(settingsPath, after, { mode: INIT_FILE_MODE });
+  }
+  return true;
 });
 
 export const writeVscodeConfig = Effect.fnUntraced(function* (
