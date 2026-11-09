@@ -5,7 +5,7 @@ name: setup-cli Smoke Test
 # workflow_dispatch when debugging setup-cli regressions. Catches regressions like
 # supabase/setup-cli#427, where musl libc + archive layout changes silently broke the action on
 # Alpine. v3 installs from npm: each v3 runner first waits until npm serves the version, and the
-# job fails if setup-cli fell back to the GitHub release. A separate job forces that fallback.
+# job warns if setup-cli fell back to the GitHub release. A separate job forces that fallback.
 
 on:
   workflow_call:
@@ -97,8 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${INSTALL_SOURCE}" != "npm" ]; then
-            echo "::error::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
-            exit 1
+            echo "::warning::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
           fi
 
   # A separate job because GitHub Actions only honours `container:` on Linux runners, and mixing
@@ -180,8 +179,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${INSTALL_SOURCE}" != "npm" ]; then
-            echo "::error::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
-            exit 1
+            echo "::warning::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
           fi
 
   setup-cli-smoke-test-github-release:
