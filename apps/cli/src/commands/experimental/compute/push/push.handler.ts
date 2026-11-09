@@ -57,6 +57,7 @@ import {
   ComputeBuildFailedError,
   ComputeSourceMissingError,
   MissingComputeExposureError,
+  UnknownComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
 import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
@@ -216,7 +217,7 @@ const resolveSecretsScope = Effect.fnUntraced(function* (options: {
   }
   const recorded = parseComputeSecretsScope(options.recorded as string | string[]);
   if (recorded === undefined) {
-    return yield* new UnknownComputeRuntimeError({
+    return yield* new UnknownComputeSecretsScopeError({
       detail: `${options.config.path} records an unknown secrets scope "${options.recorded}" for "${options.name}".`,
       suggestion: `Set ${settingRef(options.config, options.name, "secrets_scope")} to one of: ${COMPUTE_SECRETS_SCOPE.join(", ")}.`,
     });

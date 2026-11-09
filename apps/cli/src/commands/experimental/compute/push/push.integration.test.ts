@@ -33,6 +33,7 @@ import {
   ComputeUploadFailedError,
   InvalidComputeExcludeError,
   MissingComputeExposureError,
+  UnknownComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { computePush } from "./push.handler.ts";
 import { computePushCommand } from "./push.command.ts";
@@ -862,7 +863,7 @@ describe("compute push", () => {
       return yield* Effect.gen(function* () {
         const error = yield* push().pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(UnknownComputeRuntimeError);
+        expect(error).toBeInstanceOf(UnknownComputeSecretsScopeError);
         expect(error).toMatchObject({
           detail: expect.stringContaining("meow"),
           suggestion: expect.stringContaining("all, supabase, none"),
