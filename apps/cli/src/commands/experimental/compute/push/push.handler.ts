@@ -206,10 +206,30 @@ const resolveSecretsScope = Effect.fnUntraced(function* (options: {
   readonly config: ConfigFileRef;
   readonly name: string;
   readonly recorded: string | readonly string[] | undefined;
+  readonly configured: boolean;
   readonly override: Option.Option<ComputeSecretsScope>;
 }) {
   if (Option.isSome(options.override)) {
-    return options.override.value;
+    const chosen = options.override.value;
+    const withoutTheFlag =
+      options.recorded === undefined
+        ? DEFAULT_COMPUTE_EXPOSURE
+        : parseComputeSecretsScope(options.recorded as string | string[]);
+    if (!options.configured || withoutTheFlag !== chosen) {
+      const output = yield* Output;
+      const applyFormat = (v: string | string[] | readonly string[]) =>
+        Array.isArray(v) ? `[${formatSecretsScope(v.map((i) => `"${i}"`))}]` : `"${v}"`;
+
+      const message = options.configured
+        ? `--secrets-scope${Array.isArray(chosen) && ":custom"} ${chosen} applies to this deploy only: ${options.config.path} ${
+            options.recorded === undefined
+              ? `records no secrets_scope for ${options.name}`
+              : `records secrets_scope = ${applyFormat(options.recorded)}`
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "secrets_scope", applyFormat(chosen))} in ${options.config.path}.\n`
+        : `--secrets_scope ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "secrets_scope")} for future pushes.\n`;
+      yield* output.raw(message, "stderr");
+    }
+    return chosen;
   }
 
   if (options.recorded === undefined) {
@@ -367,6 +387,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     config,
     name,
     recorded: compute.entry?.secrets_scope,
+    configured: compute.entry !== undefined,
     override: input.secretsScope,
   });
 
