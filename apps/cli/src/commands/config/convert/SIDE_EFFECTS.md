@@ -13,7 +13,7 @@
 
 | Path                              | Format | When                                                                                                 |
 | --------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then rename, mode `0644`                                               |
+| `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then rename, with the mode of `config.toml`                            |
 | `<workdir>/supabase/config.toml`  | —      | deleted after `config.jsonc` is written; kept when conversion is refused or the file changed on disk |
 | `<workdir>/.vscode/settings.json` | JSONC  | unless `--dry-run`; only when it exists and lacks the schema trusted domain; comments are preserved  |
 | `~/.supabase/telemetry.json`      | JSON   | always (telemetry state)                                                                             |

@@ -3212,6 +3212,35 @@ describe("writeCliConfigDocumentText", () => {
       }),
     ));
 
+  test("creates a missing target with the requested createMode", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { filePath } = yield* tempFileTargets();
+
+        yield* writeCliConfigDocumentText(filePath, 'project_id = "new"\n', { createMode: 0o600 });
+
+        const info = yield* fs.stat(filePath);
+        expect(info.mode & 0o777).toBe(0o600);
+      }),
+    ));
+
+  test("keeps an existing target's mode over createMode", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { filePath } = yield* tempFileTargets();
+
+        yield* fs.writeFileString(filePath, 'project_id = "old"\n');
+        yield* fs.chmod(filePath, 0o640);
+
+        yield* writeCliConfigDocumentText(filePath, 'project_id = "new"\n', { createMode: 0o600 });
+
+        const info = yield* fs.stat(filePath);
+        expect(info.mode & 0o777).toBe(0o640);
+      }),
+    ));
+
   test("fails with a typed CliConfigWriteError (not a defect) when the destination directory doesn't exist, leaving nothing behind", () =>
     runConfigEffect(
       Effect.gen(function* () {

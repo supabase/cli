@@ -171,7 +171,16 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
 
     const jsoncPath = path.join(configDir, "config.jsonc");
     yield* Effect.gen(function* () {
-      yield* writeCliConfigDocumentText(jsoncPath, outcome.text).pipe(
+      const tomlMode = yield* fs.stat(parsed.path).pipe(
+        Effect.map((info) => info.mode & 0o7777),
+        Effect.mapError(
+          (cause) =>
+            new ConfigConvertWriteError({
+              message: `Could not read the permissions of supabase/config.toml: ${cause.message}. Nothing was converted.`,
+            }),
+        ),
+      );
+      yield* writeCliConfigDocumentText(jsoncPath, outcome.text, { createMode: tomlMode }).pipe(
         Effect.catchTag(
           "CliConfigWriteError",
           (cause) => new ConfigConvertWriteError({ message: cause.message }),

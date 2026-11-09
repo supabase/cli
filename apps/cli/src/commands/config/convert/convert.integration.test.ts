@@ -192,6 +192,20 @@ describe("config convert integration", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
+  it.effect("gives config.jsonc the permissions of the config.toml it replaces", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+      yield* fs.chmod(yield* configTomlPath, 0o600);
+
+      yield* run().pipe(Effect.provide(layer));
+
+      const info = yield* fs.stat(yield* projectPath("supabase", "config.jsonc"));
+      expect(info.mode & 0o777).toBe(0o600);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
   it.effect("keeps a comment inside a multi-line array in place without a warning", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
