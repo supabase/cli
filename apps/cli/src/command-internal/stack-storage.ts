@@ -63,10 +63,14 @@ const capabilityState = (observation: Observation | undefined) => {
   return observation.lifecycle;
 };
 
-/** Resolves bucket-seeding credentials from a configured Storage instance. */
+/**
+ * Resolves bucket-seeding credentials from a configured Storage instance; `apiCert` is the
+ * certificate the stack saved at start, trusted while its API serves HTTPS.
+ */
 export const stackStorageCredentialsFor = (
   storage: ServiceInstance<"storage">,
   serviceRoleKey: string,
+  apiCert: string | undefined,
 ): Effect.Effect<StorageCredentials, StackStorageUnavailableError | StackStorageCapabilityError> =>
   storage.status.pipe(
     Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
@@ -81,7 +85,7 @@ export const stackStorageCredentialsFor = (
           return Effect.fail(
             new StackStorageUnavailableError({ message: describeStorageCapability(observation) }),
           );
-        return storageCredentialsFrom(observation, serviceRoleKey);
+        return storageCredentialsFrom(observation, serviceRoleKey, apiCert);
       },
     ),
   );
@@ -128,9 +132,11 @@ const notRunningSuggestion = (lifecycle: "starting" | "stopping" | "stopped"): s
     Match.exhaustive,
   );
 
+/* An HTTPS endpoint trusts the stack's saved certificate, never `config.toml`'s current one. */
 const storageCredentialsFrom = (
   observation: Observation,
   serviceRoleKey: string,
+  apiCert: string | undefined,
 ): Effect.Effect<StorageCredentials, StackStorageCapabilityError> => {
   const endpoint = observation.endpoints.find(({ name }) => name === "http");
   return endpoint === undefined
@@ -138,9 +144,9 @@ const storageCredentialsFrom = (
         new StackStorageCapabilityError({ message: "The stack exposes no Storage endpoint." }),
       )
     : Effect.succeed({
-        baseUrl: `http://${endpoint.host}:${endpoint.port}`,
+        baseUrl: `${endpoint.scheme ?? "http"}://${endpoint.host}:${endpoint.port}`,
         apiKey: serviceRoleKey,
-        localKongCa: undefined,
+        localKongCa: endpoint.scheme === "https" ? apiCert : undefined,
       });
 };
 
@@ -204,7 +210,10 @@ export const stackStorageEndpointFor = (
         message: "The stack has no saved credentials.",
         suggestion: INSPECT_OR_RESTART_SUGGESTION,
       });
-    return yield* storageCredentialsFrom(storageObservation, identity.serviceRoleKey);
+    const apiTls = yield* stack.apiTls.get.pipe(
+      Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
+    );
+    return yield* storageCredentialsFrom(storageObservation, identity.serviceRoleKey, apiTls?.cert);
   });
 
 /** Storage credentials for the project stack, opening it without launching the owner. */

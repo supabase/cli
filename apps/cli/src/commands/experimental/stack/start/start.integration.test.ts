@@ -94,6 +94,10 @@ import {
   StackTargetResolver,
 } from "../../../../command-internal/stack-target.ts";
 import { stackStart } from "./start.handler.ts";
+import {
+  KONG_LOCAL_TLS_CERT,
+  KONG_LOCAL_TLS_KEY,
+} from "../../../start/templates/kong-local-tls.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
@@ -347,6 +351,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   /** The endpoint changes a simulated owner startup re-planned, until the next `applyStartupReplan`. */
   let pendingStartupChanges: ReadonlyArray<EndpointPortChange> = [];
   let savedCredentials = credentialsFor(undefined, undefined);
+  let composedApiTls: { readonly cert: string; readonly key: string } | undefined;
   const memberView = (id: string): MemberView => {
     const status = memberStatuses.get(id);
     const memberLifecycle = status?.lifecycle ?? lifecycle;
@@ -388,6 +393,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
         Effect.sync(() => {
           composed += 1;
+          composedApiTls = options?.apiTls;
           savedCredentials = credentialsFor(
             creations.find((creation) => creation.service === "database"),
             options,
@@ -477,6 +483,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     },
     get composed() {
       return composed;
+    },
+    /** The API TLS the last compose was given. */
+    get composedApiTls() {
+      return composedApiTls;
     },
     /** Whether a detached owner is still up, the way a live stack's would be between calls. */
     get hostRunning() {
@@ -792,6 +802,63 @@ describe("experimental stack start", () => {
         message: expect.stringContaining("auth.email.template.invite.content_path"),
       });
       expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("rejects an api.tls pair that does not load before creating a stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-pair-" });
+      yield* fs.makeDirectory(`${root}/supabase/certs`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        '[api.tls]\nenabled = true\ncert_path = "certs/api.crt"\nkey_path = "certs/api.key"\n',
+      );
+      yield* fs.writeFileString(`${root}/supabase/certs/api.crt`, "not a pem");
+      yield* fs.writeFileString(`${root}/supabase/certs/api.key`, "not a pem");
+      let created = false;
+      const fixture = fakeStack();
+      const base = layers(root, fixture, mockOutput(), false);
+      const api = Layer.succeed(StackApi, {
+        create: () =>
+          Effect.sync(() => {
+            created = true;
+            return fixture.stack;
+          }),
+        open: () => Effect.succeed(fixture.stack),
+        discover: () => Effect.succeed([]),
+        find: () => Effect.die("identity not used"),
+        findDeleted: () => Effect.die("identity not used"),
+      });
+      const result = yield* stackStart(flags()).pipe(
+        Effect.flip,
+        Effect.provide(Layer.merge(base, api)),
+      );
+      expect(result).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("Invalid config for api.tls: failed to load TLS key pair"),
+      });
+      expect(created).toBe(false);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("composes the stack with the api.tls pair only while api.tls is enabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-on-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      const start = (config: string) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(`${root}/supabase/config.toml`, config);
+          const fixture = fakeStack();
+          yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+          return fixture.composedApiTls;
+        });
+      expect(yield* start('project_id = "start-tls"\n[api.tls]\nenabled = true\n')).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+      expect(yield* start('project_id = "start-tls"\n')).toBeUndefined();
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
