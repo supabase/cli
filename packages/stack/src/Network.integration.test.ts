@@ -1495,79 +1495,86 @@ const selfCheckFrom = (port: number, from: string) =>
     { localAddress: from },
   );
 
-it.live("admits a saved arrival's network at its address once that network is adopted", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const tls = yield* localTls;
-      const { lan, network: lanNet, sibling } = yield* lanNetwork;
-      const { port, network } = yield* emailTemplates(
-        "docker",
-        undefined,
-        { ...savedTls(tls), learnedArrivals: [{ peer: sibling, local: "127.0.0.1" }] },
-        gatewayOnly,
-      );
-      expect(yield* plainFrom(port, lan)).toBe("");
-      yield* network.adoptApiNetworks("self-check-token", [lanNet]);
-      expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+/* Windows refuses a LAN source address to the loopback port (EADDRNOTAVAIL), so these run on POSIX. */
+it.live.skipIf(process.platform === "win32")(
+  "admits a saved arrival's network at its address once that network is adopted",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tls = yield* localTls;
+        const { lan, network: lanNet, sibling } = yield* lanNetwork;
+        const { port, network } = yield* emailTemplates(
+          "docker",
+          undefined,
+          { ...savedTls(tls), learnedArrivals: [{ peer: sibling, local: "127.0.0.1" }] },
+          gatewayOnly,
+        );
+        expect(yield* plainFrom(port, lan)).toBe("");
+        yield* network.adoptApiNetworks("self-check-token", [lanNet]);
+        expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("admits a learned self-check only at the exact address it arrived on", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const tls = yield* localTls;
-      const { lan, network: lanNet } = yield* lanNetwork;
-      const { port, network } = yield* emailTemplates(
-        "docker",
-        undefined,
-        savedTls(tls),
-        gatewayOnly,
-      );
-      expect(yield* plainFrom(port, lan)).toBe("");
-      expect(yield* selfCheckFrom(port, lan)).toMatch(/^HTTP\/1\./u);
-      expect(yield* network.learnedApi("self-check-token")).toEqual([
-        { peer: lan, local: "127.0.0.1" },
-      ]);
-      expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
-      expect(yield* plainFrom(port, lan, lan)).toBe("");
-      /* The arrival's own network adds its address, never another one. */
-      yield* network.adoptApiNetworks("self-check-token", [lanNet]);
-      expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
-      expect(yield* plainFrom(port, lan, lan)).toBe("");
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+it.live.skipIf(process.platform === "win32")(
+  "admits a learned self-check only at the exact address it arrived on",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tls = yield* localTls;
+        const { lan, network: lanNet } = yield* lanNetwork;
+        const { port, network } = yield* emailTemplates(
+          "docker",
+          undefined,
+          savedTls(tls),
+          gatewayOnly,
+        );
+        expect(yield* plainFrom(port, lan)).toBe("");
+        expect(yield* selfCheckFrom(port, lan)).toMatch(/^HTTP\/1\./u);
+        expect(yield* network.learnedApi("self-check-token")).toEqual([
+          { peer: lan, local: "127.0.0.1" },
+        ]);
+        expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
+        expect(yield* plainFrom(port, lan, lan)).toBe("");
+        /* The arrival's own network adds its address, never another one. */
+        yield* network.adoptApiNetworks("self-check-token", [lanNet]);
+        expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
+        expect(yield* plainFrom(port, lan, lan)).toBe("");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("admits saved arrivals on a later owner's listener until a start sets TLS again", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const tls = yield* localTls;
-      const { lan, network: lanNet } = yield* lanNetwork;
-      const first = yield* emailTemplates("docker", undefined, savedTls(tls), gatewayOnly);
-      expect(yield* selfCheckFrom(first.port, lan)).toMatch(/^HTTP\/1\./u);
-      /* What the start check saves for later owners. */
-      yield* first.state.save({
-        ...stack(first.stackId),
-        apiTls: {
-          ...savedTls(tls),
-          networks: [lanNet],
-          learnedArrivals: yield* first.network.learnedApi("self-check-token"),
-        },
-      });
-      yield* first.namespace.close;
-      const later = yield* first.reopened;
-      expect(yield* plainFrom(later.port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
-      yield* later.namespace.close;
-      yield* first.state.save({
-        ...stack(first.stackId),
-        apiTls: { ...savedTls(tls), networks: [lanNet], selfCheck: "next-start" },
-      });
-      const [binding] = yield* later.namespace.bind;
-      expect(yield* plainFrom(binding?.port ?? later.port, lan)).toBe("");
-      expect(yield* later.network.learnedApi("next-start")).toEqual([]);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+it.live.skipIf(process.platform === "win32")(
+  "admits saved arrivals on a later owner's listener until a start sets TLS again",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tls = yield* localTls;
+        const { lan, network: lanNet } = yield* lanNetwork;
+        const first = yield* emailTemplates("docker", undefined, savedTls(tls), gatewayOnly);
+        expect(yield* selfCheckFrom(first.port, lan)).toMatch(/^HTTP\/1\./u);
+        /* What the start check saves for later owners. */
+        yield* first.state.save({
+          ...stack(first.stackId),
+          apiTls: {
+            ...savedTls(tls),
+            networks: [lanNet],
+            learnedArrivals: yield* first.network.learnedApi("self-check-token"),
+          },
+        });
+        yield* first.namespace.close;
+        const later = yield* first.reopened;
+        expect(yield* plainFrom(later.port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
+        yield* later.namespace.close;
+        yield* first.state.save({
+          ...stack(first.stackId),
+          apiTls: { ...savedTls(tls), networks: [lanNet], selfCheck: "next-start" },
+        });
+        const [binding] = yield* later.namespace.bind;
+        expect(yield* plainFrom(binding?.port ?? later.port, lan)).toBe("");
+        expect(yield* later.network.learnedApi("next-start")).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.live("advertises the scheme the open API listener serves, not the saved TLS", () =>
