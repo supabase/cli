@@ -17,6 +17,8 @@ import { renderCliConfigTemplate } from "../../../shared/init/project-init.templ
 
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
+import { KONG_LOCAL_TLS_CERT, KONG_LOCAL_TLS_KEY } from "../../start/templates/kong-local-tls.ts";
+import { generateKeyPairSync } from "node:crypto";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 import {
   CommandTelemetryAttributes,
@@ -320,6 +322,92 @@ content_path = "./supabase/templates/missing.html"
 `);
       const config = yield* load(root);
       expect(byService(yield* config.creations("stack-auth-disabled")).has("auth")).toBe(false);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("serves api.tls with legacy's embedded pair or the configured one, like legacy", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const plain = yield* project(`project_id = "stack-config-tls-off"\n`);
+      expect(yield* (yield* load(plain)).apiTls).toBeUndefined();
+
+      const embedded = yield* project(`project_id = "stack-config-tls-embedded"
+[api.tls]
+enabled = true
+`);
+      expect(yield* (yield* load(embedded)).apiTls).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+
+      /* Without PostgREST the API port still serves https, on the embedded pair. */
+      const apiOff = yield* project(`project_id = "stack-config-tls-api-off"
+[api]
+enabled = false
+[api.tls]
+enabled = true
+cert_path = "certs/missing.crt"
+`);
+      expect(yield* (yield* load(apiOff)).apiTls).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+
+      const custom = yield* project(`project_id = "stack-config-tls-custom"
+[api.tls]
+enabled = true
+cert_path = "certs/local.crt"
+key_path = "certs/local.key"
+`);
+      const certs = path.join(custom, "supabase", "certs");
+      yield* fs.makeDirectory(certs);
+      yield* fs.writeFileString(path.join(certs, "local.crt"), KONG_LOCAL_TLS_CERT);
+      yield* fs.writeFileString(path.join(certs, "local.key"), KONG_LOCAL_TLS_KEY);
+      expect(yield* (yield* load(custom)).apiTls).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+      const other = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey;
+      for (const key of [other.export({ type: "pkcs8", format: "pem" }).toString(), "not a pem"]) {
+        yield* fs.writeFileString(path.join(certs, "local.key"), key);
+        expect((yield* Effect.flip((yield* load(custom)).apiTls)).message).toMatch(
+          /^Invalid config for api\.tls: failed to load TLS key pair from \S+certs\/local\.crt and \S+certs\/local\.key: /u,
+        );
+      }
+      /* An empty file still builds a secure context, which then serves no certificate. */
+      for (const [cert, key] of [
+        ["", KONG_LOCAL_TLS_KEY],
+        [KONG_LOCAL_TLS_CERT, ""],
+      ]) {
+        yield* fs.writeFileString(path.join(certs, "local.crt"), cert ?? "");
+        yield* fs.writeFileString(path.join(certs, "local.key"), key ?? "");
+        expect((yield* Effect.flip((yield* load(custom)).apiTls)).message).toMatch(
+          /^Invalid config for api\.tls: failed to load TLS key pair from \S+certs\/local\.crt and \S+certs\/local\.key: /u,
+        );
+      }
+
+      const halfPair = yield* project(`project_id = "stack-config-tls-half"
+[api.tls]
+enabled = true
+cert_path = "certs/local.crt"
+`);
+      expect((yield* Effect.flip((yield* load(halfPair)).apiTls)).message).toContain(
+        "api.tls.key_path",
+      );
+
+      const unreadable = yield* project(`project_id = "stack-config-tls-missing"
+[api.tls]
+enabled = true
+cert_path = "certs/missing.crt"
+key_path = "certs/missing.key"
+`);
+      /* Only the start applying TLS reads the files; every other command loads and composes. */
+      const missingFiles = yield* load(unreadable);
+      expect(yield* missingFiles.creations("stack-config-tls-missing")).not.toHaveLength(0);
+      expect((yield* Effect.flip(missingFiles.apiTls)).message).toContain(
+        "failed to read TLS cert",
+      );
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
