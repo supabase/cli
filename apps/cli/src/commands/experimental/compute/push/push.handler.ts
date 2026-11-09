@@ -629,6 +629,13 @@ export const computePush = Effect.fn("compute.push")(function* (
     readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
   } = {},
 ) {
+  if (Option.isSome(flags.secretsScope) && Option.isSome(flags.secretsScopeCustom)) {
+    return yield* new InvalidComputeSecretsScopeError({
+      detail: `Can't derminate the secrets scope. Found both --secrets-scope and --secrets-scope:custom overrides`,
+      suggestion: `Only use \`--secrets-scope\` or \`--secrets-scope:custom\` but not both.`,
+    });
+  }
+
   const output = yield* Output;
   const path = yield* Path.Path;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -672,13 +679,6 @@ export const computePush = Effect.fn("compute.push")(function* (
           });
         }
       }
-    }
-
-    if (Option.isSome(flags.secretsScope) && Option.isSome(flags.secretsScopeCustom)) {
-      return yield* new InvalidComputeSecretsScopeError({
-        detail: `Can't derminate the secrets scope. Found both --secrets-scope and --secrets-scope:custom overrides`,
-        suggestion: `Only use \`--secrets-scope\` or \`--secrets-scope:custom\` but not both.`,
-      });
     }
 
     // Before the first deploy, not after the last one: this payload always

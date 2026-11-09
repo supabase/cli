@@ -1,5 +1,5 @@
-import { Layer } from "effect";
-import { Argument, Command, Flag } from "effect/cli";
+import { Effect, Layer, Option } from "effect";
+import { Argument, CliError, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
@@ -132,4 +132,13 @@ export const computeNewCommand = Command.make("new", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "local-only", consent: "none" }),
+  Command.validate(({ secretsScope, secretsScopeCustom }) =>
+    Option.isSome(secretsScope) && Option.isSome(secretsScopeCustom)
+      ? Effect.fail(
+          new CliError.ValidationError({
+            message: "--secrets-scope and --secrets-scope:custom are mutually exclusive",
+          }),
+        )
+      : Effect.void,
+  ),
 );

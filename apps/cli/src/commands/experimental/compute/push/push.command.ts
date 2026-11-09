@@ -1,4 +1,4 @@
-import { Argument, Command, Flag } from "effect/cli";
+import { Argument, CliError, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
@@ -23,6 +23,7 @@ import { computePush } from "./push.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
+import { Effect, Option } from "effect";
 
 const config = {
   names: Argument.String("name").pipe(
@@ -134,4 +135,13 @@ export const computePushCommand = Command.make("push", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "hosted", consent: "no" }),
+  Command.validate(({ secretsScope, secretsScopeCustom }) =>
+    Option.isSome(secretsScope) && Option.isSome(secretsScopeCustom)
+      ? Effect.fail(
+          new CliError.ValidationError({
+            message: "--secrets-scope and --secrets-scope:custom are mutually exclusive",
+          }),
+        )
+      : Effect.void,
+  ),
 );
