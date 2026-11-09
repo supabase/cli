@@ -6,7 +6,10 @@ import {
   ErrorActionabilityId,
   unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
-import { type StackTargetIssue, stackTargetInvalidConfigActionability } from "../stack.shared.ts";
+import {
+  type StackTargetIssue,
+  stackTargetInvalidConfigActionability,
+} from "../../../../command-internal/stack-target.ts";
 
 export class StackCommandStatusError extends Data.TaggedError("ExperimentalStackStatusError")<{
   readonly message: string;

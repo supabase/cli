@@ -1,4 +1,5 @@
-import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
+import { requestLogs } from "../logs/request.ts";
+import { type ApiClient } from "@supabase/api/effect";
 import { Effect, Option, Predicate, Schema } from "effect";
 import {
   bodyText,
@@ -20,54 +21,18 @@ import {
 } from "./compute.errors.ts";
 import { computeLogsQuery } from "./compute-logs.sql.ts";
 
-/**
- * Reading a compute's logs, over the project's unified logs stream:
- * `GET /v1/projects/{ref}/analytics/endpoints/logs`.
- *
- * Not `/v2/projects/{ref}/compute/...` like the rest of the family — there is no
- * compute-scoped log route — so this is the one Compute seam that talks to the
- * analytics API, and the one that has to reckon with its two quirks: the query is
- * SQL this CLI writes, and a failed query can arrive as **HTTP 200 with an
- * `error` field**.
- */
-
-/** One log line, flattened out of the untyped `result` array. */
 export interface ComputeLogEntry {
-  /** Logflare-minted. The dedupe key for an overlapping-window poll. */
   readonly id: string;
-  /** Epoch milliseconds. Order on this — guest lines arrive out of order. */
+
   readonly timestampMs: number;
-  /**
-   * Display text only, never a parse target. On the guest stream it is
-   * tenant-controlled bytes and must be escaped before it reaches a terminal.
-   */
+
   readonly message: string;
-  /** `worker_guest_logs` | `worker_ingress_logs` | `worker_api_logs`, or newer. */
+
   readonly stream: string;
-  /**
-   * `log_attributes`, which is a `Map(String, String)` — so `status` arrives as
-   * `"200"` and `duration_ms` as `"23"`. Coerce before comparing.
-   */
+
   readonly attributes: Readonly<Record<string, string>>;
 }
 
-/**
- * The row shape the projection in `computeLogsQuery` produces.
- *
- * `stream` stays a plain string and `log_attributes` an open record because the
- * log contract is additive-only: a new stream or a new attribute must render,
- * not fail the whole read. A closed `Schema.Literal` union here would break the
- * command the next time a stream is added.
- */
-/**
- * The widest instant a JavaScript `Date` can hold, either side of the epoch.
- *
- * `ts_ms` feeds `DateTime.formatIso(...)` when a payload is built, which is
- * unconditional — text runs format it too. Outside this range that call throws
- * `RangeError`, turning a recoverable bad row into a defect, so the bound belongs
- * on the schema where it fails through `decodeBody` as an unreadable response
- * instead.
- */
 const MAX_DATE_MS = 8_640_000_000_000_000;
 
 const ComputeLogRow = Schema.Struct({
@@ -83,29 +48,15 @@ const ComputeLogRow = Schema.Struct({
   log_attributes: Schema.Record(Schema.String, Schema.String),
 });
 
-/** The endpoint's structured error shape, when it is not a bare string. */
 const StructuredLogError = Schema.Struct({
   message: Schema.String,
 });
 
-/**
- * The response envelope, declared here rather than reusing the generated
- * `V1GetProjectLogsOutput`: that schema forbids `null` on either field, while the endpoint
- * always sends one of them as an explicit `null` (`getAnalyticsResponse` normalizes the
- * unused half), so decoding a real response against it always fails. `error` stays `Unknown`
- * so both the string and structured forms are accepted and narrowed at the point of use.
- */
 const LogsResponse = Schema.Struct({
   result: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Unknown))),
   error: Schema.optionalKey(Schema.NullOr(Schema.Unknown)),
 });
 
-/**
- * Renders the endpoint's `error` field, which is `string | {code, errors[], message, status}`.
- *
- * Narrowed through the schema rather than a `typeof` chain so the structured
- * shape is checked rather than assumed.
- */
 const describeLogError = Effect.fnUntraced(function* (error: unknown) {
   if (Predicate.isString(error)) {
     return error;
@@ -126,7 +77,7 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
     readonly name: string;
     readonly streams: ReadonlyArray<string>;
     readonly tail: number;
-    /** Both bounds, always — see `logWindow`. */
+
     readonly window: { readonly start: string; readonly end: string };
   },
 ) {
@@ -137,32 +88,23 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
     tail: options.tail,
   });
 
-  const response = yield* api
-    .executeRaw(operationDefinitions.v1GetProjectLogs, {
-      ref: projectRef,
-      sql,
-      iso_timestamp_start: options.window.start,
-      iso_timestamp_end: options.window.end,
-    })
-    .pipe(Effect.mapError(mapRequestError(operation)));
-
+  const response = yield* requestLogs(api, projectRef, sql, options.window).pipe(
+    Effect.mapError(mapRequestError(operation)),
+  );
   if (response.status === 402) {
     return yield* new ComputeLogsUsageExceededError({
       detail: `The log query allowance for project ${projectRef} is exhausted.`,
       suggestion: "Enable additional usage for this project in the dashboard, then retry.",
     });
   }
-  // The analytics endpoints allow 10 requests per 60 seconds, which is well
-  // inside what a tight `--follow` poll would spend.
+
   if (response.status === 429) {
     return yield* new ComputeLogsRateLimitedError({
       detail: "The logs API is rate limiting this project (10 requests per minute).",
       suggestion: "Wait a minute before retrying, and avoid running several tails at once.",
     });
   }
-  // Unlike the compute routes this one is not gated on the alpha's allow-list,
-  // so its 404 is about the project or the route, and only an unrecognized body
-  // is left to read as the family's usual refusal.
+
   if (response.status === 404) {
     const parsed = yield* parse404(yield* bodyText(response));
     const route = unroutedPath(parsed);
@@ -182,15 +124,11 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
     });
   }
   if (response.status !== 200) {
-    // A rejected query or the server's 30-second timeout lands here rather than
-    // in the 200-with-`error` branch below, so both paths have to exist.
     return yield* unexpectedStatus(operation, response);
   }
 
   const decoded = yield* decodeJsonBody(LogsResponse, operation, response);
 
-  // Checked before `result`: this endpoint reports a failed query with a 200 and
-  // a populated `error`, so reading `result` first reports success on a failure.
   if (decoded.error !== undefined && decoded.error !== null) {
     const described = yield* describeLogError(decoded.error);
     return yield* new ComputeLogsQueryFailedError({
@@ -199,8 +137,6 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
     });
   }
 
-  // `result` is optional in the contract, so absent, null and [] all mean "no
-  // rows" and must not be told apart.
   const rows = decoded.result ?? [];
   const entries: Array<ComputeLogEntry> = [];
   for (const row of rows) {
@@ -214,8 +150,5 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
     });
   }
 
-  // The query orders `desc` to make `limit` mean "the most recent N", but sorting here rather
-  // than trusting that order: guest lines are ingested late and out of order, and once
-  // `--follow` merges overlapping windows the server's order stops being meaningful at all.
   return entries.sort((left, right) => left.timestampMs - right.timestampMs);
 });

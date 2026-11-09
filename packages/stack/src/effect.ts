@@ -1183,6 +1183,8 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
 
 /** Selects the persisted logs of a stack; its owner does not need to run. */
 export interface StreamStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
+  /** Inclusive record positions by instance id; missing generations emit lost before retained records. */
+  readonly from?: ReadonlyMap<string, LogPosition>;
   readonly stackId: string;
   /** Instance ids to read; every instance with persisted logs by default. */
   readonly instances?: ReadonlyArray<string>;
@@ -1205,6 +1207,7 @@ export const streamStackLogs = (
       const root = StackNamespace.stackLogsRoot(path, options.stateRoot, options.stackId);
       return streamPersistedLogs({
         root,
+        ...(options.from === undefined ? {} : { from: options.from }),
         ...(options.instances === undefined ? {} : { instances: options.instances }),
         ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
       });

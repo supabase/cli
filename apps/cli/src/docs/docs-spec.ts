@@ -1,3 +1,4 @@
+import { hasOptionalSubcommand } from "../shared/output/optional-subcommand-usage.ts";
 import { Option } from "effect";
 import { stringify } from "yaml";
 import { Command, Completions, GlobalFlag, Param } from "effect/cli";
@@ -514,7 +515,8 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
     const docs = docsOf(command);
     const children = docsVisibleChildren(command);
     const registered = registeredParams(command);
-    const isLeaf = children.length === 0;
+    const optionalSubcommand = hasOptionalSubcommand(command);
+    const isExecutable = children.length === 0 || optionalSubcommand;
     emittedIds.add(docId);
 
     const tableCategory = DOCS_CATEGORY[docId];
@@ -548,7 +550,7 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
     );
 
     const flags: Array<DocsFlag> = [];
-    if (isLeaf) {
+    if (isExecutable) {
       const localIndex = docsByName(commandPath, registered.own, Param.flagKind);
       const sharedIndex = docsByName(commandPath, inherited.shared, Param.flagKind);
       const declared = publishedFlags(
@@ -602,14 +604,19 @@ export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
     }
 
     let usage: string | undefined;
-    if (isLeaf) {
+    if (isExecutable) {
       const argIndex = docsByName(commandPath, registered.own, Param.argumentKind);
       const argUsages = descriptor.arguments
         .map((argument) =>
           docsArgumentUsage(argument, lookupDocs(commandPath, argIndex, argument.name)),
         )
         .filter((part) => part !== undefined);
-      usage = [...commandPath, ...argUsages, "[flags]"].join(" ");
+      usage = [
+        ...commandPath,
+        ...argUsages,
+        ...(optionalSubcommand ? ["[subcommand]"] : []),
+        "[flags]",
+      ].join(" ");
     }
 
     const tags = DOCS_TAGS[docId];

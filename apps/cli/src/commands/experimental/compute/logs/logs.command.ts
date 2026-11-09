@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { Output } from "../../../../shared/output/output.service.ts";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -18,14 +20,6 @@ import { branchResolution } from "../../../../command-internal/target/branch-res
 import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 import { cliArgument, cliFlag, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
-/**
- * The endpoint's own ceiling is the SQL `LIMIT`, so this bound is the CLI's
- * choice. 1000 is high enough to be a non-issue in practice and low enough that a
- * typo cannot ask for a payload nobody wants.
- *
- * 0 is allowed and means "no history", which only becomes useful alongside
- * `--follow`; on its own it prints nothing and makes no request.
- */
 const MAX_TAIL = 1000;
 
 const config = {
@@ -60,7 +54,7 @@ export type ComputeLogsFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const computeLogsCommand = makeCommand("logs", config).pipe(
   Command.withDescription(
-    "Print a compute's recent logs: its own output, the HTTP requests it served, and its " +
+    "Deprecated; removed in v4. Use supabase logs instead. Print a compute's recent logs: its own output, the HTTP requests it served, and its " +
       "deploy lifecycle events.\n\n" +
       "Covers the last 24 hours, which is the longest window the logs API will answer in one " +
       "query. Lines are printed oldest first.\n\n" +
@@ -111,9 +105,13 @@ export const computeLogsCommand = makeCommand("logs", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    computeLogs(flags).pipe(
-      // `config` as well as `flags`: `--kind` is a choice flag, and the wrapper
-      // treats a command's own declared choices as safe to log verbatim.
+    Effect.gen(function* () {
+      yield* (yield* Output).raw(
+        "Warning: compute logs is deprecated and will be removed in v4. Use supabase logs --remote --service compute --resource <name> instead.\n",
+        "stderr",
+      );
+      yield* computeLogs(flags);
+    }).pipe(
       withCommandTelemetry({ flags, config, aliases: { f: "follow" } }),
       withJsonErrorHandling,
     ),

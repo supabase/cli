@@ -8,7 +8,11 @@ import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { stackRestart } from "./restart.handler.ts";
 import { destroyTestStack } from "../../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../../tests/helpers/stack-artifacts.ts";
