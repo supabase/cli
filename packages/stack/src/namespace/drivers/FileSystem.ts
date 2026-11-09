@@ -59,6 +59,9 @@ const fileError = (
     ...detail,
   });
 
+const notRegularFile = (path: string) =>
+  fileError(path, "BadResource", { description: "Not a regular file at this path" });
+
 /** A path's form for comparison: Windows names are case-insensitive, so they compare folded. */
 const comparable = (path: string, windows: boolean) => (windows ? path.toLowerCase() : path);
 
@@ -87,14 +90,13 @@ export const windowsFinalPath = (reported: string): string =>
 const GENERIC_READ = 0x8000_0000;
 const FILE_SHARE_ALL = 0x7;
 const OPEN_EXISTING = 3;
-const FILE_FLAG_OPEN_REPARSE_POINT = 0x20_0000;
 const FILE_ATTRIBUTE_DIRECTORY = 0x10;
-const FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
 const WINDOWS_PATH_CHARS = 32_768;
 
 /**
- * Windows: opens `resolved` without following a reparse point, and reads it only when the
- * handle's final path is `resolved` and names a plain file. Node has no handle-path API there.
+ * Windows: opens `resolved` the normal way, so OneDrive placeholders and deduplicated files read,
+ * and reads it only when the handle's final path is still `resolved` and names a file, so a link
+ * swapped in anywhere on the path is refused. Node has no handle-path API there.
  */
 const readWindowsHandle = Effect.fnUntraced(function* (resolved: string) {
   const sync = <A>(operation: () => A) =>
@@ -140,36 +142,42 @@ const readWindowsHandle = Effect.fnUntraced(function* (resolved: string) {
         FILE_SHARE_ALL,
         null,
         OPEN_EXISTING,
-        FILE_FLAG_OPEN_REPARSE_POINT,
+        0,
         null,
       ),
     ),
     (opened) =>
       Number(opened) === -1 ? Effect.void : Effect.sync(() => symbols.CloseHandle(opened)),
   );
-  if (Number(handle) === -1) return undefined;
-  return yield* sync(() => {
-    const info = new Uint32Array(13);
-    if (symbols.GetFileInformationByHandle(handle, info) === 0) return undefined;
-    const attributes = info[0] ?? FILE_ATTRIBUTE_DIRECTORY;
-    if ((attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) !== 0)
-      return undefined;
-    const name = new Uint16Array(WINDOWS_PATH_CHARS);
-    const length = symbols.GetFinalPathNameByHandleW(handle, name, WINDOWS_PATH_CHARS, 0);
-    if (length === 0 || length >= WINDOWS_PATH_CHARS) return undefined;
-    const final = windowsFinalPath(Buffer.from(name.buffer, 0, length * 2).toString("utf16le"));
-    if (comparable(final, true) !== comparable(resolved, true)) return undefined;
-    const size = (info[8] ?? 0) * 2 ** 32 + (info[9] ?? 0);
-    const bytes = new Uint8Array(size);
-    const read = new Uint32Array(1);
-    let offset = 0;
-    while (offset < size) {
-      const ok = symbols.ReadFile(handle, bytes.subarray(offset), size - offset, read, null);
-      if (ok === 0 || read[0] === undefined || read[0] === 0) return undefined;
-      offset += read[0];
-    }
-    return bytes;
-  });
+  if (Number(handle) === -1)
+    return yield* fileError(resolved, "Unknown", { description: "Could not open the file" });
+  const unreadable = fileError(resolved, "Unknown", { description: "Could not read the file" });
+  const info = new Uint32Array(13);
+  if ((yield* sync(() => symbols.GetFileInformationByHandle(handle, info))) === 0)
+    return yield* unreadable;
+  if (((info[0] ?? FILE_ATTRIBUTE_DIRECTORY) & FILE_ATTRIBUTE_DIRECTORY) !== 0)
+    return yield* notRegularFile(resolved);
+  const name = new Uint16Array(WINDOWS_PATH_CHARS);
+  const length = yield* sync(() =>
+    symbols.GetFinalPathNameByHandleW(handle, name, WINDOWS_PATH_CHARS, 0),
+  );
+  if (length === 0 || length >= WINDOWS_PATH_CHARS) return yield* unreadable;
+  const final = windowsFinalPath(Buffer.from(name.buffer, 0, length * 2).toString("utf16le"));
+  if (comparable(final, true) !== comparable(resolved, true))
+    return yield* notRegularFile(resolved);
+  const size = (info[8] ?? 0) * 2 ** 32 + (info[9] ?? 0);
+  const bytes = yield* sync(() => new Uint8Array(size));
+  const read = new Uint32Array(1);
+  let offset = 0;
+  while (offset < size) {
+    const at = offset;
+    const ok = yield* sync(() =>
+      symbols.ReadFile(handle, bytes.subarray(at), size - at, read, null),
+    );
+    if (ok === 0 || read[0] === undefined || read[0] === 0) return yield* unreadable;
+    offset += read[0];
+  }
+  return bytes;
 }, Effect.scoped);
 
 /** Reads the file `path` resolves to while it stays inside `root`, like `content_path` in the CLI. */
@@ -205,9 +213,9 @@ export const readContainedFile = (
 };
 
 /**
- * Reads canonical `resolved` only through a handle opened without following a link or blocking
- * on a FIFO that still names `resolved` (`/dev/fd` on macOS and Linux, the final handle path on
- * Windows) and a regular file, so a swap after `realpath` is refused rather than read.
+ * Reads canonical `resolved` only through a handle that still names `resolved` and a regular file
+ * (`/dev/fd` on macOS and Linux, opened without following a link or blocking on a FIFO; the final
+ * handle path on Windows), so a swap after `realpath` is refused rather than read.
  */
 export const readResolvedFile = (
   resolved: string,
@@ -218,22 +226,17 @@ export const readResolvedFile = (
       try: operation,
       catch: (cause) => fileError(resolved, "Unknown", { cause }),
     });
-  const refused = fileError(resolved, "BadResource", {
-    description: "Not a regular file at this path",
-  });
-  if (windows)
-    return Effect.flatMap(readWindowsHandle(resolved), (bytes) =>
-      bytes === undefined ? Effect.fail(refused) : Effect.succeed(bytes),
-    );
+  if (windows) return readWindowsHandle(resolved);
   return Effect.acquireUseRelease(
     attempt(() => open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)),
     (handle) =>
       Effect.gen(function* () {
         const stats = yield* attempt(() => handle.stat());
+        /* On macOS, Bun resolves /dev/fd/N to the file; libc realpath doesn't, which refuses. */
         const opened = stats.isFile()
           ? yield* attempt(() => realpath(`/dev/fd/${handle.fd}`))
           : undefined;
-        if (opened !== resolved) return yield* refused;
+        if (opened !== resolved) return yield* notRegularFile(resolved);
         return yield* attempt((signal) => handle.readFile({ signal }));
       }),
     (handle) => attempt(() => handle.close()).pipe(Effect.ignore),
