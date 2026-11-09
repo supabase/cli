@@ -1,6 +1,19 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Data, Deferred, Effect, Fiber, FileSystem, Hash, Layer, Path, Ref } from "effect";
+import {
+  Context,
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Hash,
+  Layer,
+  Option,
+  Path,
+  Ref,
+} from "effect";
 import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
@@ -13,7 +26,11 @@ import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import { plainPeerAllowed, type ApiTlsNetwork } from "./runtime/ApiTlsSupport.ts";
+import {
+  plainPeerAllowed,
+  type ApiTlsNetwork,
+  type HostAddresses,
+} from "./runtime/ApiTlsSupport.ts";
 import { emailTemplateFile, freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
 import { readResolvedFile } from "./namespace/drivers/FileSystem.ts";
 import type { ServiceCreation } from "./services/Catalog.ts";
@@ -30,7 +47,7 @@ const makeTestNetwork = (options: {
   readonly runtime: Network.NetworkRuntime;
   readonly state: StackNamespace.Interface;
   readonly onAccess?: HttpAccessSink | undefined;
-  readonly hostAddresses?: () => ReadonlySet<string>;
+  readonly hostAddresses?: () => HostAddresses;
 }) =>
   Layer.build(
     Network.layer({
@@ -777,7 +794,7 @@ const emailTemplates = (
   runtime: Network.NetworkRuntime,
   onAccess?: HttpAccessSink,
   apiTls?: NonNullable<StackNamespace.SavedStack["apiTls"]>,
-  hostAddresses?: () => ReadonlySet<string>,
+  hostAddresses?: () => HostAddresses,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1447,7 +1464,7 @@ it.live("keeps every listener, URL and scheme of the API without TLS", () =>
 
 /* This host holds only a fake gateway, so its LAN address connecting to loopback stands in for a
    container's self-check arriving at a `host-gateway` set to another address of this host. */
-const gatewayOnly = () => new Set(["192.0.2.1"]);
+const gatewayOnly = () => ({ addresses: new Set(["192.0.2.1"]), interfaces: [] });
 
 /** The LAN address, its /24 network with the held fake gateway, and a sibling address in it. */
 const lanNetwork = Effect.gen(function* () {
@@ -1651,6 +1668,282 @@ it.live(
         yield* Fiber.interrupt(binding);
         stalled = false;
         expect(yield* namespace.bind).toHaveLength(1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/* Listens on every address at `port`, or answers none while a listener there holds it. */
+const listenAll = (port: number) =>
+  Effect.callback<Option.Option<Net.Server>>((resume) => {
+    const server = Net.createServer((socket) => socket.destroy());
+    server.once("error", () => resume(Effect.succeedNone));
+    server.listen({ host: "0.0.0.0", port }, () => resume(Effect.succeedSome(server)));
+    return Effect.sync(() => {
+      server.close();
+    });
+  });
+
+const closeServer = (server: Net.Server) =>
+  Effect.callback<void>((resume) => {
+    server.close(() => resume(Effect.void));
+    return Effect.void;
+  });
+
+/* A shared API listener serving trusted TLS (self-check "first"), and from the first state read
+   that finds its port free, the one a reopen makes once the old listener closed, a test listener
+   that holds the port for `hold.reads` more reads; the next `hold.failures` reads fail. */
+const tlsReopen = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const base = yield* fs.makeTempDirectoryScoped({ prefix: "network-tls-reopen-" });
+  const state = yield* makeTestState(path.join(base, "state"));
+  const stackId = `tls-reopen-${randomUUID()}`;
+  const trusted = yield* localTls;
+  const untrusted = {
+    ...trusted,
+    cert: yield* fs.readFileString(
+      path.join(import.meta.dirname, "..", "tests", "certs", "untrusted.crt"),
+    ),
+  };
+  const saveTls = (tls: typeof trusted, selfCheck: string) =>
+    state.save({ ...stack(stackId), apiTls: { ...savedTls(tls), selfCheck } });
+  yield* saveTls(trusted, "first");
+  const hold: { port: number; reads: number; failures: number; server: Net.Server | undefined } = {
+    port: 0,
+    reads: 0,
+    failures: 0,
+    server: undefined,
+  };
+  const free = Effect.suspend(() => {
+    const server = hold.server;
+    hold.server = undefined;
+    return server === undefined ? Effect.void : closeServer(server);
+  });
+  yield* Effect.addFinalizer(() => free);
+  const network = yield* makeTestNetwork({
+    stackId,
+    runtime: "docker",
+    state: {
+      ...state,
+      read: (id) =>
+        Effect.gen(function* () {
+          if (hold.failures > 0) {
+            hold.failures -= 1;
+            return yield* new StackNamespace.NamespaceError({
+              operation: "read",
+              message: "unreadable state",
+            });
+          }
+          if (hold.server !== undefined) {
+            if (hold.reads === 0) yield* free;
+            else hold.reads -= 1;
+          } else if (hold.port !== 0) {
+            hold.server = Option.getOrUndefined(yield* listenAll(hold.port));
+            if (hold.server !== undefined) hold.port = 0;
+          }
+          return yield* state.read(id);
+        }),
+    },
+  });
+  yield* Effect.addFinalizer(() => network.releaseStack.pipe(Effect.ignore));
+  const target = yield* backendWith((_request, response) => response.end("backend"));
+  const namespace = yield* network.register({
+    id: "rest",
+    endpoints: {
+      http: { ...endpoint(target, Effect.succeed(false)), shared: [{ prefix: "/rest/v1" }] },
+    },
+  });
+  const [binding] = yield* namespace.bind;
+  if (binding === undefined) return yield* new FixtureError({ message: "no binding" });
+  const { port } = binding;
+  const served = (ca: string) =>
+    rawHead(
+      port,
+      ["GET /rest/v1/health HTTP/1.1", `Host: localhost:${port}`, "Connection: close"],
+      { ca },
+    ).pipe(Effect.orElseSucceed(() => ""));
+  const savedCheck = state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls?.selfCheck));
+  expect(yield* served(trusted.cert)).toContain("backend");
+  return {
+    state,
+    stackId,
+    trusted,
+    untrusted,
+    saveTls,
+    hold,
+    free,
+    network,
+    namespace,
+    port,
+    served,
+    savedCheck,
+  };
+});
+
+it.live(
+  "keeps serving the API with its TLS when a reopen can't listen, and opens it again once the port frees",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { trusted, untrusted, saveTls, hold, free, network, namespace, port, served } =
+          yield* tlsReopen;
+        const savedAgain = saveTls(untrusted, "second");
+
+        /* The replacement can't listen, so the TLS it served is saved and opens again. */
+        yield* saveTls(untrusted, "second");
+        hold.port = port;
+        yield* Effect.flip(network.reopenApi(saveTls(trusted, "first")));
+        expect(hold.server).toBeUndefined();
+        expect(yield* network.apiTlsPort).toBe(port);
+        expect(yield* served(trusted.cert)).toContain("backend");
+        expect(yield* served(untrusted.cert)).toBe("");
+
+        yield* saveTls(untrusted, "second");
+        yield* network.reopenApi(Effect.void);
+        expect(yield* served(untrusted.cert)).toContain("backend");
+        expect(yield* served(trusted.cert)).toBe("");
+
+        /* Neither can listen: the next shared bind, then the next reopen, opens it again with the
+           TLS saved again. */
+        for (const [reopen, selfCheck] of [
+          [namespace.bind, "third"],
+          [network.reopenApi(Effect.void), "fourth"],
+        ] as const) {
+          yield* saveTls(trusted, selfCheck);
+          hold.port = port;
+          hold.reads = Number.POSITIVE_INFINITY;
+          yield* Effect.flip(network.reopenApi(savedAgain));
+          expect(yield* network.apiTlsPort).toBeUndefined();
+          yield* free;
+          yield* reopen;
+          expect(yield* network.apiTlsPort).toBe(port);
+          expect(yield* served(untrusted.cert)).toContain("backend");
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "never opens the API in plain from a TLS removal that couldn't listen, for a shared bind right after it",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const {
+          state,
+          stackId,
+          trusted,
+          saveTls,
+          hold,
+          free,
+          network,
+          namespace,
+          port,
+          served,
+          savedCheck,
+        } = yield* tlsReopen;
+        yield* state.save(stack(stackId));
+        hold.port = port;
+        hold.reads = Number.POSITIVE_INFINITY;
+        yield* Effect.flip(network.reopenApi(saveTls(trusted, "first")));
+        expect(yield* network.apiTlsPort).toBeUndefined();
+
+        /* The bind waits on the network until the TLS it served is saved again. */
+        yield* free;
+        yield* namespace.bind;
+        expect(yield* network.apiTlsPort).toBe(port);
+        expect(yield* savedCheck).toBe("first");
+        expect(yield* served(trusted.cert)).toContain("backend");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "keeps the API closed while the TLS it served can't be saved again, then opens it with the saved TLS",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCheck } =
+          yield* tlsReopen;
+        yield* saveTls(untrusted, "second");
+        hold.port = port;
+        const error = yield* Effect.flip(
+          network.reopenApi(Effect.fail(new FixtureError({ message: "read-only state" }))),
+        );
+        expect(error).toBeInstanceOf(FixtureError);
+        expect(yield* network.apiTlsPort).toBeUndefined();
+        expect(yield* savedCheck).toBe("second");
+
+        yield* namespace.bind;
+        expect(hold.server).toBeUndefined();
+        expect(yield* network.apiTlsPort).toBe(port);
+        expect(yield* served(untrusted.cert)).toContain("backend");
+        expect(yield* served(trusted.cert)).toBe("");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "closes the API when the saved TLS can't be read nor the TLS it served saved again, then opens it with the saved TLS",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCheck } =
+          yield* tlsReopen;
+        yield* saveTls(untrusted, "second");
+        hold.failures = 1;
+        const error = yield* Effect.flip(
+          network.reopenApi(Effect.fail(new FixtureError({ message: "read-only state" }))),
+        );
+        expect(error).toBeInstanceOf(FixtureError);
+        expect(yield* network.apiTlsPort).toBeUndefined();
+        expect(yield* served(trusted.cert)).not.toContain("backend");
+
+        yield* namespace.bind;
+        expect(yield* network.apiTlsPort).toBe(port);
+        expect(yield* savedCheck).toBe("second");
+        expect(yield* served(untrusted.cert)).toContain("backend");
+        expect(yield* served(trusted.cert)).toBe("");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "closes the API when a reopen is interrupted while the TLS it served can't be saved again, then opens it with the saved TLS",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCheck } =
+          yield* tlsReopen;
+        yield* saveTls(untrusted, "second");
+        hold.failures = 1;
+        const restoring = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const reopen = yield* Effect.forkChild(
+          network.reopenApi(
+            Effect.uninterruptible(
+              Deferred.succeed(restoring, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(Effect.fail(new FixtureError({ message: "read-only state" }))),
+              ),
+            ),
+          ),
+        );
+        yield* Deferred.await(restoring);
+        /* The interrupt lands while the restore is in flight, then the restore fails. */
+        const interrupting = yield* Effect.forkChild(Fiber.interrupt(reopen), {
+          startImmediately: true,
+        });
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(interrupting);
+        expect(Exit.hasInterrupts(yield* Fiber.await(reopen))).toBe(true);
+        expect(yield* network.apiTlsPort).toBeUndefined();
+        expect(yield* served(trusted.cert)).not.toContain("backend");
+
+        yield* namespace.bind;
+        expect(yield* network.apiTlsPort).toBe(port);
+        expect(yield* savedCheck).toBe("second");
+        expect(yield* served(untrusted.cert)).toContain("backend");
+        expect(yield* served(trusted.cert)).toBe("");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );

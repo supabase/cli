@@ -1,10 +1,11 @@
 import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Redacted, Ref, Schema, Stream } from "effect";
+import { Context, Effect, FileSystem, Layer, Option, Redacted, Ref, Schema, Stream } from "effect";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { createServer, type Server } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { RpcTest } from "effect/rpc";
 import * as Owner from "./Owner.ts";
@@ -939,6 +940,17 @@ const otherKey = () =>
     .privateKey.export({ type: "pkcs8", format: "pem" })
     .toString();
 
+/* Listens on 127.0.0.1:`port`, or answers none while a listener there holds it. */
+const listenLoopback = (port: number) =>
+  Effect.callback<Option.Option<Server>>((resume) => {
+    const server = createServer((socket) => socket.destroy());
+    server.once("error", () => resume(Effect.succeedNone));
+    server.listen({ host: "127.0.0.1", port }, () => resume(Effect.succeedSome(server)));
+    return Effect.sync(() => {
+      server.close();
+    });
+  });
+
 /* Whether a TLS client trusting `ca` completes a handshake with 127.0.0.1:`port`. */
 const handshake = (port: number, ca: string) =>
   Effect.callback<boolean>((resume) => {
@@ -960,7 +972,37 @@ it.live(
         const stack = initial(`owner-api-tls-reopen-${randomUUID().slice(0, 8)}`);
         const state = yield* stateFor(`${root}/state`);
         yield* state.save(stack);
-        const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+        /* From the first state read that finds `holdPort` free, the one a TLS reopen makes once
+           the old listener closed, a test listener holds it for that one read. */
+        const hold: { port: number; server: Server | undefined } = { port: 0, server: undefined };
+        const free = Effect.suspend(() => {
+          const server = hold.server;
+          hold.server = undefined;
+          return server === undefined
+            ? Effect.void
+            : Effect.callback<void>((resume) => {
+                server.close(() => resume(Effect.void));
+                return Effect.void;
+              });
+        });
+        yield* Effect.addFinalizer(() => free);
+        const owner = yield* ownerFor({
+          saved: stack,
+          state: {
+            ...state,
+            read: (id) =>
+              Effect.gen(function* () {
+                if (hold.server !== undefined) yield* free;
+                else if (hold.port !== 0) {
+                  hold.server = Option.getOrUndefined(yield* listenLoopback(hold.port));
+                  if (hold.server !== undefined) hold.port = 0;
+                }
+                return yield* state.read(id);
+              }),
+          },
+          root: `${root}/data`,
+          cacheRoot,
+        });
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const certs = `${import.meta.dirname}/../tests/certs`;
         const apiTls = {
@@ -1026,7 +1068,22 @@ it.live(
           expect(yield* handshake(before.port, apiTls.cert)).toBe(true);
         }
 
+        /* A rotation whose listener can't open keeps both the TLS it saved and the one it serves. */
         const untrusted = yield* fs.readFileString(`${certs}/untrusted.crt`);
+        const kept = (yield* state.read(stack.id))?.apiTls;
+        hold.port = before.port;
+        yield* Effect.flip(
+          owner.rpc.supabaseComposition({
+            services,
+            reuseIds: plain.map(({ id }) => id),
+            apiTls: { ...apiTls, cert: untrusted },
+          }),
+        );
+        expect(hold.server).toBeUndefined();
+        expect((yield* state.read(stack.id))?.apiTls).toEqual(kept);
+        expect(yield* handshake(before.port, apiTls.cert)).toBe(true);
+        expect(yield* handshake(before.port, untrusted)).toBe(false);
+
         const rotated = yield* owner.rpc.supabaseComposition({
           services,
           reuseIds: plain.map(({ id }) => id),

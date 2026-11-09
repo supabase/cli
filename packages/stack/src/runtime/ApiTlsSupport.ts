@@ -89,13 +89,34 @@ const parseNetworks = (text: string): ReadonlyArray<ApiTlsNetwork> =>
     return [{ subnet: `${base}/${bits}`, gateway }];
   });
 
-/* Every address this host holds now; a packet from outside carrying one is dropped as martian. */
-const hostAddresses = () =>
-  new Set(
-    Object.values(networkInterfaces())
-      .flatMap((entries) => entries ?? [])
-      .map((entry) => entry.address),
+/** This host's addresses now, and its non-internal IPv4 interfaces as `<address>/<bits>`. */
+export interface HostAddresses {
+  readonly addresses: ReadonlySet<string>;
+  readonly interfaces: ReadonlyArray<string>;
+}
+
+/* A packet from outside carrying one of these addresses is dropped as martian. */
+const hostAddresses = (): HostAddresses => {
+  const entries = Object.values(networkInterfaces()).flatMap((entry) => entry ?? []);
+  return {
+    addresses: new Set(entries.map((entry) => entry.address)),
+    interfaces: entries.flatMap((entry) =>
+      entry.family === "IPv4" && !entry.internal && entry.cidr !== null ? [entry.cidr] : [],
+    ),
+  };
+};
+
+/* Whether two `<address>/<bits>` ranges share an address. */
+const overlaps = (a: string, b: string) => {
+  const [left = "", leftBits = "32"] = a.split("/");
+  const [right = "", rightBits = "32"] = b.split("/");
+  const size = 2 ** (32 - Math.min(Number(leftBits), Number(rightBits)));
+  return (
+    IPV4_CIDR.test(a) &&
+    IPV4_CIDR.test(b) &&
+    Math.floor(ipv4ToInt(left) / size) === Math.floor(ipv4ToInt(right) / size)
   );
+};
 
 const loopbackPeer = (peer: string) => peer === "::1" || inSubnet(peer, "127.0.0.0/8");
 
@@ -108,7 +129,7 @@ const loopbackPeer = (peer: string) => peer === "::1" || inSubnet(peer, "127.0.0
 export const plainPeerAllowed =
   (
     networks: ReadonlyArray<ApiTlsNetwork>,
-    localAddresses: () => ReadonlySet<string> = hostAddresses,
+    localAddresses: () => ReadonlySet<string> = () => hostAddresses().addresses,
   ) =>
   (peer: string, local: string): boolean =>
     loopbackPeer(peer) ||
@@ -119,18 +140,24 @@ export const plainPeerAllowed =
     );
 
 /* Each network, and again at the local address a self-check from inside it arrived on when this
-   host holds its gateway, that address is outside it, and the peer is not loopback or this host. */
+   host holds its gateway, no other interface of this host is in its range (a LAN peer there gets
+   its replies through that interface), that address is outside it, and the peer is not loopback
+   or this host. */
 const arrivalGateways = (
   networks: ReadonlyArray<ApiTlsNetwork>,
   arrivals: ReadonlyArray<ApiTlsArrival>,
-  host: ReadonlySet<string>,
+  host: HostAddresses,
 ) => {
   const inside = arrivals.filter(
-    ({ peer }) => IPV4.test(peer) && !inSubnet(peer, "127.0.0.0/8") && !host.has(peer),
+    ({ peer }) => IPV4.test(peer) && !inSubnet(peer, "127.0.0.0/8") && !host.addresses.has(peer),
   );
   return networks.flatMap((network) => [
     network,
-    ...(network.gateway !== "" && host.has(network.gateway)
+    ...(network.gateway !== "" &&
+    host.addresses.has(network.gateway) &&
+    !host.interfaces.some(
+      (cidr) => !cidr.startsWith(`${network.gateway}/`) && overlaps(cidr, network.subnet),
+    )
       ? inside
           .filter(
             ({ peer, local }) =>
@@ -151,14 +178,17 @@ export const plainPeerAdmitted =
   (
     networks: ReadonlyArray<ApiTlsNetwork>,
     arrivals: ReadonlyArray<ApiTlsArrival>,
-    localAddresses: () => ReadonlySet<string> = hostAddresses,
+    localAddresses: () => HostAddresses = hostAddresses,
   ) =>
   (peer: string, local: string): boolean => {
     if (loopbackPeer(peer)) return true;
     if (arrivals.some((arrival) => arrival.peer === peer && arrival.local === local)) return true;
     /* One snapshot per connection. */
     const host = localAddresses();
-    return plainPeerAllowed(arrivalGateways(networks, arrivals, host), () => host)(peer, local);
+    return plainPeerAllowed(arrivalGateways(networks, arrivals, host), () => host.addresses)(
+      peer,
+      local,
+    );
   };
 
 /** The self-check request target; its secret token, redacted in access logs, lets an unlisted peer be learned. */
@@ -251,9 +281,9 @@ export const selfCheckApiTls = Effect.fn("ApiTlsSupport.selfCheck")(function* (
 });
 
 /**
- * The self-check after a start or restart, when the stack saved TLS and has an API port. A failed
- * read of the saved TLS or a failed probe stops the stack's services and fails with the detail,
- * the probe's token redacted.
+ * The self-check after a start or restart, when the API listener serves TLS. A failed read of the
+ * saved TLS or a failed probe stops the stack's services and fails with the detail, the probe's
+ * token redacted.
  */
 export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* (options: {
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -265,6 +295,7 @@ export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* 
     { readonly selfCheck: string } | undefined,
     { readonly message: string }
   >;
+  /** The API listener's port while it serves TLS; none has nothing to check. */
   readonly port: number | undefined;
   readonly stop: Effect.Effect<unknown, { readonly message: string }>;
   /**
@@ -302,6 +333,7 @@ export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* 
         detail,
       });
     });
+  if (options.port === undefined) return;
   const apiTls = yield* options.apiTls.pipe(
     Effect.catch((cause) =>
       stopThenFail(
@@ -311,7 +343,7 @@ export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* 
       ),
     ),
   );
-  if (apiTls === undefined || options.port === undefined) return;
+  if (apiTls === undefined) return;
   const networks = yield* selfCheckApiTls(
     options.spawner,
     options.target,

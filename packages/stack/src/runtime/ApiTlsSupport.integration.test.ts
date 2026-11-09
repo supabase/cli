@@ -233,7 +233,7 @@ it.live("reads the database container's networks once its request got a reply", 
 
 class StopError extends Data.TaggedError("StopError")<{ readonly message: string }> {}
 
-it.live("has nothing to check on a stack without an API port, and stops nothing", () =>
+it.live("has nothing to check, or read, while the API serves no TLS, and stops nothing", () =>
   Effect.gen(function* () {
     let stops = 0;
     yield* checkApiTlsReach({
@@ -241,7 +241,7 @@ it.live("has nothing to check on a stack without an API port, and stops nothing"
       target,
       stack,
       runtime: "test runtime",
-      apiTls: Effect.succeed({ selfCheck: "start-token" }),
+      apiTls: Effect.fail(new StopError({ message: "state.json unreadable" })),
       port: undefined,
       stop: Effect.sync(() => {
         stops += 1;

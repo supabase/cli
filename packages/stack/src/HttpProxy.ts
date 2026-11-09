@@ -1022,8 +1022,10 @@ export const makeHttpProxy = (options: {
           );
           const outcome = misdirected(request)
             ? yield* Effect.sync(() => {
+                /* The upgrade took the socket off its deadlines, so it closes once the reply is out. */
                 socket.end(
                   "HTTP/1.1 421 Misdirected Request\r\nconnection: close\r\ncontent-length: 0\r\n\r\n",
+                  () => socket.destroy(),
                 );
                 return 421;
               })

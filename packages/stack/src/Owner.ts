@@ -775,11 +775,36 @@ const makeOwner = Effect.fn("Owner.make")(function* (
             ),
             selfCheck: yield* crypto.uuidV4(),
           };
-    yield* updateState(({ apiTls: _previous, ...current }) =>
-      saved === undefined ? current : { ...current, apiTls: saved },
-    ).pipe(Effect.mapError(serviceError("state")));
-    /* An endpoint claim at owner startup can have opened the listener with the previous TLS. */
-    yield* network.reopenApi.pipe(Effect.mapError(serviceError("bind")));
+    const previous = yield* options.state
+      .withLock(
+        readSaved.pipe(
+          Effect.flatMap(({ apiTls: kept, ...current }) =>
+            options.state
+              .save(saved === undefined ? current : { ...current, apiTls: saved })
+              .pipe(Effect.as(kept)),
+          ),
+        ),
+      )
+      .pipe(Effect.mapError(serviceError("state")));
+    /* An endpoint claim at owner startup can have opened the listener with the previous TLS; a
+       failed reopen saves that TLS again before the listener opens with it. */
+    yield* network
+      .reopenApi(
+        options.state
+          .withLock(
+            readSaved.pipe(
+              Effect.flatMap(({ apiTls: _failed, ...current }) =>
+                Effect.uninterruptible(
+                  options.state.save(
+                    previous === undefined ? current : { ...current, apiTls: previous },
+                  ),
+                ),
+              ),
+            ),
+          )
+          .pipe(Effect.mapError(serviceError("state"))),
+      )
+      .pipe(Effect.catchTag("NetworkError", (error) => Effect.fail(serviceError("bind")(error))));
   });
 
   /* Under TLS on an engine, one database-container request must reach the API port in plain
@@ -796,7 +821,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       stack: { id: stackId, root: path.resolve(options.root), database },
       runtime: apiTlsRuntimeLabel(options.engineTarget),
       apiTls: options.state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls)),
-      port: yield* network.apiPort,
+      port: yield* network.apiTlsPort,
       stop: orchestrator.stopComposition,
       learned: (token, networks) =>
         network.adoptApiNetworks(token, networks).pipe(Effect.andThen(network.learnedApi(token))),

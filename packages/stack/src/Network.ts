@@ -5,6 +5,7 @@ import {
   plainPeerAdmitted,
   type ApiTlsArrival,
   type ApiTlsNetwork,
+  type HostAddresses,
 } from "./runtime/ApiTlsSupport.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -95,8 +96,8 @@ export interface Interface {
     key: string,
     port: number,
   ) => Effect.Effect<boolean, PortError, Scope.Scope>;
-  /** The shared API listener's port while it is open. */
-  readonly apiPort: Effect.Effect<number | undefined>;
+  /** The shared API listener's port while it is open and serves TLS. */
+  readonly apiTlsPort: Effect.Effect<number | undefined>;
   /** Where the self-check with this token was let in from, and at, outside the saved peer rule. */
   readonly learnedApi: (token: string) => Effect.Effect<ReadonlyArray<ApiTlsArrival>>;
   /** Admits these engine networks, when any, in place of the saved ones for this token. */
@@ -106,9 +107,13 @@ export interface Interface {
   ) => Effect.Effect<void>;
   /**
    * Reopens the open shared API listener on its port with its routes when the saved TLS changed
-   * since it opened, so the TLS a stopped stack takes is the one it serves.
+   * since it opened, so the TLS a stopped stack takes is the one it serves. When that fails,
+   * `restoreSaved` saves the previous TLS again before any shared bind can open the listener from
+   * the saved stack, which then opens with it; a failed `restoreSaved` leaves it closed and owed.
    */
-  readonly reopenApi: Effect.Effect<void, NetworkError>;
+  readonly reopenApi: <E>(
+    restoreSaved: Effect.Effect<void, E>,
+  ) => Effect.Effect<void, NetworkError | E>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Network") {}
@@ -137,8 +142,8 @@ const makeNetwork = (options: {
   readonly state: StackNamespace.Interface;
   readonly platform?: NodeJS.Platform;
   readonly onAccess?: HttpAccessSink;
-  /** This host's addresses for the plain peer rule, when a test stands in for them. */
-  readonly hostAddresses?: () => ReadonlySet<string>;
+  /** This host's addresses and interfaces for the plain peer rule, when a test stands in for them. */
+  readonly hostAddresses?: () => HostAddresses;
 }) =>
   Effect.gen(function* () {
     const ports = yield* makePorts(options.state).pipe(
@@ -155,13 +160,16 @@ const makeNetwork = (options: {
           readonly scope: Scope.Closeable;
           /** The port its first claimant requested, which a reopen requests again. */
           readonly requested: number | "auto";
-          /** The self-check token of the TLS it serves, which host addresses follow; none is plain. */
-          readonly selfCheck: string | undefined;
+          /** The saved TLS it serves, which host addresses follow; none is plain. */
+          readonly tls: SavedApiTls | undefined;
         }
       | undefined
     >(undefined);
     // Join routes queued before any claiming endpoint has created the shared listener.
     const pendingJoins = yield* Ref.make<ReadonlyArray<HttpRoute | HttpFileRoute>>([]);
+    /* The port request of a shared listener a failed reopen left closed; its routes wait in
+       `pendingJoins` until the next reopen or shared bind opens it again. */
+    const lostApi = yield* Ref.make<number | "auto" | undefined>(undefined);
 
     const listenHost = options.runtime === "native" ? "127.0.0.1" : "0.0.0.0";
     const hostAddress = "127.0.0.1";
@@ -258,6 +266,50 @@ const makeNetwork = (options: {
       yield* Ref.set(shared, { ...current, routes: next });
     });
 
+    /** Opens the shared listener at `requested` serving `tls`, with the routes owed to it. */
+    const openShared = (requested: number | "auto", tls: SavedApiTls | undefined) =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const scope = yield* Scope.fork(owner, "sequential");
+          const result = yield* restore(
+            ports
+              .acquire(
+                { stackId: options.stackId, key: "api", host: listenHost, port: requested },
+                (host, port) => openApi(host, port, tls),
+              )
+              .pipe(
+                Effect.provideService(Scope.Scope, scope),
+                Effect.mapError((cause) => errorFor("bind", cause)),
+              ),
+          ).pipe(
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void,
+            ),
+          );
+          const routes = yield* Ref.get(pendingJoins);
+          yield* result.listener.proxy.setRoutes(routes);
+          yield* Ref.set(pendingJoins, []);
+          yield* Ref.set(lostApi, undefined);
+          yield* Ref.set(shared, {
+            claim: result.port,
+            proxy: result.listener.proxy,
+            routes,
+            scope,
+            requested,
+            tls,
+          });
+        }),
+      );
+
+    /* Opens a listener a failed reopen left closed with the saved TLS, or forgets it once its
+       routes all closed. */
+    const reviveApi = Effect.gen(function* () {
+      const requested = yield* Ref.get(lostApi);
+      if (requested === undefined) return;
+      if ((yield* Ref.get(pendingJoins)).length === 0) return yield* Ref.set(lostApi, undefined);
+      yield* openShared(requested, yield* apiTls);
+    });
+
     const register = Effect.fn("Network.register")(function* ({
       id,
       endpoints,
@@ -274,6 +326,8 @@ const makeNetwork = (options: {
           Effect.gen(function* () {
             if (yield* Ref.get(closed))
               return yield* errorFor("bind", "Network namespace is closed");
+            if (Object.values(endpoints).some((endpoint) => endpoint.shared !== undefined))
+              yield* reviveApi;
             for (const [name, endpoint] of Object.entries(endpoints)) {
               if ((yield* Ref.get(bound)).has(name)) continue;
               const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
@@ -337,7 +391,7 @@ const makeNetwork = (options: {
                       routes: seeded,
                       scope: endpointScope,
                       requested: endpoint.port,
-                      selfCheck: tls?.selfCheck,
+                      tls,
                     };
                     if (previous !== undefined) yield* Scope.close(endpointScope, Exit.void);
                     else if (seeded.length > 0) yield* Ref.set(pendingJoins, []);
@@ -447,7 +501,7 @@ const makeNetwork = (options: {
           const secure =
             from === "host" &&
             endpoint.shared !== undefined &&
-            (active === undefined ? (yield* apiTls) !== undefined : active.selfCheck !== undefined);
+            (active === undefined ? (yield* apiTls) !== undefined : active.tls !== undefined);
           const https: Pick<NetworkBinding, "scheme"> = secure ? { scheme: "https" } : {};
           return {
             name,
@@ -468,7 +522,7 @@ const makeNetwork = (options: {
         bindings: Effect.all([Ref.get(bound), Ref.get(shared)]).pipe(
           Effect.map(([values, active]) =>
             [...values.values()].map((binding): NetworkBinding =>
-              endpoints[binding.name]?.shared !== undefined && active?.selfCheck !== undefined
+              endpoints[binding.name]?.shared !== undefined && active?.tls !== undefined
                 ? { ...binding, scheme: "https" }
                 : binding,
             ),
@@ -477,48 +531,51 @@ const makeNetwork = (options: {
       } satisfies NetworkNamespace;
     });
 
-    const reopenApi = gate.withPermits(1)(
+    /* Closes the shared listener, leaving its routes and port request owed to the next open. */
+    const loseApi = Effect.uninterruptible(
       Effect.gen(function* () {
         const current = yield* Ref.get(shared);
         if (current === undefined) return;
-        const tls = yield* apiTls;
-        if (tls?.selfCheck === current.selfCheck) return;
         yield* Scope.close(current.scope, Exit.void);
         yield* Ref.set(shared, undefined);
-        yield* Effect.uninterruptibleMask((restore) =>
-          Effect.gen(function* () {
-            const scope = yield* Scope.fork(owner, "sequential");
-            const result = yield* restore(
-              ports
-                .acquire(
-                  {
-                    stackId: options.stackId,
-                    key: "api",
-                    host: listenHost,
-                    port: current.requested,
-                  },
-                  (host, port) => openApi(host, port, tls),
-                )
-                .pipe(
-                  Effect.provideService(Scope.Scope, scope),
-                  Effect.mapError((cause) => errorFor("bind", cause)),
-                ),
-            ).pipe(
-              Effect.onExit((exit) =>
-                Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void,
-              ),
-            );
-            yield* result.listener.proxy.setRoutes(current.routes);
-            yield* Ref.set(shared, {
-              ...current,
-              proxy: result.listener.proxy,
-              scope,
-              selfCheck: tls?.selfCheck,
-            });
-          }),
-        );
+        yield* Ref.set(pendingJoins, current.routes);
+        yield* Ref.set(lostApi, current.requested);
       }),
     );
+
+    const reopenApi = <E>(restoreSaved: Effect.Effect<void, E>) =>
+      gate.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* Ref.get(shared);
+          if (current === undefined) return yield* reviveApi;
+          const tls = yield* apiTls;
+          if (tls?.selfCheck === current.tls?.selfCheck) return;
+          /* Same-port binds can't overlap portably, so the old listener closes first and stays
+             owed until a replacement, or failing that the previous TLS again, opens. */
+          yield* loseApi;
+          yield* openShared(current.requested, tls);
+        }).pipe(
+          /* Still under the gate, so a shared bind only ever opens the listener with what is
+             saved once the previous TLS is saved again; if that can't be saved, or the reopen
+             is interrupted first, a listener still open closes so the next bind opens the saved
+             TLS. */
+          Effect.catch((error) =>
+            restoreSaved.pipe(
+              Effect.onExit((exit) => (Exit.isFailure(exit) ? loseApi : Effect.void)),
+              Effect.andThen(
+                reviveApi.pipe(
+                  Effect.catch((restored) =>
+                    Effect.logWarning(
+                      `api: can't reopen the listener with its previous TLS, the next start retries: ${restored.message}`,
+                    ),
+                  ),
+                ),
+              ),
+              Effect.andThen(Effect.fail(error)),
+            ),
+          ),
+        ),
+      );
 
     const releaseStack = Effect.fn("Network.releaseStack")(() =>
       ports
@@ -529,7 +586,9 @@ const makeNetwork = (options: {
       register,
       releaseStack: releaseStack(),
       claimNativePort: (key, port) => ports.claimNative(options.stackId, key, port),
-      apiPort: Ref.get(shared).pipe(Effect.map((current) => current?.claim)),
+      apiTlsPort: Ref.get(shared).pipe(
+        Effect.map((current) => (current?.tls === undefined ? undefined : current.claim)),
+      ),
       learnedApi: (token) => Effect.sync(() => [...(learned.get(token)?.arrivals.values() ?? [])]),
       adoptApiNetworks: (token, networks) =>
         Effect.sync(() => {
@@ -545,8 +604,8 @@ export const layer = (options: {
   readonly runtime: NetworkRuntime;
   /** Receives the shared API listener's completed requests. */
   readonly onAccess?: HttpAccessSink;
-  /** This host's addresses for the plain peer rule, when a test stands in for them. */
-  readonly hostAddresses?: () => ReadonlySet<string>;
+  /** This host's addresses and interfaces for the plain peer rule, when a test stands in for them. */
+  readonly hostAddresses?: () => HostAddresses;
 }) =>
   Layer.effect(
     Service,

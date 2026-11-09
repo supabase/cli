@@ -72,8 +72,9 @@ the database container calls the API once in plain with a token minted when a `s
 TLS, which resume, restart and `db reset` reuse, redacted in logs; the peer it arrives from, at the
 host address it arrives at, and the database container's networks are let in and saved with the
 stack's TLS until a `stack start` saves TLS again (a resume or an already-running start keeps
-them). An extra gateway is derived only when this host holds the network's gateway, that call's
-peer is inside that network and is neither loopback nor a host address, and the address it
+them). An extra gateway is derived only when this host holds the network's gateway, no other
+IPv4 interface of this host has a network overlapping it (replies to a LAN peer there would leave
+through that interface), that call's peer is inside that network and is neither loopback nor a host address, and the address it
 arrived at is outside that network, such as a `host-gateway` set to the LAN address; the network's
 containers are then let in at that address too. Without an HTTP reply, start stops the stack's services and fails with ``api.tls: containers
 can't reach the api on <runtime> (<what the probe saw>); its services stopped: let <runtime>

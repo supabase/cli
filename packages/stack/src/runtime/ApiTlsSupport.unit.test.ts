@@ -194,7 +194,7 @@ describe("api.tls plain peer rule with the self-check's arrivals", () => {
     let reads = 0;
     const admitted = plainPeerAdmitted([docker], [], () => {
       reads++;
-      return new Set(["172.17.0.1"]);
+      return { addresses: new Set(["172.17.0.1"]), interfaces: [] };
     });
     expect(admitted("127.0.0.1", "127.0.0.1")).toBe(true);
     expect(admitted("::1", "::1")).toBe(true);
@@ -206,7 +206,54 @@ describe("api.tls plain peer rule with the self-check's arrivals", () => {
   it.each(rows)("%s", (_label, networks, arrivals, host, connection, admitted) => {
     const { peer, local } = arrival(connection);
     expect(
-      plainPeerAdmitted(networks, arrivals.map(arrival), () => new Set(host))(peer, local),
+      plainPeerAdmitted(networks, arrivals.map(arrival), () => ({
+        addresses: new Set(host),
+        interfaces: [],
+      }))(peer, local),
+    ).toBe(admitted);
+  });
+
+  /* `rows` beside this host's non-internal IPv4 interfaces: a LAN in docker0's range on another
+     interface gets the replies to its peers through that interface. */
+  const interfaceRows: ReadonlyArray<
+    readonly [
+      label: string,
+      host: ReadonlyArray<string>,
+      interfaces: ReadonlyArray<string>,
+      connection: string,
+      admitted: boolean,
+    ]
+  > = [
+    [
+      "a sibling beside a LAN outside the network",
+      linux,
+      ["172.17.0.1/16", "192.168.1.10/24"],
+      "172.17.0.5@192.168.1.10",
+      true,
+    ],
+    [
+      "a sibling beside a LAN inside the network",
+      [...linux, "172.17.5.10"],
+      ["172.17.0.1/16", "192.168.1.10/24", "172.17.5.10/24"],
+      "172.17.0.5@192.168.1.10",
+      false,
+    ],
+    [
+      "that LAN's peer at the arrival's local",
+      [...linux, "172.17.5.10"],
+      ["172.17.0.1/16", "192.168.1.10/24", "172.17.5.10/24"],
+      "172.17.5.20@192.168.1.10",
+      false,
+    ],
+  ];
+
+  it.each(interfaceRows)("%s", (_label, host, interfaces, connection, admitted) => {
+    const { peer, local } = arrival(connection);
+    expect(
+      plainPeerAdmitted([docker], [arrival(db)], () => ({ addresses: new Set(host), interfaces }))(
+        peer,
+        local,
+      ),
     ).toBe(admitted);
   });
 });

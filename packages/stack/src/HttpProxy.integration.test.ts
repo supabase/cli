@@ -2500,3 +2500,52 @@ it.live(
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.live(
+  "closes a plain upgrade refused for its Host even when the client keeps its side open",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: { ...(yield* testPair), plainPeer: () => true },
+        });
+        const upgrade = [
+          "GET /socket HTTP/1.1",
+          `Host: evil.example:${proxy.port}`,
+          "Connection: Upgrade",
+          "Upgrade: websocket",
+          "Sec-WebSocket-Version: 13",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "",
+          "",
+        ].join("\r\n");
+        const socket = yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            const client = new Socket({ allowHalfOpen: true });
+            client.on("error", () => client.destroy());
+            return client.connect(proxy.port, "127.0.0.1", () => client.write(upgrade));
+          }),
+          (client) => Effect.sync(() => client.destroy()),
+        );
+        const reply = yield* Effect.callback<string>((resume) => {
+          let text = "";
+          const onData = (chunk: Buffer) => {
+            text += chunk.toString("latin1");
+          };
+          const onEnd = () => resume(Effect.succeed(text));
+          socket.on("data", onData);
+          socket.once("end", onEnd);
+          return Effect.sync(() => {
+            socket.off("data", onData);
+            socket.off("end", onEnd);
+          });
+        });
+        expect(reply).toMatch(/^HTTP\/1\.1 421 /u);
+        /* Bytes after the reply reach a closed connection, which resets it. */
+        socket.write("still here");
+        yield* closed(socket).pipe(Effect.timeout("10 seconds"));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
