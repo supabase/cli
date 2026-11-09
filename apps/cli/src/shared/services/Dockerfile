@@ -35,7 +35,7 @@ FROM supabase/gotrue:v2.197.0 AS gotrue
 
 FROM supabase/realtime:v2.153.4 AS realtime
 
-FROM supabase/storage-api:v1.90.0 AS storage
+FROM supabase/storage-api:v1.90.1 AS storage
 
 FROM supabase/logflare:1.50.15 AS logflare
 # One-shot job images (not started as long-running containers); differ's alias
