@@ -53,6 +53,7 @@ import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import {
   MissingComputeNameError,
   ComputeDirectoryExistsError,
+  InvalidComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { loadComputeProject, validateComputeName, type ComputeProject } from "../compute.shared.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
@@ -323,7 +324,18 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
-    const secretsScope = yield* resolveSecretsScope({ explicit: flags.secretsScope, canPrompt });
+
+    if (Option.isSome(flags.secretsScope) && Option.isSome(flags.secretsScopeCustom)) {
+      return yield* new InvalidComputeSecretsScopeError({
+        detail: `Can't derminate the secrets scope. Found both --secrets-scope and --secrets-scope:custom overrides`,
+        suggestion: `Only use \`--secrets-scope\` or \`--secrets-scope:custom\` but not both.`,
+      });
+    }
+
+    const secretsScope = yield* resolveSecretsScope({
+      explicit: flags.secretsScope.pipe(Option.orElse(() => flags.secretsScopeCustom)),
+      canPrompt
+    });
 
     const instances = recordedInstances(flags.instances);
     // Recorded in `config.toml` rather than applied at push time; see ./SIDE_EFFECTS.md.
@@ -336,20 +348,20 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // from `apps/web` means `apps/web/generated`.
     const destination = Option.isSome(flags.source)
       ? yield* resolveComputeSource({
-          projectRoot: project.projectRoot,
-          cwd: runtimeInfo.cwd,
-          raw: flags.source.value,
-        })
+        projectRoot: project.projectRoot,
+        cwd: runtimeInfo.cwd,
+        raw: flags.source.value,
+      })
       : yield* confineComputePath({
-          projectRoot: project.projectRoot,
-          target: path.join(project.computeDir, name),
-          subject: `The default directory for "${name}"`,
-          // The default directory is `supabase/compute/<name>` with a validated
-          // name, so only a symlink escaping the project can reach this
-          // failure — which is what the suggestion names.
-          suggestion:
-            "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
-        });
+        projectRoot: project.projectRoot,
+        target: path.join(project.computeDir, name),
+        subject: `The default directory for "${name}"`,
+        // The default directory is `supabase/compute/<name>` with a validated
+        // name, so only a symlink escaping the project can reach this
+        // failure — which is what the suggestion names.
+        suggestion:
+          "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
+      });
 
     // Nothing here replaces what is already on disk: scaffolding over an existing
     // directory would have to delete it first, which isn't this command's job — it

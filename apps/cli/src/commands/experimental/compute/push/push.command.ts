@@ -52,17 +52,22 @@ const config = {
     ),
     Flag.optional,
   ),
-  secretsScope: Flag.orElse(Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE), () =>
-    Flag.String("secrets-scope:custom").pipe(
+  secretsScope: Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE)
+    .pipe(
+      Flag.withDescription(
+        "Controls whether secrets are available, overriding `secrets_scope` in the project config file for this deploy. Falls back to the recorded value, then all.",
+      ),
+      Flag.optional,
+    ),
+  secretsScopeCustom: Flag.String("secrets-scope:custom")
+    .pipe(
       Flag.map(parseSecretsScopeCustom),
       Flag.withMetavar("SECRET_NAMES"),
+      Flag.withDescription(
+        "Controls whether secrets are available, overriding `secrets_scope` with a comma separed list of allowed secret names. Falls back to the recorded value, then all.",
+      ),
+      Flag.optional,
     ),
-  ).pipe(
-    Flag.withDescription(
-      "Controls whether secrets are available, overriding `secrets_scope` in the project config file for this deploy. Falls back to the recorded value, then all.",
-    ),
-    Flag.optional,
-  ),
   noWait: Flag.Boolean("no-wait").pipe(
     // The deploy POST returns once the platform accepts the spec and context; the
     // server-side build that follows can run for minutes. Waiting stays the
