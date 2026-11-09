@@ -26,6 +26,7 @@ import {
   isSchemaWriter,
   type SchemaWriterService,
 } from "./internal/schema-writers.ts";
+import { apiTlsContext } from "./HttpProxy.ts";
 import * as Network from "./Network.ts";
 import type { NetworkEndpoint, NetworkNamespace } from "./Network.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -761,6 +762,8 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     retainMembers: boolean,
   ) {
     if (apiTls === undefined && retainMembers) return;
+    if (apiTls !== undefined)
+      yield* apiTlsContext(apiTls).pipe(Effect.mapError(serviceError("bind")));
     const saved =
       apiTls === undefined
         ? undefined
@@ -796,10 +799,8 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       port: yield* network.apiPort,
       stop: orchestrator.stopComposition,
       learned: (token, networks) =>
-        network
-          .adoptApiNetworks(token, networks)
-          .pipe(Effect.andThen(network.learnedApiPeers(token))),
-      saveLearned: ({ learnedPeers, networks }) =>
+        network.adoptApiNetworks(token, networks).pipe(Effect.andThen(network.learnedApi(token))),
+      saveLearned: ({ learnedArrivals, networks }) =>
         updateState((current) =>
           current.apiTls === undefined
             ? current
@@ -807,7 +808,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
                 ...current,
                 apiTls: {
                   ...current.apiTls,
-                  learnedPeers,
+                  learnedArrivals,
                   ...(networks.length === 0 ? {} : { networks }),
                 },
               },

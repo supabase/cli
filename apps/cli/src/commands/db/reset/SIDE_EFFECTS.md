@@ -37,15 +37,20 @@ local path stops the saved composition, resets the registered database instance'
 and readies that instance, reapplies the catalog overlay and migrations, then starts the saved
 composition again instead of recreating containers. On a Docker or Podman stack started with
 `[api.tls]`, that start reruns the `api.tls` container reach check; if it fails, the stack's
-services stop and the reset fails with `api.tls: containers can't reach the api on <runtime> (<what
-the probe saw>)`. The reset retains the saved database configuration and composition members; it
-does not rebuild the stack from current config. The catalog overlay provisions the Auth, Storage, and Realtime
-schemas for the saved composition's
-members, so services excluded at `stack start` stay excluded; for the database-only composition
-that `db start` creates, it provisions the services enabled in current config instead. The
-catalog also creates the `supabase_functions` schema, which migrations must not recreate. After
-the reset, buckets are seeded — reusing the `seed buckets` local path — when Storage is running
-(healthy or still starting), starting, or stopping/stopped with wake enabled; an unhealthy or
+services stop and the reset fails with ``failed to start local stack services: api.tls:
+containers can't reach the api on <runtime> (<what the probe saw>); its services stopped: let
+<runtime> containers reach the api port, or turn off `[api.tls]`, then start the stack
+again``; if they don't stop, it fails with ``failed to start local stack services: api.tls:
+containers can't reach the api on <runtime> (<what the probe saw>); its services did not stop
+(<reason>), run `supabase stack stop --stack-id <id>` to stop them``. The reset retains the saved
+database configuration and composition members; it does
+not rebuild the stack from current config. The catalog overlay provisions the Auth, Storage,
+and Realtime schemas for the saved composition's members, so services excluded at `stack
+start` stay excluded; for the database-only composition that `db start` creates, it provisions
+the services enabled in current config instead. The catalog also creates the
+`supabase_functions` schema, which migrations must not recreate. After the reset, buckets are
+seeded — reusing the `seed buckets` local path — when Storage is running (healthy or still
+starting), starting, or stopping/stopped with wake enabled; an unhealthy or
 errored Storage is skipped. The gateway handles lazy activation. The command never fails the
 reset for a Storage problem: an unavailable service, missing credentials, a stack-gateway
 activation failure, or an invalid bucket config all print `WARNING: skipped seeding storage buckets: <reason>

@@ -9,6 +9,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw HTTP upgrade sockets preserve handshake bytes.
+import { X509Certificate, createPrivateKey } from "node:crypto";
 import { createServer as createNetServer, Socket } from "node:net";
 import { createSecureContext, type SecureContext, TLSSocket } from "node:tls";
 import type { Duplex } from "node:stream";
@@ -723,8 +724,14 @@ export interface HttpProxyTls {
   readonly cert: string;
   readonly key: string;
   readonly plainPeer: (peer: string, local: string) => boolean;
-  /** A rejected peer whose first bytes are `GET <path> ` is learned, so `plainPeer` admits it. */
-  readonly learn?: { readonly path: string; readonly add: (address: string) => void };
+  /**
+   * A rejected peer whose first bytes are `GET <path> ` is learned with the local address it
+   * connected to, so `plainPeer` admits it.
+   */
+  readonly learn?: {
+    readonly path: string;
+    readonly add: (arrival: { readonly peer: string; readonly local: string }) => void;
+  };
   /** The plain listener's clocks unless a test shortens them. */
   readonly deadlines?: HttpDeadlines;
 }
@@ -732,7 +739,10 @@ export interface HttpProxyTls {
 interface HttpDeadlines {
   /** From accept until a request's headers, a TLS handshake included. */
   readonly headers: number;
-  /** From a response until the connection's next request. */
+  /**
+   * From a response until the connection's next request; when it runs out, a connection that read
+   * bytes since its last request gets `headers` once more, so a request started before it can finish.
+   */
   readonly idle: number;
 }
 
@@ -740,11 +750,38 @@ interface HttpDeadlines {
    client that stalls past its own timer from reusing a closed one. */
 const KEEP_ALIVE_TIMEOUT_BUFFER = 70_000;
 
-/** What Bun 1.4.4's HTTP server gives a plain connection: 12 s for headers, then 75 s idle. */
+/**
+ * What Bun 1.4.4's HTTP server gives a plain connection: 12 s for headers, then 75 s idle with no
+ * grace; `sniffing` adds a one-time 12 s grace for a request that started before idle ran out.
+ */
 const PLAIN_LISTENER_DEADLINES: HttpDeadlines = {
   headers: 12_000,
   idle: 5_000 + KEEP_ALIVE_TIMEOUT_BUFFER,
 };
+
+const invalidApiTls = (cause: unknown) =>
+  new PortError({
+    key: "http",
+    message: `api.tls: invalid certificate or key: ${cause instanceof Error ? cause.message : String(cause)}`,
+    cause,
+  });
+
+/* Fails on a certificate and key that are not a matching PEM pair; an empty pair still makes a
+   secure context, so the pair is parsed and matched as well. */
+export const apiTlsContext = (tls: { readonly cert: string; readonly key: string }) =>
+  Effect.try({
+    try: () => ({
+      context: createSecureContext({ cert: tls.cert, key: tls.key }),
+      matches: new X509Certificate(tls.cert).checkPrivateKey(createPrivateKey(tls.key)),
+    }),
+    catch: invalidApiTls,
+  }).pipe(
+    Effect.filterOrFail(
+      ({ matches }) => matches,
+      () => invalidApiTls("the certificate does not match the key"),
+    ),
+    Effect.map(({ context }) => context),
+  );
 
 const unmapped = (address: string | undefined) =>
   address?.startsWith("::ffff:") === true ? address.slice(7) : (address ?? "");
@@ -765,6 +802,8 @@ const sniffing = (
     readonly socket: Socket;
     timer: Fiber.Fiber<void> | undefined;
     inFlight: number;
+    /** The raw socket's `bytesRead` at the latest request. */
+    readAtRequest: number;
   }
   const pending = new WeakMap<object, Deadline>();
   const disarm = (deadline: Deadline) => {
@@ -777,6 +816,22 @@ const sniffing = (
       Effect.sleep(ms).pipe(Effect.andThen(Effect.sync(() => deadline.socket.destroy()))),
     );
   };
+  /* Never later than `idle + headers`: the grace is decided once, when idle runs out. */
+  const armIdle = (deadline: Deadline) => {
+    disarm(deadline);
+    deadline.timer = runDeadline(
+      Effect.sleep(deadlines.idle).pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            deadline.socket.bytesRead > deadline.readAtRequest
+              ? Effect.sleep(deadlines.headers)
+              : Effect.void,
+          ),
+        ),
+        Effect.andThen(Effect.sync(() => deadline.socket.destroy())),
+      ),
+    );
+  };
   const handOff = (deadline: Deadline, socket: Socket) => {
     pending.set(socket, deadline);
     server.emit("connection", socket);
@@ -785,10 +840,11 @@ const sniffing = (
     const deadline = pending.get(request.socket);
     if (deadline === undefined) return;
     deadline.inFlight += 1;
+    deadline.readAtRequest = deadline.socket.bytesRead;
     disarm(deadline);
     response.once("close", () => {
       deadline.inFlight -= 1;
-      if (deadline.inFlight === 0 && !deadline.socket.destroyed) arm(deadline, deadlines.idle);
+      if (deadline.inFlight === 0 && !deadline.socket.destroyed) armIdle(deadline);
     });
   });
   server.on("upgrade", (request) => {
@@ -808,7 +864,7 @@ const sniffing = (
     else socket.once("readable", () => peek(socket, size, next));
   };
   return createNetServer({ pauseOnConnect: true }, (socket) => {
-    const deadline: Deadline = { socket, timer: undefined, inFlight: 0 };
+    const deadline: Deadline = { socket, timer: undefined, inFlight: 0, readAtRequest: 0 };
     arm(deadline, deadlines.headers);
     sockets.add(socket);
     socket.once("close", () => {
@@ -824,11 +880,12 @@ const sniffing = (
         secure.on("error", () => secure.destroy());
         return handOff(deadline, secure);
       }
-      if (tls.plainPeer(peer, unmapped(socket.localAddress))) return handOff(deadline, socket);
+      const local = unmapped(socket.localAddress);
+      if (tls.plainPeer(peer, local)) return handOff(deadline, socket);
       if (learn === undefined || learning === undefined) return socket.destroy();
       peek(socket, learning.length, (head) => {
         if (head === undefined || !head.equals(learning)) return socket.destroy();
-        learn.add(peer);
+        learn.add({ peer, local });
         handOff(deadline, socket);
       });
     });
@@ -999,15 +1056,7 @@ export const makeHttpProxy = (options: {
         ? server
         : sniffing(
             tls,
-            yield* Effect.try({
-              try: () => createSecureContext({ cert: tls.cert, key: tls.key }),
-              catch: (cause) =>
-                new PortError({
-                  key: "http",
-                  message: `api.tls: invalid certificate or key: ${cause instanceof Error ? cause.message : String(cause)}`,
-                  cause,
-                }),
-            }),
+            yield* apiTlsContext(tls),
             server,
             sockets,
             yield* FiberSet.makeRuntime<never, void, never>(),

@@ -2,7 +2,8 @@ import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effec
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import {
   apiTlsSelfCheckPath,
-  plainPeerAllowed,
+  plainPeerAdmitted,
+  type ApiTlsArrival,
   type ApiTlsNetwork,
 } from "./runtime/ApiTlsSupport.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
@@ -96,8 +97,8 @@ export interface Interface {
   ) => Effect.Effect<boolean, PortError, Scope.Scope>;
   /** The shared API listener's port while it is open. */
   readonly apiPort: Effect.Effect<number | undefined>;
-  /** Plain API peers the self-check with this token let in, outside the saved peer rule. */
-  readonly learnedApiPeers: (token: string) => Effect.Effect<ReadonlyArray<string>>;
+  /** Where the self-check with this token was let in from, and at, outside the saved peer rule. */
+  readonly learnedApi: (token: string) => Effect.Effect<ReadonlyArray<ApiTlsArrival>>;
   /** Admits these engine networks, when any, in place of the saved ones for this token. */
   readonly adoptApiNetworks: (
     token: string,
@@ -136,6 +137,8 @@ const makeNetwork = (options: {
   readonly state: StackNamespace.Interface;
   readonly platform?: NodeJS.Platform;
   readonly onAccess?: HttpAccessSink;
+  /** This host's addresses for the plain peer rule, when a test stands in for them. */
+  readonly hostAddresses?: () => ReadonlySet<string>;
 }) =>
   Effect.gen(function* () {
     const ports = yield* makePorts(options.state).pipe(
@@ -170,14 +173,17 @@ const makeNetwork = (options: {
     );
 
     /* Owned by this network per self-check token, so a start that sets TLS again starts from its
-       own saved peers and networks rather than an earlier generation's. */
+       own saved arrivals and networks rather than an earlier generation's. */
     const learned = new Map<
       string,
-      { readonly peers: Set<string>; networks: ReadonlyArray<ApiTlsNetwork> }
+      { readonly arrivals: Map<string, ApiTlsArrival>; networks: ReadonlyArray<ApiTlsNetwork> }
     >();
+    const arrivalKey = ({ peer, local }: ApiTlsArrival) => `${peer}>${local}`;
     const proxyTls = (tls: SavedApiTls): HttpProxyTls => {
       const current = learned.get(tls.selfCheck) ?? {
-        peers: new Set(tls.learnedPeers),
+        arrivals: new Map(
+          (tls.learnedArrivals ?? []).map((arrival) => [arrivalKey(arrival), arrival]),
+        ),
         networks: tls.networks,
       };
       learned.set(tls.selfCheck, current);
@@ -185,8 +191,15 @@ const makeNetwork = (options: {
         cert: tls.cert,
         key: tls.key,
         plainPeer: (peer, local) =>
-          current.peers.has(peer) || plainPeerAllowed(current.networks)(peer, local),
-        learn: { path: apiTlsSelfCheckPath(tls.selfCheck), add: (peer) => current.peers.add(peer) },
+          plainPeerAdmitted(
+            current.networks,
+            [...current.arrivals.values()],
+            options.hostAddresses,
+          )(peer, local),
+        learn: {
+          path: apiTlsSelfCheckPath(tls.selfCheck),
+          add: (arrival) => current.arrivals.set(arrivalKey(arrival), arrival),
+        },
       };
     };
 
@@ -517,7 +530,7 @@ const makeNetwork = (options: {
       releaseStack: releaseStack(),
       claimNativePort: (key, port) => ports.claimNative(options.stackId, key, port),
       apiPort: Ref.get(shared).pipe(Effect.map((current) => current?.claim)),
-      learnedApiPeers: (token) => Effect.sync(() => [...(learned.get(token)?.peers ?? [])]),
+      learnedApi: (token) => Effect.sync(() => [...(learned.get(token)?.arrivals.values() ?? [])]),
       adoptApiNetworks: (token, networks) =>
         Effect.sync(() => {
           const current = learned.get(token);
@@ -532,6 +545,8 @@ export const layer = (options: {
   readonly runtime: NetworkRuntime;
   /** Receives the shared API listener's completed requests. */
   readonly onAccess?: HttpAccessSink;
+  /** This host's addresses for the plain peer rule, when a test stands in for them. */
+  readonly hostAddresses?: () => ReadonlySet<string>;
 }) =>
   Layer.effect(
     Service,

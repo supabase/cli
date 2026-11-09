@@ -45,8 +45,8 @@ first, so the gateway targets the same port/scheme the stack was actually
 brought up on (#6452).
 
 **Local (stack backend):** the Storage endpoint comes from the selected composition's
-Storage member observation, and the service-role JWT is generated from the primary database's
-observed JWT secret. `[api]`/`[api.tls]` fields and their `SUPABASE_API_*` overrides are not
+Storage member observation, and the service-role JWT is the stack's saved service-role key
+(`stack.credentials`). `[api]`/`[api.tls]` fields and their `SUPABASE_API_*` overrides are not
 consulted: a stack started with `[api.tls]` serves that endpoint over `https`, trusting the
 certificate saved in the stack's state at start, never `config.toml`. A saved certificate with a
 self-signed root is the only trusted CA; a CA-issued one is verified against Bun's default trust
@@ -241,8 +241,8 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
   result is refined by extension via a built-in MIME table (the host OS MIME
   database is not consulted; the deterministic built-in table is used instead).
 - **Stack backend (local).** The Storage endpoint comes from the selected composition's
-  Storage member observation, and the service-role JWT is generated from the primary database's
-  observed JWT secret. `seed buckets` opens saved state without launching the owner or any
+  Storage member observation, and the service-role JWT is the stack's saved service-role key
+  (`stack.credentials`). `seed buckets` opens saved state without launching the owner or any
   service member. All legacy `[api]`/`[api.tls]`/`SUPABASE_API_*`/`SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}`
   config validation above (including the `<16`-char secret and TLS cert/key-pairing checks) is
   skipped on this path, even when there is nothing configured to seed.

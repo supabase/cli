@@ -30,12 +30,14 @@ const makeTestNetwork = (options: {
   readonly runtime: Network.NetworkRuntime;
   readonly state: StackNamespace.Interface;
   readonly onAccess?: HttpAccessSink | undefined;
+  readonly hostAddresses?: () => ReadonlySet<string>;
 }) =>
   Layer.build(
     Network.layer({
       stackId: options.stackId,
       runtime: options.runtime,
       ...(options.onAccess === undefined ? {} : { onAccess: options.onAccess }),
+      ...(options.hostAddresses === undefined ? {} : { hostAddresses: options.hostAddresses }),
     }).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, options.state))),
   ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
 
@@ -775,6 +777,7 @@ const emailTemplates = (
   runtime: Network.NetworkRuntime,
   onAccess?: HttpAccessSink,
   apiTls?: NonNullable<StackNamespace.SavedStack["apiTls"]>,
+  hostAddresses?: () => ReadonlySet<string>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -797,51 +800,66 @@ const emailTemplates = (
       response.end("backend");
     });
     const creation = yield* Ref.make(authWith(root, [{ id: "invite", path: invite }]));
-    const network = yield* makeTestNetwork({ stackId, runtime, state, onAccess });
-    const namespace = yield* network.register({
-      id: "auth",
-      endpoints: {
-        http: {
-          ...endpoint(target, Effect.succeed(false)),
-          shared: sharedRoutes(
-            { service: "auth" },
-            "http",
-            { publishableKey: "", secretKey: "", anonKey: "", serviceRoleKey: "" },
-            () => Effect.succeed(target),
-            emailTemplateFile(Ref.get(creation)),
-          ),
-        },
-      },
-    });
-    const [binding] = yield* namespace.bind;
-    if (binding === undefined) return yield* new FixtureError({ message: "no binding" });
-    yield* Effect.addFinalizer(() => network.releaseStack.pipe(Effect.ignore));
+    /* Auth's shared routes on `network`, bound. */
+    const serve = (network: Network.Interface) =>
+      Effect.gen(function* () {
+        const namespace = yield* network.register({
+          id: "auth",
+          endpoints: {
+            http: {
+              ...endpoint(target, Effect.succeed(false)),
+              shared: sharedRoutes(
+                { service: "auth" },
+                "http",
+                { publishableKey: "", secretKey: "", anonKey: "", serviceRoleKey: "" },
+                () => Effect.succeed(target),
+                emailTemplateFile(Ref.get(creation)),
+              ),
+            },
+          },
+        });
+        const [binding] = yield* namespace.bind;
+        if (binding === undefined) return yield* new FixtureError({ message: "no binding" });
+        yield* Effect.addFinalizer(() => network.releaseStack.pipe(Effect.ignore));
+        return { namespace, port: binding.port };
+      });
+    const network = yield* makeTestNetwork({ stackId, runtime, state, onAccess, hostAddresses });
+    const { namespace, port } = yield* serve(network);
     return {
       root,
       outside,
       invite,
       creation,
       backendCalls,
-      port: binding.port,
+      port,
       namespace,
       network,
       state,
       stackId,
+      /** A later owner's network over the same saved state, serving the same routes. */
+      reopened: makeTestNetwork({ stackId, runtime, state, hostAddresses }).pipe(
+        Effect.flatMap((next) =>
+          serve(next).pipe(Effect.map((served) => ({ ...served, network: next }))),
+        ),
+      ),
     };
   });
 
-/** Sends a request head verbatim, Host included, over plain TCP or TLS, and answers the raw reply. */
+/**
+ * Sends a request head verbatim, Host included, over plain TCP from `localAddress` when given, or
+ * TLS, and answers the raw reply.
+ */
 const rawHead = (
   port: number,
   lines: ReadonlyArray<string>,
-  options: { readonly host?: string; readonly ca?: string } = {},
+  options: { readonly host?: string; readonly ca?: string; readonly localAddress?: string } = {},
 ) =>
   Effect.callback<string, FixtureError>((resume) => {
     const host = options.host ?? "127.0.0.1";
     const head = `${lines.join("\r\n")}\r\n\r\n`;
     const socket =
       options.ca === undefined
-        ? Net.connect({ host, port }, () => socket.write(head))
+        ? Net.connect({ host, port, localAddress: options.localAddress }, () => socket.write(head))
         : Tls.connect({ host, port, ca: options.ca, servername: "localhost" }, () =>
             socket.write(head),
           );
@@ -1427,35 +1445,110 @@ it.live("keeps every listener, URL and scheme of the API without TLS", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("admits the plain peers an earlier owner's self-check saved with the stack's TLS", () =>
+/* This host holds only a fake gateway, so its LAN address connecting to loopback stands in for a
+   container's self-check arriving at a `host-gateway` set to another address of this host. */
+const gatewayOnly = () => new Set(["192.0.2.1"]);
+
+/** The LAN address, its /24 network with the held fake gateway, and a sibling address in it. */
+const lanNetwork = Effect.gen(function* () {
+  const lan = yield* externalAddress;
+  const [a, b, c, d] = lan.split(".").map(Number);
+  return {
+    lan,
+    network: { subnet: `${a}.${b}.${c}.0/24`, gateway: "192.0.2.1" },
+    sibling: `${a}.${b}.${c}.${d === 254 ? 253 : (d ?? 0) + 1}`,
+  };
+});
+
+/* A plain API request from `from`, to `to`; a refused peer reads as "". */
+const plainFrom = (port: number, from: string, to = "127.0.0.1") =>
+  rawHead(
+    port,
+    ["GET /auth/v1/health HTTP/1.1", `Host: host.supabase.internal:${port}`, "Connection: close"],
+    { host: to, localAddress: from },
+  ).pipe(Effect.orElseSucceed(() => ""));
+
+const selfCheckFrom = (port: number, from: string) =>
+  rawHead(
+    port,
+    [
+      "GET /__api_tls_self_check?token=self-check-token HTTP/1.0",
+      `Host: host.supabase.internal:${port}`,
+    ],
+    { localAddress: from },
+  );
+
+it.live("admits a saved arrival's network at its address once that network is adopted", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const tls = yield* localTls;
-      const { network } = yield* emailTemplates("docker", undefined, {
-        ...savedTls(tls),
-        learnedPeers: ["10.9.8.7"],
-      });
-      expect(yield* network.learnedApiPeers("self-check-token")).toEqual(["10.9.8.7"]);
+      const { lan, network: lanNet, sibling } = yield* lanNetwork;
+      const { port, network } = yield* emailTemplates(
+        "docker",
+        undefined,
+        { ...savedTls(tls), learnedArrivals: [{ peer: sibling, local: "127.0.0.1" }] },
+        gatewayOnly,
+      );
+      expect(yield* plainFrom(port, lan)).toBe("");
+      yield* network.adoptApiNetworks("self-check-token", [lanNet]);
+      expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("refuses an earlier TLS generation's learned peer once a start sets TLS again", () =>
+it.live("admits a learned self-check only at the exact address it arrived on", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const tls = yield* localTls;
-      const { network, namespace, state, stackId } = yield* emailTemplates("docker", undefined, {
-        ...savedTls(tls),
-        learnedPeers: ["10.9.8.7"],
+      const { lan, network: lanNet } = yield* lanNetwork;
+      const { port, network } = yield* emailTemplates(
+        "docker",
+        undefined,
+        savedTls(tls),
+        gatewayOnly,
+      );
+      expect(yield* plainFrom(port, lan)).toBe("");
+      expect(yield* selfCheckFrom(port, lan)).toMatch(/^HTTP\/1\./u);
+      expect(yield* network.learnedApi("self-check-token")).toEqual([
+        { peer: lan, local: "127.0.0.1" },
+      ]);
+      expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
+      expect(yield* plainFrom(port, lan, lan)).toBe("");
+      /* The arrival's own network adds its address, never another one. */
+      yield* network.adoptApiNetworks("self-check-token", [lanNet]);
+      expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
+      expect(yield* plainFrom(port, lan, lan)).toBe("");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("admits saved arrivals on a later owner's listener until a start sets TLS again", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const tls = yield* localTls;
+      const { lan, network: lanNet } = yield* lanNetwork;
+      const first = yield* emailTemplates("docker", undefined, savedTls(tls), gatewayOnly);
+      expect(yield* selfCheckFrom(first.port, lan)).toMatch(/^HTTP\/1\./u);
+      /* What the start check saves for later owners. */
+      yield* first.state.save({
+        ...stack(first.stackId),
+        apiTls: {
+          ...savedTls(tls),
+          networks: [lanNet],
+          learnedArrivals: yield* first.network.learnedApi("self-check-token"),
+        },
       });
-      expect(yield* network.learnedApiPeers("self-check-token")).toEqual(["10.9.8.7"]);
-      yield* namespace.close;
-      yield* state.save({
-        ...stack(stackId),
-        apiTls: { ...savedTls(tls), selfCheck: "next-start" },
+      yield* first.namespace.close;
+      const later = yield* first.reopened;
+      expect(yield* plainFrom(later.port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
+      yield* later.namespace.close;
+      yield* first.state.save({
+        ...stack(first.stackId),
+        apiTls: { ...savedTls(tls), networks: [lanNet], selfCheck: "next-start" },
       });
-      yield* namespace.bind;
-      expect(yield* network.learnedApiPeers("next-start")).toEqual([]);
+      const [binding] = yield* later.namespace.bind;
+      expect(yield* plainFrom(binding?.port ?? later.port, lan)).toBe("");
+      expect(yield* later.network.learnedApi("next-start")).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -1,6 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Queue } from "effect";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
@@ -2103,7 +2104,7 @@ it.live("serves TLS to every peer and plain HTTP on the same port only to admitt
     Effect.gen(function* () {
       const { cert, key } = yield* testPair;
       const seen: Array<string> = [];
-      const learned = new Set<string>();
+      const learned: Array<{ readonly peer: string; readonly local: string }> = [];
       let admit = false;
       const backend = yield* listen(
         createServer((incoming, outgoing) =>
@@ -2120,9 +2121,9 @@ it.live("serves TLS to every peer and plain HTTP on the same port only to admitt
           key,
           plainPeer: (peer) => {
             seen.push(peer);
-            return admit || learned.has(peer);
+            return admit || learned.some((arrival) => arrival.peer === peer);
           },
-          learn: { path: "/__self_check/secret", add: (peer) => learned.add(peer) },
+          learn: { path: "/__self_check/secret", add: (arrival) => learned.push(arrival) },
         },
       });
       yield* proxy.setRoutes([
@@ -2143,15 +2144,15 @@ it.live("serves TLS to every peer and plain HTTP on the same port only to admitt
       expect(yield* exchange(proxy.port, at(local))).toBe("");
       expect(seen).toEqual(["127.0.0.1"]);
       expect(yield* exchange(proxy.port, "GET /__self_check/wrong HTTP/1.0\r\n\r\n")).toBe("");
-      expect(learned.size).toBe(0);
+      expect(learned).toHaveLength(0);
       expect(
         yield* exchange(proxy.port, `GET /__self_check/secret HTTP/1.0\r\nHost: ${local}\r\n\r\n`),
       ).toMatch(/^HTTP\/1\.1 404 /u);
-      expect([...learned]).toEqual(["127.0.0.1"]);
+      expect(learned).toEqual([{ peer: "127.0.0.1", local: "127.0.0.1" }]);
       expect(yield* exchange(proxy.port, at(local, "/api"))).toMatch(
         new RegExp(`proto=http port=${proxy.port}$`, "u"),
       );
-      learned.clear();
+      learned.length = 0;
 
       admit = true;
       expect(yield* exchange(proxy.port, at(local, "/api"), cert)).toMatch(
@@ -2186,13 +2187,18 @@ it.live("serves TLS to every peer and plain HTTP on the same port only to admitt
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-/* A raw connection that sends `head`, collecting what comes back until the proxy closes it. */
-const held = (port: number, head: string | Buffer) =>
+/* A raw connection, over TLS with `ca`, that sends `head`, collecting what comes back until the
+   proxy closes it. */
+const held = (port: number, head: string | Buffer, ca?: string) =>
   Effect.acquireRelease(
     Effect.sync(() => {
-      const socket = new Socket().connect(port, "127.0.0.1", () => {
+      const send = () => {
         if (head.length > 0) socket.write(head);
-      });
+      };
+      const socket =
+        ca === undefined
+          ? new Socket().connect(port, "127.0.0.1", send)
+          : tlsConnect({ host: "127.0.0.1", port, ca, servername: "localhost" }, send);
       const received = { text: "" };
       socket.on("data", (chunk: Buffer) => {
         received.text += chunk.toString("latin1");
@@ -2270,15 +2276,17 @@ it.live(
   10_000,
 );
 
-it.live(
+it.effect(
   "keeps a TLS port's slow, keep-alive and WebSocket connections past the header deadline",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const pair = yield* testPair;
-        const slow: Array<ServerResponse> = [];
+        const slow = yield* Deferred.make<ServerResponse>();
         const backend = createServer((incoming, outgoing) =>
-          incoming.url === "/api/slow" ? slow.push(outgoing) : outgoing.end("pong"),
+          incoming.url === "/api/slow"
+            ? Deferred.doneUnsafe(slow, Effect.succeed(outgoing))
+            : outgoing.end("pong"),
         );
         const sockets = new WebSocketServer({ server: backend });
         sockets.on("connection", (socket) =>
@@ -2292,7 +2300,7 @@ it.live(
         const proxy = yield* makeHttpProxy({
           host: "127.0.0.1",
           port: 0,
-          tls: { ...pair, deadlines: { headers: 150, idle: 60_000 }, plainPeer: () => true },
+          tls: { ...pair, deadlines: { headers: 1_000, idle: 60_000 }, plainPeer: () => true },
         });
         yield* proxy.setRoutes([
           { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backendAddress) },
@@ -2302,6 +2310,7 @@ it.live(
         const kept = yield* held(proxy.port, request("/api/x"));
         yield* replies(kept, "pong", 1);
         const waiting = yield* held(proxy.port, request("/api/slow"));
+        const response = yield* Deferred.await(slow);
         const client = yield* Effect.acquireRelease(
           Effect.callback<WebSocket, HttpProxyTestError>((resume) => {
             const socket = new WebSocket(`ws://127.0.0.1:${proxy.port}/api/ws`);
@@ -2312,10 +2321,9 @@ it.live(
           }),
           (socket) => Effect.sync(() => socket.terminate()),
         );
-        /* A later silent connection closing proves the earlier header timers have run out. */
-        yield* closed((yield* held(proxy.port, "")).socket);
-        expect(slow).toHaveLength(1);
-        for (const response of slow) response.end("late");
+        /* Each connection is past its headers, so running out their clocks must close none. */
+        yield* TestClock.adjust(1_000);
+        response.end("late");
         expect(yield* replies(waiting, "late", 1)).toMatch(/^HTTP\/1\.1 200 /u);
         kept.socket.write(request("/api/x"));
         expect(yield* replies(kept, "pong", 2)).toMatch(/^HTTP\/1\.1 200 /u);
@@ -2330,6 +2338,114 @@ it.live(
     ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+/* A keep-alive connection on a TLS port at the plain listener's clocks whose first request,
+   `POST /api/hold`, the backend answers only once its body ends. */
+const keepAlive = (mode: "plain" | "tls", head: (host: string) => string) =>
+  Effect.gen(function* () {
+    const pair = yield* testPair;
+    const holding = yield* Deferred.make<void>();
+    const backend = yield* listen(
+      createServer((incoming, outgoing) => {
+        if (incoming.url !== "/api/hold") return outgoing.end("pong");
+        Deferred.doneUnsafe(holding, Effect.void);
+        incoming.resume();
+        incoming.once("end", () => outgoing.end("held"));
+      }),
+    );
+    const proxy = yield* makeHttpProxy({
+      host: "127.0.0.1",
+      port: 0,
+      tls: { ...pair, deadlines: { headers: 12_000, idle: 75_000 }, plainPeer: () => true },
+    });
+    yield* proxy.setRoutes([
+      { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backend) },
+    ]);
+    const host = `Host: 127.0.0.1:${proxy.port}\r\n`;
+    const connection = yield* held(proxy.port, head(host), mode === "tls" ? pair.cert : undefined);
+    return { connection, holding, host };
+  });
+
+/* Its first body byte, which reaches the backend only after the proxy's request, then the rest
+   and the next request's start in one write, which the proxy has read once the held response
+   arrives on the same connection. */
+const straddling = (mode: "plain" | "tls") =>
+  Effect.gen(function* () {
+    const { connection, holding, host } = yield* keepAlive(
+      mode,
+      (host) => `POST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nb`,
+    );
+    yield* Deferred.await(holding);
+    connection.socket.write("odyGET /api/x HTTP/1.1\r\n");
+    yield* replies(connection, "held", 1);
+    return { connection, rest: `${host}\r\n` };
+  });
+
+/* The connection's next reply, or `closed` when the proxy closes it first. */
+const nextReply = (connection: Effect.Success<ReturnType<typeof held>>, body: string, count = 1) =>
+  Effect.raceFirst(
+    replies(connection, body, count),
+    closed(connection.socket).pipe(Effect.as("closed")),
+  );
+
+for (const mode of ["plain", "tls"] as const) {
+  it.effect(`lets a ${mode} request that started before idle ran out finish its headers`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, rest } = yield* straddling(mode);
+        yield* TestClock.adjust(75_000);
+        yield* TestClock.adjust(11_999);
+        connection.socket.write(rest);
+        expect(yield* nextReply(connection, "pong")).toMatch(/HTTP\/1\.1 200 [^]*pong$/u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    `closes a ${mode} request that started before idle ran out at its header deadline`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { connection } = yield* straddling(mode);
+          yield* TestClock.adjust(75_000);
+          yield* TestClock.adjust(12_000);
+          yield* closed(connection.socket);
+          expect(connection.received.text).not.toContain("pong");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`closes an idle ${mode} connection at idle`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection } = yield* keepAlive(
+          mode,
+          (host) => `GET /api/x HTTP/1.1\r\n${host}\r\n`,
+        );
+        yield* replies(connection, "pong", 1);
+        yield* TestClock.adjust(75_000);
+        yield* closed(connection.socket);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`keeps a ${mode} pipelined partial request open for idle`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, host } = yield* keepAlive(
+          mode,
+          (host) => `GET /api/x HTTP/1.1\r\n${host}\r\nGET /api/x HTTP/1.1\r\n`,
+        );
+        yield* replies(connection, "pong", 1);
+        yield* TestClock.adjust(74_999);
+        connection.socket.write(`${host}\r\n`);
+        expect(yield* nextReply(connection, "pong", 2)).toMatch(
+          /pong[^]*HTTP\/1\.1 200 [^]*pong$/u,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
 it.live("fails to listen when the certificate and key are not a pair", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2339,6 +2455,7 @@ it.live("fails to listen when the certificate and key are not a pair", () =>
         { cert: pair.cert, key: other.export({ type: "pkcs8", format: "pem" }).toString() },
         { cert: pair.cert, key: "not a pem" },
         { cert: "not a pem", key: pair.key },
+        { cert: "", key: "" },
       ]) {
         const error = yield* Effect.flip(
           makeHttpProxy({ host: "127.0.0.1", port: 0, tls: { ...tls, plainPeer: () => true } }),

@@ -109,8 +109,8 @@ No custom storage telemetry events.
   subcommand token (`storage ls --remote`, not `storage --remote ls`) — the same shape the `db`
   family uses.
 - **Stack backend (local target).** The Storage endpoint comes from the selected composition's
-  Storage member observation, and the service-role JWT is generated from the primary database's
-  observed JWT secret. The stack is opened by project identity through the `@supabase/stack` API,
+  Storage member observation, and the service-role JWT is the stack's saved service-role key
+  (`stack.credentials`). The stack is opened by project identity through the `@supabase/stack` API,
   which reads stack state under `SUPABASE_HOME`; `ls` opens saved state without launching
   the owner or any service member. A stack started with `[api.tls]` serves that endpoint over
   `https`, and the request trusts the certificate saved in the stack's state at start, never

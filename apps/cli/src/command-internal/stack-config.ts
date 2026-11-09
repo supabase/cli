@@ -6,13 +6,14 @@ import {
   DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
   DEFAULT_SIGNING_KEY,
 } from "@supabase/stack/defaults";
-import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
+import {
+  apiTlsContext,
+  type ServiceCreationInput as ServiceCreationType,
+} from "@supabase/stack/effect";
 import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import { SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
-import { X509Certificate, createPrivateKey } from "node:crypto";
-import { createSecureContext } from "node:tls";
 
 import { CliConfigKeys, type AnyCliConfigKey } from "../config/cli-config-keys.ts";
 import { resolveConfigSubtree } from "../config/cli-config-subtree.ts";
@@ -368,24 +369,19 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           cert: yield* readTls(certPath, apiTlsCertReadErrorMessage),
           key: yield* readTls(keyPath, apiTlsKeyReadErrorMessage),
         };
-        const pairError = (cause: unknown) =>
-          new StackConfigError({
-            message: apiTlsPairErrorMessage(
-              resolveApiTlsPath(path, projectRoot, certPath),
-              resolveApiTlsPath(path, projectRoot, keyPath),
-              cause,
-            ),
-          });
-        /* Proven usable here, so start never fails on it after binding; an empty file still makes
-           a secure context, so the pair is parsed and matched as well. */
-        const matches = yield* Effect.try({
-          try: () => {
-            createSecureContext(pair);
-            return new X509Certificate(pair.cert).checkPrivateKey(createPrivateKey(pair.key));
-          },
-          catch: pairError,
-        });
-        if (!matches) return yield* pairError("the certificate does not match the key");
+        /* Proven usable here, so start never fails on it after binding. */
+        yield* apiTlsContext(pair).pipe(
+          Effect.mapError(
+            (error) =>
+              new StackConfigError({
+                message: apiTlsPairErrorMessage(
+                  resolveApiTlsPath(path, projectRoot, certPath),
+                  resolveApiTlsPath(path, projectRoot, keyPath),
+                  error.cause,
+                ),
+              }),
+          ),
+        );
         return pair;
       });
       const auth = validatedConfig.auth;

@@ -75,15 +75,16 @@ const tlsProxy = (token: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const certs = path.join(import.meta.dirname, "..", "..", "tests", "certs");
-    const learned = new Set<string>();
+    const learned: Array<{ readonly peer: string; readonly local: string }> = [];
     const proxy = yield* makeHttpProxy({
       host: "127.0.0.1",
       port: 0,
       tls: {
         cert: yield* fs.readFileString(path.join(certs, "trusted.crt")),
         key: yield* fs.readFileString(path.join(certs, "localhost.key")),
-        plainPeer: (peer) => learned.has(peer),
-        learn: { path: apiTlsSelfCheckPath(token), add: (peer) => learned.add(peer) },
+        plainPeer: (peer, local) =>
+          learned.some((arrival) => arrival.peer === peer && arrival.local === local),
+        learn: { path: apiTlsSelfCheckPath(token), add: (arrival) => learned.push(arrival) },
       },
     });
     return { port: proxy.port, learned };
@@ -105,7 +106,7 @@ it.live("lets the database container's peer in and passes start", () =>
         port,
         apiTlsSelfCheckPath("start-token"),
       );
-      expect([...learned]).toEqual(["127.0.0.1"]);
+      expect(learned).toEqual([{ peer: "127.0.0.1", local: "127.0.0.1" }]);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -126,7 +127,7 @@ it.live("fails start when the container's request gets no HTTP reply", () =>
         ),
       );
       expect(blocked.message).toBe("api.tls: containers can't reach the api on test runtime");
-      expect(learned.size).toBe(0);
+      expect(learned).toHaveLength(0);
       const missing = yield* Effect.flip(
         selfCheckApiTls(
           yield* engineOnHost(""),
@@ -277,11 +278,11 @@ it.live("stops the stack when containers can't reach the API, naming what the pr
         stops += 1;
       });
       expect((yield* check(stopped, "")).message).toBe(
-        "api.tls: containers can't reach the api on test runtime (no database container)",
+        "api.tls: containers can't reach the api on test runtime (no database container); its services stopped: let test runtime containers reach the api port, or turn off `[api.tls]`, then start the stack again",
       );
       const blocked = yield* check(stopped, "stack-db\n");
       expect(blocked.message).toMatch(
-        /^api\.tls: containers can't reach the api on test runtime \(.+\)$/u,
+        /^api\.tls: containers can't reach the api on test runtime \(.+\); its services stopped: /u,
       );
       const refused = yield* check(stopped, "stack-db\n", true);
       expect(refused.message).toContain("__api_tls_self_check?token=<redacted>");
@@ -356,7 +357,7 @@ it.live("stops the stack when its saved TLS can't be read after a start", () =>
       }),
     );
     expect(unreadable.message).toBe(
-      "api.tls: can't read the stack's saved TLS (state.json unreadable)",
+      "api.tls: can't read the stack's saved TLS (state.json unreadable); its services stopped: start the stack again",
     );
     expect(stops).toBe(1);
     const stuck = yield* read(Effect.fail(new StopError({ message: "engine gone" })));
@@ -371,11 +372,14 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { port } = yield* tlsProxy("start-token");
+        const { port, learned: arrivals } = yield* tlsProxy("start-token");
         const bridge = { subnet: "172.17.0.0/16", gateway: "172.17.0.1" };
         const saved: Array<unknown> = [];
         const adopted: Array<unknown> = [];
-        const check = (peers: ReadonlyArray<string>, networks: string) =>
+        const check = (
+          found: ReadonlyArray<{ readonly peer: string; readonly local: string }>,
+          networks: string,
+        ) =>
           Effect.gen(function* () {
             yield* checkApiTlsReach({
               spawner: yield* engineOnHost("stack-db\n", [], false, networks),
@@ -385,10 +389,10 @@ it.live(
               apiTls: Effect.succeed({ selfCheck: "start-token" }),
               port,
               stop: Effect.void,
-              learned: (token, found) =>
+              learned: (token, read) =>
                 Effect.sync(() => {
-                  adopted.push(found);
-                  return token === "start-token" ? peers : [];
+                  adopted.push(read);
+                  return token === "start-token" ? [...found] : [];
                 }),
               saveLearned: (learned) =>
                 Effect.sync(() => {
@@ -396,14 +400,15 @@ it.live(
                 }),
             });
           });
-        yield* check(["10.9.8.7"], "");
+        /* The proxy learned where the self-check arrived from, and at. */
+        yield* check(arrivals, "");
         /* A database admitted by the network rule learns no peer, but its network is saved. */
         yield* check([], "172.17.0.4/16 172.17.0.1\n");
         yield* check([], "");
         expect(adopted).toEqual([[], [bridge], []]);
         expect(saved).toEqual([
-          { learnedPeers: ["10.9.8.7"], networks: [] },
-          { learnedPeers: [], networks: [bridge] },
+          { learnedArrivals: [{ peer: "127.0.0.1", local: "127.0.0.1" }], networks: [] },
+          { learnedArrivals: [], networks: [bridge] },
         ]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
@@ -425,7 +430,7 @@ it.live("keeps a passing self-check when saving its learned peers fails", () => 
         stop: Effect.sync(() => {
           stops += 1;
         }),
-        learned: () => Effect.succeed(["10.9.8.7"]),
+        learned: () => Effect.succeed([{ peer: "10.9.8.7", local: "192.168.1.10" }]),
         saveLearned: () => Effect.fail(new StopError({ message: "state.json unwritable" })),
       });
       expect(stops).toBe(0);

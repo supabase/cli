@@ -42,8 +42,10 @@ const SavedApiTls = Schema.Struct({
   /** The engine's default network at compose, then the database container's after a self-check. */
   networks: Schema.Array(Schema.Struct({ subnet: Schema.String, gateway: Schema.String })),
   selfCheck: Schema.String,
-  /** Peers the self-check let in, kept for later owners until a start sets TLS again. */
-  learnedPeers: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Where the self-check was let in from, and at, kept for later owners until a start sets TLS again. */
+  learnedArrivals: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ peer: Schema.String, local: Schema.String })),
+  ),
 });
 
 export const StackCredentials = Schema.Struct({

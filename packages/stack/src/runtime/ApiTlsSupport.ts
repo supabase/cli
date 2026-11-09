@@ -15,6 +15,12 @@ export interface ApiTlsNetwork {
   readonly gateway: string;
 }
 
+/** Where a self-check's request came from and the address of this host it connected to. */
+export interface ApiTlsArrival {
+  readonly peer: string;
+  readonly local: string;
+}
+
 /** The runtime a failed self-check names, like `macos rootless podman`. */
 export const apiTlsRuntimeLabel = (
   target: EngineTarget,
@@ -91,6 +97,8 @@ const hostAddresses = () =>
       .map((entry) => entry.address),
   );
 
+const loopbackPeer = (peer: string) => peer === "::1" || inSubnet(peer, "127.0.0.0/8");
+
 /**
  * Plain HTTP on a TLS API port: loopback, an address of this host (host processes and user-mode
  * relays connect from one), or a peer in an engine network that connected to that network's
@@ -103,13 +111,55 @@ export const plainPeerAllowed =
     localAddresses: () => ReadonlySet<string> = hostAddresses,
   ) =>
   (peer: string, local: string): boolean =>
-    peer === "::1" ||
-    inSubnet(peer, "127.0.0.0/8") ||
+    loopbackPeer(peer) ||
     localAddresses().has(peer) ||
     networks.some(
       (network) =>
         network.gateway !== "" && local === network.gateway && inSubnet(peer, network.subnet),
     );
+
+/* Each network, and again at the local address a self-check from inside it arrived on when this
+   host holds its gateway, that address is outside it, and the peer is not loopback or this host. */
+const arrivalGateways = (
+  networks: ReadonlyArray<ApiTlsNetwork>,
+  arrivals: ReadonlyArray<ApiTlsArrival>,
+  host: ReadonlySet<string>,
+) => {
+  const inside = arrivals.filter(
+    ({ peer }) => IPV4.test(peer) && !inSubnet(peer, "127.0.0.0/8") && !host.has(peer),
+  );
+  return networks.flatMap((network) => [
+    network,
+    ...(network.gateway !== "" && host.has(network.gateway)
+      ? inside
+          .filter(
+            ({ peer, local }) =>
+              local !== network.gateway &&
+              inSubnet(peer, network.subnet) &&
+              !inSubnet(local, network.subnet),
+          )
+          .map(({ local }) => ({ subnet: network.subnet, gateway: local }))
+      : []),
+  ]);
+};
+
+/**
+ * `plainPeerAllowed`, plus each self-check arrival on its exact peer and local address, and the
+ * peers of its engine network at that arrival's local address, as `arrivalGateways` derives them.
+ */
+export const plainPeerAdmitted =
+  (
+    networks: ReadonlyArray<ApiTlsNetwork>,
+    arrivals: ReadonlyArray<ApiTlsArrival>,
+    localAddresses: () => ReadonlySet<string> = hostAddresses,
+  ) =>
+  (peer: string, local: string): boolean => {
+    if (loopbackPeer(peer)) return true;
+    if (arrivals.some((arrival) => arrival.peer === peer && arrival.local === local)) return true;
+    /* One snapshot per connection. */
+    const host = localAddresses();
+    return plainPeerAllowed(arrivalGateways(networks, arrivals, host), () => host)(peer, local);
+  };
 
 /** The self-check request target; its secret token, redacted in access logs, lets an unlisted peer be learned. */
 export const apiTlsSelfCheckPath = (token: string) => `/__api_tls_self_check?token=${token}`;
@@ -219,19 +269,20 @@ export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* 
   readonly stop: Effect.Effect<unknown, { readonly message: string }>;
   /**
    * Admits the database container's networks found by the probe, none when unread, and returns
-   * the peers the probe was let in as; both are saved so later owners admit them too.
+   * the arrivals the probe was let in as; both are saved so later owners admit them too.
    */
   readonly learned: (
     token: string,
     networks: ReadonlyArray<ApiTlsNetwork>,
-  ) => Effect.Effect<ReadonlyArray<string>>;
+  ) => Effect.Effect<ReadonlyArray<ApiTlsArrival>>;
   readonly saveLearned: (learned: {
-    readonly learnedPeers: ReadonlyArray<string>;
+    readonly learnedArrivals: ReadonlyArray<ApiTlsArrival>;
     readonly networks: ReadonlyArray<ApiTlsNetwork>;
   }) => Effect.Effect<void, { readonly message: string }>;
 }) {
   const { stack } = options;
-  const stopThenFail = (message: string, detail: string) =>
+  /* `next` is what to do once the services stopped. */
+  const stopThenFail = (message: string, detail: string, next: string) =>
     Effect.gen(function* () {
       yield* Effect.logWarning(`${message}: ${detail}`);
       const unstopped = yield* options.stop.pipe(
@@ -244,7 +295,7 @@ export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* 
       );
       const recovery =
         unstopped === undefined
-          ? ""
+          ? `; its services stopped: ${next}`
           : `; its services did not stop (${unstopped}), run \`supabase stack stop --stack-id ${stack.id}\` to stop them`;
       return yield* new ApiTlsSelfCheckError({
         message: `${message} (${detail})${recovery}`,
@@ -253,7 +304,11 @@ export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* 
     });
   const apiTls = yield* options.apiTls.pipe(
     Effect.catch((cause) =>
-      stopThenFail("api.tls: can't read the stack's saved TLS", cause.message),
+      stopThenFail(
+        "api.tls: can't read the stack's saved TLS",
+        cause.message,
+        "start the stack again",
+      ),
     ),
   );
   if (apiTls === undefined || options.port === undefined) return;
@@ -266,16 +321,22 @@ export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* 
     apiTlsSelfCheckPath(apiTls.selfCheck),
   ).pipe(
     Effect.catchTag("ApiTlsSelfCheckError", (error) =>
-      stopThenFail(error.message, error.detail.replaceAll(apiTls.selfCheck, "<redacted>")),
+      stopThenFail(
+        error.message,
+        error.detail.replaceAll(apiTls.selfCheck, "<redacted>"),
+        `let ${options.runtime} containers reach the api port, or turn off \`[api.tls]\`, then start the stack again`,
+      ),
     ),
   );
   const learned = yield* options.learned(apiTls.selfCheck, networks);
   if (learned.length > 0)
-    yield* Effect.logInfo(`api.tls: plain api peers learned by the self-check: ${learned}`);
+    yield* Effect.logInfo(
+      `api.tls: plain api peers learned by the self-check: ${learned.map(({ peer, local }) => `${peer}@${local}`)}`,
+    );
   if (learned.length === 0 && networks.length === 0) return;
   /* Best effort: this owner keeps them in memory, only a later owner would miss them. */
   yield* options
-    .saveLearned({ learnedPeers: learned, networks })
+    .saveLearned({ learnedArrivals: learned, networks })
     .pipe(
       Effect.catch((cause) =>
         Effect.logWarning(`api.tls: can't save the peers the start check let in: ${cause.message}`),

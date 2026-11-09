@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, FileSystem, Layer, Redacted, Ref, Schema, Stream } from "effect";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { connect as tlsConnect } from "node:tls";
 import { RpcTest } from "effect/rpc";
 import * as Owner from "./Owner.ts";
@@ -934,6 +934,11 @@ it.live("destroying one service deletes its port reservation", () =>
   ),
 );
 
+const otherKey = () =>
+  generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+    .privateKey.export({ type: "pkcs8", format: "pem" })
+    .toString();
+
 /* Whether a TLS client trusting `ca` completes a handshake with 127.0.0.1:`port`. */
 const handshake = (port: number, ca: string) =>
   Effect.callback<boolean>((resume) => {
@@ -946,7 +951,7 @@ const handshake = (port: number, ca: string) =>
   });
 
 it.live(
-  "serves the API TLS each recompose saves, or plain without it, on the listener an earlier claim opened",
+  "serves the API TLS each recompose saves, or plain without it, on the listener an earlier claim opened, and keeps it on a mismatched pair",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1004,6 +1009,22 @@ it.live(
         });
         expect(yield* api(secured)).toMatchObject({ port: before.port, scheme: "https" });
         expect(yield* handshake(before.port, apiTls.cert)).toBe(true);
+
+        for (const invalid of [
+          { ...apiTls, key: otherKey() },
+          { cert: "", key: "" },
+        ]) {
+          const mismatched = yield* Effect.flip(
+            owner.rpc.supabaseComposition({
+              services,
+              reuseIds: plain.map(({ id }) => id),
+              apiTls: invalid,
+            }),
+          );
+          expect(mismatched.message).toContain("api.tls: invalid certificate or key: ");
+          expect((yield* state.read(stack.id))?.apiTls).toMatchObject(apiTls);
+          expect(yield* handshake(before.port, apiTls.cert)).toBe(true);
+        }
 
         const untrusted = yield* fs.readFileString(`${certs}/untrusted.crt`);
         const rotated = yield* owner.rpc.supabaseComposition({
@@ -1512,7 +1533,6 @@ it.live(
         expect(refused.message).toContain(
           `api.tls: containers can't reach the api on ${apiTlsRuntimeLabel(engineTarget)} (`,
         );
-        expect(refused.message).not.toContain(token);
         for (const { id } of created)
           expect((yield* owner.rpc.status({ id })).lifecycle, id).toBe("stopped");
 

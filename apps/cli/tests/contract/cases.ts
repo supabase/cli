@@ -191,6 +191,8 @@ const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(func
     .replaceAll("&amp;", "&")
     .match(/https?:\/\/[^\s"'<>]+\/verify\?[^\s"'<>]+/);
   if (link === null) return yield* mailError("no verify link");
+  /* Under TLS, Auth links name the HTTPS host URL. */
+  if ((yield* ContractTrust) !== undefined) expect(link[0]).toMatch(/^https:\/\//u);
   return link[0];
 });
 

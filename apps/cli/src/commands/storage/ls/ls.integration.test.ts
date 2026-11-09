@@ -54,6 +54,18 @@ Pe4hUZWq4jAq9wMwTUAGndjSCuI+rDgCIGJT3tzvx13epP7hgX3XO5nN41kKl/H3
 PwqCAg+n5VDT
 -----END CERTIFICATE-----
 `;
+/* A `localhost` leaf issued by another `localhost` CA, so its subject names its issuer. */
+const SAME_NAME_ISSUED_LEAF_CERT = `-----BEGIN CERTIFICATE-----
+MIIBVjCB/qADAgECAhQEUnl3yH/LOMrhaw0GuaXKPkZ1qTAKBggqhkjOPQQDAjAU
+MRIwEAYDVQQDDAlsb2NhbGhvc3QwIBcNMjYxMTA5MTUzMjExWhgPMjEyNjEwMTYx
+NTMyMTFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49
+AwEHA0IABJ7nnsKdr3XHkttuGUNcghIE5+up1e0frS1WYi45NtqUtA1WjajFx3z3
+qk92KYyevrDPXHD4G8IfMlBOpQD22h+jLDAqMBoGA1UdEQQTMBGCCWxvY2FsaG9z
+dIcEfwAAATAMBgNVHRMBAf8EAjAAMAoGCCqGSM49BAMCA0cAMEQCIE2IdgjAjro+
+0FFQVLumGmqF6TCwA2sKzYwaHqepisN3AiBzNeA9prRBijsRZ4+iVlJTrinKJwZd
+jFgn9/KcFeKqyA==
+-----END CERTIFICATE-----
+`;
 /* A self-signed `localhost` leaf whose key usage has no `keyCertSign`. */
 const SELF_SIGNED_LEAF_CERT = `-----BEGIN CERTIFICATE-----
 MIIBhzCCAS2gAwIBAgIUXkUA3O/35tpuViO2x3YAXbjuSIowCgYIKoZIzj0EAwIw
@@ -814,6 +826,11 @@ describe("stack backend", () => {
     {
       name: "with default trust for a CA-issued leaf on its CA's key",
       cert: CA_KEY_REUSING_LEAF_CERT,
+      trusted: false,
+    },
+    {
+      name: "with default trust for a leaf its same-named CA issued",
+      cert: SAME_NAME_ISSUED_LEAF_CERT,
       trusted: false,
     },
   ])(

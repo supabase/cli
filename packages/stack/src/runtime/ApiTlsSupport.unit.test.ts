@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { plainPeerAllowed } from "./ApiTlsSupport.ts";
+import { plainPeerAdmitted, plainPeerAllowed } from "./ApiTlsSupport.ts";
 
 const docker = { subnet: "172.17.0.0/16", gateway: "172.17.0.1" };
 const podman = { subnet: "10.88.0.0/16", gateway: "10.88.0.1" };
@@ -55,5 +55,158 @@ describe("api.tls plain peer rule", () => {
     const allowed = plainPeerAllowed([{ subnet: "172.17.0.0/16", gateway: "" }], () => new Set());
     expect(allowed("172.17.0.4", "")).toBe(false);
     expect(allowed("172.17.0.4", "172.17.0.1")).toBe(false);
+  });
+});
+
+describe("api.tls plain peer rule with the self-check's arrivals", () => {
+  /* `peer@local`: the database container's self-check through a `host-gateway` set to the LAN
+     address, on Linux docker, where this host holds docker0's gateway. */
+  const db = "172.17.0.2@192.168.1.10";
+  const linux = ["172.17.0.1", "192.168.1.10"];
+  const lan = { subnet: "192.168.1.0/24", gateway: "192.0.2.1" };
+  const rows: ReadonlyArray<
+    readonly [
+      label: string,
+      networks: ReadonlyArray<{ readonly subnet: string; readonly gateway: string }>,
+      arrivals: ReadonlyArray<string>,
+      host: ReadonlyArray<string>,
+      connection: string,
+      admitted: boolean,
+    ]
+  > = [
+    ["a sibling at the arrival's local", [docker], [db], linux, "172.17.0.5@192.168.1.10", true],
+    ["the arrival itself", [docker], [db], linux, db, true],
+    [
+      "a LAN peer at the arrival's local",
+      [docker],
+      [db],
+      linux,
+      "192.168.1.20@192.168.1.10",
+      false,
+    ],
+    [
+      "a sibling at another local",
+      [docker],
+      [db],
+      [...linux, "10.0.0.9"],
+      "172.17.0.5@10.0.0.9",
+      false,
+    ],
+    [
+      "the arrival's peer at another local",
+      [docker],
+      [db],
+      [...linux, "10.0.0.9"],
+      "172.17.0.2@10.0.0.9",
+      false,
+    ],
+    ["a sibling before any network", [], [db], linux, "172.17.0.5@192.168.1.10", false],
+    ["a sibling at the gateway", [docker], [], ["172.17.0.1"], "172.17.0.5@172.17.0.1", true],
+    /* Docker Desktop: the bridge lives in its VM, so this host never holds the gateway. */
+    [
+      "Desktop's host arrival",
+      [docker],
+      ["172.17.20.5@172.17.20.5"],
+      ["172.17.20.5"],
+      "172.17.30.9@172.17.20.5",
+      false,
+    ],
+    [
+      "a VPN-in-range arrival",
+      [docker],
+      ["172.17.0.2@172.17.20.5"],
+      ["172.17.0.1", "172.17.20.5"],
+      "172.17.20.9@172.17.20.5",
+      false,
+    ],
+    [
+      "a relay's host arrival",
+      [docker],
+      ["192.168.1.10@192.168.1.10"],
+      linux,
+      "172.17.0.5@192.168.1.10",
+      false,
+    ],
+    [
+      "an arrival from the gateway",
+      [docker],
+      ["172.17.0.1@192.168.1.10"],
+      linux,
+      "172.17.0.5@192.168.1.10",
+      false,
+    ],
+    [
+      "a loopback arrival",
+      [docker],
+      ["127.0.0.1@192.168.1.10"],
+      linux,
+      "172.17.0.5@192.168.1.10",
+      false,
+    ],
+    [
+      "an arrival from another network",
+      [docker],
+      ["10.88.0.2@192.168.1.10"],
+      linux,
+      "172.17.0.5@192.168.1.10",
+      false,
+    ],
+    /* macvlan on the LAN: its gateway is the router, not this host. */
+    [
+      "a macvlan LAN peer",
+      [{ subnet: "192.168.1.0/24", gateway: "192.168.1.1" }],
+      ["192.168.1.50@192.168.1.200"],
+      ["192.168.1.10", "192.168.1.200"],
+      "192.168.1.20@192.168.1.200",
+      false,
+    ],
+    [
+      "a network without a gateway",
+      [{ subnet: "172.17.0.0/16", gateway: "" }],
+      [db],
+      ["192.168.1.10"],
+      "172.17.0.5@192.168.1.10",
+      false,
+    ],
+    [
+      "a sibling at loopback, gateway held",
+      [lan],
+      ["192.168.1.14@127.0.0.1"],
+      ["192.0.2.1"],
+      "192.168.1.13@127.0.0.1",
+      true,
+    ],
+    [
+      "a sibling at loopback, gateway not held",
+      [lan],
+      ["192.168.1.14@127.0.0.1"],
+      [],
+      "192.168.1.13@127.0.0.1",
+      false,
+    ],
+  ];
+  const arrival = (text: string) => {
+    const [peer = "", local = ""] = text.split("@");
+    return { peer, local };
+  };
+
+  it("admits loopback without reading this host's addresses", () => {
+    let reads = 0;
+    const admitted = plainPeerAdmitted([docker], [], () => {
+      reads++;
+      return new Set(["172.17.0.1"]);
+    });
+    expect(admitted("127.0.0.1", "127.0.0.1")).toBe(true);
+    expect(admitted("::1", "::1")).toBe(true);
+    expect(reads).toBe(0);
+    expect(admitted("172.17.0.5", "172.17.0.1")).toBe(true);
+    expect(reads).toBe(1);
+  });
+
+  it.each(rows)("%s", (_label, networks, arrivals, host, connection, admitted) => {
+    const { peer, local } = arrival(connection);
+    expect(
+      plainPeerAdmitted(networks, arrivals.map(arrival), () => new Set(host))(peer, local),
+    ).toBe(admitted);
   });
 });

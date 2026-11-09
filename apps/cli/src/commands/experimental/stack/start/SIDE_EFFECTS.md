@@ -54,24 +54,32 @@ Auth's cached copy until the next wake, then the built-in template.
 With `[api.tls] enabled`, the API port serves HTTPS with legacy's embedded local pair, or the
 `cert_path`/`key_path` pair under `supabase/` (ignored, like legacy, with `[api] enabled = false`),
 saved in the stack's state at start; no listener or port is added. Only `stack start` reads those
-files; a configured pair that does not load as a matching PEM pair fails it before it creates or
-starts anything, with `Invalid config for api.tls: failed to load TLS key pair from <cert> and
-<key>: <reason>`. Only `stack start` sets or clears TLS; a database-only recompose keeps it. Host
-URLs (`API_URL`, Auth links, Studio's public URL, and Functions' `SUPABASE_INTERNAL_HOST_URL`, which
-the Functions banner prefers) use `https://127.0.0.1:<api>`, and user URL overrides stay as given.
-Runtime URLs stay `http://host.supabase.internal:<api>` for containers and `http://127.0.0.1:<api>`
-on native, so `SUPABASE_URL`, `SUPABASE_INTERNAL_HOST_PORT` and `pg_net` SQL are unchanged. A TLS
-hello gets HTTPS from any peer; plain HTTP answers only this host and its containers, and any other
-peer is closed before any HTTP byte. A plain request needs a stack host alias, `localhost` or an IP
-address with the API port in `Host` (the port may be left out on port 80), or gets 421, WebSocket
-upgrades included, and `/email` templates answer only plain requests. Each request forwards its own
+files, and fails before it creates or starts anything on an unreadable one with `failed to read TLS
+cert: <reason>` (or `key`), or on a pair that does not parse as a matching PEM pair with `Invalid
+config for api.tls: failed to load TLS key pair from <cert> and <key>: <reason>`. Only `stack start`
+sets TLS; it, or a command that composes a database-only stack such as `db start`, clears it, and
+a recompose that retains members keeps it. Host URLs (`API_URL`, Auth links, Studio's public URL,
+and Functions' `SUPABASE_INTERNAL_HOST_URL`, which the Functions banner prefers) use
+`https://127.0.0.1:<api>`, and user URL overrides stay as given. Runtime URLs stay
+`http://host.supabase.internal:<api>` for containers and `http://127.0.0.1:<api>` on native, so
+`SUPABASE_URL`, `SUPABASE_INTERNAL_HOST_PORT` and `pg_net` SQL are unchanged. A TLS hello gets HTTPS
+from any peer; plain HTTP answers only this host and its containers, and any other peer is closed
+before any HTTP byte. A plain request needs a stack host alias, `localhost` or an IP address with
+the API port in `Host` (the port may be left out on port 80), or gets 421, WebSocket upgrades
+included, and `/email` templates answer only plain requests. Each request forwards its own
 connection's proto. After every start and restart of a stack with API services on Docker or Podman,
-the database container calls the API once in plain with a token new on every start and redacted in
-logs; the peer it arrives from and the database container's networks are let in and saved with the
-stack's TLS until the next `stack start`. Without an HTTP reply, start fails with `api.tls:
-containers can't reach the api on <runtime> (<what the probe saw>)` and stops the stack's services;
-if they don't stop, the error says to run `supabase stack stop`. Stack `storage` commands use the
-saved certificate, never `config.toml`, so editing `api.tls` applies at the next start. A saved
+the database container calls the API once in plain with a token minted when a `stack start` saves
+TLS, which resume, restart and `db reset` reuse, redacted in logs; the peer it arrives from, at the
+host address it arrives at, and the database container's networks are let in and saved with the
+stack's TLS until a `stack start` saves TLS again (a resume or an already-running start keeps
+them). An extra gateway is derived only when this host holds the network's gateway, that call's
+peer is inside that network and is neither loopback nor a host address, and the address it
+arrived at is outside that network, such as a `host-gateway` set to the LAN address; the network's
+containers are then let in at that address too. Without an HTTP reply, start stops the stack's services and fails with ``api.tls: containers
+can't reach the api on <runtime> (<what the probe saw>); its services stopped: let <runtime>
+containers reach the api port, or turn off `[api.tls]`, then start the stack again``; if they don't
+stop, the error says to run `supabase stack stop` instead. Stack `storage` commands use the saved
+certificate, never `config.toml`, so editing `api.tls` applies at the next start. A saved
 certificate with a self-signed root is the only trusted CA; a CA-issued one is verified against
 Bun's default trust store and `NODE_EXTRA_CA_CERTS`. Without TLS every listener, URL and output is
 unchanged.

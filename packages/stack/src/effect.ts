@@ -78,6 +78,7 @@ import type {
 export { initialization, postgres } from "./Commands.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { apiRoute, sharesApiEndpoint } from "./host/Endpoints.ts";
+export { apiTlsContext } from "./HttpProxy.ts";
 export { gatewayLog };
 export { StackError } from "./Rpc.ts";
 /** Atomically writes a file so readers only ever see the prior or the complete new content. */
