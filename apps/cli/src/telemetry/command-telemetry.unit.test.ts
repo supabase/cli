@@ -480,9 +480,9 @@ describe("withCommandTelemetry", () => {
             mockProcessControl().layer,
             mockOutput({ format: "text" }).layer,
             Stdio.layerTest({
-              args: Effect.succeed(["stack", "logs", "-f", "--service", "database"]),
+              args: Effect.succeed(["fixture", "watch", "-f", "--service", "database"]),
             }),
-            commandRuntimeLayer(["stack", "logs"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["fixture", "watch"]).pipe(Layer.provide(BunCrypto.layer)),
           ),
         ),
         Effect.tap(() =>

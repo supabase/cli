@@ -39,7 +39,7 @@ describe("permission help section across the command tree", () => {
     describe(name, () => {
       const tree = commandTreeFor(variant);
       const rootFlags = permissionFlagsOf(userGlobalFlagParams(rootCommandForFeatures(variant)));
-      const leaves = [...tree].filter(([, node]) => node.isLeaf);
+      const executableCommands = [...tree].filter(([, node]) => node.isExecutable);
 
       // Help lists only visible flags of a parent group, but the command's own flags come with
       // their hidden ones from what `withPermissions` recorded.
@@ -71,7 +71,7 @@ describe("permission help section across the command tree", () => {
 
       it.effect("gives a flag a default only when parsing no arguments yields that value", () =>
         Effect.gen(function* () {
-          for (const [path, node] of leaves) {
+          for (const [path, node] of executableCommands) {
             const declared = Option.getOrUndefined(readPermissions(node.command));
             if (declared?.status !== "mapped") continue;
             const params = paramsFor(path);
@@ -106,7 +106,7 @@ describe("permission help section across the command tree", () => {
       );
 
       it("never tests the presence of a text flag that has a default", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const declared = Option.getOrUndefined(readPermissions(node.command));
           if (declared?.status !== "mapped") continue;
           const catalog = catalogFor(path);
@@ -124,7 +124,7 @@ describe("permission help section across the command tree", () => {
 
       it.effect("never turns on by default a switch a condition tests", () =>
         Effect.gen(function* () {
-          for (const [path, node] of leaves) {
+          for (const [path, node] of executableCommands) {
             const declared = Option.getOrUndefined(readPermissions(node.command));
             if (declared?.status !== "mapped") continue;
             const params = paramsFor(path);
@@ -148,7 +148,7 @@ describe("permission help section across the command tree", () => {
       );
 
       it("records every flag a command accepts when it declares its permissions", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const recorded = Context.getOption(node.command.annotations, CommandFlagsAnnotation);
           const expected = permissionFlagsOf(ownParams(node.command)).map((flag) => flag.name);
           expect(Option.isSome(recorded), `"${path}" records no flags`).toBe(true);
@@ -164,7 +164,7 @@ describe("permission help section across the command tree", () => {
       // Help sees a parent group's flags only as visible names, so a condition cannot depend on
       // a parent's hidden flag or on its choice values.
       it("only conditions on flags a parent group shares when help can describe them", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const declared = Option.getOrUndefined(readPermissions(node.command));
           if (declared?.status !== "mapped") continue;
           const parts = path.split(" ");
@@ -193,7 +193,7 @@ describe("permission help section across the command tree", () => {
       });
 
       it("renders a section for every command that calls an API operation", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const declared = Option.getOrUndefined(readPermissions(node.command));
           if (declared === undefined) continue;
           const section = resolvePermissionSection(declared, catalogFor(path));
@@ -216,7 +216,7 @@ describe("permission help section across the command tree", () => {
       });
 
       it("names only flags the command shows in its help", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const declared = Option.getOrUndefined(readPermissions(node.command));
           if (declared === undefined) continue;
           const catalog = catalogFor(path);
@@ -233,7 +233,7 @@ describe("permission help section across the command tree", () => {
       });
 
       it("prints each heading once, and never lists a row as both required and optional", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const declared = Option.getOrUndefined(readPermissions(node.command));
           if (declared === undefined) continue;
           const section = resolvePermissionSection(declared, catalogFor(path));

@@ -1,4 +1,5 @@
 import type { CliOutput, HelpDoc } from "effect/cli";
+import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
 import { permissionSectionForHelp } from "../../command-internal/command-permissions/help-section.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { cliErrorCode, formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
@@ -10,7 +11,9 @@ export function jsonCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
       const scopes = subcommandScopes(doc, context?.rootCommand);
       const target = targetHelpFor(doc);
       const permissions = permissionSectionForHelp(doc);
-      const { annotations: _annotations, ...serializable } = withRemoteFlagValue(doc);
+      const { annotations: _annotations, ...serializable } = withOptionalSubcommandUsage(
+        withRemoteFlagValue(doc),
+      );
       return JSON.stringify({
         _tag: "Help",
         doc: {

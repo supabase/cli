@@ -10,7 +10,7 @@ import {
   rejectStackOutput,
   validateStackTarget,
   mapTargetError,
-} from "../stack.shared.ts";
+} from "../../../../command-internal/stack-target.ts";
 import type { StackStopFlags } from "./stop.command.ts";
 import { StackCommandStopError } from "./stop.errors.ts";
 
