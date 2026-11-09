@@ -1,6 +1,6 @@
 # Command Contract Spike
 
-Plan for the spike in [RFC: A Command Contract for the Supabase CLI](https://linear.app/supabase/document/rfc-a-command-contract-for-the-supabase-cli-4753ba96a6bd).
+Plan for the spike of a command contract for the Supabase CLI.
 
 Status values: `not started`, `in progress`, `blocked`, `done`, `dropped`.
 
@@ -95,7 +95,7 @@ Configuration can join the contract once every config and settings read goes thr
 - **The accessor needs one cast.** The wildcard can't stand in for a keyed service at runtime, so the accessor adds `Reads<K>` to `R` without a real lookup. That's one cast in one module, with a lint-disable reason.
 - **Prerequisite work.** A `CliSettingKeys` registry that declares each runtime setting's sources (flag, env, file, default), which removes the need for links like `fallbackFor`. Table keys (``Reads<`auth.${string}`>``) for code that consumes whole sections: `start`, `config push`, `[remotes.*]`, `[edge_runtime.secrets]`. No command access to the decoded config object or to `CommandSettings` fields, enforced by the types or by lint with an allowlist during migration.
 - **Scale.** About 150 files: 39 files with roughly 318 reads off the decoded config object, 110 files reading `CommandSettings`, and 10 already reading through `.get(CliConfigKeys...)` (rough greps over `apps/cli/src`, tests excluded).
-- **Ownership.** It overlaps ADR 0032 and the `config.jsonc` project (CLI-2862, CLI-2867 in review), both owned by Colum Ferry, so it's a separate proposal to take to him.
+- **Ownership.** It overlaps ADR 0032 and the existing config work, so it's a separate proposal.
 - **Untested.** Whether template-literal table keys behave like the wildcard, and type-check time with long `Reads` unions.
 
 ## Prerequisite for the Boundary
