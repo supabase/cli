@@ -315,9 +315,13 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ? `http://${databaseAddress.hostname}:${port}`
       : (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
+  /* Without an API member, saved api TLS still makes the banner's host API origin
+     `https://127.0.0.1:<port>`. */
   const hostApiUrl =
     apiSource === undefined
-      ? undefined
+      ? (yield* stack.apiTls.get) === undefined
+        ? undefined
+        : `https://127.0.0.1:${port}`
       : functionsHostApiUrl((yield* apiSource.credentials({ from: "host" })).apiUrl);
   const { jwtSecret: _jwtSecret, ...sourceConfig } = source.config;
   const creation: FunctionsCreation = {

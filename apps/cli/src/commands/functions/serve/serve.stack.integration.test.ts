@@ -333,7 +333,9 @@ const fixture = (
           >;
         },
       },
-      apiTls: { get: Effect.undefined },
+      apiTls: {
+        get: Effect.succeed(options.apiTls === true ? { cert: "saved-cert" } : undefined),
+      },
       credentials: { get: Effect.succeed(stackCredentials) },
       composition: {
         plan: () => Effect.succeed([]),
@@ -633,6 +635,27 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.await(state.started);
       expect(state.createdFunctions?.config.apiUrl).toBe("http://127.0.0.1:23849");
       expect(state.createdFunctions?.config.hostApiUrl).toBe("https://127.0.0.1:23849");
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("gives standalone Functions the HTTPS host API origin without an API member", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-api-tls-db-only-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-api-tls-db-only"\n\n[api]\nport = 23850\n\n[edge_runtime]\nenabled = true\n',
+      );
+      const state = yield* fixture({ standaloneProjectRoot: root, apiTls: true });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+      expect(state.createdFunctions?.config.hostApiUrl).toBe("https://127.0.0.1:23850");
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
