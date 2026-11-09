@@ -180,12 +180,10 @@ export class BranchesUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
   readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, {
-      upgradeSuggested: this.upgradeSuggested,
       notFoundIsInvalidInput: true,
     });
   }

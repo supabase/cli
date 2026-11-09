@@ -71,7 +71,7 @@ describe("gated branch operation 404s", () => {
       new BranchesUpdateUnexpectedStatusError({
         status: 404,
         ...body,
-        upgradeSuggested: true,
+        entitlement: gatedEntitlement,
       }),
     );
     expect(result.error_category).toBe("plan_limit");

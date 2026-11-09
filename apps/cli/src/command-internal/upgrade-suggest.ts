@@ -1,4 +1,3 @@
-import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, type Redacted } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -36,23 +35,6 @@ export const upgradeSuggestion = block("upgrade-suggest", [
 export function gateResponse(cause: unknown): HttpClientResponse.HttpClientResponse | undefined {
   return HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
 }
-
-export const gateMapError =
-  <E, R2>(
-    opts: { readonly projectRef: string; readonly featureKey?: string },
-    mapError: (cause: SupabaseApiError, upgradeSuggested: boolean) => Effect.Effect<never, E, R2>,
-  ) =>
-  (cause: SupabaseApiError) =>
-    Effect.gen(function* () {
-      const response = gateResponse(cause);
-      const upgradeSuggested = yield* suggestUpgrade({
-        projectRef: opts.projectRef,
-        featureKey: opts.featureKey,
-        statusCode: response?.status ?? 0,
-        response,
-      });
-      return yield* mapError(cause, upgradeSuggested);
-    });
 
 /**
  * Suggests an upgrade when a request fails with a plan-gate error. Never
