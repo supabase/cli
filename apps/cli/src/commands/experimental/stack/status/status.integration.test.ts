@@ -16,7 +16,7 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
-import { StackApi, StackTargetResolver } from "../stack.shared.ts";
+import { StackApi, StackTargetResolver } from "../../../../command-internal/stack-target.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { stackStatus } from "./status.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";

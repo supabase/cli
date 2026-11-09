@@ -7,7 +7,7 @@ import {
   StackTargetResolver,
   stackApiLayer,
   stackTargetResolverLayer,
-} from "./stack.shared.ts";
+} from "../../../command-internal/stack-target.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import {
   CommandTelemetryAttributes,
