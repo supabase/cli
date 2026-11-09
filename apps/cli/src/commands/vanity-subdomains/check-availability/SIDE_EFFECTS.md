@@ -49,12 +49,10 @@ Target: hosted, no consent — see [Command target](../../../../docs/command-tar
 
 ## Telemetry Events Fired
 
-| Event                  | When                                                                                           | Notable properties / groups         |
-| ---------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` |
-
-This command may print an upgrade suggestion for a 4xx whose body is the `entitlement_required` envelope, but it does not fire
-`cli_upgrade_suggested`.
+| Event                   | When                                                                                                              | Notable properties / groups                |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `cli_command_executed`  | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed                    | `exit_code`, `duration_ms`, `flags`        |
+| `cli_upgrade_suggested` | post-run (via wrapper), before `cli_command_executed`, on a 4xx whose body is the `entitlement_required` envelope | `feature_key=vanity_subdomain`, `org_slug` |
 
 ## Output
 

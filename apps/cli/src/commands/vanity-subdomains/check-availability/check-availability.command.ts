@@ -70,7 +70,7 @@ export const vanitySubdomainsCheckAvailabilityCommand = Command.make(
       // token, before the gate ever runs.
       yield* requireExperimental;
       return yield* vanitySubdomainsCheckAvailability(flags).pipe(
-        withCommandTelemetry({ flags, trackUpgradeSuggested: false }),
+        withCommandTelemetry({ flags }),
         Effect.provide(managementApiRuntimeLayer(["vanity-subdomains", "check-availability"])),
       );
     }).pipe(withJsonErrorHandling),

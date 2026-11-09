@@ -1429,10 +1429,10 @@ describe("withCommandTelemetry", () => {
         upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
       },
     });
-    const runGated = (options: { readonly trackUpgradeSuggested?: boolean }) => {
+    const runGated = () => {
       const analytics = mockContextualAnalytics();
       return Effect.fail(gatedFailure).pipe(
-        withCommandTelemetry(options),
+        withCommandTelemetry(),
         Effect.provide(
           Layer.mergeAll(
             analytics.layer,
@@ -1448,7 +1448,7 @@ describe("withCommandTelemetry", () => {
     };
 
     it.live("fires cli_upgrade_suggested once, before cli_command_executed", () =>
-      runGated({}).pipe(
+      runGated().pipe(
         Effect.tap((captured) =>
           Effect.sync(() => {
             expect(captured.map((event) => event.event)).toEqual([
@@ -1463,16 +1463,6 @@ describe("withCommandTelemetry", () => {
               exit_code: 1,
               error_category: "plan_limit",
             });
-          }),
-        ),
-      ),
-    );
-
-    it.live("skips cli_upgrade_suggested when the command opts out", () =>
-      runGated({ trackUpgradeSuggested: false }).pipe(
-        Effect.tap((captured) =>
-          Effect.sync(() => {
-            expect(captured.map((event) => event.event)).toEqual(["cli_command_executed"]);
           }),
         ),
       ),

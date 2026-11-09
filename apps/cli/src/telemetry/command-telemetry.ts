@@ -105,9 +105,6 @@ interface CommandTelemetryOptions<Flags extends Record<string, unknown> = never>
   // so a `-s public` invocation records the `schema` flag rather than `s`. Global shorthands
   // (`-o` for `--output`) are merged in automatically via `GLOBAL_SHORT_ALIASES` below.
   readonly aliases?: Readonly<Record<string, string>>;
-  // Set false for a command whose plan-gated denial prints the upgrade hint without firing
-  // `cli_upgrade_suggested` (vanity-subdomains check-availability, see its SIDE_EFFECTS.md).
-  readonly trackUpgradeSuggested?: boolean;
 }
 
 function orgSlugFromUpgradeUrl(upgradeUrl: string): string {
@@ -586,9 +583,7 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
               ? toFailureTelemetryProperties(processControlledFailureActionability(command))
               : {};
         const entitlement =
-          failureCause !== undefined && options?.trackUpgradeSuggested !== false
-            ? normalizeCause(failureCause).entitlement
-            : undefined;
+          failureCause !== undefined ? normalizeCause(failureCause).entitlement : undefined;
 
         if (entitlement !== undefined) {
           yield* analytics
