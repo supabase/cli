@@ -376,6 +376,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
         return Effect.succeed(members);
       },
     },
+    apiTls: { get: Effect.undefined },
     credentials: {
       get: Effect.sync(() => savedCredentials),
     },

@@ -328,6 +328,7 @@ const fixture = (
           >;
         },
       },
+      apiTls: { get: Effect.undefined },
       credentials: { get: Effect.succeed(stackCredentials) },
       composition: {
         plan: () => Effect.succeed([]),

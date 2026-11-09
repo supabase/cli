@@ -137,8 +137,15 @@ const derivedInputs: Partial<
     analyticsBackend: "analytics",
     functionsRoot: "functions",
   },
-  functions: { apiUrl: "api", databaseUrl: "database" },
+  functions: { apiUrl: "api", hostApiUrl: "api", databaseUrl: "database" },
 };
+
+/**
+ * A Functions instance's `hostApiUrl`: only an HTTPS host API origin differs from the banner's
+ * plain loopback default, so a plain one is left out.
+ */
+export const functionsHostApiUrl = (apiHostUrl: string | undefined): string | undefined =>
+  apiHostUrl?.startsWith("https:") === true ? apiHostUrl : undefined;
 
 /** Derived inputs a project may set itself; a plan compares one whenever the request sets it. */
 const overridableInputs: Partial<Record<ServiceCreation["service"], ReadonlyArray<string>>> = {
@@ -202,6 +209,8 @@ export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
     creation: ServiceCreation,
   ) => Effect.Effect<SupabaseCompositionEntry, E>;
   readonly configure: (configuration: CompositionConfig) => Effect.Effect<void, E>;
+  /** Runs once the request is valid, before any instance or binding changes. */
+  readonly validated: Effect.Effect<void, E>;
 }
 
 export interface SupabaseCompositionOptions {
@@ -215,6 +224,8 @@ export interface SupabaseCompositionOptions {
    * endpoint start eagerly, and other members start on their first connection.
    */
   readonly eager?: boolean;
+  /** Serves the shared API port over HTTPS with this PEM pair, and plain HTTP to stack peers. */
+  readonly apiTls?: { readonly cert: string; readonly key: string };
 }
 
 /** How a saved instance differs from a requested creation once package-managed inputs are set aside. */
@@ -677,6 +688,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
         }
       }
 
+      yield* operations.validated;
       const createdIds: Array<string> = [];
       const compose = Effect.gen(function* () {
         const replacedByKind = new Map<ServiceCreation["service"], SupabaseCompositionEntry>();
@@ -777,7 +789,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
         }
         const configured = yield* Effect.forEach(configuredEntries, (entry) =>
           Effect.gen(function* () {
-            const extra: Record<string, string> =
+            const extra: Record<string, string | undefined> =
               entry.creation.service === "auth" && apiHostUrl !== undefined
                 ? {
                     externalApiUrl: `${apiHostUrl}/auth/v1`,
@@ -796,7 +808,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
                       publicApiUrl: entry.creation.config.publicApiUrl ?? apiHostUrl,
                     }
                   : entry.creation.service === "functions" && apiRuntimeUrl !== undefined
-                    ? { apiUrl: apiRuntimeUrl }
+                    ? { apiUrl: apiRuntimeUrl, hostApiUrl: functionsHostApiUrl(apiHostUrl) }
                     : {};
             const values = { ...configInputs.get(entry.id), ...extra };
             if (entry.creation.service === "studio") {

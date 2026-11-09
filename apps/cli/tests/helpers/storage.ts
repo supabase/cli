@@ -105,6 +105,8 @@ export interface SetupStorageStackApiOptions {
     | "failed"
     | "disabled";
   readonly storageError?: string;
+  /** The certificate the stack saved at its last start with `api.tls`; its API serves HTTPS. */
+  readonly apiTlsCert?: string;
 }
 
 const STORAGE_STACK_ID = "e".repeat(64);
@@ -257,6 +259,11 @@ export function buildStorageStackApi(
       get: (id: string) =>
         id === database.id ? Effect.succeed(database) : Effect.succeed(storage),
       list: Effect.succeed(storageEnabled ? [database, storage] : [database]),
+    },
+    apiTls: {
+      get: Effect.succeed(
+        options.apiTlsCert === undefined ? undefined : { cert: options.apiTlsCert },
+      ),
     },
     credentials: { get: Effect.succeed(stackCredentials) },
     composition: {

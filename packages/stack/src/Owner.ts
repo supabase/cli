@@ -76,6 +76,7 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
+import { apiTlsPeers, apiTlsRuntimeLabel, checkApiTlsReach } from "./runtime/ApiTlsSupport.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import { confirmStackDataRoot } from "./namespace/Paths.ts";
@@ -753,6 +754,69 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     },
     Effect.mapError(serviceError("compose")),
   );
+  /* A stopped stack takes the requested API TLS with its plain peer rule and self-check token;
+     a recompose that retains members without one keeps the saved TLS. */
+  const applyApiTls = Effect.fn("Owner.applyApiTls")(function* (
+    apiTls: SupabaseCompositionOptions["apiTls"],
+    retainMembers: boolean,
+  ) {
+    if (apiTls === undefined && retainMembers) return;
+    const saved =
+      apiTls === undefined
+        ? undefined
+        : {
+            ...apiTls,
+            networks: yield* apiTlsPeers(
+              Context.get(services, ChildProcessSpawner.ChildProcessSpawner),
+              options.engineTarget,
+            ),
+            selfCheck: yield* crypto.uuidV4(),
+          };
+    yield* updateState(({ apiTls: _previous, ...current }) =>
+      saved === undefined ? current : { ...current, apiTls: saved },
+    ).pipe(Effect.mapError(serviceError("state")));
+    /* An endpoint claim at owner startup can have opened the listener with the previous TLS. */
+    yield* network.reopenApi.pipe(Effect.mapError(serviceError("bind")));
+  });
+
+  /* Under TLS on an engine, one database-container request must reach the API port in plain
+     after a start or restart; otherwise the stack stops and the start fails. */
+  const reachApiTls = Effect.gen(function* () {
+    if (runtime === "native" || options.engineTarget === undefined) return;
+    const members = new Set((yield* orchestrator.composition).members.map(({ id }) => id));
+    const database = (yield* orchestrator.instances).find(
+      (entry) => entry.service === "database" && members.has(entry.id),
+    )?.id;
+    yield* checkApiTlsReach({
+      spawner: Context.get(services, ChildProcessSpawner.ChildProcessSpawner),
+      target: options.engineTarget,
+      stack: { id: stackId, root: path.resolve(options.root), database },
+      runtime: apiTlsRuntimeLabel(options.engineTarget),
+      apiTls: options.state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls)),
+      port: yield* network.apiPort,
+      stop: orchestrator.stopComposition,
+      learned: (token, networks) =>
+        network
+          .adoptApiNetworks(token, networks)
+          .pipe(Effect.andThen(network.learnedApiPeers(token))),
+      saveLearned: ({ learnedPeers, networks }) =>
+        updateState((current) =>
+          current.apiTls === undefined
+            ? current
+            : {
+                ...current,
+                apiTls: {
+                  ...current.apiTls,
+                  learnedPeers,
+                  ...(networks.length === 0 ? {} : { networks }),
+                },
+              },
+        ),
+    }).pipe(
+      Effect.mapError((error) => new ServiceError({ operation: "start", message: error.message })),
+    );
+  });
+
   const compose = Effect.fn("Owner.compose")(
     function* (
       inputs: ReadonlyArray<ServiceCreationInput>,
@@ -770,13 +834,17 @@ const makeOwner = Effect.fn("Owner.make")(function* (
               Effect.map((creation) => ({ id, creation })),
             ),
           status: orchestrator.status,
+          validated: applyApiTls(
+            compositionOptions.apiTls,
+            compositionOptions.retainMembers === true,
+          ),
           create: addInstance,
           destroy: orchestrator.destroy,
           bind: (id) => orchestrator.get(id).pipe(Effect.flatMap((entry) => entry.bind)),
           address: (id, endpoint, from) =>
             orchestrator.get(id).pipe(
               Effect.flatMap((entry) => entry.namespace.address(endpoint, from)),
-              Effect.map(({ host, port }) => publicUrl(host, port)),
+              Effect.map(({ host, port, scheme }) => publicUrl(host, port, scheme)),
             ),
           output: (id, name) =>
             orchestrator
@@ -957,18 +1025,23 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       ).pipe(rpcError("restoreSnapshot")),
     resetData: ({ id }) =>
       databaseData(id, ({ resetDatabaseData }) => resetDatabaseData).pipe(rpcError("resetData")),
-    supabaseComposition: ({ services, reuseIds, keys, eager, retainMembers }) =>
-      definitionChange(compose(services, { reuseIds, keys, eager, retainMembers })).pipe(
+    supabaseComposition: ({ services, reuseIds, keys, eager, retainMembers, apiTls }) =>
+      definitionChange(compose(services, { reuseIds, keys, eager, retainMembers, apiTls })).pipe(
         rpcError("supabaseComposition"),
       ),
     configureComposition: (configuration) =>
       definitionChange(configure(configuration)).pipe(rpcError("configureComposition")),
     startComposition: () =>
-      orchestrator.startComposition.pipe(Effect.flatMap(observeAll), rpcError("startComposition")),
+      orchestrator.startComposition.pipe(
+        Effect.tap(() => reachApiTls),
+        Effect.flatMap(observeAll),
+        rpcError("startComposition"),
+      ),
     stopComposition: () =>
       orchestrator.stopComposition.pipe(Effect.flatMap(observeAll), rpcError("stopComposition")),
     restartComposition: () =>
       orchestrator.restartComposition.pipe(
+        Effect.tap(() => reachApiTls),
         Effect.flatMap(observeAll),
         rpcError("restartComposition"),
       ),
