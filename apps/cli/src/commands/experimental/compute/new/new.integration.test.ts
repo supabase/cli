@@ -356,8 +356,6 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // The count a scaffold cannot guess: `--secrets-scope` has no prompt, so it is
-  // recorded when given and left out when not.
   it.effect("records a secrets scope that differs from the default", () =>
     Effect.gen(function* () {
       const repo = yield* project();
