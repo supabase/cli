@@ -142,7 +142,9 @@ export function readComputeSection(compute: unknown): ComputeSection {
       // Left as written, empty included: `push` names the accepted values, and dropping an
       // unrecognized one here would silently deploy at the default exposure instead.
       exposure: recordedStringOrUndefined(value["exposure"]),
-      secrets_scope: recordedStringOrUndefined(value["secrets_scope"]) ?? patternsOrUndefined(value["secrets_scope"]),
+      secrets_scope:
+        recordedStringOrUndefined(value["secrets_scope"]) ??
+        patternsOrUndefined(value["secrets_scope"]),
       instances: instanceCountOrUndefined(value["instances"]),
       source: stringOrUndefined(value["source"]),
       exclude: patternsOrUndefined(value["exclude"]),

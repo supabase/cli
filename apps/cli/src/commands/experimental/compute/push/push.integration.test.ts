@@ -65,7 +65,7 @@ const deployRequest = Schema.Struct({
         exposure: Schema.String,
         secrets_scope: Schema.Union([
           Schema.String,
-          Schema.Array(Schema.Struct({ secret_name: Schema.String }))
+          Schema.Array(Schema.Struct({ secret_name: Schema.String })),
         ]),
         instances: Schema.Finite,
       }),
@@ -778,7 +778,7 @@ describe("compute push", () => {
         );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  )
+  );
 
   it.effect("reads the compute secrets_scope defined on config", () =>
     Effect.gen(function* () {
@@ -796,7 +796,7 @@ describe("compute push", () => {
         );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  )
+  );
 
   it.effect("reads the compute secrets_scope defined on config as array", () =>
     Effect.gen(function* () {
@@ -809,12 +809,12 @@ describe("compute push", () => {
         yield* push();
 
         const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
-        expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope).toStrictEqual(
-          [{ secret_name: "STRIPE_KEY" }, { secret_name: "ANTHROPIC_KEY" }],
-        );
+        expect(
+          (yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope,
+        ).toStrictEqual([{ secret_name: "STRIPE_KEY" }, { secret_name: "ANTHROPIC_KEY" }]);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  )
+  );
 
   it.effect("lets --secrets-scope overrided the defined secrets_scope", () =>
     Effect.gen(function* () {
@@ -832,7 +832,7 @@ describe("compute push", () => {
         );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  )
+  );
 
   it.effect("lets --secrets-scope overrided the defined secrets_scope as array", () =>
     Effect.gen(function* () {
@@ -845,12 +845,12 @@ describe("compute push", () => {
         yield* push({ secretsScope: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]) });
 
         const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
-        expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope).toStrictEqual(
-          [{ secret_name: "STRIPE_KEY" }, { secret_name: "ANTHROPIC_KEY" }],
-        );
+        expect(
+          (yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope,
+        ).toStrictEqual([{ secret_name: "STRIPE_KEY" }, { secret_name: "ANTHROPIC_KEY" }]);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  )
+  );
 
   it.effect("refuses an invalid secrets_scope defined on config", () =>
     Effect.gen(function* () {
@@ -870,7 +870,7 @@ describe("compute push", () => {
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  )
+  );
 
   it.effect("polls until the build leaves `building`", () =>
     Effect.gen(function* () {

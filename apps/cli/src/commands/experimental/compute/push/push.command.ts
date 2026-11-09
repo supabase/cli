@@ -12,7 +12,11 @@ import { computeRead } from "../../../../shared/compute/compute-api.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { COMPUTE_EXPOSURES, COMPUTE_SECRETS_SCOPE, parseSecretsScopeCustom } from "../../../../shared/compute/compute-runtimes.ts";
+import {
+  COMPUTE_EXPOSURES,
+  COMPUTE_SECRETS_SCOPE,
+  parseSecretsScopeCustom,
+} from "../../../../shared/compute/compute-runtimes.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computePush } from "./push.handler.ts";
@@ -48,15 +52,17 @@ const config = {
     ),
     Flag.optional,
   ),
-  secretsScope: Flag.orElse(
-    Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE),
-    () => Flag.String("secrets-scope:custom").pipe(Flag.map(parseSecretsScopeCustom), Flag.withMetavar("SECRET_NAMES")))
-    .pipe(
-      Flag.withDescription(
-        "Controls whether secrets are available, overriding `secrets_scope` in the project config file for this deploy. Falls back to the recorded value, then all.",
-      ),
-      Flag.optional,
+  secretsScope: Flag.orElse(Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE), () =>
+    Flag.String("secrets-scope:custom").pipe(
+      Flag.map(parseSecretsScopeCustom),
+      Flag.withMetavar("SECRET_NAMES"),
     ),
+  ).pipe(
+    Flag.withDescription(
+      "Controls whether secrets are available, overriding `secrets_scope` in the project config file for this deploy. Falls back to the recorded value, then all.",
+    ),
+    Flag.optional,
+  ),
   noWait: Flag.Boolean("no-wait").pipe(
     // The deploy POST returns once the platform accepts the spec and context; the
     // server-side build that follows can run for minutes. Waiting stays the

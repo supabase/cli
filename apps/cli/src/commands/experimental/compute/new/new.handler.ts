@@ -222,7 +222,10 @@ const resolveSecretsScope = Effect.fnUntraced(function* (options: {
     const output = yield* Output;
     const selected = yield* output.promptSelect(
       "Which secrets should be available for this compute?",
-      defaultFirst([...COMPUTE_SECRETS_SCOPE_ENUM], DEFAULT_COMPUTE_SECRETS_SCOPE as ComputeSecretsScopeEnum).map((scope) => ({
+      defaultFirst(
+        [...COMPUTE_SECRETS_SCOPE_ENUM],
+        DEFAULT_COMPUTE_SECRETS_SCOPE as ComputeSecretsScopeEnum,
+      ).map((scope) => ({
         value: scope,
         label: scope,
         hint: COMPUTE_SECRETS_SCOPE_DESCRIPTIONS[scope],
@@ -231,10 +234,8 @@ const resolveSecretsScope = Effect.fnUntraced(function* (options: {
 
     let selectedSecretsScope: string | string[] = selected;
 
-    if (selected as ComputeSecretsScopeEnum === "custom") {
-      const customSecretsNames = yield* output.promptText(
-        "Comma separated list of secret names:"
-      )
+    if ((selected as ComputeSecretsScopeEnum) === "custom") {
+      const customSecretsNames = yield* output.promptText("Comma separated list of secret names:");
 
       selectedSecretsScope = parseSecretsScopeCustom(customSecretsNames);
     }
@@ -335,20 +336,20 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // from `apps/web` means `apps/web/generated`.
     const destination = Option.isSome(flags.source)
       ? yield* resolveComputeSource({
-        projectRoot: project.projectRoot,
-        cwd: runtimeInfo.cwd,
-        raw: flags.source.value,
-      })
+          projectRoot: project.projectRoot,
+          cwd: runtimeInfo.cwd,
+          raw: flags.source.value,
+        })
       : yield* confineComputePath({
-        projectRoot: project.projectRoot,
-        target: path.join(project.computeDir, name),
-        subject: `The default directory for "${name}"`,
-        // The default directory is `supabase/compute/<name>` with a validated
-        // name, so only a symlink escaping the project can reach this
-        // failure — which is what the suggestion names.
-        suggestion:
-          "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
-      });
+          projectRoot: project.projectRoot,
+          target: path.join(project.computeDir, name),
+          subject: `The default directory for "${name}"`,
+          // The default directory is `supabase/compute/<name>` with a validated
+          // name, so only a symlink escaping the project can reach this
+          // failure — which is what the suggestion names.
+          suggestion:
+            "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
+        });
 
     // Nothing here replaces what is already on disk: scaffolding over an existing
     // directory would have to delete it first, which isn't this command's job — it

@@ -934,8 +934,8 @@ describe("compute new", () => {
             writeFileString: (target, data, options) =>
               path.basename(target) === "config.toml"
                 ? fs
-                  .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
-                  .pipe(Effect.andThen(writeDenied(target)))
+                    .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
+                    .pipe(Effect.andThen(writeDenied(target)))
                 : fs.writeFileString(target, data, options),
           }),
           Effect.flip,
@@ -1163,7 +1163,7 @@ describe("compute new", () => {
           exposure: Option.none(),
           instances: Option.none(),
           source: Option.none(),
-          secretsScope: Option.none()
+          secretsScope: Option.none(),
         });
 
         expect(yield* repo.config).toContain(`runtime = "deno"`);

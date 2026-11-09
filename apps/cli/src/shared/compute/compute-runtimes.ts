@@ -149,33 +149,35 @@ export const COMPUTE_SECRETS_SCOPE_DESCRIPTIONS: Record<ComputeSecretsScopeEnum,
   all: "Gives access to all defined secrets",
   supabase: "Exposes only the \`SUPABASE_*\` defaults",
   none: "Will complete hide any secret",
-  custom: "Exposes only the specified secret names"
+  custom: "Exposes only the specified secret names",
 };
 
 function isComputeSecretScope(value: string | string[]): value is ComputeSecretsScope {
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     return COMPUTE_SECRETS_SCOPE.some((scope) => scope === value);
   }
 
-  return Array.isArray(value) && value.every(secretName => typeof secretName === "string")
+  return Array.isArray(value) && value.every((secretName) => typeof secretName === "string");
 }
 
 /** As {@link parseComputeRuntime}, for secrets_scope. */
-export function parseComputeSecretsScope(value: string | string[]): ComputeSecretsScope | undefined {
-  const canonical = typeof value === 'string' ? value.trim().toLowerCase() : value;
+export function parseComputeSecretsScope(
+  value: string | string[],
+): ComputeSecretsScope | undefined {
+  const canonical = typeof value === "string" ? value.trim().toLowerCase() : value;
   return isComputeSecretScope(canonical) ? canonical : undefined;
 }
 
 export function parseSecretsScopeCustom(secretsNames: string) {
-  if (typeof secretsNames !== 'string') {
-    return []
+  if (typeof secretsNames !== "string") {
+    return [];
   }
 
-  return secretsNames.split(',').map(secretName => secretName.trim())
+  return secretsNames.split(",").map((secretName) => secretName.trim());
 }
 
 export function formatSecretsScope(secretsScope: string | string[]) {
-  return typeof secretsScope === "string" ? secretsScope : secretsScope.join(', ')
+  return typeof secretsScope === "string" ? secretsScope : secretsScope.join(", ");
 }
 
 const VCPU_FOR_SIZE: Record<ComputeSize, number> = { "2gb": 1, "4gb": 2 };

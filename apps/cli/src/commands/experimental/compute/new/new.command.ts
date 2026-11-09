@@ -45,15 +45,17 @@ const config = {
     ),
     Flag.optional,
   ),
-  secretsScope: Flag.orElse(
-    Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE),
-    () => Flag.String("secrets-scope:custom").pipe(Flag.map(parseSecretsScopeCustom), Flag.withMetavar("SECRET_NAMES")))
-    .pipe(
-      Flag.withDescription(
-        "Controls whether secrets are available, recorded as `secrets_scope` in the project config file. Prompted when omitted.",
-      ),
-      Flag.optional,
+  secretsScope: Flag.orElse(Flag.Literals("secrets-scope", COMPUTE_SECRETS_SCOPE), () =>
+    Flag.String("secrets-scope:custom").pipe(
+      Flag.map(parseSecretsScopeCustom),
+      Flag.withMetavar("SECRET_NAMES"),
     ),
+  ).pipe(
+    Flag.withDescription(
+      "Controls whether secrets are available, recorded as `secrets_scope` in the project config file. Prompted when omitted.",
+    ),
+    Flag.optional,
+  ),
   instances: Flag.Int("instances").pipe(
     // Bounded at the parser, the same way `push --instances` and the config
     // schema's own `instances` are.

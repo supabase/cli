@@ -94,19 +94,23 @@ export interface ComputeDeploySpec {
   readonly runtime?: string;
   readonly size: string;
   readonly exposure: string;
-  readonly secrets_scope?: ComputeSecretsScope | {
-    readonly secret_name: string;
-  }[];
+  readonly secrets_scope?:
+    | ComputeSecretsScope
+    | {
+        readonly secret_name: string;
+      }[];
   readonly instances: number;
 }
 
-export function parseComputeSecretsScopeToAPIFormat(value: string | string[]): ComputeDeploySpec['secrets_scope'] | undefined {
-  if (typeof value === 'string' && COMPUTE_SECRETS_SCOPE.includes(value as ComputeSecretsScope)) {
+export function parseComputeSecretsScopeToAPIFormat(
+  value: string | string[],
+): ComputeDeploySpec["secrets_scope"] | undefined {
+  if (typeof value === "string" && COMPUTE_SECRETS_SCOPE.includes(value as ComputeSecretsScope)) {
     return value as ComputeSecretsScope;
   }
 
-  if (Array.isArray(value) && value.every(i => typeof i === 'string')) {
-    return value.map((secret_name) => ({ secret_name }))
+  if (Array.isArray(value) && value.every((i) => typeof i === "string")) {
+    return value.map((secret_name) => ({ secret_name }));
   }
 }
 
@@ -265,8 +269,9 @@ export const uploadBuildContext = Effect.fn("Compute.uploadContext")(function* (
         new ComputeUploadFailedError({
           // Not `error.message` as elsewhere in this module: it appends the URL that failed,
           // and here that URL is the write-capable signature.
-          detail: `Uploading the build context failed: ${error.reason.description ?? "the upload request did not complete"
-            }.`,
+          detail: `Uploading the build context failed: ${
+            error.reason.description ?? "the upload request did not complete"
+          }.`,
           suggestion: "Check your network connection, then re-run the same command.",
         }),
     ),
@@ -276,8 +281,9 @@ export const uploadBuildContext = Effect.fn("Compute.uploadContext")(function* (
   if (response.status < 200 || response.status >= 300) {
     const body = yield* bodyText(response);
     return yield* new ComputeUploadFailedError({
-      detail: `Uploading the build context failed with status ${response.status}${body.trim() === "" ? "" : `: ${body.trim()}`
-        }.`,
+      detail: `Uploading the build context failed with status ${response.status}${
+        body.trim() === "" ? "" : `: ${body.trim()}`
+      }.`,
       suggestion: "Re-run the same command; the upload slot is minted fresh each time.",
     });
   }

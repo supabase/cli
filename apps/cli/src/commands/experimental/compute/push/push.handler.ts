@@ -108,7 +108,7 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
   // payload stdout is carrying.
   yield* output.raw(
     `No runtime configured for ${options.name}: guessed ${classified.runtime} (${classified.reason}). ` +
-    `Set ${configSetting(options.config.format, `compute.${options.name}`, "runtime", `"${classified.runtime}"`)} in ${options.config.path}.\n`,
+      `Set ${configSetting(options.config.format, `compute.${options.name}`, "runtime", `"${classified.runtime}"`)} in ${options.config.path}.\n`,
     "stderr",
   );
   return classified.runtime;
@@ -172,10 +172,11 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
       // unguarded by format, like the runtime nudge: a CI run is exactly where
       // a one-deploy exposure quietly reverting matters most.
       const message = options.configured
-        ? `--exposure ${chosen} applies to this deploy only: ${options.config.path} ${options.recorded === undefined
-          ? `records no exposure for ${options.name}`
-          : `records exposure = "${options.recorded}"`
-        }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "exposure", `"${chosen}"`)} in ${options.config.path}.\n`
+        ? `--exposure ${chosen} applies to this deploy only: ${options.config.path} ${
+            options.recorded === undefined
+              ? `records no exposure for ${options.name}`
+              : `records exposure = "${options.recorded}"`
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "exposure", `"${chosen}"`)} in ${options.config.path}.\n`
         : `--exposure ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "exposure")} for future pushes.\n`;
       yield* output.raw(message, "stderr");
     }
@@ -211,7 +212,7 @@ const resolveSecretsScope = Effect.fnUntraced(function* (options: {
   }
 
   if (options.recorded === undefined) {
-    return DEFAULT_COMPUTE_SECRETS_SCOPE
+    return DEFAULT_COMPUTE_SECRETS_SCOPE;
   }
   const recorded = parseComputeSecretsScope(options.recorded as string | string[]);
   if (recorded === undefined) {
@@ -366,7 +367,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     name,
     recorded: compute.entry?.secrets_scope,
     override: input.secretsScope,
-  })
+  });
 
   // Same reason, and the same place: a pattern the CLI cannot read is a config mistake, and
   // finding it out mid-walk would mean reporting it after the packaging step announced itself.
@@ -462,14 +463,14 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     input.noWait || accepted.buildState !== "building"
       ? accepted
       : yield* awaitComputeBuild(api, projectRef, name, {
-        schedule: input.pollSchedule,
-        retrySchedule: input.pollRetrySchedule,
-        refSuffix: input.refSuffix,
-        onPoll: (polled) =>
-          polled.buildState === "building"
-            ? deploying.message("Building compute...")
-            : Effect.void,
-      }).pipe(Effect.tapError(() => deploying.fail()));
+          schedule: input.pollSchedule,
+          retrySchedule: input.pollRetrySchedule,
+          refSuffix: input.refSuffix,
+          onPoll: (polled) =>
+            polled.buildState === "building"
+              ? deploying.message("Building compute...")
+              : Effect.void,
+        }).pipe(Effect.tapError(() => deploying.fail()));
 
   yield* Effect.annotateCurrentSpan({
     "compute.waited": !input.noWait && accepted.buildState === "building",
@@ -481,8 +482,9 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   if (settled.buildState === "failed") {
     yield* deploying.clear;
     return yield* new ComputeBuildFailedError({
-      detail: `The build for "${name}" failed${settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
-        }.`,
+      detail: `The build for "${name}" failed${
+        settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
+      }.`,
       suggestion: `Fix the issue, then re-run \`supabase compute push ${name}${input.refSuffix}\`.`,
     });
   }
@@ -503,9 +505,10 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
-    const settledSecretsScope = typeof settled.spec.secrets_scope === "string"
-      ? settled.spec.secrets_scope as string
-      : settled.spec.secrets_scope?.map(({ secret_name }) => secret_name)
+    const settledSecretsScope =
+      typeof settled.spec.secrets_scope === "string"
+        ? (settled.spec.secrets_scope as string)
+        : settled.spec.secrets_scope?.map(({ secret_name }) => secret_name);
 
     // Declarative line first, then the details. `renderComputeDetails` drops
     // empty-valued rows, so optional fields need no conditional spreads.
@@ -535,7 +538,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
       // unpredictably and buried the command mid-sentence.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
-        `Run ${aqua(`supabase compute status ${name}${input.refSuffix}`)} to check on it.\n`,
+          `Run ${aqua(`supabase compute status ${name}${input.refSuffix}`)} to check on it.\n`,
       );
     }
   }
