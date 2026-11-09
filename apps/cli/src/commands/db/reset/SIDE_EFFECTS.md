@@ -35,9 +35,12 @@ When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1
 precedence, same rules as [`docs/stack-commands.md`](../../../../docs/stack-commands.md)), the
 local path stops the saved composition, resets the registered database instance's data, starts
 and readies that instance, reapplies the catalog overlay and migrations, then starts the saved
-composition again instead of recreating containers. The reset retains the saved database
-configuration and composition members; it does not rebuild the stack from current config. The
-catalog overlay provisions the Auth, Storage, and Realtime schemas for the saved composition's
+composition again instead of recreating containers. On a Docker or Podman stack started with
+`[api.tls]`, that start reruns the `api.tls` container reach check; if it fails, the stack's
+services stop and the reset fails with `api.tls: containers can't reach the api on <runtime> (<what
+the probe saw>)`. The reset retains the saved database configuration and composition members; it
+does not rebuild the stack from current config. The catalog overlay provisions the Auth, Storage, and Realtime
+schemas for the saved composition's
 members, so services excluded at `stack start` stay excluded; for the database-only composition
 that `db start` creates, it provisions the services enabled in current config instead. The
 catalog also creates the `supabase_functions` schema, which migrations must not recreate. After

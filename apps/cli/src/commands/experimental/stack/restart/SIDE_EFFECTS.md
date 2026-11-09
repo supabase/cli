@@ -24,7 +24,12 @@ owners. An owner may be launched by restart when none exists. Existing runtime
 resources are stopped/recreated for composition members only. Artifacts are
 resolved from `<SUPABASE_HOME or ~/.supabase>/cache/stack`; missing artifacts may
 be downloaded. Shared routing/settings may read project config and profiles.
-No hosted project API calls or caller-owned data deletion occur.
+No hosted project API calls or caller-owned data deletion occur. On a stack
+started with `[api.tls]` on Docker or Podman, the database container then calls
+the API once in plain with the token the last `stack start` saved. Without an HTTP
+reply, restart fails with `api.tls: containers can't reach the api on <runtime>
+(<what the probe saw>)` and stops the stack's services; if they don't stop, the
+error says to run `supabase stack stop`.
 
 ## Output, exit codes and telemetry
 
