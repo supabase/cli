@@ -44,6 +44,7 @@ CliConfigLoadError
 CliConfigParseError
 CliConfigRemovedEnvError
 CliConfigRemovedKeyError
+CliConfigSchemaVersionError
 CliConfigValueError
 CliConfigWriteError
 CliProjectEnvParseError
