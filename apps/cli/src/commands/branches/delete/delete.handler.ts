@@ -14,6 +14,7 @@ import {
 import { promptBranchId } from "../branches.prompt.ts";
 import { resolveBranchProjectRef } from "../branches.resolver.ts";
 import type { BranchesDeleteFlags } from "./delete.command.ts";
+import { BranchDeleted } from "./delete.output.ts";
 
 const mapDeleteError = mapHttpError({
   networkError: BranchesDeleteNetworkError,
@@ -37,7 +38,7 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
   );
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
-  yield* Effect.gen(function* () {
+  return yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.name, ref);
     const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
 
@@ -54,10 +55,6 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
     );
     yield* deleting?.clear ?? Effect.void;
 
-    if (output.format === "json" || output.format === "stream-json") {
-      yield* output.success("Deleted preview branch", { project_ref: branchRef });
-      return;
-    }
-    yield* output.raw(`Deleted preview branch: ${branchRef}\n`, "stderr");
+    return BranchDeleted.make({ project_ref: branchRef, message: "Deleted preview branch" });
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });
