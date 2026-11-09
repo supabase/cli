@@ -10,6 +10,10 @@ import {
 } from "./branches.errors.ts";
 
 const body = { body: "not found", message: "boom" };
+const gatedEntitlement = {
+  feature: "branching_limit",
+  upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+};
 
 describe("branch operation 404s classify as invalid input", () => {
   it("pause 404 → invalid input", () => {
@@ -79,7 +83,7 @@ describe("gated branch operation 404s", () => {
       new BranchesCreateUnexpectedStatusError({
         status: 404,
         ...body,
-        upgradeSuggested: true,
+        entitlement: gatedEntitlement,
       }),
     );
     expect(result.error_category).toBe("plan_limit");
@@ -102,7 +106,7 @@ describe("branches create 409 = duplicate branch name", () => {
       new BranchesCreateUnexpectedStatusError({
         status: 409,
         ...body,
-        upgradeSuggested: true,
+        entitlement: gatedEntitlement,
       }),
     );
     expect(result.error_category).toBe("plan_limit");
