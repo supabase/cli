@@ -990,6 +990,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   CliConfigParseError: () => actionability.invalidConfig,
   CliConfigFileConflictError: () => actionability.invalidConfig,
   CliConfigRemovedKeyError: () => actionability.invalidConfig,
+  CliConfigSchemaVersionError: () => actionability.invalidConfig,
   CliProjectEnvParseError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
