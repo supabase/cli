@@ -2430,6 +2430,18 @@ export const V1ExchangeOauthTokenOutput = Schema.Struct({
       }),
     ),
   token_type: Schema.Literal("Bearer"),
+  scope: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Space-delimited scopes granted to the token. Omitted when no scopes were granted.",
+    }),
+  ),
+  project_refs: Schema.Union([
+    Schema.Array(Schema.String).annotate({
+      description: "Project refs the token is limited to. `null` means all projects.",
+    }),
+    Schema.Null,
+  ]),
 });
 export const V1GenerateTypescriptTypesInput = Schema.Struct({
   included_schemas: Schema.optionalKey(Schema.String),
@@ -7164,6 +7176,480 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
   updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   status: Schema.Union([Schema.Literals(["stored", "applied"]), OpenString]),
+});
+export const V1PatchPostgresConfigInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  effective_cache_size: Schema.optionalKey(Schema.String),
+  logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
+  "cron.log_statement": Schema.optionalKey(Schema.Boolean),
+  log_autovacuum_min_duration: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  log_checkpoints: Schema.optionalKey(Schema.Boolean),
+  log_connections: Schema.optionalKey(Schema.Boolean),
+  log_disconnections: Schema.optionalKey(Schema.Boolean),
+  log_duration: Schema.optionalKey(Schema.Boolean),
+  log_lock_waits: Schema.optionalKey(Schema.Boolean),
+  log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+  log_replication_commands: Schema.optionalKey(Schema.Boolean),
+  log_startup_progress_interval: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  log_temp_files: Schema.optionalKey(Schema.String),
+  maintenance_work_mem: Schema.optionalKey(Schema.String),
+  track_activity_query_size: Schema.optionalKey(Schema.String),
+  max_connections: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_locks_per_transaction: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(10).annotate({
+          expected: "a value greater than or equal to 10",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(2147483640).annotate({
+          expected: "a value less than or equal to 2147483640",
+        }),
+      ),
+  ),
+  max_logical_replication_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_parallel_maintenance_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_parallel_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_parallel_workers_per_gather: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_replication_slots: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+  ),
+  max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
+  max_standby_archive_delay: Schema.optionalKey(Schema.String),
+  max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+  max_sync_workers_per_subscription: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_wal_size: Schema.optionalKey(Schema.String),
+  max_wal_senders: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+  ),
+  max_worker_processes: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  session_replication_role: Schema.optionalKey(Schema.Literals(["origin", "replica", "local"])),
+  shared_buffers: Schema.optionalKey(Schema.String),
+  statement_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
+  wal_keep_size: Schema.optionalKey(Schema.String),
+  wal_sender_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  work_mem: Schema.optionalKey(Schema.String),
+  checkpoint_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: s" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
+  restart_database: Schema.optionalKey(Schema.Boolean),
+});
+export const V1PatchPostgresConfigOutput = Schema.Struct({
+  effective_cache_size: Schema.optionalKey(Schema.String),
+  logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "pg_stat_statements.max": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(100).annotate({
+          expected: "a value greater than or equal to 100",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(45000).annotate({
+          expected: "a value less than or equal to 45000",
+        }),
+      ),
+  ),
+  "pg_net.batch_size": Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(32767).annotate({
+          expected: "a value less than or equal to 32767",
+        }),
+      ),
+  ),
+  autovacuum_max_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  autovacuum_work_mem: Schema.optionalKey(Schema.String),
+  "cron.log_statement": Schema.optionalKey(Schema.Boolean),
+  log_autovacuum_min_duration: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  log_checkpoints: Schema.optionalKey(Schema.Boolean),
+  log_connections: Schema.optionalKey(Schema.Boolean),
+  log_disconnections: Schema.optionalKey(Schema.Boolean),
+  log_duration: Schema.optionalKey(Schema.Boolean),
+  log_lock_waits: Schema.optionalKey(Schema.Boolean),
+  log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+  log_replication_commands: Schema.optionalKey(Schema.Boolean),
+  log_startup_progress_interval: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  log_temp_files: Schema.optionalKey(Schema.String),
+  maintenance_work_mem: Schema.optionalKey(Schema.String),
+  track_activity_query_size: Schema.optionalKey(Schema.String),
+  max_connections: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_locks_per_transaction: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(10).annotate({
+          expected: "a value greater than or equal to 10",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(2147483640).annotate({
+          expected: "a value less than or equal to 2147483640",
+        }),
+      ),
+  ),
+  max_logical_replication_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_parallel_maintenance_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_parallel_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_parallel_workers_per_gather: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(1024).annotate({
+          expected: "a value less than or equal to 1024",
+        }),
+      ),
+  ),
+  max_replication_slots: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+  ),
+  max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
+  max_standby_archive_delay: Schema.optionalKey(Schema.String),
+  max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+  max_sync_workers_per_subscription: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  max_wal_size: Schema.optionalKey(Schema.String),
+  max_wal_senders: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+          expected: "a value greater than or equal to -9007199254740991",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      ),
+  ),
+  max_worker_processes: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(262143).annotate({
+          expected: "a value less than or equal to 262143",
+        }),
+      ),
+  ),
+  session_replication_role: Schema.optionalKey(
+    Schema.Union([Schema.Literals(["origin", "replica", "local"]), OpenString]),
+  ),
+  shared_buffers: Schema.optionalKey(Schema.String),
+  statement_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
+  wal_keep_size: Schema.optionalKey(Schema.String),
+  wal_sender_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  work_mem: Schema.optionalKey(Schema.String),
+  checkpoint_timeout: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: s" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$", "u")).annotate({
+        expected: "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+      }),
+    ),
+  ),
+  hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
 });
 export const V1PauseAProjectInput = Schema.Struct({
   ref: Schema.String.check(
@@ -18241,6 +18727,7 @@ export const openApiOperationIdMap = {
   "v1-oauth-authorize-project-claim": "v1OauthAuthorizeProjectClaim",
   "v1-patch-a-migration": "v1PatchAMigration",
   "v1-patch-network-restrictions": "v1PatchNetworkRestrictions",
+  "v1-patch-postgres-config": "v1PatchPostgresConfig",
   "v1-pause-a-project": "v1PauseAProject",
   "v1-push-a-branch": "v1PushABranch",
   "v1-read-only-query": "v1ReadOnlyQuery",
@@ -20125,6 +20612,67 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1PatchNetworkRestrictionsInput,
     outputSchema: V1PatchNetworkRestrictionsOutput,
+  },
+  v1PatchPostgresConfig: {
+    id: "v1PatchPostgresConfig",
+    description: "Partially updates project's Postgres config",
+    method: "PATCH",
+    path: "/v1/projects/{ref}/config/database/postgres",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: {
+      kind: "json",
+      contentType: "application/json",
+      fields: [
+        "effective_cache_size",
+        "logical_decoding_work_mem",
+        "pg_stat_statements.max",
+        "pg_net.batch_size",
+        "autovacuum_max_workers",
+        "autovacuum_work_mem",
+        "cron.log_statement",
+        "log_autovacuum_min_duration",
+        "log_checkpoints",
+        "log_connections",
+        "log_disconnections",
+        "log_duration",
+        "log_lock_waits",
+        "log_recovery_conflict_waits",
+        "log_replication_commands",
+        "log_startup_progress_interval",
+        "log_temp_files",
+        "maintenance_work_mem",
+        "track_activity_query_size",
+        "max_connections",
+        "max_locks_per_transaction",
+        "max_logical_replication_workers",
+        "max_parallel_maintenance_workers",
+        "max_parallel_workers",
+        "max_parallel_workers_per_gather",
+        "max_replication_slots",
+        "max_slot_wal_keep_size",
+        "max_standby_archive_delay",
+        "max_standby_streaming_delay",
+        "max_sync_workers_per_subscription",
+        "max_wal_size",
+        "max_wal_senders",
+        "max_worker_processes",
+        "session_replication_role",
+        "shared_buffers",
+        "statement_timeout",
+        "track_commit_timestamp",
+        "wal_keep_size",
+        "wal_sender_timeout",
+        "work_mem",
+        "checkpoint_timeout",
+        "hot_standby_feedback",
+        "restart_database",
+      ],
+    },
+    response: { kind: "json" },
+    inputSchema: V1PatchPostgresConfigInput,
+    outputSchema: V1PatchPostgresConfigOutput,
   },
   v1PauseAProject: {
     id: "v1PauseAProject",
