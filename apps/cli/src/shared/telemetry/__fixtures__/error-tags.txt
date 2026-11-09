@@ -292,6 +292,7 @@ InspectReportWriteError
 InvalidAccessTokenError
 InvalidComputeExcludeError
 InvalidComputeNameError
+InvalidComputeSecretsScopeError
 InvalidComputeSourceError
 InvalidFunctionDeploySlugError
 InvalidFunctionDownloadResponseError
@@ -568,7 +569,7 @@ TestNewInvalidNameError
 TestNewWriteError
 UnknownComputeExposureError
 UnknownComputeRuntimeError
-UnknownComputeSecretsScopeError 
+UnknownComputeSecretsScopeError
 UnknownComputeSizeError
 UnlinkRefReadError
 UnlinkTempRemovalError
