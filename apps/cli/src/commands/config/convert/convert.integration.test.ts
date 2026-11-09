@@ -15,11 +15,7 @@ import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { configConvert } from "./convert.handler.ts";
-import {
-  BRANCHING_WARNING,
-  CONFIG_JSONC_MIN_CLI_VERSION,
-  MIN_VERSION_WARNING,
-} from "./convert.format.ts";
+import { CONFIG_JSONC_MIN_CLI_VERSION, MIN_VERSION_WARNING } from "./convert.format.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-convert-");
 
@@ -172,7 +168,7 @@ describe("config convert integration", () => {
           "Removed supabase/config.toml; supabase/config.jsonc is now the project config.",
           "",
         ]);
-        expect(out.stderrText.split("\n")).toEqual([MIN_VERSION_WARNING, BRANCHING_WARNING, ""]);
+        expect(out.stderrText.split("\n")).toEqual([MIN_VERSION_WARNING, ""]);
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(BunServices.layer));
     },
@@ -399,7 +395,7 @@ describe("config convert integration", () => {
       expect(out.stderrText.split("\n")[0]).toBe(
         "Dry run: would write supabase/config.jsonc, delete supabase/config.toml, and add the schema domain to .vscode/settings.json.",
       );
-      expect(out.stderrText).toContain(BRANCHING_WARNING);
+      expect(out.stderrText).toContain(MIN_VERSION_WARNING);
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -437,7 +433,7 @@ describe("config convert integration", () => {
             moved_comments: [],
             vscode_settings_updated: false,
             min_cli_version: CONFIG_JSONC_MIN_CLI_VERSION,
-            warnings: expect.arrayContaining([expect.stringContaining("Branching")]),
+            warnings: expect.arrayContaining([MIN_VERSION_WARNING]),
           }),
         },
       ]);
@@ -496,7 +492,7 @@ describe("config convert integration", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("prints the version and Branching warnings before a failed config.toml removal", () => {
+  it.effect("prints the version warning before a failed config.toml removal", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
@@ -509,7 +505,6 @@ describe("config convert integration", () => {
       expect(error._tag).toBe("ConfigConvertWriteError");
       expect(yield* exists("supabase", "config.jsonc")).toBe(true);
       expect(out.stderrText).toContain(MIN_VERSION_WARNING);
-      expect(out.stderrText).toContain(BRANCHING_WARNING);
     }).pipe(Effect.provide(BunServices.layer));
   });
 

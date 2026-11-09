@@ -21,10 +21,7 @@ export const CONVERTED_MESSAGE = "Converted supabase/config.toml to supabase/con
 export const REMOVED_MESSAGE =
   "Removed supabase/config.toml; supabase/config.jsonc is now the project config.";
 
-export const MIN_VERSION_WARNING = `Older Supabase CLIs (before ${CONFIG_JSONC_MIN_CLI_VERSION}) ignore config.jsonc and run with defaults; some commands (init, functions new) create a new config.toml that newer CLIs then ignore. Upgrade every machine and CI job that runs supabase for this project.`;
-
-export const BRANCHING_WARNING =
-  "Supabase Branching does not read config.jsonc yet: preview branches will not pick up the settings in this file. To undo, run: git restore supabase/config.toml && rm supabase/config.jsonc";
+export const MIN_VERSION_WARNING = `Older Supabase CLIs (before ${CONFIG_JSONC_MIN_CLI_VERSION}) ignore config.jsonc and run with defaults; some commands (init, functions new) create a new config.toml that newer CLIs then ignore. Upgrade every machine and CI job that runs supabase for this project. To undo, run: git restore supabase/config.toml && rm supabase/config.jsonc`;
 
 const TRUSTED_DOMAIN = "https://supabase.com/schemas/";
 
@@ -62,7 +59,6 @@ export function convertWarnings(input: {
   return [
     ...movedCommentsWarning(input.moved),
     MIN_VERSION_WARNING,
-    BRANCHING_WARNING,
     ...(input.vscodeFailure === undefined ? [] : [vscodeFailureWarning(input.vscodeFailure)]),
   ];
 }

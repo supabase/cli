@@ -10,7 +10,7 @@ Commented-out TOML examples become commented-out JSONC members, so removing the 
 
 `--dry-run` prints the converted document to stdout and writes nothing. If the project has `.vscode/settings.json`, the command also adds the schema domain to `json.schemaDownload.trustedDomains` there, keeping its comments; the file is never created.
 
-Everyone on the project needs Supabase CLI 3.1.0 or later. Older CLIs (before 3.1.0) ignore `config.jsonc` and run with defaults, and some commands (`init`, `functions new`) create a new `config.toml` that newer CLIs then ignore. Supabase Branching does not read `config.jsonc` yet: preview branches will not pick up the settings in the converted file. Both are reported as warnings, before anything is written, and never change the exit code.
+Everyone on the project needs Supabase CLI 3.1.0 or later. Older CLIs (before 3.1.0) ignore `config.jsonc` and run with defaults, and some commands (`init`, `functions new`) create a new `config.toml` that newer CLIs then ignore. This is reported as a warning, with an undo command, before anything is written, and never changes the exit code.
 
 If only `supabase/config.json` or `supabase/config.jsonc` exists, the command reports that there is nothing to convert and exits 0. It fails when `config.toml` and a JSON config both exist, because the JSON file takes precedence; delete it first to convert `config.toml` again. The legacy global `-o`/`--output` flag is not supported; use `--output-format json|stream-json` for a machine-readable result.
 

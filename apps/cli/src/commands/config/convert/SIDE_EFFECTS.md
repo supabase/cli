@@ -56,11 +56,10 @@ stdout:
 - `Removed supabase/config.toml; supabase/config.jsonc is now the project config.`
 - `Added https://supabase.com/schemas/ to json.schemaDownload.trustedDomains in .vscode/settings.json.` when the VS Code settings changed
 
-stderr (warnings; the first three are printed before anything is written, in this order):
+stderr (warnings; the first two are printed before anything is written, in this order):
 
 - `Moved N comment(s) that were inside multi-line values to the line above their key:` followed by one `  line N → <key>: # …` line per comment, only for comments in nested arrays or inline tables
-- `Older Supabase CLIs (before 3.1.0) ignore config.jsonc and run with defaults; some commands (init, functions new) create a new config.toml that newer CLIs then ignore. Upgrade every machine and CI job that runs supabase for this project.`
-- `Supabase Branching does not read config.jsonc yet: preview branches will not pick up the settings in this file. To undo, run: git restore supabase/config.toml && rm supabase/config.jsonc`
+- `Older Supabase CLIs (before 3.1.0) ignore config.jsonc and run with defaults; some commands (init, functions new) create a new config.toml that newer CLIs then ignore. Upgrade every machine and CI job that runs supabase for this project. To undo, run: git restore supabase/config.toml && rm supabase/config.jsonc`
 - `Could not update .vscode/settings.json: <detail>. …` after the write, when the settings file cannot be parsed or written
 
 With only `config.json[c]` present, stdout is `supabase/config.jsonc is already the project config; nothing to convert.` (naming the actual file).
