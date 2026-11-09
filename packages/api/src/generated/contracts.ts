@@ -12093,6 +12093,10 @@ export const V2CreateNotebookOutput = Schema.Struct({
         }).annotate({ description: "User who last wrote to the notebook." }),
         Schema.Null,
       ]),
+      url: Schema.String.annotate({
+        description: "Dashboard link for this notebook.",
+        format: "uri",
+      }),
       content: Schema.Struct({
         schema_version: Schema.Number.check(
           Schema.isFinite().annotate({ expected: "a finite number" }),
@@ -12994,6 +12998,10 @@ export const V2GetNotebookOutput = Schema.Struct({
         }).annotate({ description: "User who last wrote to the notebook." }),
         Schema.Null,
       ]),
+      url: Schema.String.annotate({
+        description: "Dashboard link for this notebook.",
+        format: "uri",
+      }),
       content: Schema.Struct({
         schema_version: Schema.Number.check(
           Schema.isFinite().annotate({ expected: "a finite number" }),
@@ -14114,6 +14122,10 @@ export const V2ListNotebooksOutput = Schema.Struct({
           }).annotate({ description: "User who last wrote to the notebook." }),
           Schema.Null,
         ]),
+        url: Schema.String.annotate({
+          description: "Dashboard link for this notebook.",
+          format: "uri",
+        }),
       }),
     }),
   ),
@@ -15257,20 +15269,24 @@ export const V2OrganizationsSlugWebhooksEndpointsGetOutput = Schema.Struct({
   ),
   links: Schema.Struct({
     first: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Null]).annotate({
-        description: "URL path to the first page if available.",
-      }),
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
     ),
-    prev: Schema.Union([Schema.String, Schema.Null]).annotate({
-      description: "URL path to the previous page.",
-    }),
-    next: Schema.Union([Schema.String, Schema.Null]).annotate({
-      description: "URL path to the next page.",
-    }),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
     last: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Null]).annotate({
-        description: "URL path to the last page if available.",
-      }),
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
     ),
   }),
 });
@@ -15607,20 +15623,24 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.
   ),
   links: Schema.Struct({
     first: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Null]).annotate({
-        description: "URL path to the first page if available.",
-      }),
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
     ),
-    prev: Schema.Union([Schema.String, Schema.Null]).annotate({
-      description: "URL path to the previous page.",
-    }),
-    next: Schema.Union([Schema.String, Schema.Null]).annotate({
-      description: "URL path to the next page.",
-    }),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
     last: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Null]).annotate({
-        description: "URL path to the last page if available.",
-      }),
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
     ),
   }),
 });
@@ -16724,20 +16744,24 @@ export const V2ProjectsRefWebhooksEndpointsGetOutput = Schema.Struct({
   ),
   links: Schema.Struct({
     first: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Null]).annotate({
-        description: "URL path to the first page if available.",
-      }),
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
     ),
-    prev: Schema.Union([Schema.String, Schema.Null]).annotate({
-      description: "URL path to the previous page.",
-    }),
-    next: Schema.Union([Schema.String, Schema.Null]).annotate({
-      description: "URL path to the next page.",
-    }),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
     last: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Null]).annotate({
-        description: "URL path to the last page if available.",
-      }),
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
     ),
   }),
 });
@@ -17086,20 +17110,24 @@ export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct
   ),
   links: Schema.Struct({
     first: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Null]).annotate({
-        description: "URL path to the first page if available.",
-      }),
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
     ),
-    prev: Schema.Union([Schema.String, Schema.Null]).annotate({
-      description: "URL path to the previous page.",
-    }),
-    next: Schema.Union([Schema.String, Schema.Null]).annotate({
-      description: "URL path to the next page.",
-    }),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
     last: Schema.optionalKey(
-      Schema.Union([Schema.String, Schema.Null]).annotate({
-        description: "URL path to the last page if available.",
-      }),
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
     ),
   }),
 });
@@ -18431,6 +18459,10 @@ export const V2UpdateNotebookOutput = Schema.Struct({
         }).annotate({ description: "User who last wrote to the notebook." }),
         Schema.Null,
       ]),
+      url: Schema.String.annotate({
+        description: "Dashboard link for this notebook.",
+        format: "uri",
+      }),
       content: Schema.Struct({
         schema_version: Schema.Number.check(
           Schema.isFinite().annotate({ expected: "a finite number" }),
