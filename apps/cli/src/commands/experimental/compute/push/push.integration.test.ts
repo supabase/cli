@@ -85,6 +85,7 @@ function flags(overrides: Partial<ComputePushFlags> = {}): ComputePushFlags {
     remote: Option.none(),
     projectRef: Option.none(),
     secretsScope: Option.none(),
+    secretsScopeCustom: Option.none(),
     ...overrides,
   };
 }
@@ -842,7 +843,7 @@ describe("compute push", () => {
       const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
-        yield* push({ secretsScope: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]) });
+        yield* push({ secretsScopeCustom: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]) });
 
         const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
         expect(
