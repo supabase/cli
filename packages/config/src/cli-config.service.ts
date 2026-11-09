@@ -8,6 +8,7 @@ import type {
 } from "./config-document.ts";
 import type {
   CliConfigFileConflictError,
+  CliConfigSchemaVersionError,
   CliConfigParseError,
   CliConfigRemovedKeyError,
   CliProjectEnvParseError,
@@ -25,6 +26,7 @@ import type {
  */
 type CliConfigStoreError =
   | CliConfigFileConflictError
+  | CliConfigSchemaVersionError
   | CliConfigParseError
   | CliConfigRemovedKeyError
   | DuplicateRemoteProjectIdError

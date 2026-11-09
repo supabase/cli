@@ -23,6 +23,7 @@ import {
 import { HttpClient } from "effect/http";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw release fixture server.
+import { SLIM_NATIVE_SUPABASE_S3_MIRROR } from "../Artifacts.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { databaseIdentity, recordDatabaseIdentity } from "../internal/database-reuse.ts";
@@ -374,14 +375,23 @@ describe("database component", { timeout: 180_000 }, () => {
           // The next revision is the published archive under a manifest that names the new revision.
           const targets = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
           const manifestJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
-          const client = HttpClient.followRedirects(yield* HttpClient.HttpClient);
+          const client = HttpClient.filterStatusOk(
+            HttpClient.followRedirects(yield* HttpClient.HttpClient),
+          );
           const manifests = new Map<string, string>();
           const manifestPins = new Map<string, string>();
           for (const target of targets) {
-            const upstream = yield* client.get(
-              `${upstreamReleases}${assetPath(published.revision, target, "manifest.json")}`,
+            const publishedVersion = releaseVersion(published.revision);
+            const body = yield* Effect.firstSuccessOf(
+              [
+                `${upstreamReleases}${assetPath(published.revision, target, "manifest.json")}`,
+                `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/postgres/${publishedVersion}/postgres-${publishedVersion}-${target}.manifest.json`,
+              ].map((url) => client.get(url).pipe(Effect.flatMap((response) => response.text))),
             );
-            const manifest = yield* Schema.decodeEffect(manifestJson)(yield* upstream.text);
+            expect(createHash("sha256").update(body).digest("hex")).toBe(
+              published.natives[target].manifest,
+            );
+            const manifest = yield* Schema.decodeEffect(manifestJson)(body);
             const text = yield* Schema.encodeEffect(manifestJson)({
               ...manifest,
               version: releaseVersion(nextRevision),

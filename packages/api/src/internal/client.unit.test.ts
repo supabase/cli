@@ -69,6 +69,7 @@ function oauthTokenResponse(
     refresh_token: "refresh-token",
     expires_in: 3600,
     token_type: "Bearer",
+    project_refs: null,
   });
 }
 

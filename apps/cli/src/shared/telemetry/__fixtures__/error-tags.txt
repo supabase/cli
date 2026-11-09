@@ -45,6 +45,7 @@ CliConfigLoadError
 CliConfigParseError
 CliConfigRemovedEnvError
 CliConfigRemovedKeyError
+CliConfigSchemaVersionError
 CliConfigValueError
 CliConfigWriteError
 CliProjectEnvParseError
@@ -333,6 +334,9 @@ LoginMissingTokenError
 LoginSaveTokenError
 LoginVerificationError
 LogoutCancelledError
+LogsApiError
+LogsClipboardError
+LogsInputError
 MigraDiffError
 MigraSchemaLoadError
 MigrationApplyError

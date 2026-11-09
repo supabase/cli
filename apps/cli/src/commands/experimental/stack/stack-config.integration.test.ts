@@ -223,15 +223,103 @@ port = 55431
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("rejects Auth email template content paths deferred by the stack", () =>
+  it.effect("resolves Auth template and enabled notification files for the stack", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* project(`project_id = "stack-config-auth-template"
 [auth.email.template.invite]
-content_path = "./templates/invite.html"
+subject = "Join us"
+content_path = "./supabase/templates/invite.html"
+[auth.email.notification.password_changed]
+enabled = true
+subject = "Changed"
+content_path = "./templates/password_changed.txt"
+[auth.email.notification.email_changed]
+enabled = false
+content_path = "./supabase/templates/disabled.html"
 `);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.email");
+      const templates = path.join(root, "supabase", "templates");
+      yield* fs.makeDirectory(templates);
+      yield* fs.writeFileString(path.join(templates, "invite.html"), "invite");
+      yield* fs.writeFileString(path.join(templates, "password_changed.txt"), "changed");
+
+      const config = yield* load(root);
+      const auth = byService(yield* config.creations("stack-auth-template")).get("auth");
+      if (auth?.service !== "auth") return yield* Effect.die("Auth creation missing");
+
+      expect(auth.config.templates).toEqual([
+        { id: "invite", path: path.join(templates, "invite.html"), root },
+        {
+          id: "password_changed_notification",
+          path: path.join(templates, "password_changed.txt"),
+          root,
+        },
+      ]);
+      expect(auth.config.settings?.email?.template.invite?.subject).toBe("Join us");
+      expect(auth.config.settings?.email?.notification.password_changed?.subject).toBe("Changed");
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "keeps an in-root symlinked Auth template, refuses an escaping one, and leaves a missing one to the start check",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const missing = yield* project(`project_id = "stack-config-auth-template-missing"
+[auth.email.template.invite]
+content_path = "./supabase/templates/missing.html"
+`);
+        const unread = byService(yield* (yield* load(missing)).creations("stack-auth-missing"));
+        expect(unread.get("auth")).toMatchObject({
+          config: { templates: [{ id: "invite" }] },
+        });
+
+        const linked = yield* project(`project_id = "stack-config-auth-template-link"
+[auth.email.template.invite]
+content_path = "./supabase/templates/invite.html"
+`);
+        yield* fs.makeDirectory(path.join(linked, "supabase", "templates"));
+        yield* fs.writeFileString(path.join(linked, "shared.html"), "shared");
+        yield* fs.writeFileString(path.join(linked, "retargeted.html"), "retargeted");
+        const link = path.join(linked, "supabase", "templates", "invite.html");
+        yield* fs.symlink("../../shared.html", link);
+        const kept = byService(yield* (yield* load(linked)).creations("stack-auth-link"));
+        expect(kept.get("auth")).toMatchObject({
+          config: { templates: [{ id: "invite", path: link, root: linked }] },
+        });
+        /* The stack reads the configured path per fetch, so a retargeted link serves its new file. */
+        yield* fs.remove(link);
+        yield* fs.symlink("../../retargeted.html", link);
+        const auth = kept.get("auth");
+        const served = auth?.service === "auth" ? auth.config.templates?.[0]?.path : undefined;
+        expect(yield* fs.readFileString(served ?? "")).toBe("retargeted");
+
+        const escaping = yield* project(`project_id = "stack-config-auth-template-escape"
+[auth.email.notification.password_changed]
+enabled = true
+content_path = "./supabase/link.html"
+`);
+        const outside = path.join(yield* fs.makeTempDirectoryScoped(), "outside.html");
+        yield* fs.writeFileString(outside, "outside");
+        yield* fs.symlink(outside, path.join(escaping, "supabase", "link.html"));
+        const config = yield* load(escaping);
+        const failure = yield* Effect.flip(config.creations("stack-auth-template-escape"));
+        expect(failure.message).toContain("resolves outside the project root");
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("ignores Auth template files while Auth is disabled", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-auth-template-disabled"
+[auth]
+enabled = false
+[auth.email.template.invite]
+content_path = "./supabase/templates/missing.html"
+`);
+      const config = yield* load(root);
+      expect(byService(yield* config.creations("stack-auth-disabled")).has("auth")).toBe(false);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 

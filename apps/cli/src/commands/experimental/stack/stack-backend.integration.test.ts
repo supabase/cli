@@ -51,7 +51,7 @@ describe("resolveProjectStateSelection", () => {
     }),
   );
 
-  it.effect("selects the configured backend for top-level start, stop, and status", () => {
+  it.effect("selects the configured backend for managed local commands", () => {
     return withServices(
       Effect.gen(function* () {
         const root = yield* project(`project_id = "stack-routing-test"
@@ -82,9 +82,30 @@ stack = true
         expect(yield* resolve({ args: ["storage", "ls"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["seed", "buckets"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["services"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["logs"], cwd: root, env: {} })).toBeUndefined();
+        expect(yield* resolve({ args: ["logs", "sources"], cwd: root, env: {} })).toBeUndefined();
       }),
     );
   });
+
+  it.effect.each([
+    ["logs", "--service", "--sql"],
+    ["logs", "--search=--file"],
+    ["logs", "--remote"],
+    ["logs", "sources"],
+    ["help", "logs"],
+    ["__complete", "logs", "--"],
+  ])("defers local logs feature validation until after parsing %j", (args) =>
+    Effect.gen(function* () {
+      const selection = yield* select({
+        args,
+        cwd: "/missing",
+        env: { SUPABASE_EXPERIMENTAL_STACK: "invalid" },
+      });
+      expect(selection.stackBackend).toBeUndefined();
+      expect(selection.projectState?._tag).toBe("Failure");
+    }),
+  );
 
   it.effect("keeps storage on legacy when the feature flag is disabled", () => {
     return withServices(
@@ -97,6 +118,15 @@ stack = true
             env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
           }),
         ).toBe("legacy");
+        for (const args of [["logs"], ["logs", "sources"]]) {
+          expect(
+            yield* resolve({
+              args,
+              cwd: root,
+              env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
+            }),
+          ).toBeUndefined();
+        }
       }),
     );
   });
@@ -106,6 +136,9 @@ stack = true
       Effect.gen(function* () {
         const root = yield* project("[experimental]\nstack = true\n");
         expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBeUndefined();
+        expect(
+          yield* resolve({ args: ["logs", "--remote", "--sql", "select 1"], cwd: root, env: {} }),
+        ).toBeUndefined();
       }),
     );
   });

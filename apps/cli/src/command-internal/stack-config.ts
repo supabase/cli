@@ -44,6 +44,7 @@ import {
   resolveAuthExternalProviders,
 } from "./local-config-values.ts";
 import { generateAsymmetricLocalJwt } from "./local-jwt.ts";
+import { resolveEmailTemplatePaths } from "./config-validate.ts";
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import {
   resolveRemoteJwks,
@@ -233,14 +234,6 @@ const firstDifference = (left: unknown, right: unknown, path: string): string | 
 
 const configValidationError = (config: CliConfig): string | undefined => {
   const defaults = getDefaultCliConfig();
-  if (config.auth.enabled) {
-    for (const [name, template] of Object.entries(config.auth.email.template))
-      if (template.content_path !== "")
-        return `auth.email.template.${name}.content_path requires template serving, which is not supported by the experimental stack`;
-    for (const [name, notification] of Object.entries(config.auth.email.notification))
-      if (notification.enabled && notification.content_path !== "")
-        return `auth.email.notification.${name}.content_path requires template serving, which is not supported by the experimental stack`;
-  }
   for (const { path, active } of unsupportedConfigPaths) {
     if (!active(config)) continue;
     const value = pathValue(config, path);
@@ -546,10 +539,48 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         config: {},
         endpoints: { http: endpoint(undefined) },
       };
+      const { template, notification } = validatedConfig.auth.email;
+      const emailTemplates = Effect.forEach(
+        !validatedConfig.auth.enabled
+          ? []
+          : [
+              ...Object.entries(template).map(([name, entry]) => ({
+                section: "template" as const,
+                name,
+                id: name,
+                contentPath: entry.content_path,
+              })),
+              ...Object.entries(notification)
+                .filter(([, entry]) => entry.enabled)
+                .map(([name, entry]) => ({
+                  section: "notification" as const,
+                  name,
+                  id: `${name}_notification`,
+                  contentPath: entry.content_path,
+                })),
+            ],
+        ({ section, name, id, contentPath }) =>
+          resolveEmailTemplatePaths({
+            section,
+            name,
+            contentPath,
+            contentPresent: false,
+            base: projectRoot,
+          }).pipe(
+            Effect.map((paths) =>
+              paths === undefined ? [] : [{ id, path: paths.candidate, root: projectRoot }],
+            ),
+          ),
+      ).pipe(
+        Effect.map((templates) => templates.flat()),
+        Effect.provideService(FileSystem.FileSystem, yield* FileSystem.FileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(toStackConfigError),
+      );
       const createCreations = (
         stackId: string,
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
-        Effect.sync(() => {
+        Effect.map(emailTemplates, (templates) => {
           return [
             {
               service: "database",
@@ -619,6 +650,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     config: {
                       ...authConfig,
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
+                      ...(templates.length === 0 ? {} : { templates }),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,

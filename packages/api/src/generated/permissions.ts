@@ -125,6 +125,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["database_network_restrictions_write"]],
     oauthScope: "projects:write",
   },
+  "v1-review-network-restrictions": {
+    fga: [["database_network_restrictions_write"]],
+    oauthScope: "projects:write",
+  },
   "v1-get-pgsodium-config": { fga: [["project_admin_write"]], oauthScope: "secrets:read" },
   "v1-update-pgsodium-config": { fga: [["project_admin_write"]], oauthScope: "secrets:write" },
   "v1-get-postgrest-service-config": {
@@ -299,6 +303,7 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   },
   "v1-get-postgres-config": { fga: [["database_config_read"]], oauthScope: "database:read" },
   "v1-update-postgres-config": { fga: [["database_config_write"]], oauthScope: "database:write" },
+  "v1-patch-postgres-config": { fga: [["database_config_write"]], oauthScope: "database:write" },
   "v1-get-realtime-config": { fga: [["realtime_config_read"]] },
   "v1-update-realtime-config": { fga: [["realtime_config_write"]] },
   "v1-shutdown-realtime": { fga: [["realtime_config_write"]] },

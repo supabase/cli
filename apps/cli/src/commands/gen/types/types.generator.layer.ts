@@ -110,7 +110,10 @@ export const genTypesGeneratorLayer = Layer.effect(
                       rows: [...rows],
                     })),
                 };
-                return introspect(queryable, { includedSchemas: [...input.includedSchemas] });
+                return introspect(queryable, {
+                  includedSchemas: [...input.includedSchemas],
+                  extraSearchPath: [...input.extraSearchPath],
+                });
               },
               catch: toGenerationError,
             });

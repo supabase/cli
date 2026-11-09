@@ -1,3 +1,4 @@
+import { DateTime } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { ComputeLogEntry } from "../../../shared/compute/compute-logs-api.ts";
@@ -5,12 +6,6 @@ import { renderComputeLogLine, computeLogLevel } from "./compute-logs.format.ts"
 
 const ESCAPE = "\u001b";
 
-/**
- * Colour depends on both the stream and the environment (`supportsColor`
- * checks NO_COLOR/CLICOLOR/CLICOLOR_FORCE/CI before the stream), so a fake
- * stream alone isn't deterministic — under CI a `hasColors: () => true`
- * stream still renders plain unless the env vars are neutralised too.
- */
 const PLAIN = { hasColors: () => false };
 const COLOURED = { hasColors: () => true };
 
@@ -27,11 +22,9 @@ afterEach(() => {
 const AT = 1_788_187_532_576;
 
 function nativeDate(timestampMs: number): Date {
-  // oxlint-disable-next-line effecttsgo/global-date -- native Date accessors form an independent local-time oracle.
-  return new Date(timestampMs);
+  return DateTime.toDateUtc(DateTime.makeUnsafe(timestampMs));
 }
 
-/** Native Date accessors provide a local-time oracle independent of DateTime.formatLocal. */
 function localTime(timestampMs: number): string {
   const at = nativeDate(timestampMs);
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -85,8 +78,6 @@ describe("computeLogLevel", () => {
   });
 
   it("reports no level for guest output rather than guessing one", () => {
-    // Nothing short of parsing tenant text could tell, so absent is the honest
-    // answer.
     expect(computeLogLevel(entry())).toBeUndefined();
   });
 
@@ -103,8 +94,6 @@ describe("renderComputeLogLine", () => {
   });
 
   it("composes the request line from attributes, not the message", () => {
-    // On the wire `event_message` is only "GET /" - status and duration live in
-    // log_attributes, so the useful line has to be assembled.
     const line = renderComputeLogLine(
       entry({
         stream: "worker_ingress_logs",
@@ -131,7 +120,6 @@ describe("renderComputeLogLine", () => {
   });
 
   it("falls back to the message for an unknown stream", () => {
-    // The log contract is additive-only, so a new stream must still print.
     const line = renderComputeLogLine(
       entry({ stream: "compute_future_logs", message: "something new" }),
       { showStream: false, colorStream: PLAIN },
@@ -141,8 +129,6 @@ describe("renderComputeLogLine", () => {
   });
 
   it("renders local time, not UTC", () => {
-    // Pinned against a fixed offset rather than the ambient zone, so the choice is
-    // asserted on a UTC machine too, where local and UTC would otherwise coincide.
     const utc = nativeDate(AT).toISOString().slice(11, 19);
     const offsetMinutes = nativeDate(AT).getTimezoneOffset();
     const line = renderComputeLogLine(entry(), { showStream: false, colorStream: PLAIN });
@@ -350,7 +336,6 @@ describe("renderComputeLogLine", () => {
       { showStream: true, colorStream: PLAIN },
     );
 
-    // A ragged left edge is harder to scan than a slightly wider one.
     expect(app.indexOf("compute shim")).toBe(build.indexOf("deploy_accepted"));
   });
 

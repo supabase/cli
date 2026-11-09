@@ -13,6 +13,7 @@ import {
 } from "../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
+import { describeConfigLoadFailure } from "../command-internal/resolved-config-context.ts";
 import { loadStackConfig } from "../command-internal/stack-config.ts";
 import { CliEnvNameSource } from "../shared/config/cli-config-provider.layer.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
@@ -564,6 +565,270 @@ describe("CliConfigValues JSON config files", () => {
         );
       }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
+});
+
+describe("CliConfigValues schema declaration", () => {
+  const V2 = "https://supabase.com/schemas/config/v2.json";
+  const V1 = "https://supabase.com/schemas/config/v1.json";
+
+  const load = (root: string) =>
+    CliConfigValues.use((values) => values.load({ workdir: root, projectRef: Option.none() }));
+
+  const loadLinked = (root: string) =>
+    CliConfigValues.use((values) =>
+      values.load({ workdir: root, projectRef: Option.some(LINKED) }),
+    );
+
+  const writeConfig = (root: string, name: string, content: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.remove(path.join(root, "supabase", "config.toml"), { force: true });
+      yield* fs.writeFileString(path.join(root, "supabase", name), content);
+    });
+
+  const warningsFor = (file: string, content: string) =>
+    Effect.gen(function* () {
+      const root = yield* project("");
+      yield* writeConfig(root, file, content);
+      const output = mockOutput();
+      yield* load(root).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+      return { messages: output.messages, stderr: output.stderrText, stdout: output.stdoutText };
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect));
+
+  it.live("warns once that an unrecognized schema URL is read as v1", () =>
+    Effect.gen(function* () {
+      const root = yield* project("");
+      yield* writeConfig(
+        root,
+        "config.json",
+        '{"$schema": "https://example.com/x.json", "db": {"port": 54777}}',
+      );
+      const output = mockOutput();
+
+      const loaded = yield* Effect.gen(function* () {
+        const first = yield* load(root);
+        yield* loadLinked(root);
+        return first;
+      }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(loaded.materialized.config.db.port).toBe(54777);
+      expect(output.stderrText).toBe(
+        "WARN: supabase/config.json declares schema https://example.com/x.json, which is not the Supabase CLI config schema, so it is read as v1. Set it to https://supabase.com/schemas/config/v1.json to remove this warning.\n",
+      );
+      expect(output.stdoutText).toBe("");
+      expect(output.messages).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  const silent: ReadonlyArray<readonly [string, string, string]> = [
+    ["v1 JSON", "config.json", `{"$schema": "${V1}"}`],
+    ["an undeclared JSON file", "config.json", "{}"],
+    ["a v1 TOML directive", "config.toml", `#:schema ${V1}\n[db]\nport = 54111\n`],
+    ["an undeclared TOML file", "config.toml", "[db]\nport = 54111\n"],
+    [
+      "the legacy docs URL",
+      "config.json",
+      '{"$schema": "https://supabase.com/docs/cli/config.schema.json"}',
+    ],
+    [
+      "the built dist/schema.json path",
+      "config.json",
+      '{"$schema": "../node_modules/@supabase/config/dist/schema.json"}',
+    ],
+    [
+      "the legacy node_modules path",
+      "config.jsonc",
+      '{"$schema": "./node_modules/@supabase/config/schema.json"}',
+    ],
+  ];
+
+  for (const [name, file, content] of silent) {
+    it.live(`prints no warning for ${name}`, () =>
+      Effect.gen(function* () {
+        expect(yield* warningsFor(file, content)).toEqual({ messages: [], stderr: "", stdout: "" });
+      }).pipe(Effect.scoped),
+    );
+  }
+
+  it.live("warns once with the sorted unknown keys of the file", () =>
+    Effect.gen(function* () {
+      const root = yield* project("bogus = 1\n[api]\nfoo = 2\n");
+      const output = mockOutput();
+
+      yield* Effect.gen(function* () {
+        yield* load(root);
+        yield* loadLinked(root);
+      }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(output.stderrText).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: api.foo, bogus. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+      expect(output.stdoutText).toBe("");
+      expect(output.messages).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("lists unknown keys under a remote with the remote name", () =>
+    Effect.gen(function* () {
+      const messages = yield* warningsFor(
+        "config.toml",
+        '[remotes.staging]\nproject_id = "stagingrefstagingref"\n[remotes.staging.api]\nfoo = 1\n',
+      );
+
+      expect(messages.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: remotes.staging.api.foo. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+      expect(messages.messages).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "never lists the document-only db.password and db.root_key, at the root or in a remote",
+    () =>
+      Effect.gen(function* () {
+        const messages = yield* warningsFor(
+          "config.toml",
+          [
+            "[db]",
+            'password = "pw"',
+            'root_key = "rk"',
+            "oops = 1",
+            "[remotes.staging]",
+            'project_id = "stagingrefstagingref"',
+            "[remotes.staging.db]",
+            'password = "pw"',
+            'root_key = "rk"',
+            "",
+          ].join("\n"),
+        );
+
+        expect(messages.stderr).toBe(
+          "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: db.oops. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+        );
+        expect(messages.messages).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "never lists the document-only auth.passkey and auth.webauthn tables, at the root or in a remote",
+    () =>
+      Effect.gen(function* () {
+        const warnings = yield* warningsFor(
+          "config.toml",
+          [
+            "[auth.passkey]",
+            "enabled = true",
+            "[auth.webauthn]",
+            'rp_id = "x"',
+            "[remotes.staging]",
+            'project_id = "stagingrefstagingref"',
+            "[remotes.staging.auth.passkey]",
+            "enabled = true",
+            "[remotes.staging.auth.webauthn]",
+            'rp_id = "x"',
+            "",
+          ].join("\n"),
+        );
+
+        expect(warnings).toEqual({ messages: [], stderr: "", stdout: "" });
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("never lists a custom auth.external provider table, at the root or in a remote", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.toml",
+        [
+          "[auth.external.my_oidc]",
+          "enabled = true",
+          'client_id = "id"',
+          "[remotes.staging]",
+          'project_id = "stagingrefstagingref"',
+          "[remotes.staging.auth.external.my_oidc]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+
+      expect(warnings).toEqual({ messages: [], stderr: "", stdout: "" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("still lists a non-table value under auth.external", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor("config.toml", '[auth.external]\nmy_oidc = "x"\n');
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: auth.external.my_oidc. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("still lists an unknown key written beside the document-only auth tables", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.toml",
+        "[auth.passkey]\nenabled = true\n[auth.passkeys]\nenabled = true\n",
+      );
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: auth.passkeys. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "prints an unknown key containing an escape sequence with the control characters escaped",
+    () =>
+      Effect.gen(function* () {
+        const warnings = yield* warningsFor("config.toml", '"bad\\u001b[31m" = 1\n');
+
+        expect(warnings.stderr).toBe(
+          "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: bad\\u001b[31m. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+        );
+        expect(warnings.stderr.includes("\u001b")).toBe(false);
+        expect(warnings.stdout).toBe("");
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("prints an unrecognized $schema containing an escape sequence escaped", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.json",
+        '{"$schema": "https://example.com/\\u001b[31mx.json"}',
+      );
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.json declares schema https://example.com/\\u001b[31mx.json, which is not the Supabase CLI config schema, so it is read as v1. Set it to https://supabase.com/schemas/config/v1.json to remove this warning.\n",
+      );
+      expect(warnings.stderr.includes("\u001b")).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
+  const tooNew: ReadonlyArray<readonly [string, string, string]> = [
+    ["config.json", `{"$schema": "${V2}"}`, "supabase/config.json"],
+    ["config.jsonc", `{\n// c\n"$schema": "${V2}",\n}`, "supabase/config.jsonc"],
+    ["config.toml", `#:schema ${V2}\n[db\nbroken = = 1\n`, "supabase/config.toml"],
+    ["config.toml", `  # note\n\t#:schema ${V2} \t\n[db]\n`, "supabase/config.toml"],
+  ];
+
+  for (const [file, content, shown] of tooNew) {
+    it.live(`fails CliConfigValues.load with the upgrade message for a v2 ${file}`, () =>
+      Effect.gen(function* () {
+        const root = yield* project("");
+        yield* writeConfig(root, file, content);
+
+        const failure = yield* load(root).pipe(Effect.flip, Effect.provide(configValuesLayer()));
+
+        expect(failure).toMatchObject({ _tag: "CliConfigSchemaVersionError" });
+        expect(failure.message).toBe(
+          `${shown} declares config schema v2, but this version of the Supabase CLI only reads up to v1. Upgrade the Supabase CLI to use this config.`,
+        );
+        expect(describeConfigLoadFailure(failure)).toBe(failure.message);
+      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    );
+  }
 });
 
 describe("CliConfigValues memoisation", () => {

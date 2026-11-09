@@ -19,6 +19,7 @@ import {
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
   CliConfigParseError,
+  CliConfigSchemaVersionError,
   CliConfigWriteError,
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
@@ -26,8 +27,14 @@ import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts"
 import { parseJsonc } from "./jsonc.ts";
 import { findCliProjectPaths } from "./paths.ts";
 import { rejectRemovedConfigKeys } from "./removed-config-keys.ts";
+import { SUPPORTED_CLI_CONFIG_SCHEMA_VERSION } from "./schema-metadata.ts";
+import {
+  readCliConfigSchemaDeclaration,
+  SCHEMA_DIRECTIVE_LINE,
+  versionOfSchemaRef,
+  type CliConfigSchemaDeclaration,
+} from "./schema-version.ts";
 import { setOwnProperty } from "./sparse.ts";
-import { tomlSchemaDirective } from "./toml-scan.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
 import { validateCliConfig } from "./validate.ts";
 
@@ -382,25 +389,52 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
+const failIfSchemaTooNew = Effect.fnUntraced(function* (
+  filePath: string,
+  format: ConfigFormat,
+  declaration: CliConfigSchemaDeclaration | undefined,
+) {
+  if (
+    declaration?.version !== undefined &&
+    declaration.version > BigInt(SUPPORTED_CLI_CONFIG_SCHEMA_VERSION)
+  ) {
+    return yield* new CliConfigSchemaVersionError({
+      path: filePath,
+      format,
+      schemaRef: declaration.ref,
+      declaredVersion: declaration.version.toString(),
+      supportedVersion: SUPPORTED_CLI_CONFIG_SCHEMA_VERSION,
+    });
+  }
+});
+
 const readCliConfigDocumentFile = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
   const format = cliConfigFormatForPath(filePath);
   const content = yield* fs.readFileString(filePath);
+  yield* failIfSchemaTooNew(
+    filePath,
+    format,
+    readCliConfigSchemaDeclaration(content, format, undefined),
+  );
   const document = yield* Effect.try({
     try: () => parseCliConfigDocument(content, format),
     catch: (cause) => new CliConfigParseError({ path: filePath, format, cause }),
   });
-  return { format, content, document } as const;
+  const schemaDeclaration = readCliConfigSchemaDeclaration(content, format, document);
+  yield* failIfSchemaTooNew(filePath, format, schemaDeclaration);
+  return { format, content, document, schemaDeclaration } as const;
 });
 
 const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: string) {
-  const { format, content, document } = yield* readCliConfigDocumentFile(filePath);
+  const { format, content, document, schemaDeclaration } =
+    yield* readCliConfigDocumentFile(filePath);
   const withoutRemoved = isObject(document)
     ? yield* rejectRemovedConfigKeys(document, filePath, format)
     : document;
   const { document: normalized, deprecatedPaths } =
     normalizeDeprecatedProviderSignupKeys(withoutRemoved);
-  return { format, content, document, normalized, deprecatedPaths } as const;
+  return { format, content, document, schemaDeclaration, normalized, deprecatedPaths } as const;
 });
 
 /**
@@ -696,6 +730,7 @@ export interface ParsedCliConfigDocument {
   readonly format: ConfigFormat;
   readonly rawText: string;
   readonly schemaRef: string | undefined;
+  readonly schemaDeclaration: CliConfigSchemaDeclaration | undefined;
   readonly ignoredPaths: ReadonlyArray<string>;
   readonly deprecatedPaths: ReadonlyArray<string>;
   readonly rawDocument: Record<string, unknown> | undefined;
@@ -720,7 +755,7 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
     return null;
   }
 
-  const { format, content, document, normalized, deprecatedPaths } =
+  const { format, content, document, schemaDeclaration, normalized, deprecatedPaths } =
     yield* readAndNormalizeCliConfigFile(located.filePath);
 
   return {
@@ -728,6 +763,7 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
     format,
     rawText: content,
     schemaRef: getSchemaRef(document),
+    schemaDeclaration,
     ignoredPaths: located.ignoredPaths,
     deprecatedPaths,
     rawDocument: isObject(normalized) ? normalized : undefined,
@@ -820,6 +856,27 @@ const readExistingSchemaRef = Effect.fnUntraced(function* (cwd: string) {
   return getSchemaRef(document);
 });
 
+/** Fails when any existing config file, including a shadowed sibling the save removes, declares a
+ * newer schema; a file that does not parse can still be overwritten. */
+const rejectNewerExistingSchema = Effect.fnUntraced(function* (paths: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem;
+  for (const filePath of paths) {
+    if (!(yield* fs.exists(filePath))) {
+      continue;
+    }
+    const format = cliConfigFormatForPath(filePath);
+    const content = yield* fs.readFileString(filePath);
+    const document = yield* Effect.try(() => parseCliConfigDocument(content, format)).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    yield* failIfSchemaTooNew(
+      filePath,
+      format,
+      readCliConfigSchemaDeclaration(content, format, document),
+    );
+  }
+});
+
 /** Saves `config`; an existing JSON/JSONC file is edited in place so comments survive, and a TOML
  * file keeps its `#:schema` directive. */
 export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: SaveCliConfigOptions) {
@@ -828,11 +885,20 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
   const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
   const { format, filePath, allPaths } = yield* resolveSaveTarget(baseCwd, options.format);
+  if (project !== null) {
+    yield* rejectNewerExistingSchema(allPaths);
+  }
   const existingSchemaRef =
     options.schemaRef !== undefined || project === null
       ? undefined
       : yield* readExistingSchemaRef(baseCwd);
   const schemaRef = options.schemaRef ?? existingSchemaRef;
+  if (schemaRef !== undefined) {
+    yield* failIfSchemaTooNew(filePath, cliConfigFormatForPath(filePath), {
+      ref: schemaRef,
+      version: versionOfSchemaRef(schemaRef),
+    });
+  }
   let content =
     format === "json"
       ? encodeCliConfigToJsonDocument(options.config, schemaRef)
@@ -844,7 +910,7 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
     if (format === "json") {
       content = updateJsonDocument(existingText.value, parseJsonc(content)) ?? content;
     } else {
-      const directive = tomlSchemaDirective(existingText.value)?.line;
+      const directive = SCHEMA_DIRECTIVE_LINE.exec(existingText.value)?.[0];
       if (directive !== undefined && !content.startsWith("#:schema")) {
         content = `${directive}\n${content}`;
       }

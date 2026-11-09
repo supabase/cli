@@ -69,6 +69,8 @@ const networkRestrictionsAttributes = Schema.Struct({
       }),
     ),
   ),
+  pending_allowed_cidrs: Schema.optionalKey(Schema.Unknown),
+  pending_requested_at: Schema.optionalKey(Schema.Unknown),
   updated_at: Schema.optionalKey(Schema.Unknown),
   applied_at: Schema.optionalKey(Schema.Unknown),
 });

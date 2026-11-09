@@ -170,7 +170,8 @@ these rules:
 
 The saved file may also preserve a top-level `"$schema"` key as editor metadata: when a caller
 doesn't pass an explicit `schemaRef`, saving reuses whatever `$schema` the project's existing
-config file already had. That key does not participate in runtime config semantics.
+config file already had. Beyond the schema version it declares (see [Schema version](#schema-version)),
+the key has no runtime meaning.
 
 ## Env Loading and Precedence
 
@@ -486,7 +487,8 @@ The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` enviro
 
 1. `parseCliConfigDocumentFile` reads `config.json`, `config.jsonc` or `config.toml` without decoding, and
    fails with `CliConfigRemovedKeyError` when the document uses a removed key, or
-   `CliConfigFileConflictError` when both JSON files exist.
+   `CliConfigFileConflictError` when both JSON files exist, or `CliConfigSchemaVersionError` when
+   the file declares a newer schema version.
 2. `mergeParsedCliConfig` applies the remote chosen by the `selectRemote` callback.
 3. The CLI overlays flag, env and default values onto the merged document.
 4. `decodeMergedCliConfig` expands `env()` references, then decodes and validates the overlaid
@@ -494,6 +496,44 @@ The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` enviro
 
 The result is the `materialized` config on the resolved config; `get(key)` also reports the tier a value
 came from.
+
+## Schema version
+
+A config file declares its schema version with `$schema` in `config.json`/`config.jsonc`, or with a
+leading `#:schema <url>` directive in `config.toml` (a top-level `"$schema"` key is the fallback;
+the directive wins). The directive must come before any other content; blank lines and comments
+may precede it, and surrounding spaces or tabs are ignored. A file with no declaration is v1.
+
+- `https://supabase.com/schemas/config/v<N>.json` declares version `N`.
+- The legacy `https://supabase.com/docs/cli/config.schema.json` and paths ending in
+  `node_modules/@supabase/config/schema.json` or `node_modules/@supabase/config/dist/schema.json`
+  read as v1.
+- Any other reference is unrecognized: the file is read as v1 and the CLI warns on stderr, naming
+  the current schema URL.
+- A file declaring a version newer than the package supports fails with
+  `CliConfigSchemaVersionError` and an upgrade message, in `loadCliConfig`, `loadCliConfigFile`,
+  `parseCliConfigDocumentFile` and `saveCliConfig` alike. A save also fails when the `$schema` it
+  would write, explicit or carried over, is newer than the package supports, and checks every
+  existing config file, including a
+  shadowed sibling it would remove. With an explicit `schemaRef`, a save overwrites an existing
+  file that does not parse unless that file declares a newer version; without one, the save reads
+  the existing `$schema` and fails with `CliConfigParseError` on a file that does not parse. For TOML the directive is checked before
+  parsing, so a newer file this version cannot parse still reports the upgrade error.
+
+## Unknown keys
+
+`findUnknownCliConfigKeys(document)` (`@supabase/config/internal`) returns the sorted key paths
+(segment arrays) of keys in a raw config document that `CliConfigSchema` does not accept, derived from the schema
+itself: the document is decoded with excess-property errors enabled and the unexpected-key issues
+are collected. A key a union member accepts is not reported. The top-level `$schema` key is
+ignored, and `[remotes.<name>]` blocks report under `["remotes", <name>, ...]`. An unknown table
+reports as the table, not its leaves. Pass the document after
+deprecated spellings are folded, as `parseCliConfigDocumentFile` exposes it in `rawDocument`.
+
+The loader still ignores unknown keys. The CLI prints one `WARN:` line on stderr per file listing
+them, so they can be checked for typos, removed, or read by a newer CLI. Key names and schema refs
+are printed with control characters escaped. The CLI's document-only keys (`db.password`,
+`db.root_key`, `auth.external_url`, `[auth.passkey]`, `[auth.webauthn]`) are never listed.
 
 ## CLI-owned Repo State
 

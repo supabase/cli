@@ -4,22 +4,30 @@ import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { makePorts, probeVacant, type PortError } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
-import { makeHttpProxy, type HttpAccessSink, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
+import {
+  makeHttpProxy,
+  type HttpAccessSink,
+  type HttpFileRoute,
+  type HttpProxy,
+  type HttpRoute,
+} from "./HttpProxy.ts";
 
 export type NetworkRuntime = "native" | "docker" | "podman";
 
 /* `target` serves a route from another backend than its endpoint's, like PostgREST's admin port. */
-type RouteContribution = Pick<
-  HttpRoute,
-  | "prefix"
-  | "upstreamPrefix"
-  | "upstreamHost"
-  | "addHeaders"
-  | "forwardedPrefix"
-  | "keyRewrite"
-  | "upstreamCors"
-> &
-  Partial<Pick<HttpRoute, "target">>;
+type RouteContribution =
+  | (Pick<
+      HttpRoute,
+      | "prefix"
+      | "upstreamPrefix"
+      | "upstreamHost"
+      | "addHeaders"
+      | "forwardedPrefix"
+      | "keyRewrite"
+      | "upstreamCors"
+    > &
+      Partial<Pick<HttpRoute, "target">>)
+  | Pick<HttpFileRoute, "prefix" | "file">;
 
 export interface NetworkEndpoint {
   readonly protocol: "tcp" | "http";
@@ -116,13 +124,13 @@ const makeNetwork = (options: {
       | {
           readonly claim: number;
           readonly proxy: HttpProxy;
-          readonly routes: ReadonlyArray<HttpRoute>;
+          readonly routes: ReadonlyArray<HttpRoute | HttpFileRoute>;
           readonly scope: Scope.Closeable;
         }
       | undefined
     >(undefined);
     // Join routes queued before any claiming endpoint has created the shared listener.
-    const pendingJoins = yield* Ref.make<ReadonlyArray<HttpRoute>>([]);
+    const pendingJoins = yield* Ref.make<ReadonlyArray<HttpRoute | HttpFileRoute>>([]);
 
     const listenHost = options.runtime === "native" ? "127.0.0.1" : "0.0.0.0";
     const hostAddress = "127.0.0.1";
@@ -130,20 +138,24 @@ const makeNetwork = (options: {
 
     const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
 
-    /** Maps one endpoint's route contributions to `HttpRoute`s; shared and joined ones are `gateway` routes. */
+    /** Maps one endpoint's route contributions to routes; shared and joined proxy routes are `gateway` routes. */
     const toHttpRoutes = (
       id: string,
       contributions: ReadonlyArray<RouteContribution>,
       endpoint: Pick<NetworkEndpoint, "backend" | "freshWrites">,
       gateway: boolean,
-    ): ReadonlyArray<HttpRoute> =>
-      contributions.map((route) => ({
-        ...route,
-        id,
-        ...(gateway ? { gateway: true } : {}),
-        ...(endpoint.freshWrites === true ? { freshWrites: true } : {}),
-        target: route.target ?? endpoint.backend,
-      }));
+    ): ReadonlyArray<HttpRoute | HttpFileRoute> =>
+      contributions.map((route) =>
+        "file" in route
+          ? { ...route, id }
+          : {
+              ...route,
+              id,
+              ...(gateway ? { gateway: true } : {}),
+              ...(endpoint.freshWrites === true ? { freshWrites: true } : {}),
+              target: route.target ?? endpoint.backend,
+            },
+      );
 
     /** Installs a namespace's joined routes onto the shared listener, or queues them if it does not exist yet. */
     const installJoin = Effect.fn("Network.installJoin")(function* (
@@ -243,7 +255,7 @@ const makeNetwork = (options: {
                   );
                   if (endpoint.shared !== undefined && result.listener.proxy !== undefined) {
                     const previous = yield* Ref.get(shared);
-                    let seeded: ReadonlyArray<HttpRoute> = [];
+                    let seeded: ReadonlyArray<HttpRoute | HttpFileRoute> = [];
                     if (previous === undefined) seeded = yield* Ref.get(pendingJoins);
                     const current = previous ?? {
                       claim: result.port,

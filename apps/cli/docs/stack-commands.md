@@ -280,6 +280,31 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
+`supabase logs` reads retained stdout/stderr from composition members and `gateway`
+request lines from the shared API port. Interactive terminals open a browser; press `L`
+to load more records. Pipes and machine output perform one finite read and exit.
+
+Select `--stack <name>` or `--stack-id <id>`. Repeat `--service <kind>` to select
+services, use `--service postgres` for the database, or `--resource <instance-id>`
+for one instance. `--service gateway` reads only request lines. Reads work while
+the stack is stopped and never start an owner or service.
+
+`--limit N` (default 100, maximum 1000) selects the initial newest lines. `--since`
+accepts a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each service's
+latest launch. The default is the last hour. The requested lower bound stays fixed
+when you load newer logs, and the header shows the captured end of each successful
+load. Failed loads preserve the displayed rows and window.
+
+Use `--output-format json` for an array of retained records, or `stream-json` for
+`log-entry` and `log-marker` events. Each event's `data` preserves the retained
+record, including instance IDs, launch IDs, and positions. Missing stacks and
+unmatched services fail with status 1. Browser interruption exits 130.
+
+The deprecated `supabase stack logs` keeps its existing `--tail` and `--follow`
+behavior until removal in v4.
+
+### Legacy stack logs
+
 `supabase stack logs` prints the retained stdout/stderr of composition members, plus
 the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
 streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
@@ -300,6 +325,9 @@ sequences, and notes on stderr when the tail hides older lines. For automation u
 prints the history as one array and does not accept `--follow`. Missing stacks,
 unmatched services, and `--follow` without an owner fail with status 1; interruption
 exits 130.
+
+The command emits a deprecation warning on stderr and remains available until v4.
+Stream JSON also includes a `data` object containing the original retained record.
 
 ## Data and configuration
 
@@ -446,7 +474,7 @@ unavailable fails with `StackStorageUnavailableError`, guiding the user to run `
 status`/`supabase stack restart`, or `supabase start` when the stack has never been configured.
 Missing Storage HTTP endpoints fail with `StackStorageCapabilityError`, as do other Storage
 capability failures. A stack-gateway 502/503 encountered while Storage activates is reported as
-`StackStorageCapabilityError` guiding the user to `supabase stack logs` then `supabase stack
+`StackStorageCapabilityError` guiding the user to `supabase logs --service storage` then `supabase stack
 restart`, not as a raw status body — but only for a local target; a `--remote` failure passes
 through unchanged. All of these failures exit `1` for
 `storage`/`seed buckets`, and no HTTP

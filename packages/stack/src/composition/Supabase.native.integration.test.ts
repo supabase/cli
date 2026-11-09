@@ -68,6 +68,7 @@ it.live("reports the failed binding and cleanup reason with the retained instanc
     const unused = () => Effect.die("unused operation");
     const operations: SupabaseCompositionOperations = {
       currentComposition: Effect.succeed({ members: [], dependencies: [] }),
+      randomToken: Effect.succeed("token"),
       get: unused,
       status: unused,
       create: (creation) => Effect.succeed({ id: "retained-mail", creation }),
@@ -168,6 +169,7 @@ it.live("cleans created registrations when composition is interrupted", () =>
       Effect.fail(new SupabaseCompositionError({ message: `${operation} is unused` }));
     const operations: SupabaseCompositionOperations = {
       currentComposition: Effect.succeed({ members: [], dependencies: [] }),
+      randomToken: Effect.succeed("token"),
       get: () => unused("get"),
       status: () => unused("status"),
       create: (creation) =>
@@ -335,6 +337,140 @@ it.live(
           ),
         );
         expect(remove.status).toBe(200);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
+  { timeout: 180_000 },
+);
+
+const MailpitMessages = Schema.Struct({
+  messages: Schema.Array(
+    Schema.Struct({
+      ID: Schema.String,
+      To: Schema.Array(Schema.Struct({ Address: Schema.String })),
+    }),
+  ),
+});
+const MailpitMessage = Schema.Struct({ HTML: Schema.String });
+
+it.live(
+  "mails the configured template over unchanged listeners and follows a changed content_path",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const client = yield* HttpClient.HttpClient;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-templates-" }),
+        );
+        const first = `${root}/first.html`;
+        const second = `${root}/second.html`;
+        yield* fs.writeFileString(first, "<p>first template marker</p>");
+        yield* fs.writeFileString(second, "<p>second template marker</p>");
+        const saved = initial("catalog-native-templates");
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save(saved);
+        const owner = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+        const jwtSecret = "catalog-native-templates-secret-with-at-least-32-chars";
+        const services = (templates: ReadonlyArray<string>) => [
+          {
+            service: "database" as const,
+            pin: selection.database,
+            config: {
+              databasePassword: Redacted.make("postgres"),
+              jwtSecret: Redacted.make(jwtSecret),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" as const } },
+          },
+          {
+            service: "auth" as const,
+            pin: selection.auth,
+            config: {
+              jwtSecret,
+              jwtExpiry: 3600,
+              templates: templates.map((path) => ({ id: "invite", path, root })),
+            },
+            endpoints: { http: { port: "auto" as const } },
+          },
+          {
+            service: "mail" as const,
+            pin: selection.mail,
+            config: {},
+            endpoints: { http: { port: "auto" as const }, smtp: { port: "auto" as const } },
+          },
+        ];
+        const created = yield* owner.rpc.supabaseComposition({ services: services([]) });
+        const idOf = (service: string) => {
+          const id = created.find((entry) => entry.creation.service === service)?.id;
+          return id === undefined ? Effect.die(`${service} missing`) : Effect.succeed(id);
+        };
+        const reuseIds = [yield* idOf("database"), yield* idOf("auth"), yield* idOf("mail")];
+        const bindings = (
+          observations: Effect.Success<ReturnType<typeof owner.rpc.startComposition>>,
+        ) =>
+          observations
+            .flatMap(({ id, endpoints }) => endpoints.map((endpoint) => ({ id, ...endpoint })))
+            .toSorted((left, right) => left.port - right.port);
+        const withoutTemplates = bindings(yield* owner.rpc.startComposition());
+        yield* owner.rpc.stopComposition();
+
+        yield* owner.rpc.supabaseComposition({ services: services([first]), reuseIds });
+        expect(bindings(yield* owner.rpc.startComposition())).toEqual(withoutTemplates);
+
+        const auth = yield* owner.rpc.credentials({ id: yield* idOf("auth"), from: "host" });
+        const mail = yield* owner.rpc.credentials({ id: yield* idOf("mail"), from: "host" });
+        if (auth.url === undefined || auth.apiUrl === undefined || mail.url === undefined)
+          return yield* Effect.die("Native service URLs missing");
+        const serviceToken = yield* Effect.tryPromise(() =>
+          new SignJWT({ role: "service_role" })
+            .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+            .setSubject("catalog-native-templates")
+            .setIssuedAt()
+            .setExpirationTime("1h")
+            .sign(new TextEncoder().encode(jwtSecret)),
+        );
+        /* Auth answers an invite with 200 and its built-in email even when its template fetch fails. */
+        const invitedBody = (email: string) =>
+          Effect.gen(function* () {
+            const invite = yield* client.execute(
+              yield* HttpClientRequest.bodyJson({ email })(
+                HttpClientRequest.post(`${auth.url}/invite`).pipe(
+                  HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
+                ),
+              ),
+            );
+            expect(invite.status, yield* invite.text).toBe(200);
+            const { messages } = yield* Schema.decodeUnknownEffect(MailpitMessages)(
+              yield* (yield* client.get(`${mail.url}/api/v1/messages`)).json,
+            );
+            const message = messages.find(({ To }) => To.some((to) => to.Address === email));
+            if (message === undefined) return yield* Effect.die(`No email for ${email}`);
+            const { HTML } = yield* Schema.decodeUnknownEffect(MailpitMessage)(
+              yield* (yield* client.get(`${mail.url}/api/v1/message/${message.ID}`)).json,
+            );
+            return HTML;
+          });
+        expect(yield* invitedBody("first@example.test")).toContain("first template marker");
+
+        yield* owner.rpc.stopComposition();
+        const changed = yield* owner.rpc.supabaseComposition({
+          services: services([second]),
+          reuseIds,
+        });
+        yield* owner.rpc.startComposition();
+        const composed = changed.find(({ creation }) => creation.service === "auth")?.creation;
+        if (composed?.service !== "auth") return yield* Effect.die("Auth missing");
+        const route = `${auth.apiUrl}/email/invite`;
+        expect((yield* client.get(route)).status).toBe(404);
+        const served = yield* client.get(`${route}?token=${composed.config.templateToken}`);
+        expect(yield* served.text).toContain("second template marker");
+        expect(yield* invitedBody("second@example.test")).toContain("second template marker");
       }),
     ).pipe(
       Effect.provide(

@@ -15,17 +15,21 @@ import {
 const unused = (what: string) => () => Effect.die(`${what} is not part of this test`);
 
 /** A connection whose every introspection query returns no rows: a valid, empty database. */
-const emptyDatabase = Layer.succeed(DbConnection, {
-  connect: () =>
-    Effect.succeed<DbSession>({
-      exec: unused("exec"),
-      execBatch: unused("execBatch"),
-      query: () => Effect.succeed([]),
-      queryRaw: unused("queryRaw"),
-      extensionExists: unused("extensionExists"),
-      copyToCsv: unused("copyToCsv"),
-    }),
-});
+const databaseRecording = (issued: string[]) =>
+  Layer.succeed(DbConnection, {
+    connect: () =>
+      Effect.succeed<DbSession>({
+        exec: unused("exec"),
+        execBatch: unused("execBatch"),
+        query: (sql) => {
+          issued.push(sql);
+          return Effect.succeed([]);
+        },
+        queryRaw: unused("queryRaw"),
+        extensionExists: unused("extensionExists"),
+        copyToCsv: unused("copyToCsv"),
+      }),
+  });
 
 const runtimeIn = (cwd: string) =>
   Layer.succeed(RuntimeInfo, {
@@ -38,15 +42,15 @@ const runtimeIn = (cwd: string) =>
   });
 
 /** The generator layer as the command wires it, with the environment the layer reads through Config. */
-const layerIn = (cwd: string, env: Record<string, string>) =>
+const layerIn = (cwd: string, env: Record<string, string>, issued: string[] = []) =>
   genTypesGeneratorLayer.pipe(
-    Layer.provide(emptyDatabase),
+    Layer.provide(databaseRecording(issued)),
     Layer.provide(runtimeIn(cwd)),
     Layer.provide(BunServices.layer),
     Layer.provide(Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord(env))),
   );
 
-const input = (lang: string): GenTypesGenerateInput => ({
+const input = (lang: string, extraSearchPath: readonly string[] = []): GenTypesGenerateInput => ({
   conn: {
     host: "127.0.0.1",
     port: 5432,
@@ -58,13 +62,14 @@ const input = (lang: string): GenTypesGenerateInput => ({
   dnsResolver: "native",
   lang,
   includedSchemas: ["public"],
+  extraSearchPath,
   options: {},
 });
 
-const generate = (lang: string) =>
+const generate = (lang: string, extraSearchPath: readonly string[] = []) =>
   Effect.gen(function* () {
     const generator = yield* GenTypesGenerator;
-    return yield* Effect.scoped(generator.generate(input(lang)));
+    return yield* Effect.scoped(generator.generate(input(lang, extraSearchPath)));
   });
 
 /** A stand-in `dart`: fails like the real tool when `.fail` sits in its cwd, else echoes its stdin. */
@@ -142,6 +147,23 @@ describe.skipIf(process.platform === "win32")(
             Layer.merge(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` }), BunServices.layer),
           ),
         ),
+      ),
+    );
+
+    it.effect("introspects views in the extra search path schemas", () =>
+      withFakeDart(({ cwd }) =>
+        Effect.gen(function* () {
+          const withoutExtra: string[] = [];
+          yield* generate("typescript").pipe(
+            Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, withoutExtra)),
+          );
+          const withExtra: string[] = [];
+          yield* generate("typescript", ["extensions_extra"]).pipe(
+            Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, withExtra)),
+          );
+          expect(withoutExtra.some((sql) => sql.includes("'extensions_extra'"))).toBe(false);
+          expect(withExtra.some((sql) => sql.includes("'extensions_extra'"))).toBe(true);
+        }),
       ),
     );
 

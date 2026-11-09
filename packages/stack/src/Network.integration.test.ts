@@ -2,15 +2,22 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Data, Deferred, Effect, Fiber, FileSystem, Hash, Layer, Path, Ref } from "effect";
 import { randomUUID } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import { createServer, type RequestListener } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpBody, HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { HttpAccess, HttpAccessSink } from "./HttpProxy.ts";
 import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import { freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
+import { emailTemplateFile, freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
+import { readResolvedFile } from "./namespace/drivers/FileSystem.ts";
+import type { ServiceCreation } from "./services/Catalog.ts";
 import * as StackNamespace from "./StackNamespace.ts";
+import { selection } from "../tests/pins.ts";
+import { captureLogs } from "../tests/logs.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(StackNamespace.layer({ root })).pipe(
@@ -20,11 +27,14 @@ const makeTestNetwork = (options: {
   readonly stackId: string;
   readonly runtime: Network.NetworkRuntime;
   readonly state: StackNamespace.Interface;
+  readonly onAccess?: HttpAccessSink | undefined;
 }) =>
   Layer.build(
-    Network.layer({ stackId: options.stackId, runtime: options.runtime }).pipe(
-      Layer.provide(Layer.succeed(StackNamespace.Service, options.state)),
-    ),
+    Network.layer({
+      stackId: options.stackId,
+      runtime: options.runtime,
+      ...(options.onAccess === undefined ? {} : { onAccess: options.onAccess }),
+    }).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, options.state))),
   ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
 
 const stack = (id: string) => ({
@@ -616,8 +626,12 @@ it.live("serves legacy Kong's gateway routes while each service runs", () =>
             endpoints: {
               http: {
                 ...endpoint(api, Effect.succeed(true)),
-                shared: sharedRoutes({ service }, "http", keys, (name) =>
-                  Effect.succeed(name === "admin" ? admin : api),
+                shared: sharedRoutes(
+                  { service },
+                  "http",
+                  keys,
+                  (name) => Effect.succeed(name === "admin" ? admin : api),
+                  () => Effect.undefined,
                 ),
                 join: joinRoutes({ service }, "http"),
               },
@@ -739,6 +753,352 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
       expect(runtime).toEqual({ ...host, host: DOCKER_HOST_ALIAS });
       yield* namespace.release;
       yield* namespace.releasePorts;
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/* Templates held inside `root`, the project directory the CLI passes. */
+const authWith = (
+  root: string,
+  templates: ReadonlyArray<{ readonly id: string; readonly path: string }>,
+  templateToken = "template-token",
+): ServiceCreation => ({
+  service: "auth",
+  pin: selection.auth,
+  config: { templates: templates.map((template) => ({ ...template, root })), templateToken },
+});
+
+/** An Auth shared route over a real project directory holding `invite.html`, beside `outside/`. */
+const emailTemplates = (runtime: Network.NetworkRuntime, onAccess?: HttpAccessSink) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const base = yield* fs.realPath(
+      yield* fs.makeTempDirectoryScoped({ prefix: "network-email-" }),
+    );
+    const root = path.join(base, "project");
+    const outside = path.join(base, "outside");
+    yield* fs.makeDirectory(root);
+    yield* fs.makeDirectory(outside);
+    const invite = path.join(root, "invite.html");
+    yield* fs.writeFileString(invite, "invite marker");
+    const stackId = `email-${randomUUID()}`;
+    const state = yield* makeTestState(path.join(base, "state"));
+    yield* state.save(stack(stackId));
+    const backendCalls = { count: 0 };
+    const target = yield* backendWith((_request, response) => {
+      backendCalls.count += 1;
+      response.end("backend");
+    });
+    const creation = yield* Ref.make(authWith(root, [{ id: "invite", path: invite }]));
+    const network = yield* makeTestNetwork({ stackId, runtime, state, onAccess });
+    const namespace = yield* network.register({
+      id: "auth",
+      endpoints: {
+        http: {
+          ...endpoint(target, Effect.succeed(false)),
+          shared: sharedRoutes(
+            { service: "auth" },
+            "http",
+            { publishableKey: "", secretKey: "", anonKey: "", serviceRoleKey: "" },
+            () => Effect.succeed(target),
+            emailTemplateFile(Ref.get(creation)),
+          ),
+        },
+      },
+    });
+    const [binding] = yield* namespace.bind;
+    if (binding === undefined) return yield* new FixtureError({ message: "no binding" });
+    yield* Effect.addFinalizer(() => network.releaseStack.pipe(Effect.ignore));
+    return { root, outside, invite, creation, backendCalls, port: binding.port };
+  });
+
+/** Sends bytes as written, so a client never normalizes the path, and answers with the raw reply. */
+const raw = (port: number, head: string, host = "127.0.0.1", connection = "close") =>
+  Effect.callback<string, FixtureError>((resume) => {
+    const socket = Net.connect({ host, port });
+    let received = "";
+    socket.on("data", (chunk) => {
+      received += chunk.toString();
+    });
+    socket.once("error", (cause) =>
+      resume(Effect.fail(new FixtureError({ message: cause.message }))),
+    );
+    socket.once("close", () => resume(Effect.succeed(received)));
+    socket.once("connect", () =>
+      socket.write(`${head}\r\nHost: stack\r\nConnection: ${connection}\r\n\r\n`),
+    );
+    return Effect.sync(() => {
+      socket.destroy();
+    });
+  });
+
+const invite = "/email/invite?token=template-token";
+
+it.live("serves configured templates from the live creation and fresh from disk", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, invite: file, creation, backendCalls, port } = yield* emailTemplates("native");
+
+      const first = yield* raw(port, `GET ${invite} HTTP/1.1`);
+      expect(first).toMatch(/^HTTP\/1\.1 200 /u);
+      expect(first.toLowerCase()).toContain("content-type: text/plain");
+      expect(first.toLowerCase()).toContain("x-content-type-options: nosniff");
+      expect(first).toContain("invite marker");
+
+      const replacement = path.join(root, "invite.html.next");
+      yield* fs.writeFileString(replacement, "replaced marker");
+      yield* fs.rename(replacement, file);
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toContain("replaced marker");
+
+      const notification = path.join(root, "changed.txt");
+      yield* fs.writeFileString(notification, "notification marker");
+      yield* Ref.set(
+        creation,
+        authWith(root, [{ id: "password_changed_notification", path: notification }], "next"),
+      );
+      expect(
+        yield* raw(port, "GET /email/password_changed_notification?token=next HTTP/1.1"),
+      ).toContain("notification marker");
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(backendCalls.count).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("serves a template whose filename is not URL-safe", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, creation, port } = yield* emailTemplates("native");
+      for (const name of [
+        "invite.html copy",
+        "invite.日本語",
+        "invite.v1#2",
+        ...(process.platform === "win32" ? [] : ["invite.ht?ml"]),
+      ]) {
+        const file = path.join(root, name);
+        yield* fs.writeFileString(file, `marker for ${name}`);
+        yield* Ref.set(creation, authWith(root, [{ id: "invite", path: file }]));
+        expect(yield* raw(port, `GET ${invite} HTTP/1.1`), name).toContain(`marker for ${name}`);
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("answers only the exact configured template path", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { port, backendCalls } = yield* emailTemplates("native");
+      for (const target of [
+        "/email/other",
+        "/email",
+        "/email/",
+        "/email/invite/",
+        "/email/invite.html",
+        "/email/invit%65",
+        "/email/../../etc/passwd",
+      ])
+        expect(yield* raw(port, `GET ${target}?token=template-token HTTP/1.1`), target).toMatch(
+          /^HTTP\/1\.1 404 /u,
+        );
+      expect(backendCalls.count).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("refuses every template method but GET, and a WebSocket upgrade, without waking Auth", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { port, backendCalls } = yield* emailTemplates("native");
+      for (const method of ["POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+        expect(yield* raw(port, `${method} ${invite} HTTP/1.1`), method).toMatch(
+          /^HTTP\/1\.1 405 /u,
+        );
+      const upgrade = raw(
+        port,
+        `GET ${invite} HTTP/1.1\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==`,
+        "127.0.0.1",
+        "Upgrade",
+      ).pipe(Effect.orElseSucceed(() => ""));
+      expect(yield* upgrade).toBe("");
+      expect(backendCalls.count).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "serves an in-root symlink at a template path, and its retargeted file on the next fetch",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root, invite: file, port } = yield* emailTemplates("native");
+        const shared = path.join(root, "shared");
+        yield* fs.makeDirectory(shared);
+        yield* fs.writeFileString(path.join(shared, "a.html"), "first shared marker");
+        yield* fs.writeFileString(path.join(shared, "b.html"), "second shared marker");
+        yield* fs.remove(file);
+        yield* fs.symlink(path.join("shared", "a.html"), file);
+        const linked = yield* raw(port, `GET ${invite} HTTP/1.1`);
+        expect(linked).toMatch(/^HTTP\/1\.1 200 /u);
+        expect(linked).toContain("first shared marker");
+        yield* fs.remove(file);
+        yield* fs.symlink(path.join(shared, "b.html"), file);
+        expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toContain("second shared marker");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("never serves a link or directory escaping the root, or a FIFO, at a template path", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const { root, outside, invite: file, creation, port } = yield* emailTemplates("native");
+      const escapee = path.join(outside, "outside.html");
+      yield* fs.writeFileString(escapee, "outside marker");
+
+      const folder = path.join(root, "templates");
+      yield* fs.makeDirectory(folder);
+      yield* fs.writeFileString(path.join(folder, "nested.html"), "nested marker");
+      yield* fs.writeFileString(path.join(outside, "nested.html"), "outside marker");
+      yield* Ref.set(
+        creation,
+        authWith(root, [{ id: "invite", path: path.join(folder, "nested.html") }]),
+      );
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toContain("nested marker");
+      yield* fs.rename(folder, `${folder}.aside`);
+      yield* fs.symlink(outside, folder);
+      const throughParent = yield* raw(port, `GET ${invite} HTTP/1.1`);
+      expect(throughParent).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(throughParent).not.toContain("outside marker");
+      yield* Ref.set(creation, authWith(root, [{ id: "invite", path: file }]));
+
+      yield* fs.remove(file);
+      yield* fs.symlink(escapee, file);
+      const escaped = yield* raw(port, `GET ${invite} HTTP/1.1`);
+      expect(escaped).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(escaped).not.toContain("outside marker");
+
+      yield* fs.remove(file);
+      yield* fs.makeDirectory(file);
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toMatch(/^HTTP\/1\.1 404 /u);
+
+      if (process.platform === "win32") return;
+      yield* fs.remove(file, { recursive: true });
+      expect(yield* spawner.exitCode(ChildProcess.make("mkfifo", [file]))).toBe(0);
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toMatch(/^HTTP\/1\.1 404 /u);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/* The open-and-verify step on POSIX; Windows checks its handle through `bun:ffi` instead. */
+it.live.skipIf(process.platform === "win32")(
+  "refuses a resolved template path whose final file was swapped for a link",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+        const resolved = path.join(base, "invite.html");
+        yield* fs.writeFileString(resolved, "resolved marker");
+        expect(new TextDecoder().decode(yield* readResolvedFile(resolved, false))).toBe(
+          "resolved marker",
+        );
+        yield* fs.writeFileString(path.join(base, "other.html"), "other marker");
+        yield* fs.remove(resolved);
+        yield* fs.symlink(path.join(base, "other.html"), resolved);
+        const error = yield* Effect.flip(readResolvedFile(resolved, false));
+        expect(error.cause).toMatchObject({ code: "ELOOP" });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live.skipIf(process.platform === "win32")(
+  "refuses a resolved template path whose parent directory was swapped for a link outside",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+        const folder = path.join(base, "templates");
+        const outside = path.join(base, "outside");
+        yield* fs.makeDirectory(folder);
+        yield* fs.makeDirectory(outside);
+        const resolved = path.join(folder, "invite.html");
+        yield* fs.writeFileString(resolved, "resolved marker");
+        yield* fs.writeFileString(path.join(outside, "invite.html"), "outside marker");
+        yield* fs.rename(folder, `${folder}.aside`);
+        yield* fs.symlink(outside, folder);
+        const error = yield* Effect.flip(readResolvedFile(resolved, false));
+        expect(error.message).toContain("Not a regular file at this path");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("sends no CORS header on any template response", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { port } = yield* emailTemplates("native");
+      const origin = "Origin: https://example.test";
+      for (const head of [
+        `GET ${invite} HTTP/1.1\r\n${origin}`,
+        `GET /email/other HTTP/1.1\r\n${origin}`,
+        `OPTIONS ${invite} HTTP/1.1\r\n${origin}\r\nAccess-Control-Request-Method: GET`,
+      ])
+        expect((yield* raw(port, head)).toLowerCase()).not.toContain("access-control-allow");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const external = Object.values(networkInterfaces())
+  .flat()
+  .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address;
+
+/* A LAN test that cannot reach the external interface fails rather than skips. */
+const externalAddress =
+  external === undefined
+    ? Effect.die("no external IPv4 address to reach the API from the LAN side")
+    : Effect.succeed(external);
+
+it.live("keeps a template behind its token on the external address, and off it on native", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const host = yield* externalAddress;
+      for (const runtime of ["docker", "podman"] as const) {
+        const { port } = yield* emailTemplates(runtime);
+        for (const target of ["/email/invite", "/email/invite?token=wrong"])
+          expect(yield* raw(port, `GET ${target} HTTP/1.1`, host), target).toMatch(
+            /^HTTP\/1\.1 404 /u,
+          );
+        const served = yield* raw(port, `GET ${invite} HTTP/1.1`, host);
+        expect(served).toMatch(/^HTTP\/1\.1 200 /u);
+        expect(served).toContain("invite marker");
+      }
+      const { port } = yield* emailTemplates("native");
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toMatch(/^HTTP\/1\.1 200 /u);
+      yield* Effect.flip(raw(port, `GET ${invite} HTTP/1.1`, host));
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("records a template request with its token redacted", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const access = yield* Deferred.make<HttpAccess>();
+      const { port } = yield* emailTemplates("native", (record) =>
+        Deferred.succeed(access, record).pipe(Effect.asVoid),
+      );
+      yield* raw(port, `GET ${invite} HTTP/1.1`);
+      expect((yield* Deferred.await(access)).target).toBe("/email/invite?token=redacted");
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -901,3 +1261,42 @@ it.live(
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.live("serves a template only for its exact token", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { port } = yield* emailTemplates("native");
+      for (const token of [
+        "template-tokex",
+        "template-toke",
+        "template-tokenn",
+        "",
+        "TEMPLATE-TOKEN",
+      ])
+        expect(yield* raw(port, `GET /email/invite?token=${token} HTTP/1.1`), token).toMatch(
+          /^HTTP\/1\.1 404 /u,
+        );
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toMatch(/^HTTP\/1\.1 200 /u);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("warns once about a template that keeps failing, and again after it recovers", () => {
+  const warnings: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { invite: file, port } = yield* emailTemplates("native");
+      const served = () => warnings.filter((line) => line.includes("was not served")).length;
+      yield* fs.remove(file);
+      for (const _ of [1, 2, 3])
+        expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(served()).toBe(1);
+      yield* fs.writeFileString(file, "invite marker");
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toMatch(/^HTTP\/1\.1 200 /u);
+      yield* fs.remove(file);
+      expect(yield* raw(port, `GET ${invite} HTTP/1.1`)).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(served()).toBe(2);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureLogs(["Warn"])(warnings))));
+});

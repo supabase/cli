@@ -1,11 +1,27 @@
 import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
+import { helpDocFor } from "../cli/subcommand-flag-suggestions.ts";
+import { logsCommandFor } from "../../commands/logs/logs.command.ts";
+import { jsonCliOutputFormatter } from "./json-formatter.ts";
 import { ssoCommand } from "../../commands/sso/sso.command.ts";
 import { textCliOutputFormatter } from "./text-formatter.ts";
 
 const testRoot = Command.make("supabase").pipe(Command.withSubcommands([ssoCommand]));
 
 describe("textCliOutputFormatter", () => {
+  it.each([textCliOutputFormatter, jsonCliOutputFormatter])(
+    "shows the logs subcommand as optional while preserving required command groups",
+    (makeFormatter) => {
+      const formatter = makeFormatter();
+      const logsDoc = helpDocFor(logsCommandFor(), ["supabase", "logs"]);
+      const groupDoc = helpDocFor(ssoCommand, ["supabase", "sso"]);
+      if (logsDoc === undefined || groupDoc === undefined) throw new Error("Missing command help");
+      expect(formatter.formatHelpDoc(logsDoc)).toContain("supabase logs [subcommand] [flags]");
+      expect(formatter.formatHelpDoc(logsDoc)).toContain("sources");
+      expect(formatter.formatHelpDoc(groupDoc)).toContain("supabase sso <subcommand> [flags]");
+    },
+  );
+
   it("preserves default parser suggestions for unchanged errors", () => {
     const formatter = textCliOutputFormatter();
 

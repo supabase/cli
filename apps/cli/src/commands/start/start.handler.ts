@@ -1126,7 +1126,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                   apiSchemas: apiSchemas,
                   apiExtraSearchPath: apiExtraSearchPath,
                   apiMaxRows: apiMaxRows,
-                  analyticsEnabled: values.analyticsEnabled,
+                  analyticsEnabled: gates.logflare,
                   analyticsBackend: values.analyticsBackend,
                 },
               },
