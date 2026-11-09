@@ -611,7 +611,15 @@ export function signingKeysDecodeErrorMessage(cause: unknown): string {
  * project root all fail. This applies unconditionally to every caller (config validation,
  * `config push` content loading, `start`'s pre-Docker containment pass) — there is no opt-out.
  */
-export const resolveEmailTemplateContentPath = Effect.fnUntraced(function* (args: {
+export const resolveEmailTemplateContentPath = (
+  args: Parameters<typeof resolveEmailTemplatePaths>[0],
+) => resolveEmailTemplatePaths(args).pipe(Effect.map((paths) => paths?.canonical));
+
+/**
+ * {@link resolveEmailTemplateContentPath} with the configured candidate it validated, resolved
+ * once, which the stack reads per fetch so an in-root link may retarget.
+ */
+export const resolveEmailTemplatePaths = Effect.fnUntraced(function* (args: {
   readonly section: "template" | "notification";
   readonly name: string;
   /** Post-env-expand; `""` = absent. */
@@ -629,12 +637,7 @@ export const resolveEmailTemplateContentPath = Effect.fnUntraced(function* (args
     return undefined;
   }
   const path = yield* Path.Path;
-  const candidate =
-    args.section === "notification"
-      ? yield* resolveNotificationContentPath(args.base, args.contentPath)
-      : path.isAbsolute(args.contentPath)
-        ? args.contentPath
-        : path.join(args.base, args.contentPath);
+  const candidate = yield* emailTemplateCandidatePath(args.section, args.base, args.contentPath);
   const resolvedCanonical = yield* canonicalPathForContainment(candidate);
   const canonicalBase = yield* canonicalPathForContainment(args.base);
   if (!isPathContainedInRoot(path, canonicalBase, resolvedCanonical)) {
@@ -647,7 +650,19 @@ export const resolveEmailTemplateContentPath = Effect.fnUntraced(function* (args
         `move the file inside the project, or use a relative path that stays inside it.`,
     );
   }
-  return resolvedCanonical;
+  return { candidate, canonical: resolvedCanonical };
+});
+
+/* A non-empty `content_path` as configured, joined to `base` but not dereferenced, with the
+   notification fallback below. */
+const emailTemplateCandidatePath = Effect.fnUntraced(function* (
+  section: "template" | "notification",
+  base: string,
+  contentPath: string,
+) {
+  const path = yield* Path.Path;
+  if (section === "notification") return yield* resolveNotificationContentPath(base, contentPath);
+  return path.isAbsolute(contentPath) ? contentPath : path.join(base, contentPath);
 });
 
 /**
