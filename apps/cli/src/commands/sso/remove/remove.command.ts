@@ -24,7 +24,7 @@ export type SsoRemoveFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoRemoveCommand = Command.make("remove", config).pipe(
   Command.withDescription(
-    "Remove a connection to an already added SSO identity provider. Removing the provider will prevent existing users from logging in. Please treat this command with care.",
+    "Remove a connection to an already added SSO identity provider. Removing the provider will prevent existing users from signing in. Please treat this command with care.",
   ),
   Command.withShortDescription("Remove an existing SSO identity provider"),
   Command.withExamples([

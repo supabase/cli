@@ -201,7 +201,7 @@ describe("buildDocsSpec", () => {
     expect(whoami?.tags).toEqual(["management-api"]);
     expect(whoami?.usage).toBe("supabase whoami [flags]");
     expect(whoami?.subcommands).toEqual([]);
-    expect(whoami?.description).toBe("Show information about the currently logged-in user.");
+    expect(whoami?.description).toBe("Show information about the currently signed-in user.");
   });
 
   it("renders link with its overlay description and flag display names", () => {

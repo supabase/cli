@@ -79,6 +79,6 @@ Single `success` event with the removed provider's details as data.
 
 ## Notes
 
-- Removing a provider will prevent existing SSO users from logging in.
+- Removing a provider will prevent existing SSO users from signing in.
 - The `<provider-id>` argument must be a valid UUID; UUIDs are accepted case-insensitively.
 - Asks `Remove SSO provider <id> on <target>?` (default No) before the first write.

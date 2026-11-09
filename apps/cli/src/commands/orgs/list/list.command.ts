@@ -12,7 +12,7 @@ const config = {};
 export type OrgsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const orgsListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List all organizations the logged-in user belongs."),
+  Command.withDescription("List all organizations the signed-in user belongs to."),
   Command.withShortDescription("List all organizations"),
   withPermissions({ operations: [{ operationId: "v1-list-all-organizations", kind: "required" }] }),
   Command.withHandler((flags) =>

@@ -16,7 +16,7 @@ const config = {
 export type OrgsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const orgsCreateCommand = Command.make("create", config).pipe(
-  Command.withDescription("Create an organization for the logged-in user."),
+  Command.withDescription("Create an organization for the signed-in user."),
   Command.withShortDescription("Create an organization"),
   withPermissions({ operations: [{ operationId: "v1-create-an-organization", kind: "required" }] }),
   Command.withHandler((flags) =>

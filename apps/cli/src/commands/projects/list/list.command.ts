@@ -14,7 +14,7 @@ const config = {};
 export type ProjectsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const projectsListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List all Supabase projects the logged-in user can access."),
+  Command.withDescription("List all Supabase projects the signed-in user can access."),
   Command.withShortDescription("List all projects"),
   Command.withExamples([
     {

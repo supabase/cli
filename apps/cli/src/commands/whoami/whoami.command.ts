@@ -22,7 +22,7 @@ export const whoamiHandler = (flags: WhoamiFlags) =>
   );
 
 export const whoamiCommand = Command.make("whoami", config).pipe(
-  Command.withDescription("Show information about the currently logged-in user."),
+  Command.withDescription("Show information about the currently signed-in user."),
   Command.withShortDescription("Show the current user"),
   Command.withExamples([
     {
