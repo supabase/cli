@@ -452,8 +452,9 @@ the selected composition rather than `[api]`/`[api.tls]`: the endpoint is the St
 observed HTTP binding plus `/storage/v1/...`, and the service-role JWT is the one the stack saved
 with its credentials. The stack is located by the project root (workdir realpath) through the
 `@supabase/stack` API, which reads stack state under `SUPABASE_HOME`. A stack started with
-`[api.tls]` serves that endpoint over HTTPS, and Storage trusts the certificate saved at start,
-not `config.toml`.
+`[api.tls]` serves that endpoint over HTTPS, and Storage uses the certificate saved at start,
+not `config.toml`: a saved certificate with a self-signed root is the only trusted CA; a CA-issued
+one is verified against Bun's default trust store and `NODE_EXTRA_CA_CERTS`.
 Neither `storage` nor `seed buckets` ever creates a stack; the legacy `[api]`
 port/external-URL/TLS fields, their `SUPABASE_API_*` overrides, `SUPABASE_AUTH_JWT_SECRET`/
 `SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_SERVICES_HOSTNAME` and the Docker daemon hostname are

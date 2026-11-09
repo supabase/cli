@@ -123,7 +123,9 @@ backend — same roles as `storage ls`.
   which reads stack state under `SUPABASE_HOME`; `cp` opens saved state without launching
   the owner or any service member. A stack started with `[api.tls]` serves that endpoint over
   `https`, and the request trusts the certificate saved in the stack's state at start, never
-  `config.toml`, so editing `api.tls` applies at the next start.
+  `config.toml`, so editing `api.tls` applies at the next start. A saved certificate with a
+  self-signed root is the only trusted CA; a CA-issued one is verified against Bun's default
+  trust store and `NODE_EXTRA_CA_CERTS`.
 - **Stack backend — capability policy.** Storage excluded from the composition errors with
   `StackStorageCapabilityError` and guidance to enable `[storage]`, then run `supabase start`
   without `--exclude storage`. Failed or manually stopped Storage is unusable. Dormant, starting, and ready Storage

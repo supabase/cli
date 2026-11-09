@@ -3,6 +3,7 @@
  * endpoint; lazy Storage members may be woken by the first gateway request.
  */
 
+import { X509Certificate } from "node:crypto";
 import { Data, Effect, FileSystem, Match, Option, Path } from "effect";
 import type { Observation, ServiceInstance, Stack } from "@supabase/stack/effect";
 import {
@@ -132,7 +133,22 @@ const notRunningSuggestion = (lifecycle: "starting" | "stopping" | "stopped"): s
     Match.exhaustive,
   );
 
-/* An HTTPS endpoint trusts the stack's saved certificate, never `config.toml`'s current one. */
+/* Self-signed means it is its own issuer and verifies under its own key; unparsable is not. */
+const selfSigned = (pem: string): Effect.Effect<boolean> =>
+  Effect.try(() => {
+    const cert = new X509Certificate(pem);
+    return cert.subject === cert.issuer && cert.verify(cert.publicKey);
+  }).pipe(Effect.orElseSucceed(() => false));
+
+/* A saved cert with a self-signed root becomes the only trusted CA; a CA-issued one is verified
+   against the default trust store and `NODE_EXTRA_CA_CERTS`. */
+const savedApiCa = (apiCert: string): Effect.Effect<string | undefined> =>
+  Effect.forEach(
+    apiCert.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/gu) ?? [],
+    selfSigned,
+  ).pipe(Effect.map((results) => (results.includes(true) ? apiCert : undefined)));
+
+/* An HTTPS endpoint never uses `config.toml`'s current cert; trust follows the saved one. */
 const storageCredentialsFrom = (
   observation: Observation,
   serviceRoleKey: string,
@@ -143,11 +159,16 @@ const storageCredentialsFrom = (
     ? Effect.fail(
         new StackStorageCapabilityError({ message: "The stack exposes no Storage endpoint." }),
       )
-    : Effect.succeed({
-        baseUrl: `${endpoint.scheme ?? "http"}://${endpoint.host}:${endpoint.port}`,
-        apiKey: serviceRoleKey,
-        localKongCa: endpoint.scheme === "https" ? apiCert : undefined,
-      });
+    : (endpoint.scheme === "https" && apiCert !== undefined
+        ? savedApiCa(apiCert)
+        : Effect.undefined
+      ).pipe(
+        Effect.map((localKongCa) => ({
+          baseUrl: `${endpoint.scheme ?? "http"}://${endpoint.host}:${endpoint.port}`,
+          apiKey: serviceRoleKey,
+          localKongCa,
+        })),
+      );
 };
 
 /** Resolves the composition Storage endpoint without launching the owner or any member. */

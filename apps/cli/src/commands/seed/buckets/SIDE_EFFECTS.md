@@ -48,8 +48,10 @@ brought up on (#6452).
 Storage member observation, and the service-role JWT is generated from the primary database's
 observed JWT secret. `[api]`/`[api.tls]` fields and their `SUPABASE_API_*` overrides are not
 consulted: a stack started with `[api.tls]` serves that endpoint over `https`, trusting the
-certificate saved in the stack's state at start, never `config.toml`. The stack is opened without
-launching the owner or any service member. See Notes for the capability-state gate.
+certificate saved in the stack's state at start, never `config.toml`. A saved certificate with a
+self-signed root is the only trusted CA; a CA-issued one is verified against Bun's default trust
+store and `NODE_EXTRA_CA_CERTS`. The stack is opened without launching the owner or any service
+member. See Notes for the capability-state gate.
 
 **Remote project:** `https://<ref>.<projectHost>` (default host: `supabase.co`).
 

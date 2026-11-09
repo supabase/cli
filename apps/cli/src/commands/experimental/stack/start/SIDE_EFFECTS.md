@@ -70,9 +70,11 @@ the database container calls the API once in plain with a token new on every sta
 logs; the peer it arrives from and the database container's networks are let in and saved with the
 stack's TLS until the next `stack start`. Without an HTTP reply, start fails with `api.tls:
 containers can't reach the api on <runtime> (<what the probe saw>)` and stops the stack's services;
-if they don't stop, the error says to run `supabase stack stop`. Stack `storage` commands trust the
-saved certificate, never `config.toml`, so editing `api.tls` applies at the next start. Without TLS
-every listener, URL and output is unchanged.
+if they don't stop, the error says to run `supabase stack stop`. Stack `storage` commands use the
+saved certificate, never `config.toml`, so editing `api.tls` applies at the next start. A saved
+certificate with a self-signed root is the only trusted CA; a CA-issued one is verified against
+Bun's default trust store and `NODE_EXTRA_CA_CERTS`. Without TLS every listener, URL and output is
+unchanged.
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) is a `local.services.database.version`
 request for that OrioleDB build instead of the stock major, resolved like any other version (see
 "Service versions and the lock"); the two keys must agree when both are set, and `db.major_version`

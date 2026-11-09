@@ -24,12 +24,60 @@ import { StorageGatewayStatusError } from "../../../command-internal/storage-gat
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
+import { KONG_LOCAL_TLS_CERT } from "../../start/templates/kong-local-tls.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
 const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
 const PROJECT_LOOKUP = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
 const CACHE_FILE = "supabase/.temp/linked-project.json";
+/* A `localhost` leaf issued by `TEST_CA_CERT`. */
+const CA_ISSUED_LEAF_CERT = `-----BEGIN CERTIFICATE-----
+MIIBRjCB7qADAgECAhRCV8GkkgTi9ZTiuKqZY4sOezoM4TAKBggqhkjOPQQDAjAS
+MRAwDgYDVQQDDAdUZXN0IENBMCAXDTI2MTEwOTEzNDE1OVoYDzIxMjYxMDE2MTM0
+MTU5WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjOPQMB
+BwNCAASY7wtAjlIKwjqnCEZMUlfiwJGcStRssO45rBgo4R4OF2JMObn2mFxoFypp
+qZgXQn194pdifFyurKHzU+X3JkAoox4wHDAaBgNVHREEEzARgglsb2NhbGhvc3SH
+BH8AAAEwCgYIKoZIzj0EAwIDRwAwRAIgWNrL5BKuVMqo1U9Nh1Op8+FTKssMIjQN
+Q2S/oIrjKrgCIA2gyf8CcItodnGLFYJwMhKdf0iCAlq+/qpFkOzY8s1I
+-----END CERTIFICATE-----
+`;
+/* A `localhost` leaf issued by a CA that signed it with, and gave it, the CA's own key. */
+const CA_KEY_REUSING_LEAF_CERT = `-----BEGIN CERTIFICATE-----
+MIIBVTCB/KADAgECAhR4kYYkrCXgog/zddslakRmyH+xizAKBggqhkjOPQQDAjAS
+MRAwDgYDVQQDDAdUZXN0IENBMCAXDTI2MTEwOTE0MjgxOFoYDzIxMjYxMDE2MTQy
+ODE4WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjOPQMB
+BwNCAASzwQhCGwKjZuWyeTYilHQlNL/SvOWn/Zkx8PKMFo2qlf4KwyVvSpT1drHh
+OCoVy5J6w6pe/q/tAHt1Cwl7YBRWoywwKjAMBgNVHRMBAf8EAjAAMBoGA1UdEQQT
+MBGCCWxvY2FsaG9zdIcEfwAAATAKBggqhkjOPQQDAgNIADBFAiEA7zTomLOfHVOH
+Pe4hUZWq4jAq9wMwTUAGndjSCuI+rDgCIGJT3tzvx13epP7hgX3XO5nN41kKl/H3
+PwqCAg+n5VDT
+-----END CERTIFICATE-----
+`;
+/* A self-signed `localhost` leaf whose key usage has no `keyCertSign`. */
+const SELF_SIGNED_LEAF_CERT = `-----BEGIN CERTIFICATE-----
+MIIBhzCCAS2gAwIBAgIUXkUA3O/35tpuViO2x3YAXbjuSIowCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTEwOTE0MDkyN1oYDzIxMjYxMDE2
+MTQwOTI3WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjO
+PQMBBwNCAATY9WkehjE3fyap/oZ7nuygpBIVkjDMHG3sFfBRjXp9HMI5/20kSb9h
+74eKvk1hoILB3w0Tw3dNyS0M0y5s6wYto1swWTAdBgNVHQ4EFgQUm7MD4rJsHvM/
+o7v6jkmkKeI6wtswDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCBaAwGgYDVR0R
+BBMwEYIJbG9jYWxob3N0hwR/AAABMAoGCCqGSM49BAMCA0gAMEUCICihwiiY67Td
+draV8ipjMEBSwlmqeg3tYZk8jQA46nrzAiEAxNVbz9miV+3U6q9r2BIUMESRd52m
+QG8UemIDJ94iGWk=
+-----END CERTIFICATE-----
+`;
+const TEST_CA_CERT = `-----BEGIN CERTIFICATE-----
+MIIBWjCCAQCgAwIBAgIUYsahU3X8ja50he4Tb9nzW7jQM0EwCgYIKoZIzj0EAwIw
+EjEQMA4GA1UEAwwHVGVzdCBDQTAgFw0yNjExMDkxMzQxNTlaGA8yMTI2MTAxNjEz
+NDE1OVowEjEQMA4GA1UEAwwHVGVzdCBDQTBZMBMGByqGSM49AgEGCCqGSM49AwEH
+A0IABOFbj4eYzjEBwqSgHSCK9ftNcRuedMeV18a0fTWUKF206O6fLf2AGJz7UnhU
+M31Hta1JQ1xKlh8Yl6piuW3M2e2jMjAwMB0GA1UdDgQWBBQOCeHtneH3r4od2nku
+A3HN9apjkTAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIFv8EoMV
+UlxVfYkPUQxovGMm3EYOzXaVvdmG/Z60dqtUAiEArBmXL7PqMcWLkPYJmEzoa5f4
+yUneyzDjVHiOKnszqQ4=
+-----END CERTIFICATE-----
+`;
 
 const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -754,27 +802,44 @@ describe("stack backend", () => {
     });
   });
 
-  it.effect("lists over HTTPS with the stack's saved certificate after an api.tls edit", () => {
-    /* `config.toml` now names a pair that does not exist; the stack keeps what it started with. */
-    const { layer, out, requests } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n[api.tls]\nenabled = true\ncert_path = "missing.crt"\nkey_path = "missing.key"\n',
-      local: true,
-      stackBackend: true,
-      stackApi: { storageState: "ready", apiTlsCert: "saved-stack-cert" },
-      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stdoutText).toBe("test/\n");
-      expect(requests).toEqual([
-        expect.objectContaining({
-          url: expect.stringMatching(/^https:\/\/127\.0\.0\.1:59999\//u),
-          ca: "saved-stack-cert",
-        }),
-      ]);
-    });
-  });
+  it.effect.each([
+    { name: "trusting the embedded self-signed cert", cert: KONG_LOCAL_TLS_CERT, trusted: true },
+    {
+      name: "trusting a leaf and root bundle",
+      cert: CA_ISSUED_LEAF_CERT + TEST_CA_CERT,
+      trusted: true,
+    },
+    { name: "trusting a self-signed leaf", cert: SELF_SIGNED_LEAF_CERT, trusted: true },
+    { name: "with default trust for a CA-issued leaf", cert: CA_ISSUED_LEAF_CERT, trusted: false },
+    {
+      name: "with default trust for a CA-issued leaf on its CA's key",
+      cert: CA_KEY_REUSING_LEAF_CERT,
+      trusted: false,
+    },
+  ])(
+    "lists over HTTPS with the stack's saved certificate after an api.tls edit, $name",
+    ({ cert, trusted }) => {
+      /* `config.toml` now names a pair that does not exist; the stack keeps what it started with. */
+      const { layer, out, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n[api.tls]\nenabled = true\ncert_path = "missing.crt"\nkey_path = "missing.key"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "ready", apiTlsCert: cert },
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stdoutText).toBe("test/\n");
+        expect(requests).toEqual([
+          expect.objectContaining({
+            url: expect.stringMatching(/^https:\/\/127\.0\.0\.1:59999\//u),
+            ca: trusted ? cert : undefined,
+          }),
+        ]);
+      });
+    },
+  );
 
   it.effect("proceeds to the gateway while Storage is stopping with wake retained", () => {
     const { layer, out } = setupStorage(tmp.current, {
