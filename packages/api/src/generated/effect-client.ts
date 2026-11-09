@@ -2996,6 +2996,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    enableWarehouse: (
+      input: typeof operationDefinitions.v2EnableWarehouse.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2EnableWarehouse.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2EnableWarehouse">(
+          operationDefinitions.v2EnableWarehouse,
+          input,
+          options,
+        );
+      }),
     getAComputeInstance: (
       input: typeof operationDefinitions.v2GetAComputeInstance.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3040,6 +3056,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2GetProjectConfig">(
           operationDefinitions.v2GetProjectConfig,
+          input,
+          options,
+        );
+      }),
+    getWarehouseSetup: (
+      input: typeof operationDefinitions.v2GetWarehouseSetup.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseSetup.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseSetup">(
+          operationDefinitions.v2GetWarehouseSetup,
           input,
           options,
         );
@@ -3360,6 +3392,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2PreviewAProjectTransfer">(
           operationDefinitions.v2PreviewAProjectTransfer,
+          input,
+          options,
+        );
+      }),
+    previewWarehouseSetup: (
+      input: typeof operationDefinitions.v2PreviewWarehouseSetup.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2PreviewWarehouseSetup.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2PreviewWarehouseSetup">(
+          operationDefinitions.v2PreviewWarehouseSetup,
           input,
           options,
         );

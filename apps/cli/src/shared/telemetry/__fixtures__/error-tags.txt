@@ -584,6 +584,11 @@ VanitySubdomainsGetUnexpectedStatusError
 VolumeCreateError
 VolumeInspectError
 VolumeRemoveError
+WarehouseEnableIncompleteError
+WarehouseEnableInputError
+WarehouseEnableNetworkError
+WarehouseEnableStatusError
+WarehouseEnableTimeoutError
 WhoamiNetworkError
 WhoamiOutputFlagUnsupportedError
 WhoamiUnexpectedStatusError
