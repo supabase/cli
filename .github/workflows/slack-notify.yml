@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: ""
+      setup_cli_npm_fallback:
+        description: Whether the setup-cli smoke test fell back from npm to the GitHub release. Adds a notice to success messages.
+        required: false
+        type: boolean
+        default: false
     secrets:
       SLACK_RELEASE_WEBHOOK:
         required: true
@@ -58,6 +63,7 @@ jobs:
           TAG_PREFIX: ${{ inputs.tag_prefix }}
           NPM_PACKAGE: ${{ inputs.npm_package }}
           PULL_REQUEST: ${{ inputs.pull_request }}
+          SETUP_CLI_NPM_FALLBACK: ${{ inputs.setup_cli_npm_fallback }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           SHA: ${{ github.sha }}
@@ -85,6 +91,9 @@ jobs:
               DETAILS="*Changelog:* <${CHANGELOG_URL}|${TAG_PREFIX}${VERSION} release notes>\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view run>"
               if [[ -n "$NPM_PACKAGE" ]]; then
                 DETAILS="*npm:* <https://www.npmjs.com/package/${NPM_PACKAGE}/v/${VERSION}|${NPM_PACKAGE}@${VERSION}>\n${DETAILS}"
+              fi
+              if [[ "$SETUP_CLI_NPM_FALLBACK" == "true" ]]; then
+                DETAILS="⚠️ *setup-cli smoke test:* installing from npm failed and setup-cli fell back to the GitHub release. See the setup-cli smoke jobs in the workflow run.\n${DETAILS}"
               fi
               ;;
             failure)

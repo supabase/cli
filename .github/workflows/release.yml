@@ -473,6 +473,7 @@ jobs:
       status: success
       version: ${{ needs.plan.outputs.version }}
       channel: ${{ needs.plan.outputs.channel }}
+      setup_cli_npm_fallback: ${{ needs.release.outputs.setup_cli_npm_fallback == 'true' }}
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 

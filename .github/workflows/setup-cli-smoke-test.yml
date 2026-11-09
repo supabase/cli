@@ -14,6 +14,10 @@ on:
         description: Supabase CLI version to install via setup-cli (must already be published to GitHub Releases and npm)
         required: true
         type: string
+    outputs:
+      npm_fallback:
+        description: "'true' when any v3 job installed from the GitHub release because the npm install failed"
+        value: ${{ jobs.summary.outputs.npm_fallback }}
   workflow_dispatch:
     inputs:
       version:
@@ -42,6 +46,9 @@ jobs:
           - v3
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
+    # Only set on fallback; an empty value from another matrix leg doesn't overwrite it.
+    outputs:
+      npm_fallback: ${{ steps.npm-source.outputs.fallback }}
     env:
       VERSION: ${{ inputs.version }}
     steps:
@@ -90,6 +97,7 @@ jobs:
             exit 1
           fi
       - name: Verify setup-cli installed from npm
+        id: npm-source
         if: matrix.major-version == 'v3'
         shell: bash
         env:
@@ -98,6 +106,7 @@ jobs:
           set -euo pipefail
           if [ "${INSTALL_SOURCE}" != "npm" ]; then
             echo "::warning::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
           fi
 
   # A separate job because GitHub Actions only honours `container:` on Linux runners, and mixing
@@ -115,6 +124,8 @@ jobs:
           - v3
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      npm_fallback: ${{ steps.npm-source.outputs.fallback }}
     # `node:20-alpine` ships a musl-linked Node, required for JavaScript-based actions to launch
     # here — the runner's mounted glibc Node won't execute inside an Alpine container.
     container:
@@ -172,6 +183,7 @@ jobs:
             exit 1
           fi
       - name: Verify setup-cli installed from npm
+        id: npm-source
         if: matrix.major-version == 'v3'
         shell: bash
         env:
@@ -180,6 +192,7 @@ jobs:
           set -euo pipefail
           if [ "${INSTALL_SOURCE}" != "npm" ]; then
             echo "::warning::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
           fi
 
   setup-cli-smoke-test-github-release:
@@ -220,3 +233,14 @@ jobs:
             echo "::error::setup-cli installed from ${INSTALL_SOURCE} instead of falling back to the GitHub release with npm disabled"
             exit 1
           fi
+
+  summary:
+    name: setup-cli npm fallback summary
+    needs: [setup-cli-smoke-test, setup-cli-smoke-test-alpine]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      npm_fallback: ${{ needs.setup-cli-smoke-test.outputs.npm_fallback == 'true' || needs.setup-cli-smoke-test-alpine.outputs.npm_fallback == 'true' }}
+    steps:
+      - run: echo "npm fallback recorded; see the install job annotations"
