@@ -38,7 +38,6 @@ import {
 import { computePush } from "./push.handler.ts";
 import { computePushCommand } from "./push.command.ts";
 import type { ComputePushFlags } from "./push.command.ts";
-import { SupabaseApiInputError } from "@supabase/api/effect";
 
 const setupPush = (options: ComputeSetupOptions) => setupCompute({ yes: true, ...options });
 
