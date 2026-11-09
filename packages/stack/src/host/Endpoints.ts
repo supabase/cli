@@ -2,8 +2,11 @@ import { allowedEndpointNames, type ServiceCreation } from "../services/Catalog.
 import type { ServiceEndpoint } from "../services/Recipe.ts";
 import { apiPath as storageApiPath } from "../services/Storage.ts";
 import type { NetworkEndpoint } from "../Network.ts";
+import type { HttpFileRoute, HttpRoute } from "../HttpProxy.ts";
 import type { BackendAddress } from "../Proxy.ts";
+import { readContainedFile } from "../StackNamespace.ts";
 import { Data, Effect, Redacted } from "effect";
+import { timingSafeEqual } from "node:crypto";
 
 export class EndpointError extends Data.TaggedError("EndpointError")<{
   readonly message: string;
@@ -55,7 +58,53 @@ export const apiRoute = (service: string): string | undefined => {
 export const sharesApiEndpoint = (creation: EndpointIntents): boolean =>
   apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
 
-type RouteKeys = NonNullable<NonNullable<NetworkEndpoint["shared"]>[number]["keyRewrite"]>["keys"];
+type RouteKeys = NonNullable<HttpRoute["keyRewrite"]>["keys"];
+type RouteFile = HttpFileRoute["file"];
+
+/* Compares in constant time once the lengths agree, so a guess learns nothing from timing. */
+const tokenMatches = (given: string | null, expected: string | undefined) => {
+  if (given === null || expected === undefined) return false;
+  const left = Buffer.from(given);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+};
+
+/**
+ * Reads the Auth email template at `/email/<id>?token=<token>` in the live creation, so
+ * a configuration change applies on the next start; anything else is `undefined`.
+ */
+export const emailTemplateFile = (creation: Effect.Effect<ServiceCreation>): RouteFile => {
+  /* The last failure warned per template path, so Auth's reload polling logs it once. */
+  const warned = new Map<string, string>();
+  return (url) =>
+    creation.pipe(
+      Effect.flatMap((current) => {
+        const [pathname, query] = url.split("?", 2);
+        const template =
+          current.service === "auth" &&
+          tokenMatches(new URLSearchParams(query).get("token"), current.config.templateToken)
+            ? current.config.templates?.find(({ id }) => `/email/${id}` === pathname)
+            : undefined;
+        if (template === undefined) return Effect.undefined;
+        return readContainedFile(template.path, template.root).pipe(
+          Effect.tap(() => Effect.sync(() => warned.delete(template.path))),
+          Effect.catch((cause) =>
+            warned.get(template.path) === cause.message
+              ? Effect.undefined
+              : Effect.sync(() => warned.set(template.path, cause.message)).pipe(
+                  Effect.andThen(
+                    Effect.logWarning(
+                      `Auth email template ${template.id} at ${template.path} was not served`,
+                      cause,
+                    ),
+                  ),
+                  Effect.as(undefined),
+                ),
+          ),
+        );
+      }),
+    );
+};
 
 /**
  * Routes a service's HTTP endpoint on the shared API listener, or `undefined` for a dedicated one.
@@ -66,6 +115,7 @@ export const sharedRoutes = (
   name: string,
   keys: RouteKeys,
   backend: (endpoint: string) => NetworkEndpoint["backend"],
+  emailTemplate: RouteFile,
 ): NetworkEndpoint["shared"] => {
   const route = name === "http" ? apiRoute(creation.service) : undefined;
   if (route === undefined) return undefined;
@@ -117,6 +167,7 @@ export const sharedRoutes = (
           forwardedPrefix: "/.well-known/oauth-authorization-server",
         },
         { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
+        { prefix: "/email", file: emailTemplate },
       ];
     case "functions":
       return [

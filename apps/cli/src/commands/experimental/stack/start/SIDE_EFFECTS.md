@@ -32,8 +32,25 @@ the effective root key is supplied through a stack-owned key file.
 Studio receives the database connection, the Functions management directory/URL, and Analytics
 credentials when present. Starting with Studio creates `supabase/snippets/`, where Studio saves SQL
 snippets.
-Email template `content_path` values and third-party identity providers remain unsupported: they
-require template serving and shared external JWKS verification respectively.
+Third-party identity providers remain unsupported: they require shared external JWKS verification.
+While Auth is enabled, every `auth.email.template.*` and enabled `auth.email.notification.*`
+`content_path` is held inside the project root, and start reads each one before launch through the
+shared `config.toml` check, because Auth mails its built-in template when a fetch fails. While the
+stack runs, the owner process serves those files at `/email/<id>` on the shared API listener, with
+no new listener or port. Auth gets that address on its runtime host with a random token generated at
+every `stack start`. The route answers only GET on the configured paths with that token, as
+`text/plain` with `nosniff` and no CORS header, and reads the file on every request: the stack
+resolves the configured path on every fetch, so an in-root symlink is served and retargeting it
+applies at the next fetch, and the resolved file must be a regular file inside the project root,
+else 404. The route is as reachable as the API port: Docker and Podman stacks listen on every
+interface, so a LAN peer gets 404 without the token, and native stacks listen on loopback only. The
+token limits who can fetch template source through this route; it does not make template text
+private. A failed fetch or parse puts the token in Auth's logs, masked in shipped Analytics events
+but not in `stack logs`, and a caller reaching the API and Mailpit ports can have a rendered
+template mailed and read it there. A changed `content_path` applies after stop and start. Auth
+sleeps after 60 s idle unless the stack started with `--eager`, and each wake refetches. A replaced
+file reaches mail at the next wake, or once Auth's template cache expires. A deleted file mails
+Auth's cached copy until the next wake, then the built-in template.
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) is a `local.services.database.version`
 request for that OrioleDB build instead of the stock major, resolved like any other version (see
 "Service versions and the lock"); the two keys must agree when both are set, and `db.major_version`

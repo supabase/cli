@@ -43,6 +43,7 @@ import { ProxyError } from "./Proxy.ts";
 import {
   backendAddress,
   credentialsFor,
+  emailTemplateFile,
   endpointNames,
   endpointPort,
   freshWrites,
@@ -588,9 +589,10 @@ const makeOwner = Effect.fn("Owner.make")(function* (
           cause instanceof ProxyError ? cause : new ProxyError({ message: cause.message, cause }),
         ),
       );
+    const emailTemplate = emailTemplateFile(Ref.get(creation));
     const endpoints = Object.fromEntries(
       endpointNames(initial).map((name) => {
-        const shared = sharedRoutes(initial, name, routeKeys, backendFor);
+        const shared = sharedRoutes(initial, name, routeKeys, backendFor, emailTemplate);
         const join = joinRoutes(initial, name);
         const endpoint: NetworkEndpoint = {
           protocol: name === "http" ? "http" : "tcp",
@@ -788,6 +790,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
                     ),
                 ),
               ),
+          randomToken: crypto.uuidV4(),
           updateCreation: (id, values) =>
             Effect.gen(function* () {
               const entry = yield* orchestrator.get(id);

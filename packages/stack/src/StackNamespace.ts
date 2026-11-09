@@ -5,6 +5,7 @@ import * as Registry from "./namespace/Registry.ts";
 import { restrictDirectoryToOwner } from "./runtime/postgres-user.ts";
 
 export { NamespaceError } from "./namespace/Capabilities.ts";
+export { readContainedFile } from "./namespace/drivers/FileSystem.ts";
 export { LeaseHeldError, LeaseHolder } from "./namespace/Lease.ts";
 export { holdExclusiveLock, holdLock, holdSharedLock, isLockBusy } from "./namespace/Lock.ts";
 export { resolveStackDataRoot, stackDataRootLabel, stackLogsRoot } from "./namespace/Paths.ts";

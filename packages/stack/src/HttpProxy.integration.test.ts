@@ -770,7 +770,13 @@ it.live(
         };
         yield* proxy.setRoutes([
           ...(
-            sharedRoutes({ service: "functions" }, "http", keys, () => Effect.die("unused")) ?? []
+            sharedRoutes(
+              { service: "functions" },
+              "http",
+              keys,
+              () => Effect.die("unused"),
+              () => Effect.undefined,
+            ) ?? []
           ).map((route) => ({ ...route, id: "functions", target: Effect.succeed(backendAddress) })),
           { id: "rest", prefix: "/rest/v1", target: Effect.succeed(backendAddress) },
         ]);
