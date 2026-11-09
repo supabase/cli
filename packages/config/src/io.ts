@@ -885,12 +885,6 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
   const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
   const { format, filePath, allPaths } = yield* resolveSaveTarget(baseCwd, options.format);
-  if (options.schemaRef !== undefined) {
-    yield* failIfSchemaTooNew(filePath, cliConfigFormatForPath(filePath), {
-      ref: options.schemaRef,
-      version: versionOfSchemaRef(options.schemaRef),
-    });
-  }
   if (project !== null) {
     yield* rejectNewerExistingSchema(allPaths);
   }
@@ -899,6 +893,12 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
       ? undefined
       : yield* readExistingSchemaRef(baseCwd);
   const schemaRef = options.schemaRef ?? existingSchemaRef;
+  if (schemaRef !== undefined) {
+    yield* failIfSchemaTooNew(filePath, cliConfigFormatForPath(filePath), {
+      ref: schemaRef,
+      version: versionOfSchemaRef(schemaRef),
+    });
+  }
   let content =
     format === "json"
       ? encodeCliConfigToJsonDocument(options.config, schemaRef)

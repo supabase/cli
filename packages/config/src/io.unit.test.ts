@@ -3698,6 +3698,22 @@ describe("config io schema version", () => {
       }),
     ));
 
+  test("saveCliConfig to JSON fails and keeps a TOML file whose $schema key is newer than its directive", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const content = `#:schema ${v("1")}\n"$schema" = "${v("2")}"\nproject_id = "x"\n`;
+        const { cwd, path } = yield* writeConfig("config.toml", content);
+
+        const error = yield* failureOf(
+          saveCliConfig({ cwd, config: sampleConfig, format: "json" }),
+        );
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(path)).toBe(content);
+      }),
+    ));
+
   test("saveCliConfig fails and keeps a shadowed config.toml that declares a newer schema", () =>
     runConfigEffect(
       Effect.gen(function* () {
