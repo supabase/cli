@@ -23,7 +23,9 @@ export const CONVERTED_MESSAGE = "Converted supabase/config.toml to supabase/con
 /** The command that restores config.toml from `backup`, with paths prefixed by `root` (the project root relative to the cwd). */
 export function undoCommand(root: string, backup: string, platform: ShellPlatform): string {
   const at = (file: string) => shellQuoteArgument(root === "" ? file : `${root}/${file}`, platform);
-  return `mv ${at(backup)} ${at("supabase/config.toml")} && rm ${at("supabase/config.jsonc")}`;
+  return platform === "windows"
+    ? `Move-Item -LiteralPath ${at(backup)} -Destination ${at("supabase/config.toml")}; if ($?) { Remove-Item -LiteralPath ${at("supabase/config.jsonc")} }`
+    : `mv ${at(backup)} ${at("supabase/config.toml")} && rm ${at("supabase/config.jsonc")}`;
 }
 
 const COMPATIBILITY_LINES = [
@@ -72,6 +74,14 @@ export const JSONC_CHANGED_NOTE =
 
 export function jsoncRemovalFailureNote(cause: string): string {
   return `Could not remove the new supabase/config.jsonc (${cause}); it takes precedence over supabase/config.toml, so delete it before rerunning the command.`;
+}
+
+export function backupCheckFailureMessage(cause: string): string {
+  return `Could not check for an existing backup in supabase/.temp: ${cause}. supabase/config.toml was not changed.`;
+}
+
+export function backupUnverifiedMessage(backup: string, cause: string, undo: string): string {
+  return `Converted supabase/config.toml to supabase/config.jsonc and moved it to ${backup}, but could not read the backup to confirm config.toml did not change during the run: ${cause}. Compare ${backup} with supabase/config.jsonc; to undo, run: ${undo}`;
 }
 
 export function backupFailureMessage(backup: string, cause: string, note: string): string {

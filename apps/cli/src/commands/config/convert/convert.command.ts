@@ -37,7 +37,7 @@ const configConvertHandler = (flags: ConfigConvertFlags) =>
 
 export const configConvertCommand = Command.make("convert", config).pipe(
   Command.withDescription(
-    "Converts supabase/config.toml to supabase/config.jsonc, carrying comments over, and removes the TOML file. Everyone on the project needs Supabase CLI 3.1.0 or later.",
+    "Converts supabase/config.toml to supabase/config.jsonc, carrying comments over, and moves the TOML file to a backup in supabase/.temp. Everyone on the project needs Supabase CLI 3.1.0 or later.",
   ),
   Command.withShortDescription("Convert config.toml to config.jsonc"),
   Command.withExamples([

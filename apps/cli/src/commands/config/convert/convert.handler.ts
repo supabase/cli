@@ -56,7 +56,9 @@ import {
   JSONC_SYMLINK_MESSAGE,
   NOT_UTF8_MESSAGE,
   TOML_SYMLINK_MESSAGE,
+  backupCheckFailureMessage,
   backupFailureMessage,
+  backupUnverifiedMessage,
   jsoncRemovalFailureNote,
   tomlChangedMessage,
   undoCommand,
@@ -105,7 +107,12 @@ const freeBackupPath = Effect.fnUntraced(function* (tempDir: string) {
     );
     const taken = yield* fs
       .exists(candidate)
-      .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ConfigConvertWriteError({ message: backupCheckFailureMessage(cause.message) }),
+        ),
+      );
     if (!taken) {
       return candidate;
     }
@@ -224,10 +231,12 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
     yield* refuseSymlinks(parsed.path, jsoncPath);
     const backupPath = yield* freeBackupPath(path.join(configDir, ".temp"));
     const backup = `supabase/.temp/${path.basename(backupPath)}`;
+    const windows = runtimeInfo.platform === "win32";
+    const root = path.relative(runtimeInfo.cwd, cliSettings.workdir);
     const undo = undoCommand(
-      path.relative(runtimeInfo.cwd, cliSettings.workdir).replaceAll("\\", "/"),
+      windows ? root.replaceAll("\\", "/") : root,
       backup,
-      runtimeInfo.platform === "win32" ? "windows" : "posix",
+      windows ? "windows" : "posix",
     );
 
     if (flags.dryRun) {
@@ -302,9 +311,14 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
           ),
         ),
       );
-      const moved = yield* fs
-        .readFileString(backupPath)
-        .pipe(Effect.catchTag("PlatformError", () => Effect.void));
+      const moved = yield* fs.readFileString(backupPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ConfigConvertWriteError({
+              message: backupUnverifiedMessage(backup, cause.message, undo),
+            }),
+        ),
+      );
       if (moved !== parsed.rawText) {
         return yield* new ConfigConvertFileChangedError({
           message: tomlChangedMessage(backup, undo),

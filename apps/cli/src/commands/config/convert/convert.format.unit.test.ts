@@ -25,6 +25,12 @@ describe("convert format", () => {
     );
   });
 
+  it("renders a PowerShell undo that removes config.jsonc only after the move succeeds", () => {
+    expect(undoCommand("", "supabase/.temp/config.toml.bak", "windows")).toBe(
+      "Move-Item -LiteralPath supabase/.temp/config.toml.bak -Destination supabase/config.toml; if ($?) { Remove-Item -LiteralPath supabase/config.jsonc }",
+    );
+  });
+
   it("lists relocated comments and a VS Code failure in the report", () => {
     const report = convertReport({
       dryRun: true,

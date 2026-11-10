@@ -24,7 +24,7 @@ Move the backup back and remove the JSONC file:
 mv supabase/.temp/config.toml.bak supabase/config.toml && rm supabase/config.jsonc
 ```
 
-If a backup from an earlier conversion already exists, the command uses the next free name (`config.toml.2.bak`, and so on). The printed undo command names that backup, with paths relative to the directory you ran the command from.
+If a backup from an earlier conversion already exists, the command uses the next free name (`config.toml.2.bak`, and so on). The printed undo command names that backup, with paths relative to the directory you ran the command from; on Windows it is the PowerShell equivalent.
 
 ## After converting
 

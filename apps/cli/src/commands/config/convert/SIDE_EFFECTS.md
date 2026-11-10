@@ -33,20 +33,21 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | converted (or `--dry-run` printed the document); warnings never change the exit code                                                                     |
-| `0`  | only `config.json[c]` exists: nothing to convert, nothing written                                                                                        |
-| `1`  | `-o/--output` passed                                                                                                                                     |
-| `1`  | `--workdir` is not a directory                                                                                                                           |
-| `1`  | no project config found, or it cannot be parsed (including malformed JSON or removed keys in `config.json[c]`)                                           |
-| `1`  | `config.json` and `config.jsonc` both exist                                                                                                              |
-| `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                    |
-| `1`  | conversion refused (not valid UTF-8, a TOML date, a non-finite float, failed re-parse check)                                                             |
-| `1`  | `config.toml` is a symbolic link, or `config.jsonc` is a dangling symbolic link; nothing is written                                                      |
-| `1`  | `config.jsonc` could not be written, or appeared while the command ran; an existing `config.jsonc` is never replaced and `config.toml` is kept           |
-| `1`  | `config.toml` could not be moved to the backup; the new `config.jsonc` is removed while it still holds what the command wrote, and `config.toml` is kept |
-| `1`  | `config.toml` changed while the command ran; the backup holds the latest version and the message gives the restore command                               |
+| Code | Condition                                                                                                                                                                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | converted (or `--dry-run` printed the document); warnings never change the exit code                                                                                                         |
+| `0`  | only `config.json[c]` exists: nothing to convert, nothing written                                                                                                                            |
+| `1`  | `-o/--output` passed                                                                                                                                                                         |
+| `1`  | `--workdir` is not a directory                                                                                                                                                               |
+| `1`  | no project config found, or it cannot be parsed (including malformed JSON or removed keys in `config.json[c]`)                                                                               |
+| `1`  | `config.json` and `config.jsonc` both exist                                                                                                                                                  |
+| `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                                                        |
+| `1`  | conversion refused (not valid UTF-8, a TOML date, a non-finite float, failed re-parse check)                                                                                                 |
+| `1`  | `config.toml` is a symbolic link, or `config.jsonc` is a dangling symbolic link; nothing is written                                                                                          |
+| `1`  | `config.jsonc` could not be written, or appeared while the command ran; an existing `config.jsonc` is never replaced and `config.toml` is kept                                               |
+| `1`  | `config.toml` could not be moved to the backup; the new `config.jsonc` is removed while it still holds what the command wrote, and `config.toml` is kept                                     |
+| `1`  | `config.toml` changed while the command ran; the backup holds the latest version and the message gives the restore command                                                                   |
+| `1`  | the backup name could not be checked (nothing is written), or the backup could not be re-read after the move (`config.jsonc` and the backup are kept and the message gives the undo command) |
 
 ## Output
 
@@ -101,7 +102,7 @@ Same structured result as `json`, delivered as an NDJSON `result` event.
 ## Notes
 
 - The only flag is `--dry-run`; there is no confirmation prompt and no `--force`.
-- Nothing is deleted: `config.toml` is renamed into `supabase/.temp/`, which `supabase init` adds to `supabase/.gitignore`. The undo command names the backup actually used, with paths relative to the current directory (quoted when the shell would split them); every other message names files relative to the project root.
+- Nothing is deleted: `config.toml` is renamed into `supabase/.temp/`, which `supabase init` adds to `supabase/.gitignore`. The undo command names the backup actually used, with paths relative to the current directory (quoted when the shell would split them; on Windows a PowerShell `Move-Item`/`Remove-Item` command); every other message names files relative to the project root.
 - Assumes no other process edits `supabase/` while it runs; it detects a changed `config.toml` or a `config.jsonc` that appears, but does not lock.
 - The conversion parses `config.toml` only (no env resolution, no schema decode), so the JSONC
   document carries the same raw values. The result is re-parsed and compared before anything is

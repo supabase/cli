@@ -104,7 +104,13 @@ const denied = (method: string, pathOrDescriptor: string) =>
     pathOrDescriptor,
   });
 
-type FsFailure = "rename" | "rename-and-jsonc-stuck" | "jsonc-appears" | "toml-edited";
+type FsFailure =
+  | "rename"
+  | "rename-and-jsonc-stuck"
+  | "jsonc-appears"
+  | "toml-edited"
+  | "backup-check"
+  | "backup-unreadable";
 
 const failingConfigTomlFsLayer = (failure: FsFailure) =>
   Layer.effect(
@@ -113,8 +119,17 @@ const failingConfigTomlFsLayer = (failure: FsFailure) =>
       const real = yield* FileSystem.FileSystem;
       const target = yield* configTomlPath;
       const jsonc = yield* projectPath("supabase", "config.jsonc");
+      const backup = yield* projectPath("supabase", ".temp", "config.toml.bak");
       return FileSystem.FileSystem.of({
         ...real,
+        exists: (path) =>
+          failure === "backup-check" && path === backup
+            ? Effect.fail(denied("exists", path))
+            : real.exists(path),
+        readFileString: (path, encoding) =>
+          failure === "backup-unreadable" && path === backup
+            ? Effect.fail(denied("readFileString", path))
+            : real.readFileString(path, encoding),
         stat: (path) =>
           failure === "jsonc-appears" && path === target
             ? real.writeFileString(jsonc, "{}\n").pipe(Effect.andThen(real.stat(path)))
@@ -126,7 +141,9 @@ const failingConfigTomlFsLayer = (failure: FsFailure) =>
               ? real
                   .writeFileString(target, EDITED_TOML)
                   .pipe(Effect.andThen(real.rename(from, to)))
-              : Effect.fail(denied("rename", from)),
+              : failure === "rename" || failure === "rename-and-jsonc-stuck"
+                ? Effect.fail(denied("rename", from))
+                : real.rename(from, to),
         remove: (path, options) =>
           failure === "rename-and-jsonc-stuck" && path === jsonc
             ? Effect.fail(denied("remove", path))
@@ -640,6 +657,44 @@ describe("config convert integration", () => {
       expect(error._tag).toBe("ConfigConvertFileChangedError");
       expect(error.message).toBe(tomlChangedMessage(BACKUP, UNDO));
       expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe(EDITED_TOML);
+      expect(yield* exists("supabase", "config.toml")).toBe(false);
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("fails before writing when it cannot check for an existing backup", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+
+      const error = yield* run().pipe(
+        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("backup-check"), layer)),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("ConfigConvertWriteError");
+      expect(error.message).toMatch(
+        /^Could not check for an existing backup in supabase\/\.temp: /,
+      );
+      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
+      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("says the conversion finished but is unverified when the backup cannot be read", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+
+      const error = yield* run().pipe(
+        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("backup-unreadable"), layer)),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("ConfigConvertWriteError");
+      expect(error.message).toContain("could not read the backup to confirm");
+      expect(error.message).toContain(`to undo, run: ${UNDO}`);
+      expect(yield* exists("supabase", "config.jsonc")).toBe(true);
       expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(BunServices.layer));
