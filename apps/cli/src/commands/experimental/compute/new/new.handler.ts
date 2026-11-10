@@ -333,13 +333,6 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
 
-    if (Option.isSome(flags.secretsScope) && Option.isSome(flags.secretsScopeCustom)) {
-      return yield* new InvalidComputeSecretsScopeError({
-        detail: `Can't derminate the secrets scope. Found both --secrets-scope and --secrets-scope:custom overrides`,
-        suggestion: `Only use \`--secrets-scope\` or \`--secrets-scope:custom\` but not both.`,
-      });
-    }
-
     const secretsScope = yield* resolveSecretsScope({
       explicit: flags.secretsScope.pipe(Option.orElse(() => flags.secretsScopeCustom)),
       canPrompt,
