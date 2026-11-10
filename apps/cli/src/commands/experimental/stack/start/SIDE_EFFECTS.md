@@ -79,17 +79,18 @@ loopback. Any other peer, such as a LAN device, a routed VPN or a container arri
 address, is closed before any HTTP byte and must use `https://`. A plain request needs a stack host
 alias, `localhost` or an IP address with the API port in `Host` (the port may be left out on port
 80), or gets 421, WebSocket upgrades included, and `/email` templates answer only plain requests.
-Each request forwards its own connection's proto. With `[api.tls]` on Docker or Podman, after every
-stack start or restart and every instance start or restart while the database runs, the database
-container sends `GET /__api_tls_check` once in plain; it passes only on a 200 whose body is this
-stack's id and a fresh nonce, which is never saved and admits nothing. On macOS, Docker Desktop,
-colima and Podman machine forward containers from loopback; on Linux, rootful Docker, rootful Podman
-and rootless Podman on pasta deliver them from a bridge or host address, so a TLS start there fails
-with ``api.tls: unsupported networking on <runtime>: containers must reach the api from loopback
-(the database container's plain request was closed without a reply); its services stopped: turn off
-`[api.tls]`, or use a runtime whose containers reach this host from loopback (on macOS: Docker
-Desktop, colima or Podman machine), then start the stack again``. Other runtimes are unmeasured; the
-check decides. A connection that is refused or never opens fails with ``api.tls: containers can't
+Each request forwards its own connection's proto. While the API port serves TLS on Docker or Podman,
+every stack start or restart, and every instance start or restart while the database runs, ends with
+the database container sending `GET /__api_tls_check` once in plain; it passes only on a 200 read to
+its end whose body is `supabase-stack <stack-id> <nonce>`, a fresh nonce that is never saved and
+admits nothing. On macOS, Docker Desktop, colima and Podman machine forward containers from
+loopback; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta deliver them from a
+bridge or host address, so a TLS start there fails with ``api.tls: unsupported networking on
+<runtime>: containers must reach the api from loopback (the database container's plain request was
+closed without a reply); its services stopped: turn off `[api.tls]`, or use a runtime whose
+containers reach this host from loopback (on macOS: Docker Desktop, colima or Podman machine), then
+start the stack again``. Other runtimes are unmeasured; the check decides. A connection that is
+refused or never opens, or a probe the engine can't run, fails with ``api.tls: containers can't
 reach the api port <port> on <runtime> (<what the probe saw>); its services stopped: let <runtime>
 containers reach the api port, or turn off `[api.tls]`, then start the stack again``, and any other
 reply, or none within 5 s, with `api.tls: the api port <port> on <runtime> isn't answering this

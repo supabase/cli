@@ -135,7 +135,7 @@ exit when the owner remains reachable. Edits made while serving apply on the nex
 `functions serve`, because the stack backend does not watch files. Import-map and inspector flags
 are rejected before any stack mutation with `Import-map and inspector flags are not supported by
 experimental Functions serve.` Stack mode writes no project files and does not stop or
-restart the whole composition.
+restart the whole composition, except that a failed api.tls start check stops it.
 Stack mode resolves the env like legacy serve on every invocation, for a composed or temporary
 service: the shared Functions `.env`, or the explicit `--env-file` instead, overrides the TOML
 `edge_runtime.secrets`, and without `--env-file` each enabled `<function-name>/.env` overrides

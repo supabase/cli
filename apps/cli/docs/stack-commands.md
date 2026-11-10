@@ -348,8 +348,9 @@ Analytics is enabled. The error names the setting.
 have an IP subject alternative name for `127.0.0.1` (for example `mkcert localhost 127.0.0.1`; stack
 `storage` commands then also need `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`), and
 containers must reach the host from loopback: on macOS, Docker Desktop, colima and Podman machine
-do; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta don't, so start fails with
-`api.tls: unsupported networking`. The `stack start` side effects list every start error.
+do; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta don't, so a start that
+serves the API over TLS fails there with `api.tls: unsupported networking`. The `stack start` side
+effects list its errors.
 
 Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
 uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions

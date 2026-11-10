@@ -36,12 +36,11 @@ precedence, same rules as [`docs/stack-commands.md`](../../../../docs/stack-comm
 local path stops the saved composition, resets the registered database instance's data, starts
 and readies that instance, reapplies the catalog overlay and migrations, then starts the saved
 composition again instead of recreating containers. On a Docker or Podman stack started with
-`[api.tls]`, both starts rerun the `api.tls` start check with a fresh nonce; if one fails, the
-stack's services stop and the reset fails with `failed to start local database: ` or
-`failed to start local stack services: ` followed by the `stack start` api.tls error, which ends
-``its services did not stop (<reason>), run `supabase stack stop --stack-id <id>` to stop them``
-when they don't stop. The reset retains the saved database configuration and composition members; it
-does
+`[api.tls]`, that final start reruns the `api.tls` start check with a fresh nonce; if it fails, the
+stack's services stop and the reset fails with `failed to start local stack services: ` followed by
+the `stack start` api.tls error, which ends ``its services did not stop (<reason>), run `supabase
+stack stop --stack-id <id>` to stop them`` when they don't stop. The reset retains the saved
+database configuration and composition members; it does
 not rebuild the stack from current config. The catalog overlay provisions the Auth, Storage,
 and Realtime schemas for the saved composition's members, so services excluded at `stack
 start` stay excluded; for the database-only composition that `db start` creates, it provisions

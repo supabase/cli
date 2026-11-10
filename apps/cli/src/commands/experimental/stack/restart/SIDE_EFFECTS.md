@@ -24,14 +24,14 @@ owners. An owner may be launched by restart when none exists. Existing runtime
 resources are stopped/recreated for composition members only. Artifacts are
 resolved from `<SUPABASE_HOME or ~/.supabase>/cache/stack`; missing artifacts may
 be downloaded. Shared routing/settings may read project config and profiles.
-No hosted project API calls or caller-owned data deletion occur. On a stack
-started with `[api.tls]` on Docker or Podman, the database container then sends
-the start check (see `stack start`) with a fresh nonce. A failed check stops the
-stack's services and fails with the same `api.tls: unsupported networking on
-<runtime>: ...`, `api.tls: containers can't reach the api port <port> on
-<runtime> ...` or `api.tls: the api port <port> on <runtime> isn't answering
-this stack's start check ...` error as `stack start`; if they don't stop, the
-error says to run `supabase stack stop` instead.
+No hosted project API calls or caller-owned data deletion occur. While the API
+port serves TLS on Docker or Podman, the database container then sends the start
+check (see `stack start`) with a fresh nonce. A failed check stops the stack's
+services and fails with the same `api.tls: unsupported networking on <runtime>:
+...`, `api.tls: containers can't reach the api port <port> on <runtime> ...` or
+`api.tls: the api port <port> on <runtime> isn't answering this stack's start
+check ...` error as `stack start`; if they don't stop, the error says to run
+`supabase stack stop` instead.
 
 ## Output, exit codes and telemetry
 

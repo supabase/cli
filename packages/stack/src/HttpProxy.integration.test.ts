@@ -2232,7 +2232,7 @@ const routedNamespace = (gateway: string) =>
     };
   });
 
-/* The reviewer's routed peer: an address inside docker0's network that this host reaches through
+/* A routed peer: an address inside docker0's network that this host reaches through
    a narrower route, as a VPN or second bridge would, is not loopback however it is routed. */
 it.live.skipIf(process.platform !== "linux" || (routedGateway === undefined && !ci))(
   "gives a routed peer inside the bridge network no plain byte, but TLS",
