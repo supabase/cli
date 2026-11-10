@@ -242,8 +242,8 @@ const resolveSecretsScope = Effect.fnUntraced(function* (options: {
 
           return customSecretsScope.length > 0
             ? undefined
-            : `Enter at least one secret name, separated by ","`
-        }
+            : `Enter at least one secret name, separated by ","`;
+        },
       });
 
       selectedSecretsScope = parseSecretsScopeCustom(customSecretsNames);
@@ -349,20 +349,20 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // from `apps/web` means `apps/web/generated`.
     const destination = Option.isSome(flags.source)
       ? yield* resolveComputeSource({
-        projectRoot: project.projectRoot,
-        cwd: runtimeInfo.cwd,
-        raw: flags.source.value,
-      })
+          projectRoot: project.projectRoot,
+          cwd: runtimeInfo.cwd,
+          raw: flags.source.value,
+        })
       : yield* confineComputePath({
-        projectRoot: project.projectRoot,
-        target: path.join(project.computeDir, name),
-        subject: `The default directory for "${name}"`,
-        // The default directory is `supabase/compute/<name>` with a validated
-        // name, so only a symlink escaping the project can reach this
-        // failure — which is what the suggestion names.
-        suggestion:
-          "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
-      });
+          projectRoot: project.projectRoot,
+          target: path.join(project.computeDir, name),
+          subject: `The default directory for "${name}"`,
+          // The default directory is `supabase/compute/<name>` with a validated
+          // name, so only a symlink escaping the project can reach this
+          // failure — which is what the suggestion names.
+          suggestion:
+            "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
+        });
 
     // Nothing here replaces what is already on disk: scaffolding over an existing
     // directory would have to delete it first, which isn't this command's job — it

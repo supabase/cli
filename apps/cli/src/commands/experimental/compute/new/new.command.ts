@@ -59,7 +59,7 @@ const config = {
     ),
     Flag.filter(
       (secretNames) => secretNames != undefined && secretNames.length > 0,
-      () => "Must contain at least one secret name."
+      () => "Must contain at least one secret name.",
     ),
     Flag.optional,
   ),
@@ -127,7 +127,15 @@ export const computeNewCommand = Command.make("new", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["runtime", "size", "exposure", "secrets-scope", "secrets-scope:custom", "instances", "source"],
+    noApiEffectFlags: [
+      "runtime",
+      "size",
+      "exposure",
+      "secrets-scope",
+      "secrets-scope:custom",
+      "instances",
+      "source",
+    ],
   }),
   Command.withHandler((flags) =>
     computeNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
@@ -139,10 +147,10 @@ export const computeNewCommand = Command.make("new", config).pipe(
   Command.validate(({ secretsScope, secretsScopeCustom }) =>
     Option.isSome(secretsScope) && Option.isSome(secretsScopeCustom)
       ? Effect.fail(
-        new CliError.ValidationError({
-          message: "--secrets-scope and --secrets-scope:custom are mutually exclusive",
-        }),
-      )
+          new CliError.ValidationError({
+            message: "--secrets-scope and --secrets-scope:custom are mutually exclusive",
+          }),
+        )
       : Effect.void,
   ),
 );

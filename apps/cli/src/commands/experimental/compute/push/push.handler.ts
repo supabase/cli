@@ -110,7 +110,7 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
   // payload stdout is carrying.
   yield* output.raw(
     `No runtime configured for ${options.name}: guessed ${classified.runtime} (${classified.reason}). ` +
-    `Set ${configSetting(options.config.format, `compute.${options.name}`, "runtime", `"${classified.runtime}"`)} in ${options.config.path}.\n`,
+      `Set ${configSetting(options.config.format, `compute.${options.name}`, "runtime", `"${classified.runtime}"`)} in ${options.config.path}.\n`,
     "stderr",
   );
   return classified.runtime;
@@ -174,10 +174,11 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
       // unguarded by format, like the runtime nudge: a CI run is exactly where
       // a one-deploy exposure quietly reverting matters most.
       const message = options.configured
-        ? `--exposure ${chosen} applies to this deploy only: ${options.config.path} ${options.recorded === undefined
-          ? `records no exposure for ${options.name}`
-          : `records exposure = "${options.recorded}"`
-        }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "exposure", `"${chosen}"`)} in ${options.config.path}.\n`
+        ? `--exposure ${chosen} applies to this deploy only: ${options.config.path} ${
+            options.recorded === undefined
+              ? `records no exposure for ${options.name}`
+              : `records exposure = "${options.recorded}"`
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "exposure", `"${chosen}"`)} in ${options.config.path}.\n`
         : `--exposure ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "exposure")} for future pushes.\n`;
       yield* output.raw(message, "stderr");
     }
@@ -216,23 +217,25 @@ const resolveSecretsScope = Effect.fnUntraced(function* (options: {
         ? DEFAULT_COMPUTE_SECRETS_SCOPE
         : parseComputeSecretsScope(options.recorded as string | string[]);
 
-    const isCustom = Array.isArray(chosen)
-    const isChosenEquals = isCustom && Array.isArray(withoutTheFlag)
-      ? withoutTheFlag.length === chosen.length && chosen.every(v => withoutTheFlag.includes(v))
-      : withoutTheFlag === chosen
+    const isCustom = Array.isArray(chosen);
+    const isChosenEquals =
+      isCustom && Array.isArray(withoutTheFlag)
+        ? withoutTheFlag.length === chosen.length && chosen.every((v) => withoutTheFlag.includes(v))
+        : withoutTheFlag === chosen;
 
     if (!options.configured || !isChosenEquals) {
-      const flagName = `--secrets-scope${isCustom ? ":custom" : ""}`
+      const flagName = `--secrets-scope${isCustom ? ":custom" : ""}`;
       const output = yield* Output;
 
       const applyFormat = (v: string | string[] | readonly string[]) =>
         Array.isArray(v) ? `[${formatSecretsScope(v.map((i) => `"${i}"`))}]` : `"${v}"`;
 
       const message = options.configured
-        ? `${flagName} ${chosen} applies to this deploy only: ${options.config.path} ${options.recorded === undefined
-          ? `records no secrets_scope for ${options.name}`
-          : `records secrets_scope = ${applyFormat(options.recorded)}`
-        }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "secrets_scope", applyFormat(chosen))} in ${options.config.path}.\n`
+        ? `${flagName} ${chosen} applies to this deploy only: ${options.config.path} ${
+            options.recorded === undefined
+              ? `records no secrets_scope for ${options.name}`
+              : `records secrets_scope = ${applyFormat(options.recorded)}`
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "secrets_scope", applyFormat(chosen))} in ${options.config.path}.\n`
         : `${flagName} ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "secrets_scope")} for future pushes.\n`;
       yield* output.raw(message, "stderr");
     }
@@ -492,14 +495,14 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     input.noWait || accepted.buildState !== "building"
       ? accepted
       : yield* awaitComputeBuild(api, projectRef, name, {
-        schedule: input.pollSchedule,
-        retrySchedule: input.pollRetrySchedule,
-        refSuffix: input.refSuffix,
-        onPoll: (polled) =>
-          polled.buildState === "building"
-            ? deploying.message("Building compute...")
-            : Effect.void,
-      }).pipe(Effect.tapError(() => deploying.fail()));
+          schedule: input.pollSchedule,
+          retrySchedule: input.pollRetrySchedule,
+          refSuffix: input.refSuffix,
+          onPoll: (polled) =>
+            polled.buildState === "building"
+              ? deploying.message("Building compute...")
+              : Effect.void,
+        }).pipe(Effect.tapError(() => deploying.fail()));
 
   yield* Effect.annotateCurrentSpan({
     "compute.waited": !input.noWait && accepted.buildState === "building",
@@ -511,8 +514,9 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   if (settled.buildState === "failed") {
     yield* deploying.clear;
     return yield* new ComputeBuildFailedError({
-      detail: `The build for "${name}" failed${settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
-        }.`,
+      detail: `The build for "${name}" failed${
+        settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
+      }.`,
       suggestion: `Fix the issue, then re-run \`supabase compute push ${name}${input.refSuffix}\`.`,
     });
   }
@@ -566,7 +570,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
       // unpredictably and buried the command mid-sentence.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
-        `Run ${aqua(`supabase compute status ${name}${input.refSuffix}`)} to check on it.\n`,
+          `Run ${aqua(`supabase compute status ${name}${input.refSuffix}`)} to check on it.\n`,
       );
     }
   }
