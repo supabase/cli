@@ -339,11 +339,10 @@ The flag is local CLI configuration in `supabase/config.toml` or `supabase/confi
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
-Stack mode rejects an enabled `[api.tls]` while the API is enabled, a `db.major_version` other than
-15 or 17, a non-empty `experimental.s3_*` value while `db.orioledb_version` is set, an
-`edge_runtime.deno_version` other than 2 while Edge Runtime is enabled, and
-`analytics.backend = "bigquery"` or a non-empty `analytics.gcp_*` value while Analytics is enabled.
-The error names the setting.
+Stack mode rejects a `db.major_version` other than 15 or 17, a non-empty `experimental.s3_*` value
+while `db.orioledb_version` is set, an `edge_runtime.deno_version` other than 2 while Edge Runtime
+is enabled, and `analytics.backend = "bigquery"` or a non-empty `analytics.gcp_*` value while
+Analytics is enabled. The error names the setting.
 
 Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
 uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions

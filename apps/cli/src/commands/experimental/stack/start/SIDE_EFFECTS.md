@@ -26,11 +26,10 @@ resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PO
 and ignored: the stack runs no Vector service.
 `[storage.analytics]` is accepted, but analytics buckets are hosted-only: the stack configures no
 Iceberg catalog on Storage and a local start seeds none.
-An enabled `[api.tls]` while the API is enabled, an `edge_runtime.deno_version` other than 2 while
-Edge Runtime is enabled, or a non-empty `analytics.gcp_*` value while Analytics is enabled, fails
-loading with `<setting> is unsupported by the experimental stack`. `analytics.backend = "bigquery"`
-with Analytics enabled and no `gcp_*` value fails with `analytics.backend must be postgres for the
-experimental stack`.
+An `edge_runtime.deno_version` other than 2 while Edge Runtime is enabled, or a non-empty
+`analytics.gcp_*` value while Analytics is enabled, fails loading with `<setting> is unsupported by
+the experimental stack`. `analytics.backend = "bigquery"` with Analytics enabled and no `gcp_*`
+value fails with `analytics.backend must be postgres for the experimental stack`.
 Encrypted JWT secrets are decrypted before shared credentials are derived. `[edge_runtime.secrets]`
 names are uppercased, empty or unresolved `env()` values and `SUPABASE_`-prefixed names are dropped,
 and encrypted values are decrypted before they reach the Functions service. `db.health_timeout`
