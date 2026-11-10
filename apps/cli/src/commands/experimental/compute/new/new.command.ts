@@ -57,6 +57,10 @@ const config = {
     Flag.withDescription(
       "Controls whether secrets are available, overriding `secrets_scope` with a comma separed list of allowed secret names. Falls back to the recorded value, then all.",
     ),
+    Flag.filter(
+      (secretNames) => secretNames != undefined && secretNames.length > 0,
+      () => "Must contain at least one secret name."
+    ),
     Flag.optional,
   ),
   instances: Flag.Int("instances").pipe(
@@ -135,10 +139,10 @@ export const computeNewCommand = Command.make("new", config).pipe(
   Command.validate(({ secretsScope, secretsScopeCustom }) =>
     Option.isSome(secretsScope) && Option.isSome(secretsScopeCustom)
       ? Effect.fail(
-          new CliError.ValidationError({
-            message: "--secrets-scope and --secrets-scope:custom are mutually exclusive",
-          }),
-        )
+        new CliError.ValidationError({
+          message: "--secrets-scope and --secrets-scope:custom are mutually exclusive",
+        }),
+      )
       : Effect.void,
   ),
 );
