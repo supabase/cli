@@ -1,5 +1,5 @@
 import { operationPermissions } from "@supabase/api/permissions";
-import { Effect, Option } from "effect";
+import { Context, Effect, Option } from "effect";
 import type { Command } from "effect/cli";
 
 import { commandInternals, flattenSubcommands } from "../../docs/docs-introspection.ts";
@@ -8,15 +8,16 @@ import type { DocsFlag } from "../../docs/docs-spec.ts";
 import { readPermissions } from "../command-permissions/command-permissions.annotation.ts";
 import type { FactCheck } from "./command-fact.ts";
 import { COMMAND_FACTS } from "./command-facts.registry.ts";
+import { GlobalFlagsReadAnnotation } from "./with-global-flags-read.ts";
 
 /** One registered fact as it appears in the catalog. */
-export interface CatalogFact {
+interface CatalogFact {
   readonly checked: ReadonlyArray<FactCheck>;
   readonly value: unknown;
 }
 
 /** Agent-facing traits with the names `effect/ai/Tool` uses for its annotations. */
-export interface CatalogTraits {
+interface CatalogTraits {
   readonly readonly: boolean;
   readonly destructive: boolean;
 }
@@ -29,7 +30,8 @@ export interface CatalogEntry {
   readonly unlisted: boolean;
   readonly examples: ReadonlyArray<Command.Command.Example>;
   readonly flags: ReadonlyArray<DocsFlag>;
-  readonly globalFlags: ReadonlyArray<string>;
+  /** Global flags declared with `withGlobalFlagsRead`; undefined for commands that haven't adopted it. */
+  readonly globalFlags: ReadonlyArray<string> | undefined;
   readonly traits: CatalogTraits | undefined;
   readonly facts: Readonly<Record<string, CatalogFact>>;
 }
@@ -74,12 +76,11 @@ const entryFor = Effect.fnUntraced(function* (
     unlisted: command.unlisted,
     examples: command.examples,
     flags: internals.config.flags.flatMap((flag) => docsFlagDoc(path, flag) ?? []),
-    globalFlags: internals.globalFlags
-      .map((entry) => entry.flag)
-      .flatMap((flag) => {
-        const doc = docsFlagDoc(path, flag);
-        return doc === undefined ? [] : [doc.id];
-      }),
+    globalFlags: Option.getOrUndefined(
+      Option.map(Context.getOption(command.annotations, GlobalFlagsReadAnnotation), (ids) =>
+        ids.toSorted(),
+      ),
+    ),
     traits: traitsOf(command),
     facts,
   } satisfies CatalogEntry;

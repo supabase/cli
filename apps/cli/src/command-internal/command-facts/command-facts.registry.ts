@@ -7,6 +7,8 @@ import { CommandFlagsAnnotation } from "../command-permissions/permission-flags.
 import { TargetPolicyAnnotation } from "../target/target-policy.ts";
 import { registerDerivedFact, registerFact } from "./command-fact.ts";
 import { OutputSchemaAnnotation } from "./command-output.ts";
+import { GlobalFlagsReadAnnotation } from "./with-global-flags-read.ts";
+import { CommandStageAnnotation } from "./with-stage.ts";
 
 const OperationEntry = Schema.Struct({
   operationId: Schema.String,
@@ -38,6 +40,14 @@ export const COMMAND_FACTS = [
   registerDerivedFact(OutputSchemaAnnotation, {
     serialize: (schema) => Schema.toJsonSchemaDocument(schema),
     checked: ["compiler", "runtime"],
+  }),
+  registerFact(GlobalFlagsReadAnnotation, {
+    schema: Schema.Array(Schema.String),
+    checked: ["compiler"],
+  }),
+  registerFact(CommandStageAnnotation, {
+    schema: Schema.Struct({ stage: Schema.Literal("experimental") }),
+    checked: ["runtime"],
   }),
 ] as const;
 

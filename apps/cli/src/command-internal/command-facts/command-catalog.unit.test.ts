@@ -47,13 +47,13 @@ describe("commandCatalog", () => {
       }),
   );
 
-  it.effect("leaves commands that haven't adopted an output schema without one", () =>
+  it.effect("leaves facts undefined on commands that haven't adopted them", () =>
     Effect.gen(function* () {
       const catalog = yield* commandCatalog(rootCommand);
       const entry = catalog.find((e) => e.path.join(" ") === "branches list");
 
       expect(entry?.facts["supabase/OutputSchema"]).toBeUndefined();
-      expect(entry?.globalFlags).toEqual([]);
+      expect(entry?.globalFlags).toBeUndefined();
     }),
   );
 });

@@ -207,6 +207,7 @@ DockerRemoveAllStopError
 DockerRemoveAllVolumePruneError
 DockerRunError
 DocsExamplesError
+DocsExamplesInvalidError
 DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError
@@ -216,6 +217,7 @@ EdgeRuntimeLogStreamLostError
 EdgeRuntimeScriptError
 EncryptionNetworkError
 EncryptionUnexpectedStatusError
+ExampleParsed
 ExperimentalFeatureFlagError
 ExperimentalRequiredError
 ExperimentalStackDestroyError

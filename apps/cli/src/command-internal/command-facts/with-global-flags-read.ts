@@ -1,3 +1,4 @@
+import { Context } from "effect";
 import { Command } from "effect/cli";
 import type { GlobalFlag } from "effect/cli";
 
@@ -22,6 +23,12 @@ type GlobalFlagsCheck<Flags extends ReadonlyArray<AnySetting>, R> = [
       readonly unreadGlobalFlags: Exclude<DeclaredIds<Flags>, GlobalFlagIds<R>>;
     };
 
+/** The ids of the global flags a leaf reads, as checked by {@link withGlobalFlagsRead}. */
+export class GlobalFlagsReadAnnotation extends Context.Service<
+  GlobalFlagsReadAnnotation,
+  ReadonlyArray<string>
+>()("supabase/GlobalFlagsRead") {}
+
 /**
  * Declares the global flags a leaf reads, through `Command.withGlobalFlags`. Fails to compile when
  * the leaf reads a global flag it doesn't list or lists one it never reads. Apply it last, after
@@ -32,4 +39,11 @@ export const withGlobalFlagsRead =
   <Name extends string, Input, ContextInput, E, R>(
     self: Command.Command<Name, Input, ContextInput, E, R> & GlobalFlagsCheck<Flags, R>,
   ) =>
-    Command.withGlobalFlags(self, flags);
+    Command.withGlobalFlags(
+      Command.annotate(
+        self,
+        GlobalFlagsReadAnnotation,
+        flags.map((flag) => flag.id),
+      ),
+      flags,
+    );
