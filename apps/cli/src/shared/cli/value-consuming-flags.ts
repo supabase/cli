@@ -75,6 +75,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "runtime",
   "search",
   "secrets-scope",
+  "secrets-scope:custom",
   "size",
   "source",
   "sql",
