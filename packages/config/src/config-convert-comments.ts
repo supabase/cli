@@ -301,6 +301,11 @@ function hasSpacedDot(text: string): boolean {
   return /\s\.|\.\s/.test(text.replace(/"[^"]*"|'[^']*'/g, "q"));
 }
 
+/** Whether a run of source comments holds a commented key or table header. */
+export function holdsExample(rawLines: ReadonlyArray<string>): boolean {
+  return rawLines.some((raw) => classifyComment(raw).kind !== "prose");
+}
+
 function classifyComment(raw: string): CommentLine {
   const prose: CommentLine = { kind: "prose", raw };
   const body = raw.trim().slice(1).replace(/^ /, "");

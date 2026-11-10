@@ -26,6 +26,7 @@ import {
 import { trustSupabaseSchemaDomain } from "../../../shared/init/project-init.ts";
 import { InitParseSettingsError } from "../../../shared/init/project-init.errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { ConfigConvertFlags } from "./convert.command.ts";
 import {
@@ -58,6 +59,7 @@ import {
   backupFailureMessage,
   jsoncRemovalFailureNote,
   tomlChangedMessage,
+  undoCommand,
   writeFailureMessage,
 } from "./convert.format.ts";
 
@@ -144,6 +146,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
   const outputFlag = yield* OutputFlag;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const runtimeInfo = yield* RuntimeInfo;
 
   yield* Effect.gen(function* () {
     if (Option.isSome(outputFlag)) {
@@ -221,12 +224,17 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
     yield* refuseSymlinks(parsed.path, jsoncPath);
     const backupPath = yield* freeBackupPath(path.join(configDir, ".temp"));
     const backup = `supabase/.temp/${path.basename(backupPath)}`;
+    const undo = undoCommand(
+      path.relative(runtimeInfo.cwd, cliSettings.workdir).replaceAll("\\", "/"),
+      backup,
+      runtimeInfo.platform === "win32" ? "windows" : "posix",
+    );
 
     if (flags.dryRun) {
       const vscode = yield* trustSchemaDomainInVscode(cliSettings.workdir, true);
       const warnings = convertWarnings({
         dryRun: true,
-        backup,
+        undo,
         moved: outcome.movedComments,
         vscodeFailure: vscode.failure,
       });
@@ -238,6 +246,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
             {
               dryRun: true,
               backup,
+              undo,
               moved: outcome.movedComments,
               vscodeUpdated: vscode.updated,
               vscodeFailure: vscode.failure,
@@ -297,7 +306,9 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
         .readFileString(backupPath)
         .pipe(Effect.catchTag("PlatformError", () => Effect.void));
       if (moved !== parsed.rawText) {
-        return yield* new ConfigConvertFileChangedError({ message: tomlChangedMessage(backup) });
+        return yield* new ConfigConvertFileChangedError({
+          message: tomlChangedMessage(backup, undo),
+        });
       }
     }).pipe(Effect.withSpan("config.convert.write"));
 
@@ -309,6 +320,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
           {
             dryRun: false,
             backup,
+            undo,
             moved: outcome.movedComments,
             vscodeUpdated: vscode.updated,
             vscodeFailure: vscode.failure,
@@ -326,7 +338,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
           vscodeUpdated: vscode.updated,
           warnings: convertWarnings({
             dryRun: false,
-            backup,
+            undo,
             moved: outcome.movedComments,
             vscodeFailure: vscode.failure,
           }),

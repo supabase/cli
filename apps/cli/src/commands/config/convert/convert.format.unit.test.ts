@@ -1,7 +1,12 @@
 import { CliConfigConvertError } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 
-import { convertReport, PLAIN_REPORT_STYLE, refusalMessage } from "./convert.format.ts";
+import {
+  convertReport,
+  PLAIN_REPORT_STYLE,
+  refusalMessage,
+  undoCommand,
+} from "./convert.format.ts";
 
 describe("convert format", () => {
   it("includes the line in refusals only when known", () => {
@@ -14,10 +19,17 @@ describe("convert format", () => {
     );
   });
 
+  it("quotes project roots the shell would split in the undo command", () => {
+    expect(undoCommand("../my app", "supabase/.temp/config.toml.bak", "posix")).toBe(
+      "mv '../my app/supabase/.temp/config.toml.bak' '../my app/supabase/config.toml' && rm '../my app/supabase/config.jsonc'",
+    );
+  });
+
   it("lists relocated comments and a VS Code failure in the report", () => {
     const report = convertReport({
       dryRun: true,
       backup: "supabase/.temp/config.toml.bak",
+      undo: "mv a b",
       moved: [
         { line: 3, text: "# a", anchor: ["api", "schemas"] },
         { line: 7, text: "# b", anchor: ["auth", "x"] },
@@ -46,6 +58,7 @@ describe("convert format", () => {
       {
         dryRun: false,
         backup: "supabase/.temp/config.toml.bak",
+        undo: "mv a b",
         moved: [],
         vscodeUpdated: false,
         vscodeFailure: undefined,

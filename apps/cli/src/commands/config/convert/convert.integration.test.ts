@@ -9,7 +9,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
@@ -24,7 +24,11 @@ import {
   NOT_UTF8_MESSAGE,
   TOML_SYMLINK_MESSAGE,
   tomlChangedMessage,
+  undoCommand,
 } from "./convert.format.ts";
+
+const BACKUP = "supabase/.temp/config.toml.bak";
+const UNDO = undoCommand("", BACKUP, "posix");
 
 const tempRoot = useTempWorkdir("supabase-config-convert-");
 
@@ -32,6 +36,7 @@ interface SetupOpts {
   readonly format?: OutputFormat;
   readonly explicitWorkdir?: boolean;
   readonly outputFlag?: "json";
+  readonly cwd?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -48,6 +53,7 @@ function setup(opts: SetupOpts = {}) {
       OutputFlag,
       opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     ),
+    mockRuntimeInfo({ cwd: opts.cwd ?? tempRoot.current }),
     BunServices.layer,
   );
   return { layer, out, telemetry };
@@ -502,9 +508,7 @@ describe("config convert integration", () => {
             moved_comments: [],
             vscode_settings_updated: false,
             min_cli_version: CONFIG_JSONC_MIN_CLI_VERSION,
-            warnings: expect.arrayContaining([
-              minVersionWarning(false, "supabase/.temp/config.toml.bak"),
-            ]),
+            warnings: expect.arrayContaining([minVersionWarning(false, UNDO)]),
           }),
         },
       ]);
@@ -527,9 +531,7 @@ describe("config convert integration", () => {
           would_backup: "supabase/.temp/config.toml.bak",
           would_update_vscode_settings: false,
           content: expect.stringContaining('"project_id": "demo"'),
-          warnings: expect.arrayContaining([
-            minVersionWarning(true, "supabase/.temp/config.toml.bak"),
-          ]),
+          warnings: expect.arrayContaining([minVersionWarning(true, UNDO)]),
         },
       });
       expect(message?.data).not.toHaveProperty("backup");
@@ -636,7 +638,7 @@ describe("config convert integration", () => {
       );
 
       expect(error._tag).toBe("ConfigConvertFileChangedError");
-      expect(error.message).toBe(tomlChangedMessage("supabase/.temp/config.toml.bak"));
+      expect(error.message).toBe(tomlChangedMessage(BACKUP, UNDO));
       expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe(EDITED_TOML);
       expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(out.stdoutText).toBe("");
@@ -653,6 +655,21 @@ describe("config convert integration", () => {
 
       expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe("old backup\n");
       expect(yield* readFile("supabase", ".temp", "config.toml.2.bak")).toBe(SIMPLE_TOML);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("prints the undo command relative to the directory the command ran from", () => {
+    const { layer, out } = setup({ cwd: `${tempRoot.current}/../` });
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const root = path.basename(tempRoot.current);
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+
+      yield* run().pipe(Effect.provide(layer));
+
+      expect(out.stdoutText).toContain(
+        `    mv ${root}/${BACKUP} ${root}/supabase/config.toml && rm ${root}/supabase/config.jsonc\n`,
+      );
     }).pipe(Effect.provide(BunServices.layer));
   });
 

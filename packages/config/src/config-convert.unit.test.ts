@@ -510,6 +510,47 @@ describe("convertCliConfigTomlToJsonc: commented-out examples", () => {
     expectEachCommentOnce(source, text);
   });
 
+  test("a prose paragraph between parts of a commented table keeps the table open", () => {
+    const sources = [
+      '[api]\nport = 1\n\n# [api.tls]\n# enabled = true\n\n# Paths below are relative.\n\n# cert = "c"\n',
+      '[api]\nport = 1\n\n# [storage.s3]\n# enabled = true\n\n# Credentials:\n\n# key = "k"\n\n[db]\nx = 1\n',
+    ];
+    const expected = [
+      { api: { port: 1, tls: { enabled: true, cert: "c" } } },
+      { api: { port: 1 }, storage: { s3: { enabled: true, key: "k" } }, db: { x: 1 } },
+    ];
+    for (const [index, source] of sources.entries()) {
+      const { text } = converted(source);
+      expect(uncommented(text)).toStrictEqual({
+        $schema: CLI_CONFIG_SCHEMA_URL,
+        ...expected[index],
+      });
+      expectEachCommentOnce(source, text);
+    }
+  });
+
+  test("a detached prose paragraph stays above the commented example that follows it", () => {
+    const sources = [
+      '[auth]\nenabled = true\n\n# Uncomment to customise SMTP:\n\n# [auth.smtp]\n# host = "x"\n\n[db]\nport = 1\n',
+      '[auth]\nenabled = true\n\n# Uncomment to set the URL:\n\n# site_url = "x"\n',
+    ];
+    for (const source of sources) {
+      const lines = converted(source).text.split("\n");
+      const prose = lines.findIndex((line) => line.includes("// Uncomment to"));
+      expect(lines[prose + 1]).toMatch(/^\s+\/\/ "(smtp|site_url)"/);
+      expect(lines.slice(prose).findIndex((line) => line.startsWith("  }"))).toBeGreaterThan(1);
+      expectEachCommentOnce(source, converted(source).text);
+    }
+  });
+
+  test("a detached prose paragraph before an active table still leads that table", () => {
+    const source =
+      "[api]\nport = 1\n\n# [api.tls]\n# enabled = true\n\n# Database settings.\n\n[db]\nx = 1\n";
+    const lines = converted(source).text.split("\n");
+    const prose = lines.findIndex((line) => line.includes("// Database settings."));
+    expect(lines.slice(prose + 1).find((line) => line.trim() !== "")).toMatch(/^\s+"db": \{/);
+  });
+
   test("commented dotted keys separated by an active key share one commented object", () => {
     const source = '[auth]\n# hook.a.enabled = true\nenabled = true\n# hook.a.uri = "x"\n';
     const { text } = converted(source);

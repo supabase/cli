@@ -1,5 +1,7 @@
 import type { CliConfigConvertError, MovedTomlComment } from "@supabase/config/internal";
 
+import { shellQuoteArgument, type ShellPlatform } from "../../../command-internal/shell-quote.ts";
+
 export const CONFIG_JSONC_MIN_CLI_VERSION = "3.1.0";
 
 export function dryRunMessage(vscodeWouldUpdate: boolean, backup: string): string {
@@ -18,8 +20,10 @@ export function jsonPrecedenceMessage(jsonFile: string): string {
 
 export const CONVERTED_MESSAGE = "Converted supabase/config.toml to supabase/config.jsonc.";
 
-function undoCommand(backup: string): string {
-  return `mv ${backup} supabase/config.toml && rm supabase/config.jsonc`;
+/** The command that restores config.toml from `backup`, with paths prefixed by `root` (the project root relative to the cwd). */
+export function undoCommand(root: string, backup: string, platform: ShellPlatform): string {
+  const at = (file: string) => shellQuoteArgument(root === "" ? file : `${root}/${file}`, platform);
+  return `mv ${at(backup)} ${at("supabase/config.toml")} && rm ${at("supabase/config.jsonc")}`;
 }
 
 const COMPATIBILITY_LINES = [
@@ -27,8 +31,8 @@ const COMPATIBILITY_LINES = [
   "Upgrade the Supabase CLI on every machine and CI job that uses this project.",
 ] as const;
 
-export function minVersionWarning(dryRun: boolean, backup: string): string {
-  return `${COMPATIBILITY_LINES.join(" ")} ${dryRun ? "To undo after converting" : "To undo"}, run: ${undoCommand(backup)}`;
+export function minVersionWarning(dryRun: boolean, undo: string): string {
+  return `${COMPATIBILITY_LINES.join(" ")} ${dryRun ? "To undo after converting" : "To undo"}, run: ${undo}`;
 }
 
 const TRUSTED_DOMAIN = "https://supabase.com/schemas/";
@@ -74,8 +78,8 @@ export function backupFailureMessage(backup: string, cause: string, note: string
   return `Could not move supabase/config.toml to ${backup}: ${cause}. ${note}`;
 }
 
-export function tomlChangedMessage(backup: string): string {
-  return `supabase/config.toml changed while config convert was running, so supabase/config.jsonc holds the earlier version. The latest config.toml is at ${backup}; to restore it, run: ${undoCommand(backup)}, then rerun the command.`;
+export function tomlChangedMessage(backup: string, undo: string): string {
+  return `supabase/config.toml changed while config convert was running, so supabase/config.jsonc holds the earlier version. The latest config.toml is at ${backup}; to restore it, run: ${undo}, then rerun the command.`;
 }
 
 function movedCommentsWarning(moved: ReadonlyArray<MovedTomlComment>): ReadonlyArray<string> {
@@ -92,13 +96,13 @@ function movedCommentsWarning(moved: ReadonlyArray<MovedTomlComment>): ReadonlyA
 
 export function convertWarnings(input: {
   readonly dryRun: boolean;
-  readonly backup: string;
+  readonly undo: string;
   readonly moved: ReadonlyArray<MovedTomlComment>;
   readonly vscodeFailure: string | undefined;
 }): ReadonlyArray<string> {
   return [
     ...movedCommentsWarning(input.moved),
-    minVersionWarning(input.dryRun, input.backup),
+    minVersionWarning(input.dryRun, input.undo),
     ...(input.vscodeFailure === undefined ? [] : [vscodeFailureWarning(input.vscodeFailure)]),
   ];
 }
@@ -129,6 +133,7 @@ export function convertReport(
   input: {
     readonly dryRun: boolean;
     readonly backup: string;
+    readonly undo: string;
     readonly moved: ReadonlyArray<MovedTomlComment>;
     readonly vscodeUpdated: boolean;
     readonly vscodeFailure: string | undefined;
@@ -196,7 +201,7 @@ export function convertReport(
     ...COMPATIBILITY_LINES.map((line) => `    ${line}`),
     "",
     `  ${dim(verb("To undo after converting:", "To undo:"))}`,
-    `    ${code(undoCommand(input.backup))}`,
+    `    ${code(input.undo)}`,
     "",
   );
   return lines.join("\n");

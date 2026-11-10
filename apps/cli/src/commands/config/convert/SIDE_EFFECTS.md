@@ -101,7 +101,7 @@ Same structured result as `json`, delivered as an NDJSON `result` event.
 ## Notes
 
 - The only flag is `--dry-run`; there is no confirmation prompt and no `--force`.
-- Nothing is deleted: `config.toml` is renamed into `supabase/.temp/`, which `supabase init` adds to `supabase/.gitignore`. The undo command and backup path name the backup actually used.
+- Nothing is deleted: `config.toml` is renamed into `supabase/.temp/`, which `supabase init` adds to `supabase/.gitignore`. The undo command names the backup actually used, with paths relative to the current directory (quoted when the shell would split them); every other message names files relative to the project root.
 - Assumes no other process edits `supabase/` while it runs; it detects a changed `config.toml` or a `config.jsonc` that appears, but does not lock.
 - The conversion parses `config.toml` only (no env resolution, no schema decode), so the JSONC
   document carries the same raw values. The result is re-parsed and compared before anything is

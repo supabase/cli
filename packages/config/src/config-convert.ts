@@ -2,6 +2,7 @@ import { Data, Effect } from "effect";
 import * as SmolToml from "smol-toml";
 import {
   type CommentedNode,
+  holdsExample,
   hostComments,
   newCommentedNode,
   type OpenBlock,
@@ -408,29 +409,62 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
     effective[index] = current;
   }
 
+  const groupEnd = (start: number) => {
+    let end = start;
+    while (isComment(end)) {
+      end++;
+    }
+    return end;
+  };
+  const groupLines = (start: number, end: number) =>
+    tokens.slice(start, end).map((entry) => text.slice(entry.start, entry.end));
+  const reachesExample = (from: number): boolean => {
+    let at = from;
+    while (tokens[at]?.kind === "blank") {
+      at++;
+    }
+    if (!isComment(at)) {
+      return false;
+    }
+    const end = groupEnd(at);
+    return holdsExample(groupLines(at, end)) || reachesExample(end);
+  };
+
   let open: OpenBlock | undefined;
   let openEnd = -1;
+  let deferred: { readonly start: number; readonly lines: Array<string> } | undefined;
   tokens.forEach((token, index) => {
     if (!isComment(index)) {
       return;
     }
-    const previous = index > firstTokenIndex ? tokens[index - 1] : undefined;
     if (isComment(index - 1)) {
       return;
     }
-    let end = index;
-    while (isComment(end)) {
-      end++;
-    }
-    const rawLines = tokens.slice(index, end).map((entry) => text.slice(entry.start, entry.end));
+    const end = groupEnd(index);
+    const ownLines = groupLines(index, end);
+    const start = deferred?.start ?? index;
+    const previous = start > firstTokenIndex ? tokens[start - 1] : undefined;
     const blankBefore = previous === undefined || previous.kind === "blank";
     const next = tokens[end];
+    // Detached prose followed by a commented example travels with that example.
+    if (
+      blankBefore &&
+      next?.kind === "blank" &&
+      !holdsExample(ownLines) &&
+      (open !== undefined || tokens.slice(0, index).some(isMember)) &&
+      reachesExample(end)
+    ) {
+      deferred = { start, lines: [...(deferred?.lines ?? []), ...ownLines] };
+      return;
+    }
+    const rawLines = [...(deferred?.lines ?? []), ...ownLines];
+    deferred = undefined;
     const leadTarget = isMember(next) ? (implicitParents.get(end) ?? members[end]) : undefined;
     const continues =
-      open !== undefined && tokens.slice(openEnd, index).every((entry) => entry.kind === "blank")
+      open !== undefined && tokens.slice(openEnd, start).every((entry) => entry.kind === "blank")
         ? open
         : undefined;
-    const translated = translateGroup(root, effective[index - 1] ?? root, rawLines, index, {
+    const translated = translateGroup(root, effective[index - 1] ?? root, rawLines, start, {
       blankBefore,
       leadsNextMember: leadTarget !== undefined,
       continues,
