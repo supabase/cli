@@ -88,31 +88,44 @@ function commentedMembers(node: CommentedNode): Array<CommentedMember> {
   const extra = new Map<string, Array<CommentedLine>>();
   const groups = new Map<string, CommentedNode>();
   const members: Array<CommentedMember> = [];
+  let prose: Array<CommentedLine> = [];
+  const flushProse = () => {
+    members.push(...prose);
+    prose = [];
+  };
   for (const line of node.own) {
-    const key = line.kind === "kv" && line.path.length > 1 ? (line.path[0] ?? "") : undefined;
+    if (line.kind === "prose") {
+      prose.push(line);
+      continue;
+    }
+    const key = line.path.length > 1 ? (line.path[0] ?? "") : undefined;
     const child = key === undefined ? undefined : node.children.get(key);
     if (
-      line.kind !== "kv" ||
       key === undefined ||
       child?.elements !== undefined ||
       (child === undefined && (counts.get(key) ?? 0) < 2)
     ) {
+      flushProse();
       members.push(line);
       continue;
     }
     const rest: CommentedLine = { kind: "kv", path: line.path.slice(1), value: line.value };
     if (child !== undefined) {
-      extra.set(key, [...(extra.get(key) ?? []), rest]);
+      extra.set(key, [...(extra.get(key) ?? []), ...prose, rest]);
+      prose = [];
       continue;
     }
     let group = groups.get(key);
     if (group === undefined) {
+      flushProse();
       group = newCommentedNode(node.at);
       groups.set(key, group);
       members.push({ kind: "child", key, node: group });
     }
-    group.own.push(rest);
+    group.own.push(...prose, rest);
+    prose = [];
   }
+  flushProse();
   for (const [key, child] of node.children) {
     const added = extra.get(key);
     members.push({
@@ -192,20 +205,27 @@ export function hostComments(host: CommentHost): Array<RenderedComment> {
       }
       continue;
     }
+    let prose: Array<CommentedLine> = [];
     for (const line of item.input) {
-      const key = line.kind === "kv" && line.path.length > 1 ? line.path[0] : undefined;
+      if (line.kind === "prose") {
+        prose.push(line);
+        continue;
+      }
+      const key = line.path.length > 1 ? line.path[0] : undefined;
       const owner = key === undefined ? undefined : owners.get(key);
-      if (line.kind === "kv" && owner?.kind === "forest") {
-        owner.node.own.push({ kind: "kv", path: line.path.slice(1), value: line.value });
-      } else if (owner !== undefined && owner !== item && owner.kind === "placed") {
-        owner.source.push(line);
+      if (owner?.kind === "forest") {
+        owner.node.own.push(...prose, { kind: "kv", path: line.path.slice(1), value: line.value });
+      } else if (owner !== undefined && owner !== item) {
+        owner.source.push(...prose, line);
       } else {
         if (key !== undefined && owner === undefined) {
           owners.set(key, item);
         }
-        item.source.push(line);
+        item.source.push(...prose, line);
       }
+      prose = [];
     }
+    item.source.push(...prose);
   }
   return items.flatMap((item): Array<RenderedComment> => {
     if (merged.has(item)) {

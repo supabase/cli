@@ -54,6 +54,7 @@ import {
   JSONC_CHANGED_NOTE,
   JSONC_REMOVED_NOTE,
   JSONC_VANISHED_MESSAGE,
+  NOT_UTF8_MESSAGE,
   jsonAppearedMessage,
   jsoncRemovalFailureNote,
   tomlRemovalFailureMessage,
@@ -107,6 +108,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       Effect.mapError((error) => new ConfigConvertWorkdirError({ message: error.message })),
     );
 
+    yield* Effect.annotateCurrentSpan("config.dry_run", flags.dryRun);
     const parsed = yield* parseCliConfigDocumentFile(cliSettings.workdir, { search: false }).pipe(
       Effect.mapError(
         (cause) =>
@@ -145,6 +147,15 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       return;
     }
 
+    yield* fs.readFile(parsed.path).pipe(
+      Effect.mapError((cause) => new ConfigConvertLoadConfigError({ message: cause.message })),
+      Effect.flatMap((bytes) =>
+        Effect.try({
+          try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          catch: () => new ConfigConvertUnsupportedError({ message: NOT_UTF8_MESSAGE }),
+        }),
+      ),
+    );
     const outcome = yield* convertCliConfigTomlToJsonc(parsed.rawText).pipe(
       Effect.catchTag(
         "CliConfigConvertError",
@@ -153,7 +164,6 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       Effect.withSpan("config.convert.render"),
     );
     yield* Effect.annotateCurrentSpan({
-      "config.dry_run": flags.dryRun,
       "config.schema_source": outcome.schemaSource,
       "config.comment_count": outcome.commentCount,
       "config.moved_comment_count": outcome.movedComments.length,

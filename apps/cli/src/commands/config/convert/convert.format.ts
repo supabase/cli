@@ -42,6 +42,9 @@ export function refusalMessage(error: CliConfigConvertError): string {
   return `cannot convert supabase/config.toml${location}: ${error.detail}. supabase/config.toml was not changed.`;
 }
 
+export const NOT_UTF8_MESSAGE =
+  "cannot convert supabase/config.toml: it is not valid UTF-8, which TOML requires. Re-save it as UTF-8 and rerun the command. supabase/config.toml was not changed.";
+
 export const JSONC_APPEARED_MESSAGE =
   "supabase/config.jsonc appeared while config convert was running, so it was left as is and supabase/config.toml is unchanged. Check which file you want to keep; another conversion may have finished first.";
 
@@ -71,7 +74,7 @@ function movedCommentsWarning(moved: ReadonlyArray<MovedTomlComment>): ReadonlyA
     return [];
   }
   return [
-    `Moved ${moved.length} comment(s) that were inside multi-line values to the line above their key:`,
+    `Moved ${moved.length} comment(s) that were inside nested arrays or inline tables to the line above their key:`,
     ...moved.map(
       (comment) => `  line ${comment.line} → ${comment.anchor.join(".")}: ${comment.text}`,
     ),
@@ -149,7 +152,7 @@ export function convertReport(
     lines.push(
       "",
       `  ${blue("ℹ")} ${bold(`${count} ${count === 1 ? "comment" : "comments"} relocated`)}`,
-      `    ${dim("Comments inside multi-line values move to the line above their key.")}`,
+      `    ${dim("Comments inside nested arrays or inline tables move to the line above their key.")}`,
       ...input.moved.map(
         (comment) =>
           `    line ${comment.line} → ${code(comment.anchor.join("."))}  ${dim(comment.text)}`,

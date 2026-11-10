@@ -5,8 +5,8 @@
 | Path                                | Format     | When                                                                                                                       |
 | ----------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.json[c]` | JSON/JSONC | always; parsed with the removed-key checks to detect a project already on JSON (no `.env*` file and no `[remotes.*]` read) |
-| `<workdir>/supabase/config.toml`    | TOML       | always; re-read after the write to detect a concurrent edit                                                                |
-| `<workdir>/.vscode/settings.json`   | JSONC      | after the write, only when it already exists                                                                               |
+| `<workdir>/supabase/config.toml`    | TOML       | always; must be valid UTF-8; re-read after the write to detect a concurrent edit                                           |
+| `<workdir>/.vscode/settings.json`   | JSONC      | only when it already exists; after the write, or with `--dry-run` to preview the change                                    |
 | `~/.supabase/telemetry.json`        | JSON       | always (telemetry state)                                                                                                   |
 
 ## Files Written
@@ -15,7 +15,7 @@
 | --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then hard link (exclusive create without hard links), never replacing an existing file; mode of `config.toml` |
 | `<workdir>/supabase/config.toml`  | —      | deleted after `config.jsonc` is written; kept when conversion is refused or either file changed on disk                                     |
-| `<workdir>/.vscode/settings.json` | JSONC  | unless `--dry-run`; only when it exists and lacks the schema trusted domain; comments are preserved, or it is left unchanged with a warning |
+| `<workdir>/.vscode/settings.json` | JSONC  | only when it already exists; after the write, or with `--dry-run` to preview the change                                                     |
 | `~/.supabase/telemetry.json`      | JSON   | always (telemetry state)                                                                                                                    |
 
 ## API Routes
@@ -42,7 +42,7 @@
 | `1`  | no project config found, or it cannot be parsed (including malformed JSON or removed keys in `config.json[c]`)                                                                                                       |
 | `1`  | `config.json` and `config.jsonc` both exist                                                                                                                                                                          |
 | `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                                                                                |
-| `1`  | conversion refused (invalid TOML, a TOML date, a non-finite float, failed re-parse check)                                                                                                                            |
+| `1`  | conversion refused (not valid UTF-8, a TOML date, a non-finite float, failed re-parse check)                                                                                                                         |
 | `1`  | `config.toml` changed, or `config.jsonc` or `config.json` appeared, while the command ran; an existing `config.jsonc` is never replaced, and the new one is removed only while it still holds what the command wrote |
 | `1`  | `config.toml` could not be re-read after the write; the new `config.jsonc` is removed                                                                                                                                |
 | `1`  | `config.jsonc` was removed, changed, or could not be re-read before `config.toml` was deleted; `config.toml` is kept                                                                                                 |
@@ -63,7 +63,7 @@ stdout is one report, printed after the files are written (colour only on a TTY,
     ~ Updated  .vscode/settings.json (trusts https://supabase.com/schemas/)
 
   ℹ 1 comment relocated
-    Comments inside multi-line values move to the line above their key.
+    Comments inside nested arrays or inline tables move to the line above their key.
     line 13 → api.extra  # first
 
   ⚠ Could not update .vscode/settings.json

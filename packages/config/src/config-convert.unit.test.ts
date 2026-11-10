@@ -186,6 +186,14 @@ describe("convertCliConfigTomlToJsonc: values", () => {
     );
   });
 
+  test("keeps a comment starting with a quoted string with invalid escapes as prose", () => {
+    const source = '# "C:\\Users\\me" holds it\n# ["\\xZZ"]\n# "\\uZZZZ" = 1\na = 1\n';
+    const { text } = converted(source);
+    expect(text).toContain('// "C:\\Users\\me" holds it');
+    expect(text).toContain('// ["\\xZZ"]');
+    expect(parseJsonc(text)).toEqual({ $schema: CLI_CONFIG_SCHEMA_URL, a: 1 });
+  });
+
   test("decodes hexadecimal and escape-character escapes in quoted keys", () => {
     const { text } = converted('[functions."\\x61"]\nk = 1\n"\\e" = 2\n');
     expect(parseJsonc(text)).toEqual({
@@ -477,6 +485,19 @@ describe("convertCliConfigTomlToJsonc: commented-out examples", () => {
     expect(uncommented(text)).toMatchObject({
       auth: { enabled: true, hook: { a: { enabled: true, uri: "x" } } },
     });
+  });
+
+  test("prose above a grouped commented dotted key stays directly above that key", () => {
+    const sources = [
+      '[auth]\nenabled = true\n# hook.a.enabled = true\n# URI to invoke\n# hook.a.uri = "x"\n',
+      '[auth]\n# hook.a.enabled = true\nenabled = true\n# URI to invoke\n# hook.a.uri = "x"\n',
+    ];
+    for (const source of sources) {
+      const lines = converted(source).text.split("\n");
+      const prose = lines.findIndex((line) => line.includes("// URI to invoke"));
+      expect(lines[prose + 1]).toMatch(/^\s*\/\/\s+"uri": "x"/);
+      expectEachCommentOnce(source, converted(source).text);
+    }
   });
 
   test("commented dotted keys separated by blank lines share one commented object", () => {

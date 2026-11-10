@@ -28,7 +28,7 @@ describe("convert format", () => {
     expect(report).toContain(
       [
         "  ℹ 2 comments relocated",
-        "    Comments inside multi-line values move to the line above their key.",
+        "    Comments inside nested arrays or inline tables move to the line above their key.",
         "    line 3 → api.schemas  # a",
         "    line 7 → auth.x  # b",
         "",

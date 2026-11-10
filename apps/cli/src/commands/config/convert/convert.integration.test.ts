@@ -24,6 +24,7 @@ import {
   MIN_VERSION_WARNING,
   JSONC_REMOVED_NOTE,
   jsonAppearedMessage,
+  NOT_UTF8_MESSAGE,
 } from "./convert.format.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-convert-");
@@ -303,7 +304,7 @@ describe("config convert integration", () => {
       yield* run().pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain(
-        "  ℹ 1 comment relocated\n    Comments inside multi-line values move to the line above their key.\n    line 3 → api.schemas  # keep\n",
+        "  ℹ 1 comment relocated\n    Comments inside nested arrays or inline tables move to the line above their key.\n    line 3 → api.schemas  # keep\n",
       );
       expect(yield* readFile("supabase", "config.jsonc")).toContain("// keep");
     }).pipe(Effect.provide(BunServices.layer));
@@ -393,6 +394,28 @@ describe("config convert integration", () => {
           data: { converted: false, path: "supabase/config.jsonc" },
         },
       ]);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("refuses a config.toml that is not valid UTF-8, leaving it byte-identical", () => {
+    const { layer } = setup();
+    const bytes = new Uint8Array([
+      ...new TextEncoder().encode('project_id = "caf'),
+      0xe9,
+      ...new TextEncoder().encode('"\n'),
+    ]);
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* writeFile(["supabase", "config.toml"], "");
+      const tomlPath = yield* projectPath("supabase", "config.toml");
+      yield* fs.writeFile(tomlPath, bytes);
+
+      const error = yield* run().pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error._tag).toBe("ConfigConvertUnsupportedError");
+      expect(error.message).toBe(NOT_UTF8_MESSAGE);
+      expect([...(yield* fs.readFile(tomlPath))]).toEqual([...bytes]);
+      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
     }).pipe(Effect.provide(BunServices.layer));
   });
 

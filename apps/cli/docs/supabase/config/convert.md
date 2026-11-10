@@ -2,7 +2,7 @@
 
 Converts `supabase/config.toml` to `supabase/config.jsonc` and removes the TOML file. Comments are carried over as `//` comments and the document gets a `$schema` entry, so editors validate it against the hosted config schema.
 
-The conversion reads the file as written: values, including `env(NAME)` references, are copied byte for byte and nothing is resolved from your environment. The converted document is parsed again and compared with the original before anything is written; if the two differ, or the file holds a value JSON cannot represent (a TOML date, `inf` or `nan`), the command refuses and leaves `config.toml` untouched.
+The conversion reads the file as written: values keep their meaning, `env(NAME)` references are copied as text, and nothing is resolved from your environment. Numbers are written in JSON form, so `0x1F` becomes `31` and `1_000` becomes `1000`. The converted document is parsed again and compared with the original before anything is written; if the two differ, the file is not valid UTF-8, or it holds a value JSON cannot represent (a TOML date, `inf` or `nan`), the command refuses and leaves `config.toml` untouched.
 
 Comments keep their place by these rules: a comment directly above a key or table leads it; a comment block directly below a key or table, followed by a blank line or another table, trails it; a comment block with blank lines on both sides leads the next entry; a comment on the same line as a key or table header stays on that line. Comments inside a multi-line array of plain values stay beside their elements. Comments inside nested arrays or inline tables cannot be placed, so this command does not keep them in place: they move to the line above their key and the command lists each one.
 

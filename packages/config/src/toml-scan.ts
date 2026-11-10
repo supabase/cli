@@ -268,7 +268,18 @@ function scanValue(source: string, start: number, comments?: Array<TomlSpan>): n
 
 const BARE_KEY_CHAR = /^[A-Za-z0-9_-]$/;
 
-function unescapeBasicString(raw: string): string {
+function hexCodePoint(raw: string, start: number, length: number): string | null {
+  const hex = raw.slice(start, start + length);
+  const value = Number.parseInt(hex, 16);
+  return new RegExp(`^[0-9A-Fa-f]{${length}}$`).test(hex) &&
+    value <= 0x10ffff &&
+    (value < 0xd800 || value > 0xdfff)
+    ? String.fromCodePoint(value)
+    : null;
+}
+
+/** Decodes a basic-string key segment, or returns null when an escape is invalid TOML. */
+function unescapeBasicString(raw: string): string | null {
   let result = "";
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i];
@@ -298,18 +309,16 @@ function unescapeBasicString(raw: string): string {
     } else if (next === "e") {
       result += "\u001b";
       i++;
-    } else if (next === "x") {
-      result += String.fromCodePoint(Number.parseInt(raw.slice(i + 2, i + 4), 16));
-      i += 3;
-    } else if (next === "u") {
-      result += String.fromCodePoint(Number.parseInt(raw.slice(i + 2, i + 6), 16));
-      i += 5;
-    } else if (next === "U") {
-      result += String.fromCodePoint(Number.parseInt(raw.slice(i + 2, i + 10), 16));
-      i += 9;
+    } else if (next === "x" || next === "u" || next === "U") {
+      const length = next === "x" ? 2 : next === "u" ? 4 : 8;
+      const decoded = hexCodePoint(raw, i + 2, length);
+      if (decoded === null) {
+        return null;
+      }
+      result += decoded;
+      i += length + 1;
     } else {
-      result += next ?? "";
-      i++;
+      return null;
     }
   }
   return result;
@@ -335,7 +344,11 @@ function scanDottedKeyPath(source: string, pos: number): DottedKeyScan | null {
       if (strEnd === null) {
         return null;
       }
-      segments.push(unescapeBasicString(source.slice(cursor + 1, strEnd - 1)));
+      const segment = unescapeBasicString(source.slice(cursor + 1, strEnd - 1));
+      if (segment === null) {
+        return null;
+      }
+      segments.push(segment);
       cursor = strEnd;
     } else if (ch === "'") {
       const strEnd = scanLiteralString(source, cursor + 1);
