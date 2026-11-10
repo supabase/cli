@@ -4,7 +4,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { renderGlamourTable } from "../../../../output/glamour-table.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { StackApi, rejectStackOutput } from "../stack.shared.ts";
+import { StackApi, rejectStackOutput } from "../../../../command-internal/stack-target.ts";
 import { StackCommandListError } from "./list.errors.ts";
 
 export const stackList = Effect.fn("experimental.stack.list")(function* () {

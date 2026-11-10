@@ -247,11 +247,17 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       Effect.map((listed) => listed.flat()),
     );
 
-  const readChunk = (file: string, offset: number) =>
+  const readChunk = (file: string, offset: number, end?: number) =>
     Effect.scoped(
       fs.open(file, { flag: "r" }).pipe(
         Effect.tap((handle) => handle.seek(BigInt(offset), "start")),
-        Effect.flatMap((handle) => handle.readAlloc(readChunkBytes)),
+        Effect.flatMap((handle) =>
+          handle.readAlloc(
+            end === undefined
+              ? readChunkBytes
+              : Math.min(readChunkBytes, Math.max(0, end - offset)),
+          ),
+        ),
         Effect.map(Option.getOrElse(() => new Uint8Array(0))),
         Effect.map(Option.some),
       ),
@@ -302,10 +308,10 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     live === undefined ? effect : live.passes.withPermits(1)(effect);
 
   /** Reads the complete records of one chunk at `position`; `none` when the segment is gone. */
-  const readAt = (directory: string, position: LogPosition, live: Live | undefined) =>
+  const readAt = (directory: string, position: LogPosition, live: Live | undefined, end?: number) =>
     guarded(
       live,
-      readChunk(path.join(directory, segmentName(position.generation)), position.byteOffset),
+      readChunk(path.join(directory, segmentName(position.generation)), position.byteOffset, end),
     ).pipe(
       Effect.map(
         Option.map((bytes): Chunk => {
@@ -354,9 +360,14 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     cursor: LogPosition,
     cached: ReadonlyArray<number> | undefined,
     live: Live | undefined,
+    ends?: ReadonlyMap<number, number>,
   ) {
     const fresh = cached === undefined;
-    const listed = cached ?? (yield* generations(directory));
+    const listed =
+      cached ??
+      (yield* generations(directory)).filter(
+        (generation) => ends === undefined || ends.has(generation),
+      );
     const relist = (partial: boolean): Step => ({
       records: [],
       cursor,
@@ -385,7 +396,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
           atEnd: false,
           partial: false,
         } satisfies Step;
-      const next = yield* readAt(directory, resumeAt, live).pipe(
+      const next = yield* readAt(directory, resumeAt, live, ends?.get(generation)).pipe(
         Effect.map((chunk) => Option.getOrUndefined(chunk)?.records[0]?.timestamp),
         Effect.orElseSucceed(() => undefined),
       );
@@ -407,7 +418,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     });
     if (!listed.includes(cursor.generation))
       return newer !== undefined ? yield* gap(newer) : fresh ? atEnd(false) : relist(false);
-    const chunk = yield* readAt(directory, cursor, live);
+    const chunk = yield* readAt(directory, cursor, live, ends?.get(cursor.generation));
     if (Option.isNone(chunk)) return relist(false);
     if (chunk.value.progressed)
       return {
@@ -495,10 +506,11 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     options: Pick<ReadOptions, "since" | "follow">,
     live: Live | undefined,
     wake: PubSub.Subscription<void> | undefined,
+    ends?: ReadonlyMap<number, number>,
   ): Stream.Stream<LogRecord, LogStoreError> =>
     Stream.paginate(start, (current) =>
       Effect.gen(function* () {
-        const next: Step = yield* step(directory, current.cursor, current.listed, live);
+        const next: Step = yield* step(directory, current.cursor, current.listed, live, ends);
         const resume = Option.some({ cursor: next.cursor, listed: next.listed });
         if (!next.atEnd) return page(next.records, resume);
         if (!options.follow || live === undefined || wake === undefined)
@@ -554,14 +566,19 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     );
   });
 
-  /** Streams a directory's records in file order without an owner. */
-  const records = (directory: string, options: Pick<ReadOptions, "since">) =>
+  const records = (
+    directory: string,
+    options: Pick<ReadOptions, "since">,
+    ends: ReadonlyMap<number, number>,
+    from?: LogPosition,
+  ) =>
     follow(
       directory,
-      { cursor: { generation: 0, byteOffset: 0 }, listed: undefined },
+      { cursor: from ?? { generation: 0, byteOffset: 0 }, listed: undefined },
       { ...options, follow: false },
       undefined,
       undefined,
+      ends,
     );
 
   return { read, history, records, segments, generations, latestLaunchId };
@@ -1129,6 +1146,7 @@ export const streamStackLogs = (options: {
   readonly root: string;
   readonly instances?: ReadonlyArray<string>;
   readonly since?: number;
+  readonly from?: ReadonlyMap<string, LogPosition>;
 }): Stream.Stream<StackLogRecord, LogStoreError, FileSystem.FileSystem | Path.Path> =>
   Stream.unwrap(
     Effect.gen(function* () {
@@ -1136,10 +1154,22 @@ export const streamStackLogs = (options: {
       const path = yield* Path.Path;
       const reader = makeReader(fs, path);
       const selected = yield* persistedInstances(fs, path, options.root, options.instances);
-      return Stream.fromIterable(selected).pipe(
-        Stream.flatMap(({ service, instanceId }) =>
+      const captured = yield* Effect.forEach(selected, ({ service, instanceId }) =>
+        Effect.gen(function* () {
+          const directory = path.join(options.root, service, instanceId);
+          const segments = yield* reader.segments(directory);
+          return { service, instanceId, directory, segments };
+        }),
+      );
+      return Stream.fromIterable(captured).pipe(
+        Stream.flatMap(({ service, instanceId, directory, segments }) =>
           reader
-            .records(path.join(options.root, service, instanceId), options)
+            .records(
+              directory,
+              options,
+              new Map(segments.map(({ generation, size }) => [generation, size])),
+              options.from?.get(instanceId),
+            )
             .pipe(Stream.map((record): StackLogRecord => ({ ...record, service, instanceId }))),
         ),
       );

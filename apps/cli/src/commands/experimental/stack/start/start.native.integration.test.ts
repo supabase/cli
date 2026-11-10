@@ -14,7 +14,11 @@ import { dbConnectionLayer } from "../../../../command-internal/db-connection.sq
 import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
 import { parseConnectionString } from "../../../../command-internal/db-config.parse.ts";
 import { stackCatalogSetupLayer } from "../../../../command-internal/stack-catalog-setup.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";

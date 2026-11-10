@@ -2,8 +2,15 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Predicate } from "effect";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { applyConfigEdits, loadCliConfig, type ConfigEdit } from "@supabase/config/internal";
+import {
+  applyConfigEdits,
+  findUnknownCliConfigKeys,
+  loadCliConfig,
+  type ConfigEdit,
+} from "@supabase/config/internal";
+import * as SmolToml from "smol-toml";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
+import { cliConfigDocumentOnlyPaths } from "../../config/cli-config-keys.ts";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 import {
   INIT_GITIGNORE_TEMPLATE,
@@ -182,6 +189,39 @@ describe("project init templates", () => {
       expect(loaded?.deprecatedPaths).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+
+  it("renders a config with no keys the schema does not recognize", () => {
+    for (const experimentalStack of [false, true]) {
+      for (const useOrioledb of [false, true]) {
+        const rendered = renderCliConfigTemplate("demo-project", useOrioledb, experimentalStack);
+        expect(findUnknownCliConfigKeys(SmolToml.parse(rendered))).toEqual([]);
+      }
+    }
+  });
+
+  it("renders optional commented-out sections that are all recognized once uncommented", () => {
+    const uncommentable = /^# (\[[\w.-]+\]|[\w.-]+ = .+)$/;
+    const isDocumentOnly = (key: ReadonlyArray<string>) => {
+      const dotted = key.join(".");
+      return [...cliConfigDocumentOnlyPaths].some(
+        (known) =>
+          known === dotted || known.startsWith(`${dotted}.`) || dotted.startsWith(`${known}.`),
+      );
+    };
+    for (const experimentalStack of [false, true]) {
+      const rendered = renderCliConfigTemplate("demo-project", false, experimentalStack);
+      const uncommented = rendered
+        .split("\n")
+        .map((line) => uncommentable.exec(line)?.[1] ?? line)
+        .join("\n");
+
+      expect(uncommented).toContain("[auth.passkey]");
+      expect(uncommented).toContain("[auth.webauthn]");
+      expect(
+        findUnknownCliConfigKeys(SmolToml.parse(uncommented)).filter((key) => !isDocumentOnly(key)),
+      ).toEqual([]);
+    }
+  });
 
   it("enables pg-delta by default in the generated config", () => {
     const rendered = renderCliConfigTemplate("demo-project", false);

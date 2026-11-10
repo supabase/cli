@@ -6,6 +6,7 @@ import {
   allMembers,
   clearStackOwner,
   jsonRequest,
+  recoveryTemplateMarker,
   requestWithHeaders,
   refreshLogTails,
   sql,
@@ -268,6 +269,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
             const mailBody = `${mail.Text ?? ""}\n${mail.HTML ?? ""}`;
             expect(mailBody).toContain(authOrigin);
             expect(mailBody).toContain("/verify?token=");
+            expect(mailBody).toContain(recoveryTemplateMarker);
             const realtime = yield* subscribeRealtime(
               realtimeUrl,
               loginBody.access_token,

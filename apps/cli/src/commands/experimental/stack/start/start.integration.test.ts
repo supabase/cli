@@ -88,7 +88,11 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
-import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  StackTargetResolver,
+} from "../../../../command-internal/stack-target.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
@@ -764,6 +768,28 @@ describe("experimental stack start", () => {
       expect(error.message).toBe(
         `failed to parse environment file: ${path.join(root, "supabase", "functions", ".env")} (unexpected character '-' in variable name)`,
       );
+      expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("refuses an unreadable Auth email template before creating a stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-template-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        '[auth.email.template.invite]\ncontent_path = "./supabase/templates/missing.html"\n',
+      );
+      const fixture = fakeStack();
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("auth.email.template.invite.content_path"),
+      });
       expect(fixture.composed).toBe(0);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );

@@ -1,8 +1,18 @@
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { LogsClipboard } from "../../../logs/logs.clipboard.ts";
+import { Command } from "effect/cli";
+import { stackLogsCommand } from "./logs.command.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+} from "../../../../../tests/helpers/command-mocks.ts";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
   Clock,
+  ConfigProvider,
+  Cause,
   DateTime,
   Deferred,
   Effect,
@@ -15,7 +25,10 @@ import {
   Redacted,
   Ref,
   Schema,
+  Stdio,
   Stream,
+  Queue,
+  Terminal,
 } from "effect";
 import {
   streamStackLogs,
@@ -24,16 +37,31 @@ import {
   type SavedStack,
   type ServiceInstance,
 } from "@supabase/stack/effect";
+import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
+import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
+import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
+import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
-import type { StackLogsFlags } from "./logs.command.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
+import type { StackLogsFlags } from "./logs.handler.ts";
 import { stackLogs } from "./logs.handler.ts";
+import { logs, logsSources } from "../../../logs/logs.handler.ts";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
+import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { OutputFlag, OutputFormatFlag } from "../../../../command-internal/global-flags.ts";
+import { projectStateModeLayer } from "../../../../shared/config/project-state-mode.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
+const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
 const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 
 type SavedInstance = SavedStack["instances"][number];
@@ -174,22 +202,160 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         records.map((record) => `${record}\n`).join(""),
       );
     });
-  const run = (flags: Partial<StackLogsFlags>, format: "text" | "stream-json" | "json" = "text") =>
+  const run = (
+    flags: Partial<StackLogsFlags>,
+    format: "text" | "stream-json" | "json" = "text",
+    mode: "reader" | "unified" | "legacy" | "browser" = "reader",
+    legacyOutput?: "json",
+  ) =>
     Effect.gen(function* () {
-      const output = mockOutput({ format, interactive: false });
+      const output = mockOutput({ format, interactive: mode === "browser" });
+      const screens: string[] = [];
+      const input = yield* Queue.unbounded<Terminal.UserInput>();
+      let openedDetails = false;
+      const terminal = Terminal.make({
+        columns: Effect.succeed(100),
+        rows: Effect.succeed(30),
+        size: Queue.unbounded<Terminal.Size, Cause.Done>(),
+        readInput: Effect.succeed(input),
+        readLine: Effect.die("unused"),
+        display: (text) =>
+          Effect.gen(function* () {
+            screens.push(text);
+            if (
+              !openedDetails &&
+              text.includes(" | ready") &&
+              text.includes("local browser payload")
+            ) {
+              openedDetails = true;
+              yield* Queue.offer(input, {
+                input: Option.none(),
+                key: { name: "return", ctrl: false, meta: false, shift: false },
+              });
+            } else if (text.includes("Log details")) {
+              yield* Queue.offer(input, {
+                input: Option.none(),
+                key: { name: "q", ctrl: false, meta: false, shift: false },
+              });
+            }
+          }),
+      });
       const telemetry = mockTelemetryStateTracked();
       const layer = Layer.mergeAll(
+        commandRuntimeLayer(["stack", "logs"]),
         output.layer,
+        Layer.succeed(OutputFlag, Option.fromUndefinedOr(legacyOutput)),
+        Layer.succeed(OutputFormatFlag, Option.none()),
+        ConfigProvider.layer(ConfigProvider.fromUnknown({})),
+        Layer.mock(LogsClipboard, {}),
         telemetry.layer,
+        projectStateModeLayer("stack"),
         Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
       );
-      const exit = yield* stackLogs({ ...baseFlags(stack.id), ...flags }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
-      return { exit, output, telemetry };
+      const legacyArgs = ["logs", "--stack-id", stack.id];
+      const runLogs = Effect.gen(function* () {
+        if (mode === "legacy")
+          return yield* Command.runWith(
+            Command.make("supabase").pipe(Command.withSubcommands([stackLogsCommand])),
+            { version: "test" },
+          )(legacyArgs).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                buildTestRuntime({
+                  out: output,
+                  api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
+                  cliSettings: settings,
+                  commandPath: ["stack", "logs"],
+                }),
+                Stdio.layerTest({ args: Effect.succeed(legacyArgs) }),
+              ),
+            ),
+          );
+        if (mode === "unified" || mode === "browser")
+          return yield* logs({
+            remote: Option.none(),
+            projectRef: Option.none(),
+            local: false,
+            linked: false,
+            stack: Option.none(),
+            stackId: Option.some(stack.id),
+            service: flags.service ?? ["postgres"],
+            resource: Option.none(),
+            kind: Option.none(),
+            level: [],
+            search: Option.none(),
+            since: flags.since ?? Option.some("start"),
+            limit: flags.tail ?? 100,
+            from: Option.none(),
+            to: Option.none(),
+            sql: Option.none(),
+            file: Option.none(),
+          }).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(OutputFlag, Option.none()),
+                Layer.succeed(Stdin, {
+                  isTTY: mode === "browser",
+                  readPipedText: Effect.succeed(Option.none()),
+                  readPipedBytes: Effect.succeed(Option.none()),
+                  pipedBytesStream: Stream.empty,
+                  readLine: () => Effect.succeed(Option.none()),
+                }),
+                Layer.succeed(Tty, {
+                  stdinIsTty: mode === "browser",
+                  stdoutIsTty: mode === "browser",
+                  stdoutIsPipe: false,
+                }),
+                Layer.succeed(Terminal.Terminal, terminal),
+                Layer.mock(LinkedProjectCache, {}),
+                Layer.mock(ProjectRefResolver, {}),
+                Layer.mock(ProcessControl, {}),
+                Layer.succeed(TargetPolicy, {
+                  group: "selectable",
+                  consent: "none",
+                  consentExemptReason: "read logs",
+                }),
+                Layer.succeed(CommandPlatformApiFactory, {
+                  make: Effect.die("local logs must not resolve hosted credentials"),
+                }),
+              ),
+            ),
+          );
+        return yield* stackLogs({ ...baseFlags(stack.id), ...flags });
+      });
+      const exit = yield* runLogs.pipe(Effect.provide(layer), Effect.exit);
+      return { exit, output, telemetry, screens };
     });
-  return { stackId: stack.id, stateRoot, opened, writeSegment, run };
+  const sources = () =>
+    Effect.gen(function* () {
+      const output = mockOutput({ format: "json" });
+      const telemetry = mockTelemetryStateTracked();
+      const layer = Layer.mergeAll(
+        commandRuntimeLayer(["logs", "sources"]),
+        output.layer,
+        telemetry.layer,
+        projectStateModeLayer("stack"),
+        Layer.succeed(OutputFlag, Option.none()),
+        Layer.mock(ProjectRefResolver, {}),
+        Layer.succeed(TargetPolicy, {
+          group: "selectable",
+          consent: "none",
+          consentExemptReason: "Read logs",
+        }),
+        Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
+      );
+      yield* logsSources({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        local: false,
+        linked: false,
+        stack: Option.none(),
+        stackId: Option.some(stack.id),
+        service: Option.none(),
+      }).pipe(Effect.provide(layer));
+      return output.stdoutText;
+    });
+  return { stackId: stack.id, stateRoot, opened, writeSegment, run, sources };
 });
 
 const failure = <E>(exit: Exit.Exit<void, E>) =>
@@ -198,8 +364,133 @@ const lines = (text: string) => text.split("\n").filter((value) => value.length 
 const eventLines = (events: ReadonlyArray<{ readonly type: string; readonly line?: unknown }>) =>
   events.filter(({ type }) => type === "log-entry").map(({ line: text }) => text);
 
-describe("stack logs", () => {
+describe("retained local logs", () => {
   const t0 = Date.parse("2026-09-29T10:00:00.000Z");
+
+  it.effect("reads 200 retained lines without a time filter and warns once with legacy JSON", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0),
+        ...Array.from({ length: 201 }, (_, i) => line(t0 + i + 1, "stdout", `retained ${i}`)),
+      ]);
+      const { exit, output } = yield* f.run({}, "json", "legacy");
+      expect(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toBe(true);
+      expect(output.stdoutText.startsWith("[{")).toBe(true);
+      const rows = decodeRows(output.stdoutText);
+      expect(rows).toHaveLength(200);
+      expect(rows[0]).toMatchObject({
+        type: "log-entry",
+        timestamp: iso(t0 + 2),
+        source: "history",
+        service: "mail",
+        instance_id: "mail-a",
+        stream: "stdout",
+        line: "retained 1",
+      });
+      expect(output.stderrText.match(/Warning: stack logs is deprecated/g)).toHaveLength(1);
+      expect(output.stderrText).toContain("removed in v4");
+      expect(output.stdoutText).not.toContain("deprecated");
+      expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("browses real retained local records with full positions and instance details", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(t0 + 100);
+      const f = yield* fixture({ instances: [database("db-browser")], members: ["db-browser"] });
+      yield* f.writeSegment("database", "db-browser", [
+        launch(t0),
+        line(t0 + 1, "stdout", "local browser payload"),
+      ]);
+      const { exit, output, screens } = yield* f.run({}, "text", "browser");
+      expect(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toBe(true);
+      const details = screens.find((screen) => screen.includes("Log details"));
+      expect(details).toContain("local browser payload");
+      expect(details).toContain("db-browser");
+      expect(details).toContain('"byteOffset"');
+      expect(
+        screens.some((screen) =>
+          screen.includes("Sep 29 - 10:00:00 UTC database local browser payload"),
+        ),
+      ).toBe(true);
+      expect(screens.at(-1)).toContain("?1049l");
+      expect(output.stdoutText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("advertises the accepted local log limit for instances and gateway", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
+      });
+      const sources = decodeRows(yield* f.sources());
+      const instance = sources.find((source) => source.resource === "mail-a");
+      const gateway = sources.find((source) => source.service === "gateway");
+      expect(instance?.filters).toEqual(["service", "resource", "since", "limit"]);
+      expect(gateway?.filters).toEqual(["service", "since", "limit"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect.each([
+    { since: Option.none<string>(), expected: "Window: Nov 03 11:00:00–12:00:00 UTC" },
+    {
+      since: Option.some("2026-11-03T10:00:00Z"),
+      expected: "Window: Nov 03 10:00:00–12:00:00 UTC",
+    },
+    {
+      since: Option.some("start"),
+      expected: "Window: since each service's latest launch → Nov 03 2026 12:00:00 UTC",
+    },
+  ])(
+    "shows the frozen local lower bound and captured snapshot end: $expected",
+    ({ since, expected }) =>
+      Effect.gen(function* () {
+        const readTime = Date.parse("2026-11-03T12:00:00Z");
+        yield* TestClock.setTime(readTime);
+        const f = yield* fixture({ instances: [database("db-window")], members: ["db-window"] });
+        yield* f.writeSegment("database", "db-window", [
+          launch(readTime - 2000),
+          line(readTime - 1000, "stdout", "local browser payload"),
+        ]);
+        const { exit, screens } = yield* f.run({ since }, "text", "browser");
+        expect(Exit.isSuccess(exit)).toBe(true);
+        const windows = screens
+          .filter((screen) => screen.includes("Window:") && !screen.includes("resolving…"))
+          .map((screen) => screen.split("\r\n").find((line) => line.startsWith("Window:")));
+        expect(screens.some((screen) => screen.includes("Local stack "))).toBe(true);
+        expect(windows.length).toBeGreaterThan(0);
+        expect(windows.every((window) => window === expected)).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("preserves full retained records and markers in native JSON while stopped", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(t0 + 100);
+      const f = yield* fixture({ instances: [database("db-a")], members: ["db-a"] });
+      yield* f.writeSegment("database", "db-a", [
+        launch(t0),
+        line(t0 + 1, "stdout", "retained"),
+        lost(t0 + 2, 3),
+      ]);
+      const { exit, output } = yield* f.run({}, "json", "unified");
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(output.stdoutText.startsWith("[\n  {\n")).toBe(true);
+      const rows = decodeRows(output.stdoutText);
+      expect(rows.map((row) => row.kind)).toEqual(["launch", "stdout", "lost"]);
+      expect(rows[1]).toMatchObject({
+        instanceId: "db-a",
+        service: "database",
+        launchId: 1,
+        text: "retained",
+      });
+      expect(rows[1]?.position).toMatchObject({ generation: 1 });
+      expect(rows[2]).toMatchObject({ count: 3 });
+      expect(output.stderrText).not.toContain("deprecated");
+      expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
 
   it.effect("prints the newest lines across services with aligned labels, offline", () =>
     Effect.gen(function* () {
@@ -352,10 +643,28 @@ describe("stack logs", () => {
       const finite = yield* f.run({}, "json");
       const text = yield* f.run({});
 
-      expect(streamed.output.events).toEqual(expected);
-      expect(
-        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(finite.output.stdoutText),
-      ).toEqual(expected);
+      expect(streamed.output.events.map(({ data: _data, ...event }) => event)).toEqual(expected);
+      expect(streamed.output.events).toMatchObject([
+        { data: { kind: "launch", launchId: 1, instanceId: "mail-a", service: "mail" } },
+        {
+          data: {
+            kind: "stdout",
+            text: "hello",
+            launchId: 1,
+            instanceId: "mail-a",
+            service: "mail",
+            position: { generation: 1 },
+          },
+        },
+        { data: { kind: "stderr", text: "oops", launchId: 1 } },
+        { data: { kind: "lost", count: 3 } },
+      ]);
+      expect(decodeRows(finite.output.stdoutText)).toMatchObject([
+        { type: "log-marker", kind: "launch", source: "history", service: "mail" },
+        { type: "log-entry", line: "hello", stream: "stdout", source: "history" },
+        { type: "log-entry", line: "oops", stream: "stderr", source: "history" },
+        { type: "log-marker", kind: "lost", count: 3, source: "history" },
+      ]);
       expect(
         lines(text.output.stdoutText).map((value) => value.replace(/\d{2}:\S+ /u, "")),
       ).toEqual([
@@ -364,6 +673,20 @@ describe("stack logs", () => {
         "mail | oops",
         "mail | --- 3 output chunks lost ---",
       ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("preserves the legacy output rejection and format suggestion", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      const { exit, output } = yield* f.run({}, "text", "reader", "json");
+      expect(failure(exit)).toMatchObject({
+        reason: "flags",
+        message: "The legacy -o/--output flag is not supported here; use --output-format json.",
+        suggestion:
+          "Use --output-format json, --output-format text, or --output-format stream-json.",
+      });
+      expect(output.stdoutText).toBe("");
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
@@ -633,6 +956,7 @@ describe("stack logs", () => {
         reason: "lifecycle",
         message:
           "The running stack serves none of the selected services, so there are no new lines to follow.",
+        suggestion: "Run supabase stack logs without --follow to read retained logs.",
       });
     }).pipe(Effect.scoped, Effect.provide(live)),
   );

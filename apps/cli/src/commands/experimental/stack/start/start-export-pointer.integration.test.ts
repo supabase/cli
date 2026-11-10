@@ -25,7 +25,7 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { GLOBAL_FLAGS, WorkdirFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
-import { StackApi, StackTargetResolver } from "../stack.shared.ts";
+import { StackApi, StackTargetResolver } from "../../../../command-internal/stack-target.ts";
 import { stackStatusCommand } from "../status/status.command.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";

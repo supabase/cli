@@ -8,7 +8,11 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import * as StackNamespace from "../../../../../../../packages/stack/src/StackNamespace.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { stackStop } from "./stop.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 

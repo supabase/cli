@@ -68,7 +68,7 @@ describe("buildStudioEnv", () => {
         PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
         PGRST_DB_MAX_ROWS: "1000",
         LOGFLARE_URL: "http://test-logflare:4000",
-        NEXT_PUBLIC_ENABLE_LOGS: "true",
+        ENABLED_FEATURES_LOGS_ALL: "true",
         NEXT_ANALYTICS_BACKEND_PROVIDER: "postgres",
         EDGE_FUNCTIONS_MANAGEMENT_FOLDER: "/project/supabase/functions",
         SNIPPETS_MANAGEMENT_FOLDER: "/project/supabase/.temp/snippets",
@@ -116,7 +116,7 @@ describe("buildStudioEnv", () => {
         },
         path,
       );
-      expect(env["NEXT_PUBLIC_ENABLE_LOGS"]).toBe("false");
+      expect(env["ENABLED_FEATURES_LOGS_ALL"]).toBe("false");
       expect(env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
     }).pipe(Effect.provide(BunPath.layer));
   });

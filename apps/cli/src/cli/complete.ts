@@ -6,10 +6,7 @@ import { GlobalFlag } from "effect/cli";
 import type { Command, Param, Primitive } from "effect/cli";
 import type { PlatformError } from "effect/PlatformError";
 import process from "node:process";
-import {
-  QUERY_OUTPUT_FORMATS,
-  RESOURCE_OUTPUT_FORMATS,
-} from "../command-internal/output-formats.ts";
+import { outputFormatsForCommand } from "../command-internal/output-formats.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
 import { REMOTE_FLAG_NAME } from "../command-internal/target/remote-vocabulary.ts";
 import { isValidBase0Int64, parseUintBase0 } from "../shared/config/parse-uint.ts";
@@ -651,18 +648,6 @@ function isValidCsvFlagValue(value: string): boolean {
   }
 }
 
-/**
- * `--output` is modeled as one global flag whose `choiceKeys` is the union of two distinct
- * enums (`env|pretty|json|toml|yaml` everywhere else, `json|table|csv` for `db query`), so
- * `flag.choiceKeys` alone can't tell which applies at the resolved command. This restores
- * per-command validation.
- */
-function outputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray<string> {
-  return matchedPath.length === 2 && matchedPath[0] === "db" && matchedPath[1] === "query"
-    ? QUERY_OUTPUT_FORMATS
-    : RESOURCE_OUTPUT_FORMATS;
-}
-
 function remoteTakesWord(
   remoteLeaf: RemoteArgvLeaf | undefined,
   trimmedArgs: ReadonlyArray<string>,
@@ -710,7 +695,7 @@ function isValidFlagValue(
       return parseBoolLiteral(value) !== undefined;
     case "Choice":
       if (flag.name === "output") {
-        return outputFlagChoiceKeys(matchedPath).includes(value);
+        return outputFormatsForCommand(matchedPath).includes(value);
       }
       return flag.choiceKeys !== undefined && flag.choiceKeys.includes(value);
     case "Int":
