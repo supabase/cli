@@ -339,6 +339,12 @@ The flag is local CLI configuration in `supabase/config.toml` or `supabase/confi
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
+Stack mode rejects an enabled `[api.tls]` while the API is enabled, a `db.major_version` other than
+15 or 17, a non-empty `experimental.s3_*` value while `db.orioledb_version` is set, an
+`edge_runtime.deno_version` other than 2 while Edge Runtime is enabled, and
+`analytics.backend = "bigquery"` or a non-empty `analytics.gcp_*` value while Analytics is enabled.
+The error names the setting.
+
 Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
 uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions
 bundling) in `tmp`, the release-check cache in `cli-latest`, and service versions come from
@@ -491,8 +497,9 @@ states are observed directly by Storage operations, including `stack start`.
 
 **`stack start` seeds on first configured start.** When a `stack start` (or the top-level `start`
 under the flag) invocation runs the stack's first configured start (never when it resumes an existing one) and
-Storage is not `disabled`, it seeds `[storage.buckets]` against the stack before printing status,
-reusing the `seed buckets` core. A project with no `[storage.buckets]` or
+Storage is not `disabled`, it seeds `[storage.buckets]` and, while `storage.vector.enabled`,
+`[storage.vector.buckets]` against the stack before printing status, reusing the `seed buckets`
+core. A project with no `[storage.buckets]` or
 `[storage.vector.buckets]` configured resolves no credentials and prints nothing. Auto-confirm is
 safe here since a first-start stack has no pre-existing buckets. Any other unusable Storage state,
 a missing capability/endpoint, a gateway activation failure, or an invalid bucket entry fails the

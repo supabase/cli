@@ -104,6 +104,11 @@ objects_path = "./buckets/public"
 [storage.buckets.config-private]
 public = false
 
+[storage.vector.buckets.config-vectors]
+
+[storage.analytics]
+enabled = true
+
 [edge_runtime]
 enabled = true
 
