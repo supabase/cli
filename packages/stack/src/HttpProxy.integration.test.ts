@@ -2239,7 +2239,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* () {
         const pair = yield* testPair;
-        const deadlines = { headers: 150, idle: 150 };
+        const deadlines = { headers: 150, request: 60_000, idle: 150 };
         const admitted = yield* makeHttpProxy({
           host: "127.0.0.1",
           port: 0,
@@ -2300,7 +2300,11 @@ it.effect(
         const proxy = yield* makeHttpProxy({
           host: "127.0.0.1",
           port: 0,
-          tls: { ...pair, deadlines: { headers: 1_000, idle: 60_000 }, plainPeer: () => true },
+          tls: {
+            ...pair,
+            deadlines: { headers: 1_000, request: 1_000, idle: 60_000 },
+            plainPeer: () => true,
+          },
         });
         yield* proxy.setRoutes([
           { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backendAddress) },
@@ -2339,8 +2343,12 @@ it.effect(
 );
 
 /* A keep-alive connection on a TLS port at the plain listener's clocks whose first request,
-   `POST /api/hold`, the backend answers only once its body ends. */
-const keepAlive = (mode: "plain" | "tls", head: (host: string) => string) =>
+   `POST /api/hold`, the backend answers only once its body ends; `woken` gates each route target. */
+const keepAlive = (
+  mode: "plain" | "tls",
+  head: (host: string) => string,
+  woken: Effect.Effect<void> = Effect.void,
+) =>
   Effect.gen(function* () {
     const pair = yield* testPair;
     const holding = yield* Deferred.make<void>();
@@ -2355,10 +2363,14 @@ const keepAlive = (mode: "plain" | "tls", head: (host: string) => string) =>
     const proxy = yield* makeHttpProxy({
       host: "127.0.0.1",
       port: 0,
-      tls: { ...pair, deadlines: { headers: 12_000, idle: 75_000 }, plainPeer: () => true },
+      tls: {
+        ...pair,
+        deadlines: { headers: 12_000, request: 300_000, idle: 75_000 },
+        plainPeer: () => true,
+      },
     });
     yield* proxy.setRoutes([
-      { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backend) },
+      { id: "api", prefix: "/api", gateway: true, target: woken.pipe(Effect.as(backend)) },
     ]);
     const host = `Host: 127.0.0.1:${proxy.port}\r\n`;
     const connection = yield* held(proxy.port, head(host), mode === "tls" ? pair.cert : undefined);
@@ -2424,6 +2436,91 @@ for (const mode of ["plain", "tls"] as const) {
         yield* replies(connection, "pong", 1);
         yield* TestClock.adjust(75_000);
         yield* closed(connection.socket);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`lets a ${mode} request body arrive until its request deadline`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, holding } = yield* keepAlive(
+          mode,
+          (host) => `POST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nb`,
+        );
+        yield* Deferred.await(holding);
+        yield* TestClock.adjust(299_999);
+        connection.socket.write("ody");
+        expect(yield* nextReply(connection, "held")).toMatch(/HTTP\/1\.1 200 [^]*held$/u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`closes a ${mode} request whose body stalls at its request deadline`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, holding } = yield* keepAlive(
+          mode,
+          (host) => `POST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nb`,
+        );
+        yield* Deferred.await(holding);
+        yield* TestClock.adjust(300_000);
+        yield* closed(connection.socket);
+        expect(connection.received.text).not.toContain("held");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`keeps a bodyless ${mode} request waiting on its route past the request deadline`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const asked = yield* Deferred.make<void>();
+        const wake = yield* Deferred.make<void>();
+        const { connection } = yield* keepAlive(
+          mode,
+          (host) => `GET /api/x HTTP/1.1\r\n${host}\r\n`,
+          Deferred.succeed(asked, undefined).pipe(Effect.andThen(Deferred.await(wake))),
+        );
+        yield* Deferred.await(asked);
+        yield* TestClock.adjust(300_000);
+        yield* Deferred.succeed(wake, undefined);
+        expect(yield* nextReply(connection, "pong")).toMatch(/HTTP\/1\.1 200 [^]*pong$/u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    `keeps a ${mode} request whose body arrived waiting on its route past the request deadline`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const asked = yield* Deferred.make<void>();
+          const wake = yield* Deferred.make<void>();
+          const { connection } = yield* keepAlive(
+            mode,
+            (host) => `POST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nbody`,
+            Deferred.succeed(asked, undefined).pipe(Effect.andThen(Deferred.await(wake))),
+          );
+          yield* Deferred.await(asked);
+          yield* TestClock.adjust(300_000);
+          yield* Deferred.succeed(wake, undefined);
+          expect(yield* nextReply(connection, "held")).toMatch(/HTTP\/1\.1 200 [^]*held$/u);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`closes a ${mode} pipelined request whose body stalls at its request deadline`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, holding } = yield* keepAlive(
+          mode,
+          (host) =>
+            `GET /api/x HTTP/1.1\r\n${host}\r\nPOST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nb`,
+        );
+        yield* replies(connection, "pong", 1);
+        yield* Deferred.await(holding);
+        yield* TestClock.adjust(300_000);
+        yield* closed(connection.socket);
+        expect(connection.received.text).not.toContain("held");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

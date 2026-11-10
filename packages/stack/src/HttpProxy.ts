@@ -739,6 +739,8 @@ export interface HttpProxyTls {
 interface HttpDeadlines {
   /** From accept until a request's headers, a TLS handshake included. */
   readonly headers: number;
+  /** From a request's headers until its body has arrived; upgrades have none. */
+  readonly request: number;
   /**
    * From a response until the connection's next request; when it runs out, a connection that read
    * bytes since its last request gets `headers` once more, so a request started before it can finish.
@@ -751,11 +753,12 @@ interface HttpDeadlines {
 const KEEP_ALIVE_TIMEOUT_BUFFER = 70_000;
 
 /**
- * What Bun 1.4.4's HTTP server gives a plain connection: 12 s for headers, then 75 s idle with no
- * grace; `sniffing` adds a one-time 12 s grace for a request that started before idle ran out.
+ * The plain listener's clocks: 12 s for headers, 300 s for a request's body, then 75 s idle
+ * with no grace; `sniffing` adds a one-time 12 s grace for a request started before idle ran out.
  */
 const PLAIN_LISTENER_DEADLINES: HttpDeadlines = {
   headers: 12_000,
+  request: 300_000,
   idle: 5_000 + KEEP_ALIVE_TIMEOUT_BUFFER,
 };
 
@@ -846,6 +849,16 @@ const sniffing = (
       deadline.inFlight -= 1;
       if (deadline.inFlight === 0 && !deadline.socket.destroyed) armIdle(deadline);
     });
+    /* A body that has not arrived by then closes the connection, as on the plain listener. */
+    deadline.timer = runDeadline(
+      Effect.sleep(deadlines.request).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (!request.complete) deadline.socket.destroy();
+          }),
+        ),
+      ),
+    );
   });
   server.on("upgrade", (request) => {
     const deadline = pending.get(request.socket);

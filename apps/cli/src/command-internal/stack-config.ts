@@ -338,7 +338,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       );
       const path = yield* Path.Path;
       const { supabaseHome } = yield* CommandSettings;
-      /* Like legacy: both configured paths under `supabase/`, else the embedded local pair. */
+      /* Like legacy: both configured paths, joined to `supabase/`, else the embedded local pair. */
       const tls = validatedConfig.api.tls;
       const certPath = tls.cert_path ?? "";
       const keyPath = tls.key_path ?? "";

@@ -282,7 +282,7 @@ it.live("stops the stack when containers can't reach the API, naming what the pr
       );
       const blocked = yield* check(stopped, "stack-db\n");
       expect(blocked.message).toMatch(
-        /^api\.tls: containers can't reach the api on test runtime \(.+\); its services stopped: /u,
+        /^api\.tls: containers can't reach the api on test runtime \(no HTTP reply\); its services stopped: /u,
       );
       const refused = yield* check(stopped, "stack-db\n", true);
       expect(refused.message).toContain("__api_tls_self_check?token=<redacted>");

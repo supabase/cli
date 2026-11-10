@@ -209,7 +209,10 @@ export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
     creation: ServiceCreation,
   ) => Effect.Effect<SupabaseCompositionEntry, E>;
   readonly configure: (configuration: CompositionConfig) => Effect.Effect<void, E>;
-  /** Runs once the request is valid, before any instance or binding changes. */
+  /**
+   * Runs once the request is valid, before any instance or binding changes; a later failure keeps
+   * its effects.
+   */
   readonly validated: Effect.Effect<void, E>;
 }
 

@@ -252,13 +252,14 @@ export const selfCheckApiTls = Effect.fn("ApiTlsSupport.selfCheck")(function* (
     .find((line) => line.length > 0 && !/-task-[^-]+$/u.test(line));
   if (name === undefined) return yield* failedWith("no database container");
   const authority = `${DOCKER_HOST_ALIAS}:${port}`;
-  const script = `exec 3<>/dev/tcp/${DOCKER_HOST_ALIAS}/${port} && printf 'GET ${path} HTTP/1.0\\r\\nHost: ${authority}\\r\\n\\r\\n' >&3 && read -r -t 5 -n 9 reply <&3 && printf %s "$reply"`;
+  const script = `exec 3<>/dev/tcp/${DOCKER_HOST_ALIAS}/${port} && printf 'GET ${path} HTTP/1.0\\r\\nHost: ${authority}\\r\\n\\r\\n' >&3 && { read -r -t 5 -n 9 reply <&3; printf %s "$reply"; }`;
   const reply = yield* runRaw(
     spawner,
     target.engine,
     ["exec", name, "bash", "-c", script],
     target.argv,
   ).pipe(Effect.mapError((error) => failedWith(error.message)));
+  if (reply === "") return yield* failedWith("no HTTP reply");
   if (!reply.startsWith("HTTP/1.")) return yield* failedWith(`reply ${reply.slice(0, 40)}`);
   return yield* runRaw(
     spawner,
