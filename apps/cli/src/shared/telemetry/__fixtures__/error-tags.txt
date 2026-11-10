@@ -292,7 +292,6 @@ InspectReportWriteError
 InvalidAccessTokenError
 InvalidComputeExcludeError
 InvalidComputeNameError
-InvalidComputeSecretsScopeError
 InvalidComputeSourceError
 InvalidFunctionDeploySlugError
 InvalidFunctionDownloadResponseError
