@@ -91,6 +91,8 @@ export interface ResolvedCliConfig {
   readonly remoteFailures: ReadonlyArray<CliConfigRemoteFailure>;
   /** Schema decode failures a `validation` load pruned past, in order; empty otherwise. */
   readonly schemaFailures: ReadonlyArray<CliConfigParseError>;
+  /** Whether a `validation` load stopped deleting failing keys at its round limit, so the config is partial. */
+  readonly pruneLimitReached: boolean;
   /** The key paths a `validation` load deleted from the document so decoding could continue; empty otherwise. */
   readonly pruned: ReadonlyArray<ReadonlyArray<string>>;
   /** The entry names of a family: those the registry declares plus those in the merged document. */

@@ -41,7 +41,14 @@ export const selectCliConfigRemote = (
 export interface CliConfigRemoteFailure {
   readonly remote: string;
   readonly message: string;
+  /** The env variable that supplied the rejected `project_id`, when it overrode the file. */
+  readonly envName?: string;
 }
+
+const overrideField = (name: string, lookup: EnvLookup) => {
+  const envName = cliRemoteProjectIdEnvName(name);
+  return lookup(envName) === undefined ? {} : { envName };
+};
 
 /** Every remote with a duplicate or malformed `project_id`, one failure per remote. */
 export const cliConfigRemoteFailures = (
@@ -58,6 +65,7 @@ export const cliConfigRemoteFailures = (
       failures.set(name, {
         remote: name,
         message: `duplicate project_id for [remotes.${name}] and [remotes.${prior}]`,
+        ...overrideField(name, lookup),
       });
       continue;
     }
@@ -73,6 +81,7 @@ export const cliConfigRemoteFailures = (
       failures.set(name, {
         remote: name,
         message: `Invalid config for remotes.${name}.project_id. Must be like: abcdefghijklmnopqrst`,
+        ...overrideField(name, lookup),
       });
     }
   }

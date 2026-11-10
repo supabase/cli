@@ -28,7 +28,13 @@ export const PLAIN_REPORT_STYLE: ReportStyle = {
   code: plain,
 };
 
-export type StopStage = "syntax" | "schema_version" | "file_conflict" | "env_file" | "removed_env";
+export type StopStage =
+  | "syntax"
+  | "schema_version"
+  | "file_conflict"
+  | "env_file"
+  | "removed_env"
+  | "schema_limit";
 
 const STOP_LABELS: Readonly<Record<StopStage, string>> = {
   syntax: "the syntax check",
@@ -36,6 +42,7 @@ const STOP_LABELS: Readonly<Record<StopStage, string>> = {
   file_conflict: "the config file check",
   env_file: "loading the env files",
   removed_env: "resolving the environment variables",
+  schema_limit: "the schema check, which hit its limit on dependent failures",
 };
 
 const PAYLOAD_VERSION = 1;
@@ -147,90 +154,78 @@ function urlSpans(text: string, from: number, to: number): ReadonlyArray<Span> {
   return spans;
 }
 
-/** A scalar or a flat array of scalars; a table, or anything nested, may hold values the problem is not about. */
-function isShowable(lines: ReadonlyArray<string>, location: CliConfigLocation): boolean {
-  const first = lines[location.line - 1] ?? "";
-  const last = location.endLine ?? location.line;
-  const text =
-    last === location.line
-      ? first.slice(location.column - 1, (location.endColumn ?? first.length + 1) - 1)
-      : [
-          first.slice(location.column - 1),
-          ...lines.slice(location.line, last - 1),
-          (lines[last - 1] ?? "").slice(0, (location.endColumn ?? 1) - 1),
-        ].join("\n");
-  const head = text.trimStart()[0];
-  if (head === "{") return false;
-  if (head !== "[") return true;
-  let quote: string | undefined;
-  for (let index = text.indexOf("[") + 1; index < text.length; index++) {
-    const character = text[index];
-    if (quote !== undefined) {
-      if (character === "\\" && quote === '"') index++;
-      else if (character === quote) quote = undefined;
-    } else if (character === '"' || character === "'") quote = character;
-    else if (character === "{" || character === "[") return false;
+const PLAIN_SCALAR = /^[^\s[\]{}"',#]+$/;
+
+/** A number or boolean, or a string with no escapes and no multi-line delimiter. */
+function isPlainScalar(text: string): boolean {
+  const quote = text[0];
+  if (quote === '"' || quote === "'") {
+    return (
+      text.length >= 2 &&
+      text.endsWith(quote) &&
+      !text.startsWith(quote.repeat(3)) &&
+      !text.includes("\\")
+    );
   }
-  return true;
+  return PLAIN_SCALAR.test(text);
 }
 
-const isBefore = (line: number, column: number, otherLine: number, otherColumn: number) =>
-  line < otherLine || (line === otherLine && column < otherColumn);
-
-const isWithin = (value: CliConfigLocation, shown: CliConfigLocation): boolean =>
-  !isBefore(value.line, value.column, shown.line, shown.column) &&
-  !isBefore(
-    shown.endLine ?? shown.line,
-    shown.endColumn ?? shown.column,
-    value.endLine ?? value.line,
-    value.endColumn ?? value.column,
-  );
-
 /**
- * A source line with every value masked, whichever lines it spans, except the values inside
- * `shown`. Lines of text that cannot be parsed are masked in full.
+ * A source line with every value masked, whichever lines it spans. A value prints only when
+ * `mayShow` and it is the only value touching a line, one plain scalar that starts and ends on it;
+ * URL credentials and query strings are redacted either way. Source that cannot be parsed is
+ * masked in full.
  */
 function maskedAt(
   { lines, valuesByLine }: SourceView,
   lineNumber: number,
-  shown?: CliConfigLocation,
+  mayShow: (value: CliConfigLocation) => boolean = () => false,
 ): MaskedLine {
   const text = lines[lineNumber - 1] ?? "";
   const indent = text.length - text.trimStart().length;
   if (text.trim() === "") return maskLine(text, []);
   if (valuesByLine === undefined) return maskLine(text, [{ column: indent + 1 }]);
 
+  const values = valuesByLine.get(lineNumber) ?? [];
+  const only = values.length === 1 ? values[0] : undefined;
+  const printable =
+    only !== undefined &&
+    only.line === lineNumber &&
+    only.endLine === lineNumber &&
+    mayShow(only) &&
+    isPlainScalar(text.slice(only.column - 1, (only.endColumn ?? 1) - 1));
+  const redactions = urlSpans(text, 1, text.length + 1);
+
   const spans: Array<Span> = [];
-  const redactions: Array<Span> = [];
-  for (const value of valuesByLine.get(lineNumber) ?? []) {
+  for (const value of values) {
     const startsHere = value.line === lineNumber;
     const endsHere = (value.endLine ?? value.line) === lineNumber;
     const column = startsHere ? value.column : indent + 1;
     const endColumn = endsHere ? value.endColumn : undefined;
-    if (shown !== undefined && isWithin(value, shown)) {
-      redactions.push(...urlSpans(text, column, endColumn ?? text.length + 1));
-      continue;
-    }
-    if (
+    const isEnvReference =
       startsHere &&
       endsHere &&
-      ENV_REFERENCE_VALUE.test(text.slice(column - 1, (endColumn ?? text.length + 1) - 1))
-    ) {
-      continue;
+      ENV_REFERENCE_VALUE.test(text.slice(column - 1, (endColumn ?? text.length + 1) - 1));
+    if (!printable && !isEnvReference) {
+      spans.push(endColumn === undefined ? { column } : { column, endColumn });
     }
-    spans.push(endColumn === undefined ? { column } : { column, endColumn });
   }
-  if (spans.length === 0) {
+  if (values.length === 0) {
     const pair = /^\s*(?:#|\/\/)/.test(text) ? KEY_VALUE.exec(text) : null;
     return maskLine(text, [
       ...redactions,
       ...(pair?.[1] === undefined ? [] : [{ column: pair[1].length + 1 }]),
     ]);
   }
-  const lastEnd = Math.max(...spans.map((span) => span.endColumn ?? text.length + 1)) - 1;
+  const lastEnd =
+    Math.max(
+      ...values.map((value) =>
+        value.endLine === lineNumber ? (value.endColumn ?? 1) : text.length + 1,
+      ),
+    ) - 1;
   const comment = TRAILING_COMMENT.exec(text.slice(lastEnd));
   if (comment !== null) {
-    spans.push({ column: lastEnd + comment[0].length - comment[1]!.length + 1 });
+    spans.push({ column: lastEnd + comment[0].length - (comment[1] ?? "").length + 1 });
   }
   return maskLine(text, [...spans, ...redactions]);
 }
@@ -292,10 +287,7 @@ function frameLines(
   const out: Array<string> = [];
 
   if (location.line > 1) {
-    const previous = lines[location.line - 2] ?? "";
-    const before = publicLines.has(location.line - 1)
-      ? maskLine(previous, urlSpans(previous, 1, previous.length + 1)).text
-      : maskedAt(view, location.line - 1).text;
+    const before = maskedAt(view, location.line - 1, () => publicLines.has(location.line - 1)).text;
     const shown = display(before).trimEnd();
     const clipped = shown.length > MAX_FRAME_WIDTH ? `${shown.slice(0, MAX_FRAME_WIDTH)}…` : shown;
     out.push(
@@ -303,9 +295,13 @@ function frameLines(
     );
   }
 
-  const shown =
-    problem.showValue && location.exact && isShowable(lines, location) ? location : undefined;
-  const current = maskedAt(view, location.line, shown);
+  const mayShow = (value: CliConfigLocation) =>
+    problem.showValue &&
+    location.exact &&
+    value.line === location.line &&
+    value.column === location.column &&
+    value.endColumn === location.endColumn;
+  const current = maskedAt(view, location.line, mayShow);
   const start = current.map(location.column - 1);
   const singleLine = location.endLine === undefined || location.endLine === location.line;
   const end =
@@ -327,7 +323,7 @@ function frameLines(
     `    ${style.dim(gutter(""))} ${" ".repeat(windowed.caretOffset)}${style.red("^".repeat(caretLength))}`,
   );
   for (let line = location.line + 1; line <= lastLine; line++) {
-    const text = display(maskedAt(view, line, shown).text).trimEnd();
+    const text = display(maskedAt(view, line).text).trimEnd();
     const clipped = text.length > MAX_FRAME_WIDTH ? `${text.slice(0, MAX_FRAME_WIDTH)}…` : text;
     out.push(`  ${style.red(">")} ${style.dim(gutter(String(line)))} ${clipped}`);
   }

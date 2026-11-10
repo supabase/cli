@@ -871,7 +871,14 @@ export const collectLocalConfigIssues = Effect.fn("LocalConfig.collectIssues")(f
   ).pipe(
     Effect.catch((error: { readonly message: string }) =>
       Effect.sync(() => {
-        issues.push(invalidIssue("", error.message, "could not be checked"));
+        issues.push(
+          invalidIssue(
+            "",
+            error.message,
+            "could not be checked",
+            "check the files and settings this config section reads",
+          ),
+        );
       }),
     ),
   );

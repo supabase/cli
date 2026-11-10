@@ -120,6 +120,31 @@ interface InlineEntry {
 const isBareKeyCharacter = (character: string | undefined) =>
   character !== undefined && /[A-Za-z0-9_-]/.test(character);
 
+const BASIC_ESCAPES: Readonly<Record<string, string>> = {
+  b: "\b",
+  t: "\t",
+  n: "\n",
+  f: "\f",
+  r: "\r",
+  e: "\u001b",
+  '"': '"',
+  "\\": "\\",
+};
+
+function decodeBasicKey(raw: string): string {
+  return raw.replace(
+    /\\(?:u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8})|(.))/g,
+    (match, short, long, simple) => {
+      const hex = short ?? long;
+      if (hex !== undefined) {
+        const code = Number.parseInt(hex, 16);
+        return code <= 0x10ffff ? String.fromCodePoint(code) : match;
+      }
+      return BASIC_ESCAPES[simple] ?? match;
+    },
+  );
+}
+
 function scanKeyPart(
   source: string,
   start: number,
@@ -131,7 +156,9 @@ function scanKeyPart(
     while (cursor < limit && source[cursor] !== opener) {
       cursor += opener === '"' && source[cursor] === "\\" ? 2 : 1;
     }
-    return cursor >= limit ? undefined : { text: source.slice(start + 1, cursor), end: cursor + 1 };
+    if (cursor >= limit) return undefined;
+    const raw = source.slice(start + 1, cursor);
+    return { text: opener === '"' ? decodeBasicKey(raw) : raw, end: cursor + 1 };
   }
   let cursor = start;
   while (cursor < limit && isBareKeyCharacter(source[cursor])) cursor += 1;
@@ -381,6 +408,8 @@ export function cliConfigLineKeys(
 
 function tomlValueSpans(source: string, span: Span): ReadonlyArray<Span> {
   if (source[span.start] !== "{") return [span];
+  const text = source.slice(span.start, span.end);
+  if (text.includes('"""') || text.includes("'''")) return [span];
   const entries = inlineTableEntries(source, span);
   return entries === undefined
     ? [span]

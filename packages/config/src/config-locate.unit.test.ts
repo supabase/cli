@@ -251,8 +251,25 @@ describe("cliConfigValueSpans", () => {
     expect(textOf(source, cliConfigValueSpans(source, "json"))).toEqual(['"x"', "2", "true"]);
   });
 
+  test("covers an inline table holding a triple-quoted string as one span", () => {
+    const source = 'auth = { jwt_secret = """foo", hunter2 = "x", tail = "bar""" }\n';
+    expect(textOf(source, cliConfigValueSpans(source, "toml"))).toEqual([
+      '{ jwt_secret = """foo", hunter2 = "x", tail = "bar""" }',
+    ]);
+  });
+
   test("is undefined when the text does not parse", () => {
     expect(cliConfigValueSpans('a = """\nx', "toml")).toBeUndefined();
     expect(cliConfigValueSpans('{ "a": ', "json")).toBeUndefined();
+  });
+});
+
+describe("locateCliConfigKey inline-table keys", () => {
+  test("matches a quoted key whose escapes decode to the path segment", () => {
+    const source = 'api = { "po\\u0072t" = "bad" }\n';
+    const location = locateCliConfigKey(source, "toml", ["api", "port"], "value");
+
+    expect(location?.exact).toBe(true);
+    expect(source.slice((location?.column ?? 0) - 1, (location?.endColumn ?? 0) - 1)).toBe('"bad"');
   });
 });

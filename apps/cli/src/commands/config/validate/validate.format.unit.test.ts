@@ -79,7 +79,7 @@ describe("validateReport", () => {
     expect(text).not.toContain("hunter2");
   });
 
-  it("shows the located value only when the problem allows it, still masking siblings on the line", () => {
+  it("shows the located value only when it is the only value on its line", () => {
     const text = render([
       problem({
         path: ["api", "cfg", "n"],
@@ -88,8 +88,23 @@ describe("validateReport", () => {
       }),
     ]);
 
-    expect(text).toContain('cfg = { token = ****, n = "bad" }');
+    expect(text).toContain("cfg = { token = ****, n = **** }");
     expect(text).not.toContain("hunter2");
+  });
+
+  it("shows a located scalar that is alone on its line", () => {
+    const text = render(
+      [
+        problem({
+          path: ["api", "max_rows"],
+          showValue: true,
+          location: { line: 2, column: 12, endColumn: 18, exact: true },
+        }),
+      ],
+      { source: '[api]\nmax_rows = "lots"' },
+    );
+
+    expect(text).toContain('max_rows = "lots"');
   });
 
   it("shows a known non-secret key's value on the context line", () => {
@@ -224,7 +239,7 @@ describe("validateReport", () => {
       expect(text).not.toContain("hunter2");
     });
 
-    it("shows a flat array of scalars", () => {
+    it("masks a flat array even at a shown location", () => {
       const source = '[api]\nschemas = ["a", "b"]';
       const text = render(
         [
@@ -237,7 +252,7 @@ describe("validateReport", () => {
         { source },
       );
 
-      expect(text).toContain('schemas = ["a", "b"]');
+      expect(text).toContain("schemas = ****");
     });
 
     const URL_SOURCE = [

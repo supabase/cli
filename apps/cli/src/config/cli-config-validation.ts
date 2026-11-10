@@ -13,3 +13,6 @@ export const decodeCliConfigDocumentForValidation = (
   document: Record<string, unknown>,
   options: CliConfigValidationOptions,
 ) => decodeCliConfigDocumentForValidationEffect(document, { ...options, cliCompat: true });
+
+/** How many times a validation load deletes failing keys and decodes again before it gives up. */
+export const MAX_PRUNE_ROUNDS = 5;

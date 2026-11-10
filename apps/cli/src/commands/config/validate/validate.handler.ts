@@ -327,7 +327,10 @@ function remotesShapeProblems(rawRemotes: unknown): ReadonlyArray<ConfigProblem>
     );
 }
 
-function remoteFailureProblem(failure: { remote: string; message: string }): ConfigProblem {
+function remoteFailureProblem(
+  failure: { remote: string; message: string; envName?: string },
+  file: string,
+): ConfigProblem {
   const duplicate = /^duplicate project_id for \[remotes\.[^\]]+\] and \[remotes\.([^\]]+)\]$/.exec(
     failure.message,
   );
@@ -338,11 +341,18 @@ function remoteFailureProblem(failure: { remote: string; message: string }): Con
       duplicate?.[1] === undefined
         ? "not a project ref"
         : `same project_id as remotes.${duplicate[1]}`,
-    help:
-      duplicate?.[1] === undefined
-        ? "use the 20-character ref from your project's dashboard URL"
-        : "give each remote its own project_id",
-    showValue: true,
+    ...(failure.envName === undefined
+      ? {
+          help:
+            duplicate?.[1] === undefined
+              ? "use the 20-character ref from your project's dashboard URL"
+              : "give each remote its own project_id",
+          showValue: true,
+        }
+      : {
+          external: true as const,
+          help: `${failure.envName} sets this project_id, not ${file}; fix or unset it there`,
+        }),
   });
 }
 
@@ -494,7 +504,8 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         problem("unrecognized_schema", {
           severity: "warning",
           subject: file,
-          reason: `${declaration.ref} is not a Supabase config schema, so the file is read as schema v1`,
+          reason:
+            "the schema reference is not a Supabase config schema, so the file is read as schema v1",
           help: "set it to https://supabase.com/schemas/config/v1.json",
           location: locateSchemaDeclaration(parsed.rawText, format),
           showValue: true,
@@ -538,6 +549,13 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         }
       }
       const resolved = result.success;
+      if (resolved.pruneLimitReached) {
+        return {
+          problems: withRemote(schemaProblems(resolved.schemaFailures), remote),
+          resolved,
+          stop: "schema_limit",
+        } satisfies PassResult;
+      }
       const semantic = yield* collectLocalConfigIssues(
         resolved.materialized.config,
         workdir,
@@ -683,7 +701,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
                 remoteNames.includes(failure.remote) &&
                 !unresolvedProjectIdRemotes.has(failure.remote),
             )
-            .map(remoteFailureProblem),
+            .map((failure) => remoteFailureProblem(failure, file)),
           ...remotePasses.flatMap((item) => item.problems),
         ],
         remoteWrites,
@@ -732,12 +750,14 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       location: locateProblem(item, parsed.rawText, parsed.format),
     }));
 
+    const remoteStop = remotePasses.find((item) => item.stop !== undefined)?.stop;
     return yield* emit({
       file,
       format,
       source: parsed.rawText,
       remotes: checkedRemotes,
       skippedRemotes,
+      ...(remoteStop === undefined ? {} : { stoppedAt: remoteStop }),
       problems: located,
     });
   }).pipe(Effect.ensuring(telemetryState.flush));

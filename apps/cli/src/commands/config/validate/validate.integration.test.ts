@@ -769,6 +769,33 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("reports an invalid env-sourced remote project_id as external, not at the file", () =>
+    Effect.gen(function* () {
+      const files = tomlFile(
+        'project_id = "demo"\n[remotes.prod]\nproject_id = "abcdefghijklmnopqrst"\n',
+      );
+      const json = yield* validate(files, {
+        format: "json",
+        env: { SUPABASE_REMOTES_PROD_PROJECT_ID: "nope" },
+      });
+      const text = yield* validate(files, {
+        env: { SUPABASE_REMOTES_PROD_PROJECT_ID: "nope" },
+      });
+
+      const errors = Reflect.get(payloadOf(json) ?? {}, "errors");
+      expect(errors).toMatchObject([
+        {
+          code: "remote_project_id",
+          remote: "prod",
+          help: expect.stringContaining("SUPABASE_REMOTES_PROD_PROJECT_ID"),
+        },
+      ]);
+      expect(errors).not.toMatchObject([{ line: expect.anything() }]);
+      expect(text.stdout).toContain("SUPABASE_REMOTES_PROD_PROJECT_ID");
+      expect(text.stdout).not.toMatch(/config\.toml:\d/);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("locates a remote without project_id inside that remote, not on the base key", () =>
     Effect.gen(function* () {
       const result = yield* validate(
@@ -979,6 +1006,82 @@ describe("config validate integration", () => {
         expect(own.stdout).not.toContain("tok-secret");
       }).pipe(Effect.provide(BunServices.layer)),
     );
+
+    const ADVERSARIAL: ReadonlyArray<readonly [string, Readonly<Record<string, string>>]> = [
+      [
+        "multi-line secret with comment-looking and base64 lines",
+        tomlFile(
+          `project_id = "demo"\n[auth.hook.send_email]\nenabled = true\nuri = "https://x.test"\nsecrets = """\n# ${SECRET}\nc2VjcmV0cGFzc3dvcmQ=="""\nbogus = 1\n`,
+        ),
+      ],
+      [
+        "sibling of an env() reference in an array",
+        tomlFile(
+          `project_id = "demo"\n[api]\nschemas = ["env(UNSET_SCHEMA)", "${SECRET}"]\nbogus = 1\n`,
+        ),
+      ],
+      [
+        "nested inline table at a public key",
+        tomlFile(`project_id = "demo"\n[api]\nmax_rows = { secret = "${SECRET}" }\nbogus = 1\n`),
+      ],
+      [
+        "nested table inside an array context line",
+        tomlFile(`project_id = "demo"\n[api]\nschemas = [{ secret = "${SECRET}" }]\nbogus = 1\n`),
+      ],
+      [
+        "triple-quoted string inside an inline table",
+        tomlFile(
+          `project_id = "demo"\nauth = { jwt_secret = """foo", ${SECRET} = "x", tail = "bar""" }\nbogus = 1\n`,
+        ),
+      ],
+      [
+        "credential URL on the context line",
+        tomlFile(
+          `project_id = "demo"\n[auth]\nsite_url = "https://user:pw-secret@host.test/x?token=tok-secret"\nbogus = 1\n`,
+        ),
+      ],
+      [
+        "credential URL as the problem value",
+        tomlFile(
+          `project_id = "demo"\n[studio]\napi_url = "http://u:pw-secret@[bad/x?token=tok-secret"\n`,
+        ),
+      ],
+      [
+        "escaped JSON URL on the context line",
+        {
+          "supabase/config.jsonc": `{\n  "project_id": "demo",\n  "auth": {\n    "site_url": "https:\\/\\/user:pw-secret@host.test/x?token=tok-secret",\n    "bogus": 1\n  }\n}\n`,
+        },
+      ],
+      [
+        "line that ends a multi-line JSON value and starts a public property",
+        {
+          "supabase/config.jsonc": `{\n  "project_id": "demo",\n  "api": {\n    "schemas": [\n      "a",\n      "${SECRET}"], "max_rows": 1000,\n    "prot": 1\n  }\n}\n`,
+        },
+      ],
+      [
+        "schema reference carrying credentials",
+        tomlFile(
+          `#:schema https://user:pw-secret@host.test/s.json?token=tok-secret\nproject_id = "demo"\n`,
+        ),
+      ],
+    ];
+
+    for (const [name, files] of ADVERSARIAL) {
+      it.effect(`never prints a marker for: ${name}`, () =>
+        Effect.gen(function* () {
+          const text = yield* validate(files);
+          const json = yield* validate(files, { format: "json" });
+
+          expect(text.stdout).toMatch(/[✗⚠]/);
+          for (const result of [text, json]) {
+            const printed = reportedTexts(result);
+            for (const marker of ["hunter2", "pw-secret", "tok-secret", "c2VjcmV0"]) {
+              expect(printed).not.toContain(marker);
+            }
+          }
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+    }
 
     it.effect("masks db.root_key and a hook secret in JSON mode and in JSONC frames", () =>
       Effect.gen(function* () {

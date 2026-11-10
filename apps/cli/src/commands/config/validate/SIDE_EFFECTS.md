@@ -49,13 +49,13 @@ Telemetry records a run that reports problems as a successful command, because t
 
 ## Run order and stops
 
-Each stage reports every problem it finds; a run stops after a stage only when the later stages cannot be computed: `syntax`, `schema_version`, `file_conflict`, `env_file`, `removed_env`. Remote blocks, unknown keys, removed keys, type and value errors and the semantic checks `supabase start` applies are all reported in one pass. JSON output sets `complete: false` and `stopped_at` when a run stopped early.
+Each stage reports every problem it finds; a run stops after a stage only when the later stages cannot be computed: `syntax`, `schema_version`, `file_conflict`, `env_file`, `removed_env`, `schema_limit` (dependent schema failures hit the check's round limit). Remote blocks, unknown keys, removed keys, type and value errors and the semantic checks `supabase start` applies are all reported in one pass. JSON output sets `complete: false` and `stopped_at` when a run stopped early.
 
 ## Output
 
 ### `--output-format text`
 
-stdout is one report: every problem in file order, each as `<key>  <reason>` with `file:line:column`, a code frame, an optional `help:` line and a `[remote: <name>]` label, then a total. Colour only on a TTY, per `NO_COLOR`/`CLICOLOR`. Values are masked as `****`, on every line they span, unless the key is a known non-secret setting, and then only a scalar or flat array is shown, with URL credentials and query strings redacted; `env(NAME)` references stay visible. A document that cannot be parsed is masked line by line in full. Nothing is written to stderr by the command itself.
+stdout is one report: every problem in file order, each as `<key>  <reason>` with `file:line:column`, a code frame, an optional `help:` line and a `[remote: <name>]` label, then a total. Colour only on a TTY, per `NO_COLOR`/`CLICOLOR`. Values are masked as `****`, on every line they span, unless the key is a known non-secret setting and its value is the only value on that line and is a plain number, boolean or string without escapes or multi-line delimiters; arrays, tables and everything else on the line stay masked, and URL credentials and query strings are redacted in any shown string; `env(NAME)` references stay visible. A document that cannot be parsed is masked line by line in full. Nothing is written to stderr by the command itself.
 
 ### `--output-format json`
 

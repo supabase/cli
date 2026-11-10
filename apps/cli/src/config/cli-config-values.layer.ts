@@ -41,6 +41,7 @@ import {
   sameDocumentValue,
   setDocumentValue,
 } from "./cli-config-document.ts";
+import { MAX_PRUNE_ROUNDS } from "./cli-config-validation.ts";
 import { cliConfigFailureKey } from "./cli-config-failure-key.ts";
 import { CliConfigFlagInputs, cliConfigFlagConflictError } from "./cli-config-flags.ts";
 import {
@@ -199,8 +200,6 @@ const withoutRemotes = (document: Record<string, unknown>): Record<string, unkno
   const { remotes: _remotes, ...rest } = document;
   return rest;
 };
-
-const MAX_PRUNE_ROUNDS = 5;
 
 /** The path to delete so a decode issue at `path` stops recurring: the key itself, the array holding it, or the deepest table that exists above an absent key. */
 const prunableSegments = (
@@ -406,7 +405,10 @@ export const cliConfigValuesLayer = Layer.effect(
         : [];
       const [firstRemoteFailure] = remoteFailures;
       if (firstRemoteFailure !== undefined && !target.validation) {
-        return yield* new CliConfigLoadError(firstRemoteFailure);
+        return yield* new CliConfigLoadError({
+          message: firstRemoteFailure.message,
+          remote: firstRemoteFailure.remote,
+        });
       }
 
       const merged =
@@ -580,12 +582,14 @@ export const cliConfigValuesLayer = Layer.effect(
       const mergedForDecode = merged ?? emptyMergedDocument(target.workdir, path.sep);
       const schemaFailures: Array<CliConfigParseError> = [];
       const pruned: Array<ReadonlyArray<string>> = [];
+      let pruneLimitReached = false;
       const decode = (
         draft: Record<string, unknown>,
         resolvedPaths: ReadonlyArray<ReadonlyArray<string>>,
         reportFailures: boolean,
       ) =>
         Effect.gen(function* () {
+          let cleared = false;
           for (let round = 0; ; round++) {
             const result = yield* withPlatform(
               decodeMergedCliConfig(mergedForDecode, {
@@ -598,12 +602,15 @@ export const cliConfigValuesLayer = Layer.effect(
             ).pipe(Effect.result);
             if (Result.isSuccess(result)) return result.success;
             const error = result.failure;
-            if (
-              !target.validation ||
-              !(error instanceof CliConfigParseError) ||
-              round >= MAX_PRUNE_ROUNDS
-            ) {
+            if (!target.validation || !(error instanceof CliConfigParseError) || cleared) {
               return yield* error;
+            }
+            if (round >= MAX_PRUNE_ROUNDS) {
+              if (reportFailures) schemaFailures.push(error);
+              pruneLimitReached = true;
+              cleared = true;
+              for (const key of Object.keys(draft)) delete draft[key];
+              continue;
             }
             const targets = flattenSchemaIssues(error.cause)
               .map((issue) =>
@@ -686,6 +693,9 @@ export const cliConfigValuesLayer = Layer.effect(
         invalid,
         remoteFailures: target.validation ? remoteFailures : [],
         schemaFailures,
+        get pruneLimitReached() {
+          return pruneLimitReached;
+        },
         pruned,
         familyNames,
         declares: (configPath) => configAt(configPath) !== undefined,

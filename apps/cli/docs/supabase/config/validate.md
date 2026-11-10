@@ -12,7 +12,7 @@ Checks the project config file (`supabase/config.toml`, `config.json` or `config
 6. The validations `supabase start` applies, such as a missing provider secret or an unreadable `content_path` file.
 7. Every `[remotes.<name>]` block, merged over the base config. Its problems carry the remote name.
 
-Stages 1 to 4 stop the run when they fail, because later checks cannot be computed; the report says where it stopped (`complete: false`, `stopped_at` in JSON). Everything from stage 5 on is reported together.
+Stages 1 to 4 stop the run when they fail, because later checks cannot be computed; the report says where it stopped (`complete: false`, `stopped_at` in JSON). A schema check that keeps finding dependent failures stops at `schema_limit` with the failures found so far. A remote `project_id` set by a `SUPABASE_REMOTES_*` variable is reported against that variable, not the file. Code frames print a value only when it is the sole plain scalar on its line; everything else is masked as `****`. Everything from stage 5 on is reported together.
 
 ## Secrets
 
