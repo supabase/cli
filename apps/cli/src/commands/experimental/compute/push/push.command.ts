@@ -117,7 +117,7 @@ export const computePushCommand = Command.make("push", config).pipe(
           { operationId: "v2-create-compute-instance-upload", kind: "required" },
           { operationId: "v2-deploy-a-compute-instance", kind: "required" },
         ],
-        noApiEffectFlags: ["instances", "exposure", "secrets-scope"],
+        noApiEffectFlags: ["instances", "exposure", "secrets-scope", "secrets-scope:custom"],
       },
       withContext(
         withCondition(computeRead, { flag: "no-wait", is: false }),
