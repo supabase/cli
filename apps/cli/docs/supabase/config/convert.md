@@ -1,6 +1,6 @@
 # supabase-config-convert
 
-Converts `supabase/config.toml` to `supabase/config.jsonc` and removes the TOML file. Comments are carried over as `//` comments and the document gets a `$schema` entry, so editors validate it against the hosted config schema.
+Converts `supabase/config.toml` to `supabase/config.jsonc` and moves the TOML file to `supabase/.temp/config.toml.bak`. Comments are carried over as `//` comments and the document gets a `$schema` entry, so editors validate it against the hosted config schema.
 
 The conversion reads the file as written: values keep their meaning, `env(NAME)` references are copied as text, and nothing is resolved from your environment. Numbers are written in JSON form, so `0x1F` becomes `31` and `1_000` becomes `1000`. The converted document is parsed again and compared with the original before anything is written; if the two differ, the file is not valid UTF-8, or it holds a value JSON cannot represent (a TOML date, `inf` or `nan`), the command refuses and leaves `config.toml` untouched.
 
@@ -10,17 +10,19 @@ Commented-out TOML examples become commented-out JSONC members, so removing the 
 
 `--dry-run` prints the converted document to stdout and writes nothing. If the project has `.vscode/settings.json`, the command also adds the schema domain to `json.schemaDownload.trustedDomains` there, keeping its comments; the file is never created.
 
-Everyone on the project needs Supabase CLI 3.1.0 or later: older CLIs ignore `config.jsonc` and run with defaults. The command ends with a summary of the files it created, deleted and updated, any relocated comments, this compatibility note and the undo command; with `--dry-run` the same summary, as a preview, goes to stderr.
+Everyone on the project needs Supabase CLI 3.1.0 or later: older CLIs ignore `config.jsonc` and run with defaults. The command ends with a summary of the files it created, moved and updated, any relocated comments, this compatibility note and the undo command; with `--dry-run` the same summary, as a preview, goes to stderr.
 
 If only `supabase/config.json` or `supabase/config.jsonc` exists, the command reports that there is nothing to convert and exits 0. It fails when `config.toml` and a JSON config both exist, because the JSON file takes precedence; delete it first to convert `config.toml` again. The legacy global `-o`/`--output` flag is not supported; use `--output-format json|stream-json` for a machine-readable result.
 
 ## Undo
 
-Before committing, restore the TOML file and remove the JSONC one:
+Move the backup back and remove the JSONC file:
 
 ```sh
-git restore supabase/config.toml && rm supabase/config.jsonc
+mv supabase/.temp/config.toml.bak supabase/config.toml && rm supabase/config.jsonc
 ```
+
+If a backup from an earlier conversion already exists, the command uses the next free name (`config.toml.2.bak`, and so on) and prints the matching undo command.
 
 ## After converting
 

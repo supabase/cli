@@ -2,10 +2,10 @@ import type { CliConfigConvertError, MovedTomlComment } from "@supabase/config/i
 
 export const CONFIG_JSONC_MIN_CLI_VERSION = "3.1.0";
 
-export function dryRunMessage(vscodeWouldUpdate: boolean): string {
+export function dryRunMessage(vscodeWouldUpdate: boolean, backup: string): string {
   return vscodeWouldUpdate
-    ? "Dry run: would write supabase/config.jsonc, delete supabase/config.toml, and add the schema domain to .vscode/settings.json."
-    : "Dry run: would write supabase/config.jsonc and delete supabase/config.toml.";
+    ? `Dry run: would write supabase/config.jsonc, move supabase/config.toml to ${backup}, and add the schema domain to .vscode/settings.json.`
+    : `Dry run: would write supabase/config.jsonc and move supabase/config.toml to ${backup}.`;
 }
 
 export function alreadyConvertedMessage(jsonFile: string): string {
@@ -18,16 +18,18 @@ export function jsonPrecedenceMessage(jsonFile: string): string {
 
 export const CONVERTED_MESSAGE = "Converted supabase/config.toml to supabase/config.jsonc.";
 
-const UNDO_COMMAND = "git restore supabase/config.toml && rm supabase/config.jsonc";
+function undoCommand(backup: string): string {
+  return `mv ${backup} supabase/config.toml && rm supabase/config.jsonc`;
+}
 
 const COMPATIBILITY_LINES = [
   `Supabase CLI versions before ${CONFIG_JSONC_MIN_CLI_VERSION} ignore config.jsonc and run with defaults.`,
   "Upgrade the Supabase CLI on every machine and CI job that uses this project.",
 ] as const;
 
-export const MIN_VERSION_WARNING = `${COMPATIBILITY_LINES.join(" ")} To undo, run: ${UNDO_COMMAND}`;
-
-export const DRY_RUN_MIN_VERSION_WARNING = `${COMPATIBILITY_LINES.join(" ")} To undo after converting, run: ${UNDO_COMMAND}`;
+export function minVersionWarning(dryRun: boolean, backup: string): string {
+  return `${COMPATIBILITY_LINES.join(" ")} ${dryRun ? "To undo after converting" : "To undo"}, run: ${undoCommand(backup)}`;
+}
 
 const TRUSTED_DOMAIN = "https://supabase.com/schemas/";
 
@@ -45,18 +47,21 @@ export function refusalMessage(error: CliConfigConvertError): string {
 export const NOT_UTF8_MESSAGE =
   "cannot convert supabase/config.toml: it is not valid UTF-8, which TOML requires. Re-save it as UTF-8 and rerun the command. supabase/config.toml was not changed.";
 
+export const TOML_SYMLINK_MESSAGE =
+  "cannot convert supabase/config.toml: it is a symbolic link, and converting it would leave the file it points to behind. Replace the link with the file itself, then rerun the command. supabase/config.toml was not changed.";
+
+export const JSONC_SYMLINK_MESSAGE =
+  "supabase/config.jsonc is a symbolic link to a file that does not exist. Remove it, then rerun the command. supabase/config.toml was not changed.";
+
+export function writeFailureMessage(cause: string): string {
+  return `${cause}. supabase/config.toml was not changed.`;
+}
+
 export const JSONC_APPEARED_MESSAGE =
   "supabase/config.jsonc appeared while config convert was running, so it was left as is and supabase/config.toml is unchanged. Check which file you want to keep; another conversion may have finished first.";
 
-export function jsonAppearedMessage(note: string): string {
-  return `supabase/config.json appeared while config convert was running, so supabase/config.toml was kept. ${note}`;
-}
-
 export const JSONC_REMOVED_NOTE =
   "Removed supabase/config.jsonc and kept supabase/config.toml; rerun the command to convert the current file.";
-
-export const JSONC_VANISHED_MESSAGE =
-  "supabase/config.jsonc was removed while config convert was running, so supabase/config.toml was kept; rerun the command to convert it.";
 
 export const JSONC_CHANGED_NOTE =
   "supabase/config.jsonc changed after config convert wrote it, so it was left as is alongside supabase/config.toml; supabase/config.jsonc takes precedence, so check which file you want to keep.";
@@ -65,8 +70,12 @@ export function jsoncRemovalFailureNote(cause: string): string {
   return `Could not remove the new supabase/config.jsonc (${cause}); it takes precedence over supabase/config.toml, so delete it before rerunning the command.`;
 }
 
-export function tomlRemovalFailureMessage(cause: string): string {
-  return `Wrote supabase/config.jsonc but could not remove supabase/config.toml: ${cause}. config.jsonc takes precedence; delete config.toml yourself.`;
+export function backupFailureMessage(backup: string, cause: string, note: string): string {
+  return `Could not move supabase/config.toml to ${backup}: ${cause}. ${note}`;
+}
+
+export function tomlChangedMessage(backup: string): string {
+  return `supabase/config.toml changed while config convert was running, so supabase/config.jsonc holds the earlier version. The latest config.toml is at ${backup}; to restore it, run: ${undoCommand(backup)}, then rerun the command.`;
 }
 
 function movedCommentsWarning(moved: ReadonlyArray<MovedTomlComment>): ReadonlyArray<string> {
@@ -83,12 +92,13 @@ function movedCommentsWarning(moved: ReadonlyArray<MovedTomlComment>): ReadonlyA
 
 export function convertWarnings(input: {
   readonly dryRun: boolean;
+  readonly backup: string;
   readonly moved: ReadonlyArray<MovedTomlComment>;
   readonly vscodeFailure: string | undefined;
 }): ReadonlyArray<string> {
   return [
     ...movedCommentsWarning(input.moved),
-    input.dryRun ? DRY_RUN_MIN_VERSION_WARNING : MIN_VERSION_WARNING,
+    minVersionWarning(input.dryRun, input.backup),
     ...(input.vscodeFailure === undefined ? [] : [vscodeFailureWarning(input.vscodeFailure)]),
   ];
 }
@@ -98,7 +108,6 @@ export interface ReportStyle {
   readonly bold: (text: string) => string;
   readonly dim: (text: string) => string;
   readonly green: (text: string) => string;
-  readonly red: (text: string) => string;
   readonly yellow: (text: string) => string;
   readonly blue: (text: string) => string;
   readonly code: (text: string) => string;
@@ -110,7 +119,6 @@ export const PLAIN_REPORT_STYLE: ReportStyle = {
   bold: plain,
   dim: plain,
   green: plain,
-  red: plain,
   yellow: plain,
   blue: plain,
   code: plain,
@@ -120,14 +128,17 @@ export const PLAIN_REPORT_STYLE: ReportStyle = {
 export function convertReport(
   input: {
     readonly dryRun: boolean;
+    readonly backup: string;
     readonly moved: ReadonlyArray<MovedTomlComment>;
     readonly vscodeUpdated: boolean;
     readonly vscodeFailure: string | undefined;
   },
   style: ReportStyle = PLAIN_REPORT_STYLE,
 ): string {
-  const { bold, dim, green, red, yellow, blue, code } = style;
+  const { bold, dim, green, yellow, blue, code } = style;
   const verb = (planned: string, done: string) => (input.dryRun ? planned : done);
+  const change = (marker: string, planned: string, done: string, target: string) =>
+    `    ${marker} ${verb(planned, done).padEnd(input.dryRun ? 6 : 7)}  ${target}`;
   const lines: Array<string> = input.dryRun
     ? [
         `${green("✓")} ${bold("Config conversion preview")}`,
@@ -138,12 +149,22 @@ export function convertReport(
   lines.push(
     "",
     `  ${bold(verb("Planned changes", "Changes"))}`,
-    `    ${green("+")} ${verb("Create", "Created")}  ${code("supabase/config.jsonc")}`,
-    `    ${red("-")} ${verb("Delete", "Deleted")}  ${code("supabase/config.toml")}`,
+    change(green("+"), "Create", "Created", code("supabase/config.jsonc")),
+    change(
+      blue(">"),
+      "Move",
+      "Moved",
+      `${code("supabase/config.toml")} ${dim("to")} ${code(input.backup)}`,
+    ),
   );
   if (input.vscodeUpdated) {
     lines.push(
-      `    ${yellow("~")} ${verb("Update", "Updated")}  ${code(".vscode/settings.json")} ${dim(`(trusts ${TRUSTED_DOMAIN})`)}`,
+      change(
+        yellow("~"),
+        "Update",
+        "Updated",
+        `${code(".vscode/settings.json")} ${dim(`(trusts ${TRUSTED_DOMAIN})`)}`,
+      ),
     );
   }
 
@@ -175,7 +196,7 @@ export function convertReport(
     ...COMPATIBILITY_LINES.map((line) => `    ${line}`),
     "",
     `  ${dim(verb("To undo after converting:", "To undo:"))}`,
-    `    ${code(UNDO_COMMAND)}`,
+    `    ${code(undoCommand(input.backup))}`,
     "",
   );
   return lines.join("\n");
@@ -183,6 +204,7 @@ export function convertReport(
 
 interface PayloadInput {
   readonly schema: string;
+  readonly backup: string;
   readonly moved: ReadonlyArray<MovedTomlComment>;
   readonly warnings: ReadonlyArray<string>;
 }
@@ -205,7 +227,7 @@ export function convertPayload(input: PayloadInput & { readonly vscodeUpdated: b
   return {
     ...payloadBase(input),
     converted: true,
-    removed: "supabase/config.toml",
+    backup: input.backup,
     vscode_settings_updated: input.vscodeUpdated,
   };
 }
@@ -217,7 +239,7 @@ export function dryRunPayload(
     ...payloadBase(input),
     converted: false,
     dry_run: true,
-    would_remove: "supabase/config.toml",
+    would_backup: input.backup,
     would_update_vscode_settings: input.vscodeWouldUpdate,
     content: input.content,
   };

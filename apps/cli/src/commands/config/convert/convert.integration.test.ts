@@ -16,15 +16,14 @@ import { renderCliConfigTemplate } from "../../../shared/init/project-init.templ
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { configConvert } from "./convert.handler.ts";
 import {
-  DRY_RUN_MIN_VERSION_WARNING,
   CONFIG_JSONC_MIN_CLI_VERSION,
   JSONC_APPEARED_MESSAGE,
-  JSONC_CHANGED_NOTE,
-  JSONC_VANISHED_MESSAGE,
-  MIN_VERSION_WARNING,
   JSONC_REMOVED_NOTE,
-  jsonAppearedMessage,
+  JSONC_SYMLINK_MESSAGE,
+  minVersionWarning,
   NOT_UTF8_MESSAGE,
+  TOML_SYMLINK_MESSAGE,
+  tomlChangedMessage,
 } from "./convert.format.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-convert-");
@@ -99,14 +98,7 @@ const denied = (method: string, pathOrDescriptor: string) =>
     pathOrDescriptor,
   });
 
-type FsFailure =
-  | "reread"
-  | "remove"
-  | "reread-and-jsonc-stuck"
-  | "jsonc-appears"
-  | "both-edited"
-  | "jsonc-removed"
-  | "json-appears";
+type FsFailure = "rename" | "rename-and-jsonc-stuck" | "jsonc-appears" | "toml-edited";
 
 const failingConfigTomlFsLayer = (failure: FsFailure) =>
   Layer.effect(
@@ -115,70 +107,29 @@ const failingConfigTomlFsLayer = (failure: FsFailure) =>
       const real = yield* FileSystem.FileSystem;
       const target = yield* configTomlPath;
       const jsonc = yield* projectPath("supabase", "config.jsonc");
-      const json = yield* projectPath("supabase", "config.json");
-      const rereadFails = failure === "reread" || failure === "reread-and-jsonc-stuck";
       return FileSystem.FileSystem.of({
         ...real,
         stat: (path) =>
           failure === "jsonc-appears" && path === target
             ? real.writeFileString(jsonc, "{}\n").pipe(Effect.andThen(real.stat(path)))
             : real.stat(path),
-        readFileString: (path, encoding) =>
-          failure === "json-appears" && path === target
-            ? real
-                .exists(jsonc)
-                .pipe(
-                  Effect.flatMap((written) =>
-                    written
-                      ? real
-                          .writeFileString(json, "{}\n")
-                          .pipe(Effect.andThen(real.readFileString(path, encoding)))
-                      : real.readFileString(path, encoding),
-                  ),
-                )
-            : failure === "jsonc-removed" && path === target
+        rename: (from, to) =>
+          from !== target
+            ? real.rename(from, to)
+            : failure === "toml-edited"
               ? real
-                  .exists(jsonc)
-                  .pipe(
-                    Effect.flatMap((written) =>
-                      written
-                        ? real
-                            .remove(jsonc)
-                            .pipe(Effect.andThen(real.readFileString(path, encoding)))
-                        : real.readFileString(path, encoding),
-                    ),
-                  )
-              : failure === "both-edited" && path === target
-                ? real
-                    .exists(jsonc)
-                    .pipe(
-                      Effect.flatMap((written) =>
-                        written
-                          ? real
-                              .writeFileString(jsonc, '{ "edited": true }\n')
-                              .pipe(Effect.as('project_id = "edited"\n'))
-                          : real.readFileString(path, encoding),
-                      ),
-                    )
-                : rereadFails && path === target
-                  ? real
-                      .exists(jsonc)
-                      .pipe(
-                        Effect.flatMap((written) =>
-                          written
-                            ? Effect.fail(denied("readFileString", path))
-                            : real.readFileString(path, encoding),
-                        ),
-                      )
-                  : real.readFileString(path, encoding),
+                  .writeFileString(target, EDITED_TOML)
+                  .pipe(Effect.andThen(real.rename(from, to)))
+              : Effect.fail(denied("rename", from)),
         remove: (path, options) =>
-          (failure === "remove" && path === target) ||
-          (failure === "reread-and-jsonc-stuck" && path === jsonc)
+          failure === "rename-and-jsonc-stuck" && path === jsonc
             ? Effect.fail(denied("remove", path))
             : real.remove(path, options),
       });
     }),
   );
+
+const EDITED_TOML = 'project_id = "edited"\n';
 
 const SIMPLE_TOML = `#:schema https://supabase.com/schemas/config/v1.json
 # project name
@@ -209,6 +160,7 @@ describe("config convert integration", () => {
         yield* run().pipe(Effect.provide(layer));
 
         expect(yield* exists("supabase", "config.toml")).toBe(false);
+        expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe(template);
         const jsonc = yield* readFile("supabase", "config.jsonc");
         const actualComments = jsonc
           .split("\n")
@@ -230,14 +182,14 @@ describe("config convert integration", () => {
           "",
           "  Changes",
           "    + Created  supabase/config.jsonc",
-          "    - Deleted  supabase/config.toml",
+          "    > Moved    supabase/config.toml to supabase/.temp/config.toml.bak",
           "",
           "  ⚠ Compatibility",
           "    Supabase CLI versions before 3.1.0 ignore config.jsonc and run with defaults.",
           "    Upgrade the Supabase CLI on every machine and CI job that uses this project.",
           "",
           "  To undo:",
-          "    git restore supabase/config.toml && rm supabase/config.jsonc",
+          "    mv supabase/.temp/config.toml.bak supabase/config.toml && rm supabase/config.jsonc",
           "",
         ]);
         expect(out.stderrText).toBe("");
@@ -507,7 +459,7 @@ describe("config convert integration", () => {
           "",
           "  Planned changes",
           "    + Create  supabase/config.jsonc",
-          "    - Delete  supabase/config.toml",
+          "    > Move    supabase/config.toml to supabase/.temp/config.toml.bak",
           "    ~ Update  .vscode/settings.json (trusts https://supabase.com/schemas/)",
         ].join("\n"),
       );
@@ -522,7 +474,9 @@ describe("config convert integration", () => {
 
       yield* run(true).pipe(Effect.provide(layer));
 
-      expect(out.stderrText).toContain("    - Delete  supabase/config.toml\n\n");
+      expect(out.stderrText).toContain(
+        "    > Move    supabase/config.toml to supabase/.temp/config.toml.bak\n\n",
+      );
       expect(out.stderrText).not.toContain(".vscode/settings.json");
     }).pipe(Effect.provide(BunServices.layer));
   });
@@ -543,12 +497,14 @@ describe("config convert integration", () => {
           data: expect.objectContaining({
             path: "supabase/config.jsonc",
             converted: true,
-            removed: "supabase/config.toml",
+            backup: "supabase/.temp/config.toml.bak",
             schema: "https://supabase.com/schemas/config/v1.json",
             moved_comments: [],
             vscode_settings_updated: false,
             min_cli_version: CONFIG_JSONC_MIN_CLI_VERSION,
-            warnings: expect.arrayContaining([MIN_VERSION_WARNING]),
+            warnings: expect.arrayContaining([
+              minVersionWarning(false, "supabase/.temp/config.toml.bak"),
+            ]),
           }),
         },
       ]);
@@ -568,13 +524,16 @@ describe("config convert integration", () => {
         type: "success",
         data: {
           dry_run: true,
-          would_remove: "supabase/config.toml",
+          would_backup: "supabase/.temp/config.toml.bak",
           would_update_vscode_settings: false,
           content: expect.stringContaining('"project_id": "demo"'),
-          warnings: expect.arrayContaining([DRY_RUN_MIN_VERSION_WARNING]),
+          warnings: expect.arrayContaining([
+            minVersionWarning(true, "supabase/.temp/config.toml.bak"),
+          ]),
         },
       });
-      expect(message?.data).not.toHaveProperty("removed");
+      expect(message?.data).not.toHaveProperty("backup");
+      expect(yield* exists("supabase", ".temp")).toBe(false);
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -608,38 +567,44 @@ describe("config convert integration", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("prints no conversion report when config.toml cannot be removed", () => {
+  it.effect("removes config.jsonc and keeps config.toml when config.toml cannot be moved", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
 
       const error = yield* run().pipe(
-        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("remove"), layer)),
+        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("rename"), layer)),
         Effect.flip,
       );
 
       expect(error._tag).toBe("ConfigConvertWriteError");
-      expect(error.message).toContain("could not remove supabase/config.toml");
-      expect(yield* exists("supabase", "config.jsonc")).toBe(true);
+      expect(error.message).toContain(
+        "Could not move supabase/config.toml to supabase/.temp/config.toml.bak",
+      );
+      expect(error.message).toContain(JSONC_REMOVED_NOTE);
+      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("maps a failed re-read of config.toml to a write error, not a changed file", () => {
+  it.effect("says config.jsonc remains when the rollback cannot remove it", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
 
       const error = yield* run().pipe(
-        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("reread"), layer)),
+        Effect.provide(
+          Layer.provideMerge(failingConfigTomlFsLayer("rename-and-jsonc-stuck"), layer),
+        ),
         Effect.flip,
       );
 
       expect(error._tag).toBe("ConfigConvertWriteError");
-      expect(error.message).toContain("Could not re-read supabase/config.toml");
-      expect(error.message).toContain("PermissionDenied");
+      expect(error.message).toContain("Could not remove the new supabase/config.jsonc");
+      expect(error.message).not.toContain(JSONC_REMOVED_NOTE);
+      expect(yield* exists("supabase", "config.jsonc")).toBe(true);
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -660,76 +625,65 @@ describe("config convert integration", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("keeps config.toml when config.jsonc is removed mid-run", () => {
+  it.effect("keeps a config.toml edited mid-run in the backup and says how to restore it", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
 
       const error = yield* run().pipe(
-        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("jsonc-removed"), layer)),
+        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("toml-edited"), layer)),
         Effect.flip,
       );
 
       expect(error._tag).toBe("ConfigConvertFileChangedError");
-      expect(error.message).toBe(JSONC_VANISHED_MESSAGE);
-      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
+      expect(error.message).toBe(tomlChangedMessage("supabase/.temp/config.toml.bak"));
+      expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe(EDITED_TOML);
+      expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("keeps config.toml and removes config.jsonc when config.json appears mid-run", () => {
-    const { layer, out } = setup();
+  it.effect("backs up to the next free name when a backup already exists", () => {
+    const { layer } = setup();
     return Effect.gen(function* () {
+      yield* writeFile(["supabase", ".temp", "config.toml.bak"], "old backup\n");
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
 
-      const error = yield* run().pipe(
-        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("json-appears"), layer)),
-        Effect.flip,
-      );
+      yield* run().pipe(Effect.provide(layer));
 
-      expect(error._tag).toBe("ConfigConvertFileChangedError");
-      expect(error.message).toBe(jsonAppearedMessage(JSONC_REMOVED_NOTE));
-      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-      expect(yield* readFile("supabase", "config.json")).toBe("{}\n");
+      expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe("old backup\n");
+      expect(yield* readFile("supabase", ".temp", "config.toml.2.bak")).toBe(SIMPLE_TOML);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("refuses a symlinked config.toml and leaves the link in place", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* writeFile(["shared", "real.toml"], SIMPLE_TOML);
+      yield* writeFile(["supabase", "placeholder"], "");
+      yield* fs.symlink("../shared/real.toml", yield* configTomlPath);
+
+      const error = yield* run().pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error._tag).toBe("ConfigConvertUnsupportedError");
+      expect(error.message).toBe(TOML_SYMLINK_MESSAGE);
+      expect(yield* fs.readLink(yield* configTomlPath)).toBe("../shared/real.toml");
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
-      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("keeps a config.jsonc edited mid-run instead of rolling it back", () => {
+  it.effect("refuses when config.jsonc is a dangling symlink", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+      yield* fs.symlink("nowhere.jsonc", yield* projectPath("supabase", "config.jsonc"));
 
-      const error = yield* run().pipe(
-        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("both-edited"), layer)),
-        Effect.flip,
-      );
+      const error = yield* run().pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error._tag).toBe("ConfigConvertFileChangedError");
-      expect(error.message).toContain(JSONC_CHANGED_NOTE);
-      expect(yield* readFile("supabase", "config.jsonc")).toBe('{ "edited": true }\n');
-      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("says config.jsonc remains when the rollback cannot remove it", () => {
-    const { layer } = setup();
-    return Effect.gen(function* () {
-      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
-
-      const error = yield* run().pipe(
-        Effect.provide(
-          Layer.provideMerge(failingConfigTomlFsLayer("reread-and-jsonc-stuck"), layer),
-        ),
-        Effect.flip,
-      );
-
-      expect(error._tag).toBe("ConfigConvertWriteError");
-      expect(error.message).toContain("Could not remove the new supabase/config.jsonc");
-      expect(error.message).not.toContain("Removed supabase/config.jsonc");
-      expect(yield* exists("supabase", "config.jsonc")).toBe(true);
+      expect(error._tag).toBe("ConfigConvertUnsupportedError");
+      expect(error.message).toBe(JSONC_SYMLINK_MESSAGE);
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
     }).pipe(Effect.provide(BunServices.layer));
   });

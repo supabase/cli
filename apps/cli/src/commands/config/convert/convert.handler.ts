@@ -14,7 +14,6 @@ import {
   type ColorStream,
   dim,
   green,
-  red,
   yellow,
 } from "../../../command-internal/colors.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -53,11 +52,13 @@ import {
   JSONC_APPEARED_MESSAGE,
   JSONC_CHANGED_NOTE,
   JSONC_REMOVED_NOTE,
-  JSONC_VANISHED_MESSAGE,
+  JSONC_SYMLINK_MESSAGE,
   NOT_UTF8_MESSAGE,
-  jsonAppearedMessage,
+  TOML_SYMLINK_MESSAGE,
+  backupFailureMessage,
   jsoncRemovalFailureNote,
-  tomlRemovalFailureMessage,
+  tomlChangedMessage,
+  writeFailureMessage,
 } from "./convert.format.ts";
 
 const trustSchemaDomainInVscode = Effect.fn("config.convert.vscode")(function* (
@@ -79,11 +80,58 @@ const trustSchemaDomainInVscode = Effect.fn("config.convert.vscode")(function* (
   return result;
 });
 
+const isSymlink = (fs: FileSystem.FileSystem, target: string) =>
+  fs.readLink(target).pipe(Effect.match({ onSuccess: () => true, onFailure: () => false }));
+
+const refuseSymlinks = Effect.fnUntraced(function* (tomlPath: string, jsoncPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (yield* isSymlink(fs, tomlPath)) {
+    return yield* new ConfigConvertUnsupportedError({ message: TOML_SYMLINK_MESSAGE });
+  }
+  if (yield* isSymlink(fs, jsoncPath)) {
+    return yield* new ConfigConvertUnsupportedError({ message: JSONC_SYMLINK_MESSAGE });
+  }
+});
+
+const freeBackupPath = Effect.fnUntraced(function* (tempDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (let attempt = 1; ; attempt++) {
+    const candidate = path.join(
+      tempDir,
+      attempt === 1 ? "config.toml.bak" : `config.toml.${attempt}.bak`,
+    );
+    const taken = yield* fs
+      .exists(candidate)
+      .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
+    if (!taken) {
+      return candidate;
+    }
+  }
+});
+
+const rollbackJsonc = Effect.fnUntraced(function* (jsoncPath: string, text: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(jsoncPath).pipe(
+    Effect.flatMap((written) =>
+      written === text
+        ? fs.remove(jsoncPath).pipe(Effect.as(JSONC_REMOVED_NOTE))
+        : Effect.succeed(JSONC_CHANGED_NOTE),
+    ),
+    Effect.catchTag("PlatformError", (cause) =>
+      Effect.succeed(
+        Predicate.isTagged(cause.reason, "NotFound")
+          ? JSONC_REMOVED_NOTE
+          : jsoncRemovalFailureNote(cause.message),
+      ),
+    ),
+  );
+});
+
 const reportStyle = (stream: ColorStream): ReportStyle => ({
   bold: (text) => bold(text, stream),
   dim: (text) => dim(text, stream),
   green: (text) => green(text, stream),
-  red: (text) => red(text, stream),
   yellow: (text) => yellow(text, stream),
   blue: (text) => blue(text, stream),
   code: (text) => aqua(text, stream),
@@ -169,20 +217,27 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       "config.moved_comment_count": outcome.movedComments.length,
     });
 
+    const jsoncPath = path.join(configDir, "config.jsonc");
+    yield* refuseSymlinks(parsed.path, jsoncPath);
+    const backupPath = yield* freeBackupPath(path.join(configDir, ".temp"));
+    const backup = `supabase/.temp/${path.basename(backupPath)}`;
+
     if (flags.dryRun) {
       const vscode = yield* trustSchemaDomainInVscode(cliSettings.workdir, true);
       const warnings = convertWarnings({
         dryRun: true,
+        backup,
         moved: outcome.movedComments,
         vscodeFailure: vscode.failure,
       });
-      const message = dryRunMessage(vscode.updated);
+      const message = dryRunMessage(vscode.updated, backup);
       if (output.format === "text") {
         yield* output.raw(outcome.text);
         yield* output.raw(
           `\n${convertReport(
             {
               dryRun: true,
+              backup,
               moved: outcome.movedComments,
               vscodeUpdated: vscode.updated,
               vscodeFailure: vscode.failure,
@@ -196,6 +251,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
           message,
           dryRunPayload({
             schema: outcome.schemaRef,
+            backup,
             moved: outcome.movedComments,
             vscodeWouldUpdate: vscode.updated,
             warnings,
@@ -206,7 +262,6 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       return;
     }
 
-    const jsoncPath = path.join(configDir, "config.jsonc");
     yield* Effect.gen(function* () {
       const tomlMode = yield* fs.stat(parsed.path).pipe(
         Effect.map((info) => info.mode & 0o7777),
@@ -220,80 +275,30 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       const created = yield* createCliConfigDocumentText(jsoncPath, outcome.text, tomlMode).pipe(
         Effect.catchTag(
           "CliConfigWriteError",
-          (cause) => new ConfigConvertWriteError({ message: cause.message }),
+          (cause) => new ConfigConvertWriteError({ message: writeFailureMessage(cause.message) }),
         ),
       );
       if (!created) {
         return yield* new ConfigConvertFileChangedError({ message: JSONC_APPEARED_MESSAGE });
       }
-      const rollback = fs.readFileString(jsoncPath).pipe(
-        Effect.flatMap((written) =>
-          written === outcome.text
-            ? fs.remove(jsoncPath).pipe(Effect.as(JSONC_REMOVED_NOTE))
-            : Effect.succeed(JSONC_CHANGED_NOTE),
-        ),
+      yield* fs.makeDirectory(path.dirname(backupPath), { recursive: true }).pipe(
+        Effect.andThen(fs.rename(parsed.path, backupPath)),
         Effect.catchTag("PlatformError", (cause) =>
-          Effect.succeed(
-            Predicate.isTagged(cause.reason, "NotFound")
-              ? JSONC_REMOVED_NOTE
-              : jsoncRemovalFailureNote(cause.message),
-          ),
-        ),
-      );
-      const current = yield* fs.readFileString(parsed.path).pipe(
-        Effect.catchTag("PlatformError", (cause) =>
-          Effect.flatMap(rollback, (note) =>
+          Effect.flatMap(rollbackJsonc(jsoncPath, outcome.text), (note) =>
             Effect.fail(
               new ConfigConvertWriteError({
-                message: `Could not re-read supabase/config.toml to confirm it is unchanged: ${cause.message}. ${note}`,
+                message: backupFailureMessage(backup, cause.message, note),
               }),
             ),
           ),
         ),
       );
-      if (current !== parsed.rawText) {
-        const note = yield* rollback;
-        return yield* new ConfigConvertFileChangedError({
-          message: `supabase/config.toml changed on disk while config convert was running. ${note}`,
-        });
+      const moved = yield* fs
+        .readFileString(backupPath)
+        .pipe(Effect.catchTag("PlatformError", () => Effect.void));
+      if (moved !== parsed.rawText) {
+        return yield* new ConfigConvertFileChangedError({ message: tomlChangedMessage(backup) });
       }
-      const jsonAppeared = yield* fs.exists(path.join(configDir, "config.json")).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigConvertWriteError({
-              message: `Could not check for supabase/config.json: ${cause.message}. supabase/config.toml was kept.`,
-            }),
-        ),
-      );
-      if (jsonAppeared) {
-        return yield* new ConfigConvertFileChangedError({
-          message: jsonAppearedMessage(yield* rollback),
-        });
-      }
-      const published = yield* fs.readFileString(jsoncPath).pipe(
-        Effect.catchTag("PlatformError", (cause) =>
-          Predicate.isTagged(cause.reason, "NotFound")
-            ? Effect.void
-            : Effect.fail(
-                new ConfigConvertWriteError({
-                  message: `Could not re-read supabase/config.jsonc to confirm it is intact: ${cause.message}. supabase/config.toml was kept.`,
-                }),
-              ),
-        ),
-      );
-      if (published !== outcome.text) {
-        return yield* new ConfigConvertFileChangedError({
-          message: published === undefined ? JSONC_VANISHED_MESSAGE : JSONC_CHANGED_NOTE,
-        });
-      }
-      yield* fs
-        .remove(parsed.path)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ConfigConvertWriteError({ message: tomlRemovalFailureMessage(cause.message) }),
-          ),
-        );
     }).pipe(Effect.withSpan("config.convert.write"));
 
     const vscode = yield* trustSchemaDomainInVscode(cliSettings.workdir, false);
@@ -303,6 +308,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
         convertReport(
           {
             dryRun: false,
+            backup,
             moved: outcome.movedComments,
             vscodeUpdated: vscode.updated,
             vscodeFailure: vscode.failure,
@@ -315,10 +321,12 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
         CONVERTED_MESSAGE,
         convertPayload({
           schema: outcome.schemaRef,
+          backup,
           moved: outcome.movedComments,
           vscodeUpdated: vscode.updated,
           warnings: convertWarnings({
             dryRun: false,
+            backup,
             moved: outcome.movedComments,
             vscodeFailure: vscode.failure,
           }),

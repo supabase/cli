@@ -17,6 +17,7 @@ describe("convert format", () => {
   it("lists relocated comments and a VS Code failure in the report", () => {
     const report = convertReport({
       dryRun: true,
+      backup: "supabase/.temp/config.toml.bak",
       moved: [
         { line: 3, text: "# a", anchor: ["api", "schemas"] },
         { line: 7, text: "# b", anchor: ["auth", "x"] },
@@ -42,8 +43,21 @@ describe("convert format", () => {
   it("styles headings, markers and paths through the given style", () => {
     const tag = (name: string) => (text: string) => `<${name}>${text}</${name}>`;
     const report = convertReport(
-      { dryRun: false, moved: [], vscodeUpdated: false, vscodeFailure: undefined },
-      { ...PLAIN_REPORT_STYLE, green: tag("g"), red: tag("r"), code: tag("c"), bold: tag("b") },
+      {
+        dryRun: false,
+        backup: "supabase/.temp/config.toml.bak",
+        moved: [],
+        vscodeUpdated: false,
+        vscodeFailure: undefined,
+      },
+      {
+        ...PLAIN_REPORT_STYLE,
+        green: tag("g"),
+        blue: tag("u"),
+        code: tag("c"),
+        bold: tag("b"),
+        dim: tag("d"),
+      },
     );
 
     expect(report.split("\n").slice(0, 5)).toEqual([
@@ -51,7 +65,7 @@ describe("convert format", () => {
       "",
       "  <b>Changes</b>",
       "    <g>+</g> Created  <c>supabase/config.jsonc</c>",
-      "    <r>-</r> Deleted  <c>supabase/config.toml</c>",
+      "    <u>></u> Moved    <c>supabase/config.toml</c> <d>to</d> <c>supabase/.temp/config.toml.bak</c>",
     ]);
   });
 });

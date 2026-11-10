@@ -5,18 +5,18 @@
 | Path                                | Format     | When                                                                                                                       |
 | ----------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.json[c]` | JSON/JSONC | always; parsed with the removed-key checks to detect a project already on JSON (no `.env*` file and no `[remotes.*]` read) |
-| `<workdir>/supabase/config.toml`    | TOML       | always; must be valid UTF-8; re-read after the write to detect a concurrent edit                                           |
+| `<workdir>/supabase/config.toml`    | TOML       | always; must be valid UTF-8; the backup is re-read after the move to detect a concurrent edit                              |
 | `<workdir>/.vscode/settings.json`   | JSONC      | only when it already exists; after the write, or with `--dry-run` to preview the change                                    |
 | `~/.supabase/telemetry.json`        | JSON       | always (telemetry state)                                                                                                   |
 
 ## Files Written
 
-| Path                              | Format | When                                                                                                                                        |
-| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then hard link (exclusive create without hard links), never replacing an existing file; mode of `config.toml` |
-| `<workdir>/supabase/config.toml`  | —      | deleted after `config.jsonc` is written; kept when conversion is refused or either file changed on disk                                     |
-| `<workdir>/.vscode/settings.json` | JSONC  | only when it already exists; after the write, or with `--dry-run` to preview the change                                                     |
-| `~/.supabase/telemetry.json`      | JSON   | always (telemetry state)                                                                                                                    |
+| Path                              | Format | When                                                                                                                                             |
+| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then hard link (exclusive create without hard links), never replacing an existing file; mode of `config.toml`      |
+| `<workdir>/supabase/config.toml`  | —      | moved to `supabase/.temp/config.toml.bak` (or the first free `config.toml.N.bak`) after `config.jsonc` is written; `.temp` is created if missing |
+| `<workdir>/.vscode/settings.json` | JSONC  | only when it already exists; after the write, or with `--dry-run` to preview the change                                                          |
+| `~/.supabase/telemetry.json`      | JSON   | always (telemetry state)                                                                                                                         |
 
 ## API Routes
 
@@ -33,20 +33,20 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | converted (or `--dry-run` printed the document); warnings never change the exit code                                                                                                                                 |
-| `0`  | only `config.json[c]` exists: nothing to convert, nothing written                                                                                                                                                    |
-| `1`  | `-o/--output` passed                                                                                                                                                                                                 |
-| `1`  | `--workdir` is not a directory                                                                                                                                                                                       |
-| `1`  | no project config found, or it cannot be parsed (including malformed JSON or removed keys in `config.json[c]`)                                                                                                       |
-| `1`  | `config.json` and `config.jsonc` both exist                                                                                                                                                                          |
-| `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                                                                                |
-| `1`  | conversion refused (not valid UTF-8, a TOML date, a non-finite float, failed re-parse check)                                                                                                                         |
-| `1`  | `config.toml` changed, or `config.jsonc` or `config.json` appeared, while the command ran; an existing `config.jsonc` is never replaced, and the new one is removed only while it still holds what the command wrote |
-| `1`  | `config.toml` could not be re-read after the write; the new `config.jsonc` is removed                                                                                                                                |
-| `1`  | `config.jsonc` was removed, changed, or could not be re-read before `config.toml` was deleted; `config.toml` is kept                                                                                                 |
-| `1`  | `config.jsonc` could not be written, or `config.toml` could not be removed afterwards                                                                                                                                |
+| Code | Condition                                                                                                                                                |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | converted (or `--dry-run` printed the document); warnings never change the exit code                                                                     |
+| `0`  | only `config.json[c]` exists: nothing to convert, nothing written                                                                                        |
+| `1`  | `-o/--output` passed                                                                                                                                     |
+| `1`  | `--workdir` is not a directory                                                                                                                           |
+| `1`  | no project config found, or it cannot be parsed (including malformed JSON or removed keys in `config.json[c]`)                                           |
+| `1`  | `config.json` and `config.jsonc` both exist                                                                                                              |
+| `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                    |
+| `1`  | conversion refused (not valid UTF-8, a TOML date, a non-finite float, failed re-parse check)                                                             |
+| `1`  | `config.toml` is a symbolic link, or `config.jsonc` is a dangling symbolic link; nothing is written                                                      |
+| `1`  | `config.jsonc` could not be written, or appeared while the command ran; an existing `config.jsonc` is never replaced and `config.toml` is kept           |
+| `1`  | `config.toml` could not be moved to the backup; the new `config.jsonc` is removed while it still holds what the command wrote, and `config.toml` is kept |
+| `1`  | `config.toml` changed while the command ran; the backup holds the latest version and the message gives the restore command                               |
 
 ## Output
 
@@ -59,7 +59,7 @@ stdout is one report, printed after the files are written (colour only on a TTY,
 
   Changes
     + Created  supabase/config.jsonc
-    - Deleted  supabase/config.toml
+    > Moved    supabase/config.toml to supabase/.temp/config.toml.bak
     ~ Updated  .vscode/settings.json (trusts https://supabase.com/schemas/)
 
   ℹ 1 comment relocated
@@ -75,22 +75,22 @@ stdout is one report, printed after the files are written (colour only on a TTY,
     Upgrade the Supabase CLI on every machine and CI job that uses this project.
 
   To undo:
-    git restore supabase/config.toml && rm supabase/config.jsonc
+    mv supabase/.temp/config.toml.bak supabase/config.toml && rm supabase/config.jsonc
 ```
 
 The `~ Updated` line appears only when the settings changed, the `ℹ` section only for comments in nested arrays or inline tables (`N comments relocated` when more than one), and the VS Code warning only when the settings file cannot be parsed, written, or edited without dropping its comments. A failed write prints no report.
 
 With only `config.json[c]` present, stdout is `supabase/config.jsonc is already the project config; nothing to convert.` (naming the actual file).
 
-With `--dry-run`, stdout is the converted JSONC only; stderr gets a blank line and the same report headed `✓ Config conversion preview` / `  Dry run. No files were changed.`, with `Planned changes`, `Create`/`Delete`/`Update`, and `To undo after converting:`.
+With `--dry-run`, stdout is the converted JSONC only; stderr gets a blank line and the same report headed `✓ Config conversion preview` / `  Dry run. No files were changed.`, with `Planned changes`, `Create`/`Move`/`Update`, and `To undo after converting:`.
 
 ### `--output-format json`
 
 `output.success("Converted supabase/config.toml to supabase/config.jsonc.", payload)` with
-`path`, `converted: true`, `removed`, `schema`, `moved_comments[{line,key,text}]`,
+`path`, `converted: true`, `backup` (the backup path), `schema`, `moved_comments[{line,key,text}]`,
 `vscode_settings_updated`, `min_cli_version`, `warnings[]`. With `--dry-run` the message is the
-dry-run line, `converted: false`, `dry_run: true` and `content` carry the document, `would_remove` and
-`would_update_vscode_settings` replace `removed` and `vscode_settings_updated`, the compatibility
+dry-run line, `converted: false`, `dry_run: true` and `content` carry the document, `would_backup` and
+`would_update_vscode_settings` replace `backup` and `vscode_settings_updated`, the compatibility
 warning says `To undo after converting, run:`, and nothing is written. With only `config.json[c]` present the payload is `{ converted: false, path }`. Warnings
 appear only in `warnings`.
 
@@ -101,6 +101,8 @@ Same structured result as `json`, delivered as an NDJSON `result` event.
 ## Notes
 
 - The only flag is `--dry-run`; there is no confirmation prompt and no `--force`.
+- Nothing is deleted: `config.toml` is renamed into `supabase/.temp/`, which `supabase init` adds to `supabase/.gitignore`. The undo command and backup path name the backup actually used.
+- Assumes no other process edits `supabase/` while it runs; it detects a changed `config.toml` or a `config.jsonc` that appears, but does not lock.
 - The conversion parses `config.toml` only (no env resolution, no schema decode), so the JSONC
   document carries the same raw values. The result is re-parsed and compared before anything is
   written.
