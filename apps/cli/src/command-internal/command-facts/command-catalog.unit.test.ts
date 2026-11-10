@@ -15,7 +15,7 @@ describe("commandCatalog", () => {
   });
 
   it.effect(
-    "describes branches delete with its output schema, traits and declared global flags",
+    "describes branches delete with its output schema and declared global flags",
     () =>
       Effect.gen(function* () {
         const catalog = yield* commandCatalog(rootCommand);
@@ -29,7 +29,6 @@ describe("commandCatalog", () => {
           "workdir",
           "yes",
         ]);
-        expect(entry?.traits).toEqual({ readonly: false, destructive: true });
         expect(entry?.facts["supabase/TargetPolicyAnnotation"]).toEqual({
           checked: ["runtime", "compiler"],
           value: { group: "hosted", consent: "no" },

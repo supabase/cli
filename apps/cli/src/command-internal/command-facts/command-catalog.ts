@@ -1,11 +1,9 @@
-import { operationPermissions } from "@supabase/api/permissions";
 import { Context, Effect, Option } from "effect";
 import type { Command } from "effect/cli";
 
 import { commandInternals, flattenSubcommands } from "../../docs/docs-introspection.ts";
 import { docsFlagDoc } from "../../docs/docs-spec.ts";
 import type { DocsFlag } from "../../docs/docs-spec.ts";
-import { readPermissions } from "../command-permissions/command-permissions.annotation.ts";
 import type { FactCheck } from "./command-fact.ts";
 import { COMMAND_FACTS } from "./command-facts.registry.ts";
 import { GlobalFlagsReadAnnotation } from "./with-global-flags-read.ts";
@@ -14,12 +12,6 @@ import { GlobalFlagsReadAnnotation } from "./with-global-flags-read.ts";
 interface CatalogFact {
   readonly checked: ReadonlyArray<FactCheck>;
   readonly value: unknown;
-}
-
-/** Agent-facing traits with the names `effect/ai/Tool` uses for its annotations. */
-interface CatalogTraits {
-  readonly readonly: boolean;
-  readonly destructive: boolean;
 }
 
 /** A command's public surface: Effect's own fields plus every registered fact present on it. */
@@ -32,32 +24,8 @@ export interface CatalogEntry {
   readonly flags: ReadonlyArray<DocsFlag>;
   /** Global flags declared with `withGlobalFlagsRead`; undefined for commands that haven't adopted it. */
   readonly globalFlags: ReadonlyArray<string> | undefined;
-  readonly traits: CatalogTraits | undefined;
   readonly facts: Readonly<Record<string, CatalogFact>>;
 }
-
-/**
- * Derives `Tool.Readonly` and `Tool.Destructive` from declared permissions: read-only when every
- * operation's OAuth scope is a read scope, destructive when a required operation needs a delete
- * permission. Undefined for commands without mapped permissions.
- */
-const traitsOf = (command: Command.Command.Any): CatalogTraits | undefined => {
-  const permissions = Option.getOrUndefined(readPermissions(command));
-  if (permissions === undefined || permissions.status !== "mapped") return undefined;
-  const scopes = permissions.operations.map(
-    (entry) => operationPermissions[entry.operationId]?.oauthScope,
-  );
-  return {
-    readonly: scopes.every((scope) => scope?.endsWith(":read") === true),
-    destructive: permissions.operations.some(
-      (entry) =>
-        entry.kind === "required" &&
-        (operationPermissions[entry.operationId]?.fga ?? []).some((set) =>
-          set.some((permission) => permission.endsWith("_delete")),
-        ),
-    ),
-  };
-};
 
 const entryFor = Effect.fnUntraced(function* (
   command: Command.Command.Any,
@@ -81,7 +49,6 @@ const entryFor = Effect.fnUntraced(function* (
         ids.toSorted(),
       ),
     ),
-    traits: traitsOf(command),
     facts,
   } satisfies CatalogEntry;
 });
