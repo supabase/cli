@@ -46,9 +46,6 @@ jobs:
           - v3
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
-    # Only set on fallback; an empty value from another matrix leg doesn't overwrite it.
-    outputs:
-      npm_fallback: ${{ steps.npm-source.outputs.fallback }}
     env:
       VERSION: ${{ inputs.version }}
     steps:
@@ -96,7 +93,7 @@ jobs:
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
-      - name: Verify setup-cli installed from npm
+      - name: Warn if setup-cli fell back from npm
         id: npm-source
         if: matrix.major-version == 'v3'
         shell: bash
@@ -106,8 +103,15 @@ jobs:
           set -euo pipefail
           if [ "${INSTALL_SOURCE}" != "npm" ]; then
             echo "::warning::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
+            echo "${INSTALL_SOURCE}" > npm-fallback.txt
             echo "fallback=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Record the npm fallback
+        if: steps.npm-source.outputs.fallback == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-fallback-v3-${{ matrix.runner }}
+          path: npm-fallback.txt
 
   # A separate job because GitHub Actions only honours `container:` on Linux runners, and mixing
   # container + non-container entries in one matrix is fragile when the value is empty. The
@@ -124,8 +128,6 @@ jobs:
           - v3
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    outputs:
-      npm_fallback: ${{ steps.npm-source.outputs.fallback }}
     # `node:20-alpine` ships a musl-linked Node, required for JavaScript-based actions to launch
     # here — the runner's mounted glibc Node won't execute inside an Alpine container.
     container:
@@ -182,7 +184,7 @@ jobs:
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
-      - name: Verify setup-cli installed from npm
+      - name: Warn if setup-cli fell back from npm
         id: npm-source
         if: matrix.major-version == 'v3'
         shell: bash
@@ -192,8 +194,15 @@ jobs:
           set -euo pipefail
           if [ "${INSTALL_SOURCE}" != "npm" ]; then
             echo "::warning::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
+            echo "${INSTALL_SOURCE}" > npm-fallback.txt
             echo "fallback=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Record the npm fallback
+        if: steps.npm-source.outputs.fallback == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-fallback-v3-alpine
+          path: npm-fallback.txt
 
   setup-cli-smoke-test-github-release:
     name: setup-cli v3 GitHub release fallback (ubuntu-latest)
@@ -240,7 +249,18 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      actions: read
     outputs:
-      npm_fallback: ${{ needs.setup-cli-smoke-test.outputs.npm_fallback == 'true' || needs.setup-cli-smoke-test-alpine.outputs.npm_fallback == 'true' }}
+      npm_fallback: ${{ steps.fallbacks.outputs.npm_fallback }}
     steps:
-      - run: echo "npm fallback recorded; see the install job annotations"
+      - id: fallbacks
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          count="$(gh api --paginate "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[].name' | grep -c '^npm-fallback-' || true)"
+          echo "npm_fallback=$([ "${count}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
