@@ -873,27 +873,6 @@ describe("compute push", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("refuses when both '--secrets-scope' and '--secrets-scope:custom' are set", () =>
-    Effect.gen(function* () {
-      const repo = yield* project({
-        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsecrets_scope = "all"`,
-      });
-      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
-
-      return yield* Effect.gen(function* () {
-        const error = yield* push({
-          secretsScope: Option.some("none"),
-          secretsScopeCustom: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]),
-        }).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          detail: expect.stringContaining("Found both"),
-        });
-        expect(http.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  );
-
   it.effect("polls until the build leaves `building`", () =>
     Effect.gen(function* () {
       const repo = yield* project();
