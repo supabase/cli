@@ -401,14 +401,56 @@ function continueBlock(block: OpenBlock, lines: ReadonlyArray<CommentLine>, at: 
     block.node.own.push(...lines.map(toCommentedLine));
     return;
   }
+  if (block.kind === "table") {
+    placeResolved(block.host, [], lines, at, true);
+    return;
+  }
   block.host.placed.push({
     at,
-    source:
-      block.kind === "table"
-        ? lines.map(toCommentedLine)
-        : lines.map((line) => ({ kind: "prose", text: toJsoncComment(line.raw) })),
+    source: lines.map((line) => proseLine(toJsoncComment(line.raw))),
     blankBefore: true,
   });
+}
+
+/** Places commented lines in `table`, moving each dotted key to the deepest existing table on its
+ * path; prose travels with the key below it. Returns the block placed in `table` itself. */
+function placeResolved(
+  table: CommentHost,
+  lead: ReadonlyArray<CommentedLine>,
+  lines: ReadonlyArray<CommentLine>,
+  at: number,
+  blankBefore: boolean,
+): PlacedComment | undefined {
+  const byHost = new Map<CommentHost, Array<CommentedLine>>([[table, [...lead]]]);
+  let lastHost = table;
+  let prose: Array<CommentedLine> = [];
+  for (const line of lines) {
+    if (line.kind !== "kv") {
+      prose.push(toCommentedLine(line));
+      continue;
+    }
+    const { host, path } = deepestTable(table, line.path);
+    byHost.set(host, [
+      ...(byHost.get(host) ?? []),
+      ...prose,
+      { kind: "kv", path, value: line.value },
+    ]);
+    lastHost = host;
+    prose = [];
+  }
+  byHost.get(lastHost)?.push(...prose);
+  let own: PlacedComment | undefined;
+  for (const [host, source] of byHost) {
+    if (source.length === 0) {
+      continue;
+    }
+    const block = { at, source, blankBefore: host === table && blankBefore };
+    host.placed.push(block);
+    if (host === table) {
+      own = block;
+    }
+  }
+  return own;
 }
 
 function placeBlock(
@@ -436,15 +478,15 @@ function placeBlock(
     depth++;
   }
   const leadText = lead.map((line) => toJsoncComment(line.raw));
-  const own = body.map(toCommentedLine);
   const stored = lead.length + body.length + 1;
   if (depth === header.path.length) {
     if (header.isArray || !hasKeys) {
       return { stored: 0 };
     }
-    table.placed.push({ at, source: [...leadText.map(proseLine), ...own], blankBefore: true });
+    placeResolved(table, leadText.map(proseLine), body, at, true);
     return { stored, open: { kind: "table", host: table } };
   }
+  const own = body.map(toCommentedLine);
   const node = mergeCommented(
     table.forest,
     header.path.slice(depth),
@@ -511,30 +553,7 @@ export function translateGroup(
       pending: leading.slice(taken),
     });
   }
-  const byHost = new Map<CommentHost, Array<CommentedLine>>();
-  let prose: Array<CommentedLine> = [];
-  for (const line of leading.slice(0, kept)) {
-    if (line.kind !== "kv") {
-      prose.push(toCommentedLine(line));
-      continue;
-    }
-    const { host, path } = deepestTable(effective, line.path);
-    byHost.set(host, [
-      ...(byHost.get(host) ?? []),
-      ...prose,
-      { kind: "kv", path, value: line.value },
-    ]);
-    prose = [];
-  }
-  let keyed: PlacedComment | undefined;
-  for (const [host, lines] of byHost) {
-    if (host === effective) {
-      keyed = { at: first, source: lines, blankBefore: options.blankBefore };
-      effective.placed.push(keyed);
-    } else {
-      host.placed.push({ at: first, source: lines, blankBefore: false });
-    }
-  }
+  const keyed = placeResolved(effective, [], leading.slice(0, kept), first, options.blankBefore);
   const pending = leading.slice(kept);
   if (headerAt < 0) {
     const tail = pending.map((line) => toJsoncComment(line.raw));

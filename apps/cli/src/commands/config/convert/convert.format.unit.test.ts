@@ -20,21 +20,27 @@ describe("convert format", () => {
   });
 
   it("quotes project roots the shell would split in the undo command", () => {
-    expect(undoCommand("../my app", "supabase/.temp/config.toml.bak", "posix")).toBe(
-      "mv '../my app/supabase/.temp/config.toml.bak' '../my app/supabase/config.toml' && rm '../my app/supabase/config.jsonc'",
+    expect(undoCommand("../my app", "supabase/config.toml.bak", "posix")).toBe(
+      "mv -- '../my app/supabase/config.toml.bak' '../my app/supabase/config.toml' && rm -- '../my app/supabase/config.jsonc'",
+    );
+  });
+
+  it("ends mv and rm options before a project root that starts with a dash", () => {
+    expect(undoCommand("-demo", "supabase/config.toml.bak", "posix")).toBe(
+      "mv -- -demo/supabase/config.toml.bak -demo/supabase/config.toml && rm -- -demo/supabase/config.jsonc",
     );
   });
 
   it("renders a PowerShell undo that removes config.jsonc only after the move succeeds", () => {
-    expect(undoCommand("", "supabase/.temp/config.toml.bak", "windows")).toBe(
-      "Move-Item -LiteralPath supabase/.temp/config.toml.bak -Destination supabase/config.toml; if ($?) { Remove-Item -LiteralPath supabase/config.jsonc }",
+    expect(undoCommand("", "supabase/config.toml.bak", "windows")).toBe(
+      "Move-Item -LiteralPath supabase/config.toml.bak -Destination supabase/config.toml; if ($?) { Remove-Item -LiteralPath supabase/config.jsonc }",
     );
   });
 
   it("lists relocated comments and a VS Code failure in the report", () => {
     const report = convertReport({
       dryRun: true,
-      backup: "supabase/.temp/config.toml.bak",
+      backup: "supabase/config.toml.bak",
       undo: "mv a b",
       moved: [
         { line: 3, text: "# a", anchor: ["api", "schemas"] },
@@ -63,7 +69,7 @@ describe("convert format", () => {
     const report = convertReport(
       {
         dryRun: false,
-        backup: "supabase/.temp/config.toml.bak",
+        backup: "supabase/config.toml.bak",
         undo: "mv a b",
         moved: [],
         vscodeUpdated: false,
@@ -84,7 +90,7 @@ describe("convert format", () => {
       "",
       "  <b>Changes</b>",
       "    <g>+</g> Created  <c>supabase/config.jsonc</c>",
-      "    <u>></u> Moved    <c>supabase/config.toml</c> <d>to</d> <c>supabase/.temp/config.toml.bak</c>",
+      "    <u>></u> Moved    <c>supabase/config.toml</c> <d>to</d> <c>supabase/config.toml.bak</c>",
     ]);
   });
 });

@@ -25,7 +25,7 @@ export function undoCommand(root: string, backup: string, platform: ShellPlatfor
   const at = (file: string) => shellQuoteArgument(root === "" ? file : `${root}/${file}`, platform);
   return platform === "windows"
     ? `Move-Item -LiteralPath ${at(backup)} -Destination ${at("supabase/config.toml")}; if ($?) { Remove-Item -LiteralPath ${at("supabase/config.jsonc")} }`
-    : `mv ${at(backup)} ${at("supabase/config.toml")} && rm ${at("supabase/config.jsonc")}`;
+    : `mv -- ${at(backup)} ${at("supabase/config.toml")} && rm -- ${at("supabase/config.jsonc")}`;
 }
 
 const COMPATIBILITY_LINES = [
@@ -56,9 +56,6 @@ export const NOT_UTF8_MESSAGE =
 export const TOML_SYMLINK_MESSAGE =
   "cannot convert supabase/config.toml: it is a symbolic link, and converting it would leave the file it points to behind. Replace the link with the file itself, then rerun the command. supabase/config.toml was not changed.";
 
-export const TEMP_SYMLINK_MESSAGE =
-  "cannot convert supabase/config.toml: supabase/.temp is a symbolic link, and the backup of config.toml must stay inside the project. Replace the link with a directory, then rerun the command. supabase/config.toml was not changed.";
-
 export const JSONC_SYMLINK_MESSAGE =
   "supabase/config.jsonc is a symbolic link to a file that does not exist. Remove it, then rerun the command. supabase/config.toml was not changed.";
 
@@ -80,7 +77,7 @@ export function jsoncRemovalFailureNote(cause: string): string {
 }
 
 export function backupCheckFailureMessage(cause: string): string {
-  return `Could not check for an existing backup in supabase/.temp: ${cause}. supabase/config.toml was not changed.`;
+  return `Could not check for an existing backup of supabase/config.toml: ${cause}. supabase/config.toml was not changed.`;
 }
 
 export function backupUnverifiedMessage(backup: string, cause: string, undo: string): string {

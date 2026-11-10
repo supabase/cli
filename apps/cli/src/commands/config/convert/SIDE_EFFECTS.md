@@ -11,12 +11,12 @@
 
 ## Files Written
 
-| Path                              | Format | When                                                                                                                                             |
-| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then hard link (exclusive create without hard links), never replacing an existing file; mode of `config.toml`      |
-| `<workdir>/supabase/config.toml`  | —      | moved to `supabase/.temp/config.toml.bak` (or the first free `config.toml.N.bak`) after `config.jsonc` is written; `.temp` is created if missing |
-| `<workdir>/.vscode/settings.json` | JSONC  | only when it already exists; after the write, or with `--dry-run` to preview the change                                                          |
-| `~/.supabase/telemetry.json`      | JSON   | always (telemetry state)                                                                                                                         |
+| Path                              | Format | When                                                                                                                                        |
+| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.jsonc` | JSONC  | unless `--dry-run`; temp file then hard link (exclusive create without hard links), never replacing an existing file; mode of `config.toml` |
+| `<workdir>/supabase/config.toml`  | —      | moved to `supabase/config.toml.bak` (or the first free `config.toml.N.bak`) after `config.jsonc` is written                                 |
+| `<workdir>/.vscode/settings.json` | JSONC  | only when it already exists; after the write, or with `--dry-run` to preview the change                                                     |
+| `~/.supabase/telemetry.json`      | JSON   | always (telemetry state)                                                                                                                    |
 
 ## API Routes
 
@@ -43,7 +43,7 @@
 | `1`  | `config.json` and `config.jsonc` both exist                                                                                                                                                  |
 | `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                                                        |
 | `1`  | conversion refused (not valid UTF-8, a TOML date, a non-finite float, failed re-parse check)                                                                                                 |
-| `1`  | `config.toml` or `supabase/.temp` is a symbolic link, or `config.jsonc` is a dangling symbolic link; nothing is written                                                                      |
+| `1`  | `config.toml` is a symbolic link, or `config.jsonc` is a dangling symbolic link; nothing is written                                                                                          |
 | `1`  | `config.jsonc` could not be written, or appeared while the command ran; an existing `config.jsonc` is never replaced and `config.toml` is kept                                               |
 | `1`  | `config.toml` could not be moved to the backup; the new `config.jsonc` is removed while it still holds what the command wrote, and `config.toml` is kept                                     |
 | `1`  | `config.toml` changed while the command ran; the backup holds the latest version and the message gives the restore command                                                                   |
@@ -60,7 +60,7 @@ stdout is one report, printed after the files are written (colour only on a TTY,
 
   Changes
     + Created  supabase/config.jsonc
-    > Moved    supabase/config.toml to supabase/.temp/config.toml.bak
+    > Moved    supabase/config.toml to supabase/config.toml.bak
     ~ Updated  .vscode/settings.json (trusts https://supabase.com/schemas/)
 
   ℹ 1 comment relocated
@@ -76,7 +76,7 @@ stdout is one report, printed after the files are written (colour only on a TTY,
     Upgrade the Supabase CLI on every machine and CI job that uses this project.
 
   To undo:
-    mv supabase/.temp/config.toml.bak supabase/config.toml && rm supabase/config.jsonc
+    mv -- supabase/config.toml.bak supabase/config.toml && rm -- supabase/config.jsonc
 ```
 
 The `~ Updated` line appears only when the settings changed, the `ℹ` section only for comments in nested arrays or inline tables (`N comments relocated` when more than one), and the VS Code warning only when the settings file cannot be parsed, written, or edited without dropping its comments. A failed write prints no report.
@@ -102,7 +102,7 @@ Same structured result as `json`, delivered as an NDJSON `result` event.
 ## Notes
 
 - The only flag is `--dry-run`; there is no confirmation prompt and no `--force`.
-- Nothing is deleted: `config.toml` is renamed into `supabase/.temp/`, which `supabase init` adds to `supabase/.gitignore`. The undo command names the backup actually used, with paths relative to the current directory (quoted when the shell would split them; on Windows a PowerShell `Move-Item`/`Remove-Item` command); every other message names files relative to the project root.
+- Nothing is deleted: `config.toml` is renamed next to the new file, outside `supabase/.temp` (which `unlink` and `projects delete` remove), so the user commits or deletes the backup themselves. The undo command names the backup actually used, with paths relative to the current directory (quoted when the shell would split them; on Windows a PowerShell `Move-Item`/`Remove-Item` command); every other message names files relative to the project root.
 - Assumes no other process edits `supabase/` while it runs; it detects a changed `config.toml` or a `config.jsonc` that appears, but does not lock.
 - The conversion parses `config.toml` only (no env resolution, no schema decode), so the JSONC
   document carries the same raw values. The result is re-parsed and compared before anything is

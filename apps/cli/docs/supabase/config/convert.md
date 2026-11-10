@@ -1,6 +1,6 @@
 # supabase-config-convert
 
-Converts `supabase/config.toml` to `supabase/config.jsonc` and moves the TOML file to `supabase/.temp/config.toml.bak`. Comments are carried over as `//` comments and the document gets a `$schema` entry, so editors validate it against the hosted config schema.
+Converts `supabase/config.toml` to `supabase/config.jsonc` and moves the TOML file to `supabase/config.toml.bak`. Comments are carried over as `//` comments and the document gets a `$schema` entry, so editors validate it against the hosted config schema.
 
 The conversion reads the file as written: values keep their meaning, `env(NAME)` references are copied as text, and nothing is resolved from your environment. Numbers are written in JSON form, so `0x1F` becomes `31` and `1_000` becomes `1000`. The converted document is parsed again and compared with the original before anything is written; if the two differ, the file is not valid UTF-8, or it holds a value JSON cannot represent (a TOML date, `inf` or `nan`), the command refuses and leaves `config.toml` untouched.
 
@@ -21,13 +21,14 @@ If only `supabase/config.json` or `supabase/config.jsonc` exists, the command re
 Move the backup back and remove the JSONC file:
 
 ```sh
-mv supabase/.temp/config.toml.bak supabase/config.toml && rm supabase/config.jsonc
+mv -- supabase/config.toml.bak supabase/config.toml && rm -- supabase/config.jsonc
 ```
 
 If a backup from an earlier conversion already exists, the command uses the next free name (`config.toml.2.bak`, and so on). The printed undo command names that backup, with paths relative to the directory you ran the command from; on Windows it is the PowerShell equivalent.
 
 ## After converting
 
+- Delete `supabase/config.toml.bak` once you no longer need the undo, so it is not committed. It stays outside `supabase/.temp` because `supabase unlink` and `supabase projects delete` remove that directory.
 - Commit the conversion on its own. The history of the old file stays available with `git log -- supabase/config.toml`.
 - Search the repository, CI workflows and Dockerfiles for `config.toml` and update any references.
 - Bump pinned Supabase CLI versions (for example `supabase/setup-cli`) to 3.1.0 or later.

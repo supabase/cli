@@ -478,6 +478,22 @@ describe("convertCliConfigTomlToJsonc: commented-out examples", () => {
     expectEachCommentOnce(source, text);
   });
 
+  test("dotted keys under a commented header of an existing table join its existing subtables", () => {
+    const sources = [
+      "# [auth]\n# hook.custom_access_token.enabled = false\n[auth.hook.send_sms]\nenabled = true\n",
+      "# [auth]\n# enabled = true\n\n# hook.custom_access_token.enabled = false\n[auth.hook.send_sms]\nenabled = true\n",
+    ];
+    for (const source of sources) {
+      const { text } = converted(source);
+      expect(text.match(/"hook"/g)).toHaveLength(1);
+      expect(uncommented(text)).toMatchObject({
+        auth: { hook: { custom_access_token: { enabled: false }, send_sms: { enabled: true } } },
+      });
+      expectExamplesUncommentAtTomlPaths(source);
+      expectEachCommentOnce(source, text);
+    }
+  });
+
   test("commented dotted keys in an active table share one commented object", () => {
     const source = '[auth]\nenabled = true\n# hook.a.enabled = true\n# hook.a.uri = "x"\n';
     const { text } = converted(source);

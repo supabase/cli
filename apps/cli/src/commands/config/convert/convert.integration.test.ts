@@ -22,13 +22,12 @@ import {
   JSONC_SYMLINK_MESSAGE,
   minVersionWarning,
   NOT_UTF8_MESSAGE,
-  TEMP_SYMLINK_MESSAGE,
   TOML_SYMLINK_MESSAGE,
   tomlChangedMessage,
   undoCommand,
 } from "./convert.format.ts";
 
-const BACKUP = "supabase/.temp/config.toml.bak";
+const BACKUP = "supabase/config.toml.bak";
 const UNDO = undoCommand("", BACKUP, "posix");
 
 const tempRoot = useTempWorkdir("supabase-config-convert-");
@@ -120,7 +119,7 @@ const failingConfigTomlFsLayer = (failure: FsFailure) =>
       const real = yield* FileSystem.FileSystem;
       const target = yield* configTomlPath;
       const jsonc = yield* projectPath("supabase", "config.jsonc");
-      const backup = yield* projectPath("supabase", ".temp", "config.toml.bak");
+      const backup = yield* projectPath("supabase", "config.toml.bak");
       return FileSystem.FileSystem.of({
         ...real,
         exists: (path) =>
@@ -184,7 +183,7 @@ describe("config convert integration", () => {
         yield* run().pipe(Effect.provide(layer));
 
         expect(yield* exists("supabase", "config.toml")).toBe(false);
-        expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe(template);
+        expect(yield* readFile("supabase", "config.toml.bak")).toBe(template);
         const jsonc = yield* readFile("supabase", "config.jsonc");
         const actualComments = jsonc
           .split("\n")
@@ -206,14 +205,14 @@ describe("config convert integration", () => {
           "",
           "  Changes",
           "    + Created  supabase/config.jsonc",
-          "    > Moved    supabase/config.toml to supabase/.temp/config.toml.bak",
+          "    > Moved    supabase/config.toml to supabase/config.toml.bak",
           "",
           "  ⚠ Compatibility",
           "    Supabase CLI versions before 3.1.0 ignore config.jsonc and run with defaults.",
           "    Upgrade the Supabase CLI on every machine and CI job that uses this project.",
           "",
           "  To undo:",
-          "    mv supabase/.temp/config.toml.bak supabase/config.toml && rm supabase/config.jsonc",
+          "    mv -- supabase/config.toml.bak supabase/config.toml && rm -- supabase/config.jsonc",
           "",
         ]);
         expect(out.stderrText).toBe("");
@@ -483,7 +482,7 @@ describe("config convert integration", () => {
           "",
           "  Planned changes",
           "    + Create  supabase/config.jsonc",
-          "    > Move    supabase/config.toml to supabase/.temp/config.toml.bak",
+          "    > Move    supabase/config.toml to supabase/config.toml.bak",
           "    ~ Update  .vscode/settings.json (trusts https://supabase.com/schemas/)",
         ].join("\n"),
       );
@@ -499,7 +498,7 @@ describe("config convert integration", () => {
       yield* run(true).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toContain(
-        "    > Move    supabase/config.toml to supabase/.temp/config.toml.bak\n\n",
+        "    > Move    supabase/config.toml to supabase/config.toml.bak\n\n",
       );
       expect(out.stderrText).not.toContain(".vscode/settings.json");
     }).pipe(Effect.provide(BunServices.layer));
@@ -521,7 +520,7 @@ describe("config convert integration", () => {
           data: expect.objectContaining({
             path: "supabase/config.jsonc",
             converted: true,
-            backup: "supabase/.temp/config.toml.bak",
+            backup: "supabase/config.toml.bak",
             schema: "https://supabase.com/schemas/config/v1.json",
             moved_comments: [],
             vscode_settings_updated: false,
@@ -546,14 +545,14 @@ describe("config convert integration", () => {
         type: "success",
         data: {
           dry_run: true,
-          would_backup: "supabase/.temp/config.toml.bak",
+          would_backup: "supabase/config.toml.bak",
           would_update_vscode_settings: false,
           content: expect.stringContaining('"project_id": "demo"'),
           warnings: expect.arrayContaining([minVersionWarning(true, UNDO)]),
         },
       });
       expect(message?.data).not.toHaveProperty("backup");
-      expect(yield* exists("supabase", ".temp")).toBe(false);
+      expect(yield* exists("supabase", "config.toml.bak")).toBe(false);
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -599,7 +598,7 @@ describe("config convert integration", () => {
 
       expect(error._tag).toBe("ConfigConvertWriteError");
       expect(error.message).toContain(
-        "Could not move supabase/config.toml to supabase/.temp/config.toml.bak",
+        "Could not move supabase/config.toml to supabase/config.toml.bak",
       );
       expect(error.message).toContain(JSONC_REMOVED_NOTE);
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
@@ -657,7 +656,7 @@ describe("config convert integration", () => {
 
       expect(error._tag).toBe("ConfigConvertFileChangedError");
       expect(error.message).toBe(tomlChangedMessage(BACKUP, UNDO));
-      expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe(EDITED_TOML);
+      expect(yield* readFile("supabase", "config.toml.bak")).toBe(EDITED_TOML);
       expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(BunServices.layer));
@@ -675,7 +674,7 @@ describe("config convert integration", () => {
 
       expect(error._tag).toBe("ConfigConvertWriteError");
       expect(error.message).toMatch(
-        /^Could not check for an existing backup in supabase\/\.temp: /,
+        /^Could not check for an existing backup of supabase\/config\.toml: /,
       );
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
@@ -704,13 +703,13 @@ describe("config convert integration", () => {
   it.effect("backs up to the next free name when a backup already exists", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* writeFile(["supabase", ".temp", "config.toml.bak"], "old backup\n");
+      yield* writeFile(["supabase", "config.toml.bak"], "old backup\n");
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
 
       yield* run().pipe(Effect.provide(layer));
 
-      expect(yield* readFile("supabase", ".temp", "config.toml.bak")).toBe("old backup\n");
-      expect(yield* readFile("supabase", ".temp", "config.toml.2.bak")).toBe(SIMPLE_TOML);
+      expect(yield* readFile("supabase", "config.toml.bak")).toBe("old backup\n");
+      expect(yield* readFile("supabase", "config.toml.2.bak")).toBe(SIMPLE_TOML);
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -724,7 +723,7 @@ describe("config convert integration", () => {
       yield* run().pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain(
-        `    mv ${root}/${BACKUP} ${root}/supabase/config.toml && rm ${root}/supabase/config.jsonc\n`,
+        `    mv -- ${root}/${BACKUP} ${root}/supabase/config.toml && rm -- ${root}/supabase/config.jsonc\n`,
       );
     }).pipe(Effect.provide(BunServices.layer));
   });
@@ -743,24 +742,6 @@ describe("config convert integration", () => {
       expect(error.message).toBe(TOML_SYMLINK_MESSAGE);
       expect(yield* fs.readLink(yield* configTomlPath)).toBe("../shared/real.toml");
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("refuses when supabase/.temp links outside the project and moves nothing", () => {
-    const { layer } = setup();
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
-      yield* writeFile(["outside", "placeholder"], "");
-      yield* fs.symlink(yield* projectPath("outside"), yield* projectPath("supabase", ".temp"));
-
-      const error = yield* run().pipe(Effect.provide(layer), Effect.flip);
-
-      expect(error._tag).toBe("ConfigConvertUnsupportedError");
-      expect(error.message).toBe(TEMP_SYMLINK_MESSAGE);
-      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
-      expect(yield* fs.readDirectory(yield* projectPath("outside"))).toEqual(["placeholder"]);
     }).pipe(Effect.provide(BunServices.layer));
   });
 

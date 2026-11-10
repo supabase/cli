@@ -55,7 +55,6 @@ import {
   JSONC_REMOVED_NOTE,
   JSONC_SYMLINK_MESSAGE,
   NOT_UTF8_MESSAGE,
-  TEMP_SYMLINK_MESSAGE,
   TOML_SYMLINK_MESSAGE,
   backupCheckFailureMessage,
   backupFailureMessage,
@@ -88,11 +87,7 @@ const trustSchemaDomainInVscode = Effect.fn("config.convert.vscode")(function* (
 const isSymlink = (fs: FileSystem.FileSystem, target: string) =>
   fs.readLink(target).pipe(Effect.match({ onSuccess: () => true, onFailure: () => false }));
 
-const refuseSymlinks = Effect.fnUntraced(function* (
-  tomlPath: string,
-  jsoncPath: string,
-  tempDir: string,
-) {
+const refuseSymlinks = Effect.fnUntraced(function* (tomlPath: string, jsoncPath: string) {
   const fs = yield* FileSystem.FileSystem;
   if (yield* isSymlink(fs, tomlPath)) {
     return yield* new ConfigConvertUnsupportedError({ message: TOML_SYMLINK_MESSAGE });
@@ -100,17 +95,14 @@ const refuseSymlinks = Effect.fnUntraced(function* (
   if (yield* isSymlink(fs, jsoncPath)) {
     return yield* new ConfigConvertUnsupportedError({ message: JSONC_SYMLINK_MESSAGE });
   }
-  if (yield* isSymlink(fs, tempDir)) {
-    return yield* new ConfigConvertUnsupportedError({ message: TEMP_SYMLINK_MESSAGE });
-  }
 });
 
-const freeBackupPath = Effect.fnUntraced(function* (tempDir: string) {
+const freeBackupPath = Effect.fnUntraced(function* (configDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   for (let attempt = 1; ; attempt++) {
     const candidate = path.join(
-      tempDir,
+      configDir,
       attempt === 1 ? "config.toml.bak" : `config.toml.${attempt}.bak`,
     );
     const taken = yield* fs
@@ -236,10 +228,9 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
     });
 
     const jsoncPath = path.join(configDir, "config.jsonc");
-    const tempDir = path.join(configDir, ".temp");
-    yield* refuseSymlinks(parsed.path, jsoncPath, tempDir);
-    const backupPath = yield* freeBackupPath(tempDir);
-    const backup = `supabase/.temp/${path.basename(backupPath)}`;
+    yield* refuseSymlinks(parsed.path, jsoncPath);
+    const backupPath = yield* freeBackupPath(configDir);
+    const backup = `supabase/${path.basename(backupPath)}`;
     const windows = runtimeInfo.platform === "win32";
     const root = path.relative(runtimeInfo.cwd, cliSettings.workdir);
     const undo = undoCommand(
@@ -308,8 +299,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       if (!created) {
         return yield* new ConfigConvertFileChangedError({ message: JSONC_APPEARED_MESSAGE });
       }
-      yield* fs.makeDirectory(path.dirname(backupPath), { recursive: true }).pipe(
-        Effect.andThen(fs.rename(parsed.path, backupPath)),
+      yield* fs.rename(parsed.path, backupPath).pipe(
         Effect.catchTag("PlatformError", (cause) =>
           Effect.flatMap(rollbackJsonc(jsoncPath, outcome.text), (note) =>
             Effect.fail(
