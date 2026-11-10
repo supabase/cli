@@ -55,7 +55,7 @@ Each stage reports every problem it finds; a run stops after a stage only when t
 
 ### `--output-format text`
 
-stdout is one report: every problem in file order, each as `<key>  <reason>` with `file:line:column`, a code frame, an optional `help:` line and a `[remote: <name>]` label, then a total. Colour only on a TTY, per `NO_COLOR`/`CLICOLOR`. Values are masked as `****`, on every line they span, unless the key is a known non-secret setting and its value is the only value on that line and is a plain number, boolean or string without escapes or multi-line delimiters; arrays, tables and everything else on the line stay masked, and URL credentials and query strings are redacted in any shown string; `env(NAME)` references stay visible. A document that cannot be parsed is masked line by line in full. Nothing is written to stderr by the command itself.
+stdout is one report: every problem in file order, each as `<key>  <reason>` with `file:line:column`, a code frame, an optional `help:` line and a `[remote: <name>]` label, then a total. Colour only on a TTY, per `NO_COLOR`/`CLICOLOR`. Values are masked as `****`, on every line they span, unless the key is a known non-secret setting and its value is the only value on that line and is a plain number, boolean or string without escapes or multi-line delimiters; arrays, tables and everything else on the line stay masked, and a shown string that holds a URL is printed as `scheme://****@host/path?****#****` (credentials, query and fragment redacted) and one that looks like credentials or cannot be parsed is masked whole; `env(NAME)` references stay visible. A document that cannot be parsed is masked line by line in full. Nothing is written to stderr by the command itself.
 
 ### `--output-format json`
 

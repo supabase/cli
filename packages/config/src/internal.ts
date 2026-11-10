@@ -55,8 +55,7 @@ export { CliConfigWriteError } from "./errors.ts";
 export { findUnknownCliConfigKeys, type UnknownCliConfigKey } from "./unknown-keys.ts";
 export { isSecretPath } from "./lib/secret-paths.ts";
 export {
-  cliConfigLineKeys,
-  cliConfigValueSpans,
-  locateCliConfigKey,
+  scanCliConfigDocument,
+  type CliConfigDocumentScan,
   type CliConfigLocation,
 } from "./config-locate.ts";

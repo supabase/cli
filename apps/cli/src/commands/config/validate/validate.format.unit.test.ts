@@ -107,6 +107,27 @@ describe("validateReport", () => {
     expect(text).toContain('max_rows = "lots"');
   });
 
+  it.each([
+    [`"https://u:pw'x@host.test/p?t=1#f"`, `"https://****@host.test/p?****#****"`],
+    ['"https://host.test/p"', '"https://host.test/p"'],
+    ['"user:pw@host.test"', "****"],
+    ['"host.test/x?token=1"', "****"],
+    ['"https://[bad"', "****"],
+  ])("prints the scalar %s as %s", (raw, shown) => {
+    const text = render(
+      [
+        problem({
+          path: ["api", "max_rows"],
+          showValue: true,
+          location: { line: 2, column: 12, endColumn: 12 + raw.length, exact: true },
+        }),
+      ],
+      { source: `[api]\nmax_rows = ${raw}` },
+    );
+
+    expect(text).toContain(`max_rows = ${shown}`);
+  });
+
   it("shows a known non-secret key's value on the context line", () => {
     const text = render([
       problem({
@@ -278,7 +299,7 @@ describe("validateReport", () => {
         { source: URL_SOURCE },
       );
 
-      expect(text).toContain('api_url = "https://****@host.test/x?****#top"');
+      expect(text).toContain('api_url = "https://****@host.test/x?****#****"');
       expect(text).not.toContain("pw-secret");
       expect(text).not.toContain("tok-secret");
     });
@@ -294,7 +315,7 @@ describe("validateReport", () => {
         { source: URL_SOURCE },
       );
 
-      expect(text).toContain('api_url = "https://****@host.test/x?****#top"');
+      expect(text).toContain('api_url = "https://****@host.test/x?****#****"');
       expect(text).not.toContain("pw-secret");
       expect(text).not.toContain("tok-secret");
     });

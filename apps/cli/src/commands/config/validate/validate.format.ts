@@ -1,9 +1,5 @@
 import { escapeControlCharacters } from "../../../shared/output/escape-control-characters.ts";
-import {
-  cliConfigLineKeys,
-  cliConfigValueSpans,
-  type CliConfigLocation,
-} from "@supabase/config/internal";
+import { scanCliConfigDocument, type CliConfigLocation } from "@supabase/config/internal";
 
 import { displayPath, isPublicValuePath, type ConfigProblem } from "./validate.model.ts";
 
@@ -90,13 +86,14 @@ const display = (text: string): string =>
 interface Span {
   readonly column: number;
   readonly endColumn?: number;
+  readonly replacement?: string;
 }
 
 const KEY_VALUE =
   /^(\s*(?:(?:#|\/\/)\s*)?(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+))*\s*[=:]\s*)(.*)$/;
 const ENV_REFERENCE_VALUE = /^["']env\([A-Za-z_][A-Za-z0-9_]*\)["']\s*,?\s*$/;
-const URL_USERINFO = /[a-z][a-z0-9+.-]*:\/\/([^\s/?#"']*)@/gi;
-const URL_QUERY = /[a-z][a-z0-9+.-]*:\/\/[^\s"'?#]*\?([^\s"'#]*)/gi;
+const URL_USERINFO = /[a-z][a-z0-9+.-]*:\/\/([^\s/?#"]*)@/gi;
+const URL_QUERY = /[a-z][a-z0-9+.-]*:\/\/[^\s"?#]*\?([^\s"#]*)/gi;
 const TRAILING_COMMENT = /^[\s,}\]]*(#|\/\/)/;
 
 interface MaskedLine {
@@ -109,17 +106,18 @@ function maskLine(text: string, spans: ReadonlyArray<Span>): MaskedLine {
     .map((span) => ({
       start: Math.min(span.column - 1, text.length),
       end: span.endColumn === undefined ? text.length : Math.min(span.endColumn - 1, text.length),
+      replacement: span.replacement ?? MASK,
     }))
     .sort((left, right) => left.start - right.start);
   let out = "";
   let position = 0;
-  const applied: Array<{ start: number; end: number; outStart: number }> = [];
+  const applied: Array<{ start: number; end: number; outStart: number; length: number }> = [];
   for (const range of ranges) {
     if (range.end <= position) continue;
     const start = Math.max(range.start, position);
     out += text.slice(position, start);
-    applied.push({ start, end: range.end, outStart: out.length });
-    out += MASK;
+    applied.push({ start, end: range.end, outStart: out.length, length: range.replacement.length });
+    out += range.replacement;
     position = range.end;
   }
   out += text.slice(position);
@@ -130,7 +128,7 @@ function maskLine(text: string, spans: ReadonlyArray<Span>): MaskedLine {
       for (const range of applied) {
         if (index < range.start) break;
         if (index < range.end) return range.outStart;
-        shift += MASK.length - (range.end - range.start);
+        shift += range.length - (range.end - range.start);
       }
       return index + shift;
     },
@@ -152,6 +150,24 @@ function urlSpans(text: string, from: number, to: number): ReadonlyArray<Span> {
     if (query.length > 0) spans.push({ column: start, endColumn: start + query.length });
   }
   return spans;
+}
+
+/** The scalar as it may print: URL credentials, query and fragment replaced; undefined when it must be masked whole. */
+function redactScalar(raw: string): string | undefined {
+  const quote = raw[0] === '"' || raw[0] === "'" ? raw[0] : "";
+  const inner = quote === "" ? raw : raw.slice(1, -1);
+  if (inner.includes("://")) {
+    try {
+      const url = new URL(inner);
+      const userinfo = url.username !== "" || url.password !== "" ? `${MASK}@` : "";
+      const search = url.search === "" ? "" : `?${MASK}`;
+      const hash = url.hash === "" ? "" : `#${MASK}`;
+      return `${quote}${url.protocol}//${userinfo}${url.host}${url.pathname}${search}${hash}${quote}`;
+    } catch {
+      return undefined;
+    }
+  }
+  return /[@?#]/.test(inner) ? undefined : raw;
 }
 
 const PLAIN_SCALAR = /^[^\s[\]{}"',#]+$/;
@@ -194,9 +210,26 @@ function maskedAt(
     only.endLine === lineNumber &&
     mayShow(only) &&
     isPlainScalar(text.slice(only.column - 1, (only.endColumn ?? 1) - 1));
-  const redactions = urlSpans(text, 1, text.length + 1);
+  const shownRange = printable ? only : undefined;
+  const redactions = urlSpans(text, 1, text.length + 1).filter(
+    (span) =>
+      shownRange === undefined ||
+      span.column >= (shownRange.endColumn ?? Infinity) ||
+      (span.endColumn ?? Infinity) <= shownRange.column,
+  );
 
   const spans: Array<Span> = [];
+  if (shownRange !== undefined) {
+    const raw = text.slice(shownRange.column - 1, (shownRange.endColumn ?? 1) - 1);
+    const shown = redactScalar(raw);
+    if (shown !== raw) {
+      spans.push({
+        column: shownRange.column,
+        endColumn: shownRange.endColumn,
+        ...(shown === undefined ? {} : { replacement: shown }),
+      });
+    }
+  }
   for (const value of values) {
     const startsHere = value.line === lineNumber;
     const endsHere = (value.endLine ?? value.line) === lineNumber;
@@ -250,13 +283,11 @@ interface SourceView {
 function sourceView(report: ValidateReport): SourceView {
   const lines = report.source.replace(/^\uFEFF/, "").split(/\r?\n/);
   const publicLines = new Set<number>();
-  for (const [line, path] of cliConfigLineKeys(
-    report.source,
-    report.format === "toml" ? "toml" : "json",
-  )) {
+  const document = scanCliConfigDocument(report.source, report.format === "toml" ? "toml" : "json");
+  for (const [line, path] of document.lineKeys()) {
     if (isPublicValuePath(path)) publicLines.add(line);
   }
-  const values = cliConfigValueSpans(report.source, report.format === "toml" ? "toml" : "json");
+  const values = document.valueSpans();
   if (values === undefined) return { lines, publicLines, valuesByLine: undefined };
   const valuesByLine = new Map<number, Array<CliConfigLocation>>();
   for (const value of values) {

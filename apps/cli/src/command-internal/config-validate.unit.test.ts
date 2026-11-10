@@ -1415,6 +1415,25 @@ describe("collectConfigValidationIssues", () => {
     expect(issues.map((issue) => issue.path)).toEqual(["api.port", "studio.port", "auth.site_url"]);
   });
 
+  it("keeps the segments of dynamic names that contain a dot", () => {
+    const [functionIssue] = collectConfigValidationIssues(
+      minimalInput({ functionSlugs: ["bad.name"] }),
+    );
+    expect(functionIssue?.segments).toEqual(["functions", "bad.name"]);
+
+    const [providerIssue] = collectAuthExternalProviderIssues({
+      "my.idp": {
+        enabled: true,
+        clientId: "",
+        secret: "",
+        url: "",
+        skipNonceCheck: false,
+        emailOptional: false,
+      },
+    });
+    expect(providerIssue?.segments).toEqual(["auth", "external", "my.idp", "client_id"]);
+  });
+
   it("reports nothing for a valid input", () => {
     expect(collectConfigValidationIssues(minimalInput())).toEqual([]);
   });

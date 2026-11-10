@@ -796,6 +796,72 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("scopes a removed-table rename hint to its remote", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[remotes.prod]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.prod.inbucket]\nport = 54324\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        {
+          code: "removed_key",
+          remote: "prod",
+          help: "rename [remotes.prod.inbucket] to [remotes.prod.local_smtp]",
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reports a codec enum failure from the environment as invalid_enum, unquoted", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(tomlFile('project_id = "demo"\n'), {
+        format: "json",
+        env: { SUPABASE_EDGE_RUNTIME_POLICY: "sideways" },
+      });
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        {
+          code: "invalid_enum",
+          key: "edge_runtime.policy",
+          reason: "expected one of per_worker, oneshot",
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails an undecryptable env override of a key whose file value is an unset env()", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.captcha]\nenabled = true\nprovider = "hcaptcha"\nsecret = "env(UNSET_CAPTCHA_SECRET)"\n',
+        ),
+        { format: "json", env: { SUPABASE_AUTH_CAPTCHA_SECRET: "encrypted:abcd" } },
+      );
+
+      expect(payloadOf(result)).toMatchObject({ valid: false });
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toContainEqual(
+        expect.objectContaining({ key: "auth.captcha.secret" }),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not warn about unset env() references under a disabled custom provider", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.external.myidp]\nenabled = false\nclient_id = "env(UNSET_IDP_ID)"\nsecret = "env(UNSET_IDP_SECRET)"\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(payloadOf(result)).toMatchObject({ valid: true });
+      expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("locates a remote without project_id inside that remote, not on the base key", () =>
     Effect.gen(function* () {
       const result = yield* validate(
@@ -1057,6 +1123,26 @@ describe("config validate integration", () => {
         {
           "supabase/config.jsonc": `{\n  "project_id": "demo",\n  "api": {\n    "schemas": [\n      "a",\n      "${SECRET}"], "max_rows": 1000,\n    "prot": 1\n  }\n}\n`,
         },
+      ],
+      [
+        "apostrophe in URL userinfo and query on the context line",
+        tomlFile(
+          `project_id = "demo"\n[auth]\nsite_url = "https://user:pw'hunter2@host.test/x?token=tok-secret'x"\nbogus = 1\n`,
+        ),
+      ],
+      [
+        "apostrophe in URL userinfo as the problem value",
+        tomlFile(
+          `project_id = "demo"\n[studio]\napi_url = "https://user:pw'hunter2@[bad/x?token=tok-secret"\n`,
+        ),
+      ],
+      [
+        "scheme-less credential string on the context line",
+        tomlFile(`project_id = "demo"\n[auth]\nsite_url = "user:hunter2@host.test"\nbogus = 1\n`),
+      ],
+      [
+        "literal dotted key that looks like a public path",
+        tomlFile(`project_id = "demo"\n"db.port" = "hunter2"\nbogus = 1\n`),
       ],
       [
         "schema reference carrying credentials",

@@ -5,7 +5,8 @@ import {
 } from "@supabase/config/effect";
 import {
   type CliConfigLocation,
-  locateCliConfigKey,
+  scanCliConfigDocument,
+  type CliConfigDocumentScan,
   parseCliConfigDocumentFile,
   type ParsedCliConfigDocument,
 } from "@supabase/config/internal";
@@ -123,12 +124,13 @@ function removedKeyProblems(
     const local = displayPath(split.path);
     const replacementLocal = splitRemotePath(stripBrackets(replacement).split(".")).path.join(".");
     const isTable = key.startsWith("[");
+    const scope = split.remote === undefined ? "" : `remotes.${split.remote}.`;
     return problem("removed_key", {
       path: split.path,
       reason: "removed",
       help:
         isTable && format === "toml"
-          ? `rename [${local}] to [${replacementLocal}]`
+          ? `rename [${scope}${local}] to [${scope}${replacementLocal}]`
           : `use ${replacementLocal} instead`,
       ...(split.remote === undefined ? {} : { remote: split.remote }),
     });
@@ -155,7 +157,9 @@ function locateSchemaDeclaration(
   source: string,
   format: ReportFormat,
 ): CliConfigLocation | undefined {
-  if (format !== "toml") return locateCliConfigKey(source, "json", ["$schema"], "value");
+  if (format !== "toml") {
+    return scanCliConfigDocument(source, "json").locate(["$schema"], "value");
+  }
   const match = SCHEMA_DIRECTIVE.exec(source);
   if (match === null || match[1] === undefined) return undefined;
   const before = source.slice(0, match.index + match[0].length - match[1].length);
@@ -178,8 +182,7 @@ const KEY_TARGET_CODES: ReadonlySet<ConfigProblem["code"]> = new Set([
 
 function locateProblem(
   item: ConfigProblem,
-  source: string,
-  format: FileFormat,
+  document: CliConfigDocumentScan,
 ): CliConfigLocation | undefined {
   if (item.location !== undefined || item.path === undefined || item.external !== undefined) {
     return item.location;
@@ -193,7 +196,7 @@ function locateProblem(
       : item.code === "remote_project_id"
         ? [remotePath]
         : [remotePath, segments];
-  const attempts = candidates.map((path) => locateCliConfigKey(source, format, path, target));
+  const attempts = candidates.map((path) => document.locate(path, target));
   return (
     attempts.find((found) => found?.exact === true) ?? attempts.find((found) => found !== undefined)
   );
@@ -251,25 +254,33 @@ const schemaProblems = (
   });
 
 function invalidValueProblem(error: CliConfigValueError, file: string): ConfigProblem {
-  const fromEnv = error.tier === "shell" || error.tier === "projectEnv";
+  const fromEnv = error.tier === "shell" || error.tier === "projectEnv" || error.tier === "flag";
+  const unquotedExpected = error.expected?.replaceAll('"', "");
   const reason =
-    error.expected !== undefined
-      ? `expected ${error.expected}`
+    unquotedExpected !== undefined
+      ? `expected ${unquotedExpected}`
       : error.issues !== undefined && error.issues.length > 0
         ? error.issues.join("; ")
         : "invalid value";
   const path = error.path.split(".");
-  return problem("invalid_value", {
-    path,
-    reason,
-    ...(error.expected?.startsWith("one of") ? { help: `use ${error.expected}` } : {}),
-    ...(fromEnv && error.source !== undefined
-      ? {
-          external: true as const,
-          help: `${error.source} sets this value, not ${file}; fix or unset it there`,
-        }
-      : { showValue: isPublicValuePath(path) }),
-  });
+  return problem(
+    error.kind === "enum"
+      ? "invalid_enum"
+      : error.kind === "type"
+        ? "invalid_type"
+        : "invalid_value",
+    {
+      path,
+      reason,
+      ...(error.kind === "enum" ? { help: `use ${unquotedExpected}` } : {}),
+      ...(fromEnv
+        ? {
+            external: true as const,
+            help: `${error.source ?? "the environment"} sets this value, not ${file}; fix or unset it there`,
+          }
+        : { showValue: isPublicValuePath(path) }),
+    },
+  );
 }
 
 function semanticProblem(
@@ -395,6 +406,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
   ) {
     const source = options.source ?? (options.readSource ? yield* readSource(file) : "");
     const display = relativeConfigPath(workdir, file);
+    const document = scanCliConfigDocument(source, format);
     return {
       file: display,
       format: reportFormat(display, format),
@@ -404,7 +416,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       stoppedAt,
       problems: problems.map((item) => ({
         ...item,
-        location: locateProblem(item, source, format),
+        location: locateProblem(item, document),
       })),
     } satisfies ValidateReport;
   });
@@ -594,6 +606,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
 
     const base = yield* pass(undefined).pipe(Effect.withSpan("config.validate.base"));
     if (base.stop !== undefined) {
+      const document = scanCliConfigDocument(parsed.rawText, parsed.format);
       const report = {
         file,
         format,
@@ -603,7 +616,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         stoppedAt: base.stop,
         problems: [...notices, ...base.problems].map((item) => ({
           ...item,
-          location: locateProblem(item, parsed.rawText, parsed.format),
+          location: locateProblem(item, document),
         })),
       } satisfies ValidateReport;
       return yield* emit(report);
@@ -712,9 +725,10 @@ export const configValidate = Effect.fn("config.validate")(function* () {
     const isRelevantIn = (reference: EnvReference, context: string | undefined): boolean => {
       if (CLI_CONFIG_OPTIONAL_ENV_PATHS[displayPath(reference.path)] !== undefined) return false;
       const owner = passes.get(context)?.resolved;
-      const gate =
-        nearestEnabledGate(owner?.materialized.config, reference.path) ??
-        nearestEnabledGate(owner?.loaded.document, reference.path);
+      const gate = nearestEnabledGate(
+        [owner?.materialized.config, owner?.loaded.document],
+        reference.path,
+      );
       return gate !== false;
     };
     const envWarning = (reference: EnvReference, remote: string | undefined) =>
@@ -745,9 +759,10 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         .filter((name) => inheritedBy(reference, name) && warns(name))
         .map((name) => envWarning(reference, name));
     });
+    const document = scanCliConfigDocument(parsed.rawText, parsed.format);
     const located = [...kept, ...envWarnings].map((item) => ({
       ...item,
-      location: locateProblem(item, parsed.rawText, parsed.format),
+      location: locateProblem(item, document),
     }));
 
     const remoteStop = remotePasses.find((item) => item.stop !== undefined)?.stop;

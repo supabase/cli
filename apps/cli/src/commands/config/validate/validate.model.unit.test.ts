@@ -54,6 +54,11 @@ describe("isPublicValuePath", () => {
   ])("masks the value of %s", (path) => {
     expect(isPublicValuePath(path.split("."))).toBe(false);
   });
+
+  it("keeps segment boundaries, so a quoted dotted key is not the nested path", () => {
+    expect(isPublicValuePath(["db.port"])).toBe(false);
+    expect(isPublicValuePath(["db", "port"])).toBe(true);
+  });
 });
 
 describe("dedupeProblems", () => {
@@ -181,12 +186,18 @@ describe("nearestEnabledGate", () => {
   };
 
   it("uses the nearest enclosing table that has an enabled switch", () => {
-    expect(nearestEnabledGate(config, ["auth", "external", "github", "secret"])).toBe(false);
-    expect(nearestEnabledGate(config, ["auth", "site_url"])).toBe(true);
+    expect(nearestEnabledGate([config], ["auth", "external", "github", "secret"])).toBe(false);
+    expect(nearestEnabledGate([config], ["auth", "site_url"])).toBe(true);
+  });
+
+  it("prefers a nearer gate in any representation over a farther one", () => {
+    const decoded = { auth: { enabled: true, external: {} } };
+    const raw = { auth: { external: { myidp: { enabled: false } } } };
+    expect(nearestEnabledGate([decoded, raw], ["auth", "external", "myidp", "secret"])).toBe(false);
   });
 
   it("is undefined when no enclosing table has one", () => {
-    expect(nearestEnabledGate(config, ["db", "port"])).toBeUndefined();
-    expect(nearestEnabledGate(undefined, ["db", "port"])).toBeUndefined();
+    expect(nearestEnabledGate([config], ["db", "port"])).toBeUndefined();
+    expect(nearestEnabledGate([undefined], ["db", "port"])).toBeUndefined();
   });
 });

@@ -666,14 +666,15 @@ export function collectConfigValidationIssues(
 
   for (const slug of input.functionSlugs) {
     if (!FUNCTION_SLUG_PATTERN.test(slug)) {
-      report(
-        invalidIssue(
+      report({
+        ...invalidIssue(
           `functions.${slug}`,
           `Invalid Function name: ${slug}. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (${FUNCTION_SLUG_PATTERN.source})`,
           "invalid function name",
           "start with a letter; use letters, digits, underscores and hyphens only",
         ),
-      );
+        segments: ["functions", slug],
+      });
     }
   }
 
@@ -1013,24 +1014,26 @@ export function collectAuthExternalProviderIssues(
   for (const [name, provider] of Object.entries(resolved)) {
     if (!provider.enabled) continue;
     if (provider.clientId.length === 0) {
-      issues.push(
-        missingIssue(
+      issues.push({
+        ...missingIssue(
           `auth.external.${name}.client_id`,
           `Missing required field in config: auth.external.${name}.client_id`,
         ),
-      );
+        segments: ["auth", "external", name, "client_id"],
+      });
     }
     if (
       name !== "apple" &&
       name !== "google" &&
       (provider.secret === undefined || provider.secret.length === 0)
     ) {
-      issues.push(
-        missingIssue(
+      issues.push({
+        ...missingIssue(
           `auth.external.${name}.secret`,
           `Missing required field in config: auth.external.${name}.secret`,
         ),
-      );
+        segments: ["auth", "external", name, "secret"],
+      });
     }
   }
   return issues;

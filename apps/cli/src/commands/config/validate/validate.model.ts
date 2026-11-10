@@ -49,13 +49,14 @@ export function splitRemotePath(path: ReadonlyArray<string>): {
     : { path };
 }
 
-const ROOT_KEY_PATH = "db.root_key";
+const SEGMENT_SEPARATOR = "\0";
+const ROOT_KEY_PATH = ["db", "root_key"].join(SEGMENT_SEPARATOR);
 const SECRET_LOOKING = /secret|pass|token|key|jwt|salt|credential|vault/i;
 
 const publicLeafPaths: ReadonlySet<string> = new Set(
   cliConfigRegistry.keys
     .filter((key) => key.document !== false && key.secret !== true)
-    .map((key) => key.path),
+    .map((key) => key.path.split(".").join(SEGMENT_SEPARATOR)),
 );
 
 const publicFamilyLeaves = cliConfigRegistry.families.map((family) => ({
@@ -79,7 +80,7 @@ const isPublicFamilyLeaf = (segments: ReadonlyArray<string>): boolean =>
  */
 export function isPublicValuePath(path: ReadonlyArray<string>): boolean {
   const segments = splitRemotePath(path).path;
-  const local = segments.join(".");
+  const local = segments.join(SEGMENT_SEPARATOR);
   return (
     local !== ROOT_KEY_PATH &&
     !isSecretPath(segments) &&
@@ -221,16 +222,18 @@ const readPath = (root: unknown, path: ReadonlyArray<string>): unknown => {
 };
 
 /**
- * The value of the nearest enclosing table's `enabled` switch on an owning pass's resolved
- * config, or `undefined` when no enclosing table has one.
+ * The value of the nearest enclosing table's `enabled` switch, trying each representation at every
+ * depth before moving outward, or `undefined` when no enclosing table has one.
  */
 export function nearestEnabledGate(
-  config: unknown,
+  configs: ReadonlyArray<unknown>,
   path: ReadonlyArray<string>,
 ): boolean | undefined {
   for (let depth = path.length - 1; depth > 0; depth--) {
-    const enabled = readPath(config, [...path.slice(0, depth), "enabled"]);
-    if (typeof enabled === "boolean") return enabled;
+    for (const config of configs) {
+      const enabled = readPath(config, [...path.slice(0, depth), "enabled"]);
+      if (typeof enabled === "boolean") return enabled;
+    }
   }
   return undefined;
 }

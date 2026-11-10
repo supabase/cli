@@ -406,6 +406,7 @@ const invalidCliConfigValue = (
 ): CliConfigValueError => {
   const { path, raw, expected, origin, typeOnly } = failure;
   const source = describeCliConfigOrigin(origin, ctx);
+  const kind = typeOnly ? "type" : expected.startsWith("one of") ? "enum" : "value";
   switch (origin.tier) {
     case "flag":
       return new CliConfigValueError({
@@ -414,6 +415,7 @@ const invalidCliConfigValue = (
         source,
         flag: origin.flag,
         expected,
+        kind,
         message: `Invalid --${origin.flag}="${raw}" (sets ${path}): expected ${expected}.`,
       });
     case "shell":
@@ -428,6 +430,7 @@ const invalidCliConfigValue = (
         source,
         envName: origin.envName,
         expected,
+        kind,
         message: `Invalid ${origin.envName}="${raw}"${file} (sets ${path}): expected ${expected}.`,
       });
     }
@@ -438,6 +441,7 @@ const invalidCliConfigValue = (
         tier: "config",
         source,
         expected,
+        kind,
         message: typeOnly
           ? `Invalid ${path}${where === "config" ? "" : ` in ${where}`}: expected ${expected}, got ${raw}.`
           : where === "config"
@@ -479,7 +483,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
     );
 
   const decrypt = (
-    tier: CliConfigTier,
+    origin: CliConfigKeyOrigin,
     raw: unknown,
   ): Result.Result<unknown, CliConfigValueError> => {
     if (!secret || typeof raw !== "string" || !isEncryptedSecret(raw)) return Result.succeed(raw);
@@ -489,7 +493,11 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
       : Result.fail(
           new CliConfigValueError({
             path: key.path,
-            tier,
+            tier: origin.tier,
+            source: describeCliConfigOrigin(origin, sources.context),
+            ...(origin.tier === "shell" || origin.tier === "projectEnv"
+              ? { envName: origin.envName }
+              : {}),
             expected: "a secret that decrypts with the project's dotenv private key",
             message: `failed to parse config: ${decrypted.error}`,
           }),
@@ -532,7 +540,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
         const origin: CliConfigKeyOrigin =
           file === undefined ? { tier, envName: name } : { tier, envName: name, file };
         const raw = expandCliConfigEnvReference(found.value, lookup);
-        const plain = decrypt(tier, raw);
+        const plain = decrypt(origin, raw);
         if (Result.isFailure(plain)) return Result.fail(plain.failure);
         const decoded = key.codec.parse(typeof plain.success === "string" ? plain.success : raw);
         if (decoded === undefined) return failure(origin, raw);
@@ -549,7 +557,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
       ...(configured.remote === undefined ? {} : { remote: configured.remote }),
       ...(configured.file === undefined ? {} : { file: configured.file }),
     };
-    const plain = decrypt("config", expandConfigValue(configured.value, lookup));
+    const plain = decrypt(origin, expandConfigValue(configured.value, lookup));
     if (Result.isFailure(plain)) return Result.fail(plain.failure);
     const decoded = key.codec.fromConfig(plain.success);
     if (decoded === undefined) {

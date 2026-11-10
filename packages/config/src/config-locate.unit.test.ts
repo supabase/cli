@@ -1,5 +1,16 @@
 import { describe, expect, test } from "vitest";
-import { cliConfigLineKeys, cliConfigValueSpans, locateCliConfigKey } from "./config-locate.ts";
+import { scanCliConfigDocument } from "./config-locate.ts";
+
+const locateCliConfigKey = (
+  source: string,
+  format: "toml" | "json",
+  path: ReadonlyArray<string>,
+  target: "key" | "value",
+) => scanCliConfigDocument(source, format).locate(path, target);
+const cliConfigLineKeys = (source: string, format: "toml" | "json") =>
+  scanCliConfigDocument(source, format).lineKeys();
+const cliConfigValueSpans = (source: string, format: "toml" | "json") =>
+  scanCliConfigDocument(source, format).valueSpans();
 import { isSecretPath } from "./lib/secret-paths.ts";
 
 const toml = [
