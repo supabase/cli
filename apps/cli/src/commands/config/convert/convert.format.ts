@@ -45,6 +45,10 @@ export function refusalMessage(error: CliConfigConvertError): string {
 export const JSONC_APPEARED_MESSAGE =
   "supabase/config.jsonc appeared while config convert was running, so it was left as is and supabase/config.toml is unchanged. Check which file you want to keep; another conversion may have finished first.";
 
+export function jsonAppearedMessage(note: string): string {
+  return `supabase/config.json appeared while config convert was running, so supabase/config.toml was kept. ${note}`;
+}
+
 export const JSONC_REMOVED_NOTE =
   "Removed supabase/config.jsonc and kept supabase/config.toml; rerun the command to convert the current file.";
 

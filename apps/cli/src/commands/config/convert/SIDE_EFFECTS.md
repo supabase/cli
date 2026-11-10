@@ -33,20 +33,20 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                         |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | converted (or `--dry-run` printed the document); warnings never change the exit code                                                                                                              |
-| `0`  | only `config.json[c]` exists: nothing to convert, nothing written                                                                                                                                 |
-| `1`  | `-o/--output` passed                                                                                                                                                                              |
-| `1`  | `--workdir` is not a directory                                                                                                                                                                    |
-| `1`  | no project config found, or it cannot be parsed (including malformed JSON or removed keys in `config.json[c]`)                                                                                    |
-| `1`  | `config.json` and `config.jsonc` both exist                                                                                                                                                       |
-| `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                                                             |
-| `1`  | conversion refused (invalid TOML, a TOML date, a non-finite float, failed re-parse check)                                                                                                         |
-| `1`  | `config.toml` changed or `config.jsonc` appeared while the command ran; an existing `config.jsonc` is never replaced, and the new one is removed only while it still holds what the command wrote |
-| `1`  | `config.toml` could not be re-read after the write; the new `config.jsonc` is removed                                                                                                             |
-| `1`  | `config.jsonc` was removed, changed, or could not be re-read before `config.toml` was deleted; `config.toml` is kept                                                                              |
-| `1`  | `config.jsonc` could not be written, or `config.toml` could not be removed afterwards                                                                                                             |
+| Code | Condition                                                                                                                                                                                                            |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | converted (or `--dry-run` printed the document); warnings never change the exit code                                                                                                                                 |
+| `0`  | only `config.json[c]` exists: nothing to convert, nothing written                                                                                                                                                    |
+| `1`  | `-o/--output` passed                                                                                                                                                                                                 |
+| `1`  | `--workdir` is not a directory                                                                                                                                                                                       |
+| `1`  | no project config found, or it cannot be parsed (including malformed JSON or removed keys in `config.json[c]`)                                                                                                       |
+| `1`  | `config.json` and `config.jsonc` both exist                                                                                                                                                                          |
+| `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                                                                                |
+| `1`  | conversion refused (invalid TOML, a TOML date, a non-finite float, failed re-parse check)                                                                                                                            |
+| `1`  | `config.toml` changed, or `config.jsonc` or `config.json` appeared, while the command ran; an existing `config.jsonc` is never replaced, and the new one is removed only while it still holds what the command wrote |
+| `1`  | `config.toml` could not be re-read after the write; the new `config.jsonc` is removed                                                                                                                                |
+| `1`  | `config.jsonc` was removed, changed, or could not be re-read before `config.toml` was deleted; `config.toml` is kept                                                                                                 |
+| `1`  | `config.jsonc` could not be written, or `config.toml` could not be removed afterwards                                                                                                                                |
 
 ## Output
 

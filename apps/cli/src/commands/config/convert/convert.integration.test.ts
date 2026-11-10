@@ -22,6 +22,8 @@ import {
   JSONC_CHANGED_NOTE,
   JSONC_VANISHED_MESSAGE,
   MIN_VERSION_WARNING,
+  JSONC_REMOVED_NOTE,
+  jsonAppearedMessage,
 } from "./convert.format.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-convert-");
@@ -102,7 +104,8 @@ type FsFailure =
   | "reread-and-jsonc-stuck"
   | "jsonc-appears"
   | "both-edited"
-  | "jsonc-removed";
+  | "jsonc-removed"
+  | "json-appears";
 
 const failingConfigTomlFsLayer = (failure: FsFailure) =>
   Layer.effect(
@@ -111,6 +114,7 @@ const failingConfigTomlFsLayer = (failure: FsFailure) =>
       const real = yield* FileSystem.FileSystem;
       const target = yield* configTomlPath;
       const jsonc = yield* projectPath("supabase", "config.jsonc");
+      const json = yield* projectPath("supabase", "config.json");
       const rereadFails = failure === "reread" || failure === "reread-and-jsonc-stuck";
       return FileSystem.FileSystem.of({
         ...real,
@@ -119,39 +123,53 @@ const failingConfigTomlFsLayer = (failure: FsFailure) =>
             ? real.writeFileString(jsonc, "{}\n").pipe(Effect.andThen(real.stat(path)))
             : real.stat(path),
         readFileString: (path, encoding) =>
-          failure === "jsonc-removed" && path === target
+          failure === "json-appears" && path === target
             ? real
                 .exists(jsonc)
                 .pipe(
                   Effect.flatMap((written) =>
                     written
-                      ? real.remove(jsonc).pipe(Effect.andThen(real.readFileString(path, encoding)))
+                      ? real
+                          .writeFileString(json, "{}\n")
+                          .pipe(Effect.andThen(real.readFileString(path, encoding)))
                       : real.readFileString(path, encoding),
                   ),
                 )
-            : failure === "both-edited" && path === target
+            : failure === "jsonc-removed" && path === target
               ? real
                   .exists(jsonc)
                   .pipe(
                     Effect.flatMap((written) =>
                       written
                         ? real
-                            .writeFileString(jsonc, '{ "edited": true }\n')
-                            .pipe(Effect.as('project_id = "edited"\n'))
+                            .remove(jsonc)
+                            .pipe(Effect.andThen(real.readFileString(path, encoding)))
                         : real.readFileString(path, encoding),
                     ),
                   )
-              : rereadFails && path === target
+              : failure === "both-edited" && path === target
                 ? real
                     .exists(jsonc)
                     .pipe(
                       Effect.flatMap((written) =>
                         written
-                          ? Effect.fail(denied("readFileString", path))
+                          ? real
+                              .writeFileString(jsonc, '{ "edited": true }\n')
+                              .pipe(Effect.as('project_id = "edited"\n'))
                           : real.readFileString(path, encoding),
                       ),
                     )
-                : real.readFileString(path, encoding),
+                : rereadFails && path === target
+                  ? real
+                      .exists(jsonc)
+                      .pipe(
+                        Effect.flatMap((written) =>
+                          written
+                            ? Effect.fail(denied("readFileString", path))
+                            : real.readFileString(path, encoding),
+                        ),
+                      )
+                  : real.readFileString(path, encoding),
         remove: (path, options) =>
           (failure === "remove" && path === target) ||
           (failure === "reread-and-jsonc-stuck" && path === jsonc)
@@ -632,6 +650,25 @@ describe("config convert integration", () => {
       expect(error._tag).toBe("ConfigConvertFileChangedError");
       expect(error.message).toBe(JSONC_VANISHED_MESSAGE);
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("keeps config.toml and removes config.jsonc when config.json appears mid-run", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+
+      const error = yield* run().pipe(
+        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("json-appears"), layer)),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("ConfigConvertFileChangedError");
+      expect(error.message).toBe(jsonAppearedMessage(JSONC_REMOVED_NOTE));
+      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+      expect(yield* readFile("supabase", "config.json")).toBe("{}\n");
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(BunServices.layer));

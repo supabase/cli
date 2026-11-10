@@ -383,6 +383,24 @@ describe("convertCliConfigTomlToJsonc: comments", () => {
     ] satisfies ReadonlyArray<MovedTomlComment>);
   });
 
+  test("a comment above a table declared after its subtables stays before that header's keys", () => {
+    const source = "[auth.email]\nx = 1\n\n# about auth\n[auth]\ny = 2\n";
+    const outcome = converted(source);
+    expect(body(source)).toBe(
+      [
+        '  "auth": {',
+        '    "email": {',
+        '      "x": 1',
+        "    },",
+        "",
+        "    // about auth",
+        '    "y": 2',
+        "  }",
+      ].join("\n"),
+    );
+    expect(outcome.movedComments).toEqual([]);
+  });
+
   test("keeps the blank line before an implicit parent table", () => {
     expect(body('a = 1\n\n[remotes.staging]\nproject_id = "x"\n')).toBe(
       [
@@ -459,6 +477,39 @@ describe("convertCliConfigTomlToJsonc: commented-out examples", () => {
     expect(uncommented(text)).toMatchObject({
       auth: { enabled: true, hook: { a: { enabled: true, uri: "x" } } },
     });
+  });
+
+  test("commented dotted keys separated by blank lines share one commented object", () => {
+    const source = '[auth]\nenabled = true\n# hook.a.enabled = true\n\n# hook.a.uri = "x"\n';
+    const { text } = converted(source);
+    expect(text.match(/"hook"/g)).toHaveLength(1);
+    expect(uncommented(text)).toMatchObject({
+      auth: { enabled: true, hook: { a: { enabled: true, uri: "x" } } },
+    });
+    expectEachCommentOnce(source, text);
+  });
+
+  test("commented dotted keys separated by an active key share one commented object", () => {
+    const source = '[auth]\n# hook.a.enabled = true\nenabled = true\n# hook.a.uri = "x"\n';
+    const { text } = converted(source);
+    expect(text.match(/"hook"/g)).toHaveLength(1);
+    expect(uncommented(text)).toMatchObject({
+      auth: { enabled: true, hook: { a: { enabled: true, uri: "x" } } },
+    });
+  });
+
+  test("a commented dotted key joins a commented table example on the same path", () => {
+    const before =
+      '[auth]\nenabled = true\n# hook.a.uri = "x"\n\n# [auth.hook.a]\n# enabled = true\n';
+    const after = '[auth]\n# [auth.hook.a]\n# enabled = true\nenabled = true\n# hook.a.uri = "x"\n';
+    for (const source of [before, after]) {
+      const { text } = converted(source);
+      expect(text.match(/"hook"/g)).toHaveLength(1);
+      expect(uncommented(text)).toMatchObject({
+        auth: { enabled: true, hook: { a: { enabled: true, uri: "x" } } },
+      });
+      expectEachCommentOnce(source, text);
+    }
   });
 
   test("a blank line inside a commented table example keeps the later keys in that example", () => {

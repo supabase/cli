@@ -54,6 +54,7 @@ import {
   JSONC_CHANGED_NOTE,
   JSONC_REMOVED_NOTE,
   JSONC_VANISHED_MESSAGE,
+  jsonAppearedMessage,
   jsoncRemovalFailureNote,
   tomlRemovalFailureMessage,
 } from "./convert.format.ts";
@@ -244,6 +245,19 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
         const note = yield* rollback;
         return yield* new ConfigConvertFileChangedError({
           message: `supabase/config.toml changed on disk while config convert was running. ${note}`,
+        });
+      }
+      const jsonAppeared = yield* fs.exists(path.join(configDir, "config.json")).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ConfigConvertWriteError({
+              message: `Could not check for supabase/config.json: ${cause.message}. supabase/config.toml was kept.`,
+            }),
+        ),
+      );
+      if (jsonAppeared) {
+        return yield* new ConfigConvertFileChangedError({
+          message: jsonAppearedMessage(yield* rollback),
         });
       }
       const published = yield* fs.readFileString(jsoncPath).pipe(

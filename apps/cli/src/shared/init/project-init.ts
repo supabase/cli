@@ -84,7 +84,7 @@ function mergeJsonObjects(
   return merged;
 }
 
-/** Merges `template` into the JSON(C) file at `pathname`, keeping existing comments; writes the template when the file is absent or empty. */
+/** Merges `template` into the JSON(C) file at `pathname`, keeping existing comments unless a minimal edit is impossible; writes the template when the file is absent or empty. */
 function mergeJsonSettingsFile(pathname: string, template: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

@@ -22,6 +22,12 @@ export interface CommentedNode {
 
 export interface PlacedComment {
   readonly at: number;
+  readonly source: Array<CommentedLine>;
+  readonly blankBefore: boolean;
+}
+
+export interface RenderedComment {
+  readonly at: number;
   readonly lines: Array<string>;
   readonly blankBefore: boolean;
 }
@@ -55,7 +61,7 @@ export function newCommentedNode(at: number): CommentedNode {
   return { at, lead: [], own: [], children: new Map() };
 }
 
-export function commentOut(lines: ReadonlyArray<string>): Array<string> {
+function commentOut(lines: ReadonlyArray<string>): Array<string> {
   return lines.map((line) => `// ${line}`);
 }
 
@@ -118,9 +124,15 @@ function commentedMembers(node: CommentedNode): Array<CommentedMember> {
   return members;
 }
 
-function placedBlockLines(lines: ReadonlyArray<CommentedLine>): Array<string> {
+function placedBlockLines(
+  lines: ReadonlyArray<CommentedLine>,
+  children: ReadonlyMap<string, CommentedNode> = new Map(),
+): Array<string> {
   const node = newCommentedNode(0);
   node.own.push(...lines);
+  for (const [key, child] of children) {
+    node.children.set(key, child);
+  }
   return commentedMembers(node).flatMap((member) =>
     member.kind === "child"
       ? [
@@ -129,6 +141,89 @@ function placedBlockLines(lines: ReadonlyArray<CommentedLine>): Array<string> {
         ]
       : placedLines(member),
   );
+}
+
+type HostItem =
+  | {
+      readonly kind: "placed";
+      readonly at: number;
+      readonly blankBefore: boolean;
+      readonly input: ReadonlyArray<CommentedLine>;
+      readonly source: Array<CommentedLine>;
+      readonly children: Map<string, CommentedNode>;
+    }
+  | {
+      readonly kind: "forest";
+      readonly at: number;
+      readonly key: string;
+      readonly node: CommentedNode;
+    };
+
+/** Renders a table's commented examples in source order, merging commented dotted keys into the
+ * first example that uses their first segment, so uncommenting several never yields duplicate keys. */
+export function hostComments(host: CommentHost): Array<RenderedComment> {
+  const items: Array<HostItem> = [
+    ...host.placed.map((block): HostItem => ({
+      kind: "placed",
+      at: block.at,
+      blankBefore: block.blankBefore,
+      input: block.source,
+      source: [],
+      children: new Map(),
+    })),
+    ...[...host.forest.children].map(([key, node]): HostItem => ({
+      kind: "forest",
+      at: node.at,
+      key,
+      node,
+    })),
+  ];
+  items.sort((a, b) => a.at - b.at);
+  const owners = new Map<string, HostItem>();
+  const merged = new Set<HostItem>();
+  for (const item of items) {
+    if (item.kind === "forest") {
+      const owner = owners.get(item.key);
+      if (owner?.kind === "placed" && item.node.elements === undefined) {
+        owner.children.set(item.key, item.node);
+        merged.add(item);
+      } else if (owner === undefined && item.node.elements === undefined) {
+        owners.set(item.key, item);
+      }
+      continue;
+    }
+    for (const line of item.input) {
+      const key = line.kind === "kv" && line.path.length > 1 ? line.path[0] : undefined;
+      const owner = key === undefined ? undefined : owners.get(key);
+      if (line.kind === "kv" && owner?.kind === "forest") {
+        owner.node.own.push({ kind: "kv", path: line.path.slice(1), value: line.value });
+      } else if (owner !== undefined && owner !== item && owner.kind === "placed") {
+        owner.source.push(line);
+      } else {
+        if (key !== undefined && owner === undefined) {
+          owners.set(key, item);
+        }
+        item.source.push(line);
+      }
+    }
+  }
+  return items.flatMap((item): Array<RenderedComment> => {
+    if (merged.has(item)) {
+      return [];
+    }
+    if (item.kind === "forest") {
+      const { key, node } = item;
+      return [
+        {
+          at: item.at,
+          blankBefore: true,
+          lines: [...node.lead, ...commentOut(withComma(commentedChild(key, node, ""), ","))],
+        },
+      ];
+    }
+    const lines = placedBlockLines(item.source, item.children);
+    return lines.length === 0 ? [] : [{ at: item.at, blankBefore: item.blankBefore, lines }];
+  });
 }
 
 function commentedBody(node: CommentedNode, indent: string): Array<string> {
@@ -157,7 +252,7 @@ function commentedObject(node: CommentedNode, indent: string, prefix: string): A
     : [`${indent}${prefix}{`, ...body, `${indent}}`];
 }
 
-export function commentedChild(key: string, node: CommentedNode, indent: string): Array<string> {
+function commentedChild(key: string, node: CommentedNode, indent: string): Array<string> {
   const name = JSON.stringify(key);
   const elements = node.elements;
   if (elements === undefined) {
@@ -266,6 +361,10 @@ export type OpenBlock =
   | { readonly kind: "forest"; readonly node: CommentedNode }
   | { readonly kind: "verbatim"; readonly host: CommentHost };
 
+function proseLine(text: string): CommentedLine {
+  return { kind: "prose", text };
+}
+
 function toCommentedLine(line: CommentLine): CommentedLine {
   return line.kind === "kv"
     ? { kind: "kv", path: line.path, value: line.value }
@@ -279,10 +378,10 @@ function continueBlock(block: OpenBlock, lines: ReadonlyArray<CommentLine>, at: 
   }
   block.host.placed.push({
     at,
-    lines:
+    source:
       block.kind === "table"
-        ? placedBlockLines(lines.map(toCommentedLine))
-        : lines.map((line) => toJsoncComment(line.raw)),
+        ? lines.map(toCommentedLine)
+        : lines.map((line) => ({ kind: "prose", text: toJsoncComment(line.raw) })),
     blankBefore: true,
   });
 }
@@ -318,7 +417,7 @@ function placeBlock(
     if (header.isArray || !hasKeys) {
       return { stored: 0 };
     }
-    table.placed.push({ at, lines: [...leadText, ...placedBlockLines(own)], blankBefore: true });
+    table.placed.push({ at, source: [...leadText.map(proseLine), ...own], blankBefore: true });
     return { stored, open: { kind: "table", host: table } };
   }
   const node = mergeCommented(
@@ -405,17 +504,17 @@ export function translateGroup(
   let keyed: PlacedComment | undefined;
   for (const [host, lines] of byHost) {
     if (host === effective) {
-      keyed = { at: first, lines: placedBlockLines(lines), blankBefore: options.blankBefore };
+      keyed = { at: first, source: lines, blankBefore: options.blankBefore };
       effective.placed.push(keyed);
     } else {
-      host.placed.push({ at: first, lines: placedBlockLines(lines), blankBefore: false });
+      host.placed.push({ at: first, source: lines, blankBefore: false });
     }
   }
   const pending = leading.slice(kept);
   if (headerAt < 0) {
     const tail = pending.map((line) => toJsoncComment(line.raw));
     if (keyed !== undefined && !options.leadsNextMember) {
-      keyed.lines.push(...tail);
+      keyed.source.push(...tail.map(proseLine));
       return { carried: kept + tail.length, tail: [] };
     }
     return { carried: kept, tail };
@@ -460,7 +559,7 @@ function translateHeaders(
       open = placed.open;
     } else {
       const lines = [...lead, header, ...body].map((line) => toJsoncComment(line.raw));
-      effective.placed.push({ at, lines, blankBefore: true });
+      effective.placed.push({ at, source: lines.map(proseLine), blankBefore: true });
       carried += lines.length;
       open = { kind: "verbatim", host: effective };
     }

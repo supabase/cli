@@ -2,8 +2,7 @@ import { Data, Effect } from "effect";
 import * as SmolToml from "smol-toml";
 import {
   type CommentedNode,
-  commentedChild,
-  commentOut,
+  hostComments,
   newCommentedNode,
   type OpenBlock,
   type PlacedComment,
@@ -17,7 +16,6 @@ import {
   renderValue,
   toJsoncComment,
   unsupportedReason,
-  withComma,
 } from "./config-convert-values.ts";
 import { deepEqualValue } from "./config-edit.ts";
 import { parseJsonc } from "./jsonc.ts";
@@ -115,14 +113,7 @@ function entryAt(node: ConfigNode): number {
 
 function renderTableBody(table: TableNode, indent: string): Array<string> {
   const entries = [...table.entries];
-  const pending = [
-    ...table.placed,
-    ...[...table.forest.children].map(([key, node]) => ({
-      at: node.at,
-      blankBefore: true,
-      lines: [...node.lead, ...commentOut(withComma(commentedChild(key, node, ""), ","))],
-    })),
-  ].sort((a, b) => a.at - b.at);
+  const pending = hostComments(table);
   const body = indented(indent, table.inner);
   const flushBefore = (limit: number) => {
     for (let item = pending[0]; item !== undefined && item.at < limit; item = pending[0]) {
@@ -452,6 +443,14 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
       return;
     }
     const keysPlaced = carried > 0;
+    if (leadTarget?.kind === "table" && next?.kind === "header" && leadTarget.at < end) {
+      leadTarget.placed.push({
+        at: index,
+        source: tail.map((text) => ({ kind: "prose", text })),
+        blankBefore,
+      });
+      return;
+    }
     if (leadTarget !== undefined) {
       if (leadTarget.lead.length === 0) {
         leadTarget.blankBefore = blankBefore && !keysPlaced;
