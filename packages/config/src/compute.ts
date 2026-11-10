@@ -53,6 +53,7 @@ const computeEntry = Schema.Struct({
         secrets, \`string[]\` gives only the secrets named in the list.
       `,
     examples: ["all", ["STRIPE_KEY", "LLM_APIKEY"]],
+    default: "all",
     tags,
   }),
   instances: Schema.optionalKey(

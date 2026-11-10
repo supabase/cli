@@ -147,7 +147,7 @@ export const DEFAULT_COMPUTE_SECRETS_SCOPE: ComputeSecretsScope = "all";
 /**  */
 export const COMPUTE_SECRETS_SCOPE_DESCRIPTIONS: Record<ComputeSecretsScopeEnum, string> = {
   all: "Gives access to all defined secrets",
-  supabase: "Exposes only the  ```SUPABASE_*``` defaults",
+  supabase: "Exposes only the SUPABASE_* defaults",
   none: "Hides all secrets",
   custom: "Exposes only the specified secret names",
 };
