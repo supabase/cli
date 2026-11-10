@@ -3941,6 +3941,37 @@ content_path = "./supabase/templates/custom_notice.html"
     );
   });
 
+  it.live(
+    "gives Logflare a doubled health budget to finish booting",
+    () =>
+      Effect.gen(function* () {
+        const route = defaultRoute();
+        let analyticsInspects = 0;
+        const { layer, out, child } = yield* setup({
+          route: (args) => {
+            if (
+              args[0] === "container" &&
+              args[1] === "inspect" &&
+              (args[2] ?? "").includes("_analytics_")
+            ) {
+              analyticsInspects += 1;
+              if (analyticsInspects <= 2) return { stdout: [STARTING_STATE] };
+            }
+            return route(args);
+          },
+          httpClientLayer: unusedHttpClientLayer,
+        });
+
+        yield* start(flags({ exclude: ["postgrest", "edge-runtime"] })).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Started");
+        expect(rollbackWasAttempted(child.spawned)).toBe(false);
+      }).pipe(
+        Effect.provideService(HealthCheckTimeoutSeconds, 1),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
+      ),
+    10_000,
+  );
+
   // Real time, not `it.effect`/`TestClock`: genuine async I/O deep inside the forked effect
   // (HTTP requests and `resolveDbImage`'s file read) needs real Node
   // event-loop turns to settle, so a virtualized clock would never let the fiber reach the

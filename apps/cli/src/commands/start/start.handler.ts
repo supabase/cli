@@ -146,6 +146,7 @@ import {
 import { ensureImagesCached } from "../../command-internal/db-bootstrap/image-prepull.ts";
 import {
   awaitDockerHealthSettled,
+  HealthCheckTimeoutSeconds,
   healthCheckExecUnavailableWarning,
   waitForHealthyServices,
   type ExecFallbackProbe,
@@ -186,6 +187,9 @@ import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
+
+/** Multiplies the service health budget when Logflare or Vector start; see SIDE_EFFECTS.md. */
+const ANALYTICS_HEALTH_TIMEOUT_FACTOR = 2;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return Predicate.isObject(value) ? value : undefined;
@@ -1534,8 +1538,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           localKongCa === undefined ? effect : effect.pipe(withStorageGatewayFetch(localKongCa));
         // Keep the synthetic value out of project dotenv resolution and container environments.
         configureLoopbackProxyBypass();
+        // Logflare runs its migrations before serving `/health`, and Vector waits on Logflare, so
+        // their readiness needs a longer budget than the other services.
+        const serviceTimeoutSeconds = yield* HealthCheckTimeoutSeconds;
+        const healthTimeoutSeconds =
+          started.has(logflareContainerName) || started.has(vectorContainerName)
+            ? serviceTimeoutSeconds * ANALYTICS_HEALTH_TIMEOUT_FACTOR
+            : serviceTimeoutSeconds;
         const healthResult = yield* withLocalKongCa(
           waitForHealthyServices(spawner, [...started.keys()], {
+            timeoutSeconds: healthTimeoutSeconds,
             postgrest: postgrestGateway,
             edgeRuntime: edgeRuntimeGateway,
             images: started,

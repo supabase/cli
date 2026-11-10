@@ -97,9 +97,11 @@ reports `<container> container is not ready: <connect error>`, after the contain
 start` runs the same wait, including with `--from-backup`.
 
 Every other health-checked container is gated on Docker's health status (`healthy`), polled once
-per second within the 30s service timeout. A container with no Docker healthcheck passes once
-it is running. PostgREST and Edge Runtime keep their HTTP HEAD probes through Kong. The wait also
-stops after `(30 + 1) * (1 + 10)` seconds of wall-clock time, so a gateway that accepts
+per second within the 30s service timeout. When Logflare or Vector is started, the timeout is
+60s: Logflare migrates its database before serving `/health`, and Vector starts only after
+Logflare answers. A container with no Docker healthcheck passes once it is running. PostgREST and
+Edge Runtime keep their HTTP HEAD probes through Kong. The wait also stops after
+`(<timeout> + 1) * (1 + 10)` seconds of wall-clock time, so a gateway that accepts
 connections and never answers cannot outlast the retry budget; it then fails like an exhausted
 budget, with the last round's reasons (`container is not ready: readiness probe hung after <n>s`
 when no round completed).
