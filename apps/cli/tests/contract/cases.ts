@@ -379,6 +379,18 @@ const seedingCases: ReadonlyArray<ContractCase> = [
     name: "start applies migrations in byte order, then seeds in sql_paths order, then config buckets",
     run: appliesInOrder,
   },
+  {
+    name: "start seeds config vector buckets",
+    run: Effect.gen(function* () {
+      const client = yield* contractClient("SECRET_KEY");
+      const { vectorBuckets } = yield* sdk("list vector buckets", () =>
+        client.storage.vectors.listBuckets(),
+      );
+      expect(vectorBuckets.map(({ vectorBucketName }) => vectorBucketName)).toContain(
+        "config-vectors",
+      );
+    }),
+  },
 ];
 
 const resetCases: ReadonlyArray<ContractCase> = [

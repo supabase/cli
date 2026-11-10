@@ -177,7 +177,6 @@ const unsupportedConfigPaths = [
   },
   { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
   { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
-  { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
   ...(["s3_host", "s3_region", "s3_access_key", "s3_secret_key"] as const).map((key) => ({
     path: `experimental.${key}`,
     // Legacy Compose forwards these to OrioleDB; the stack does not, so fail rather than drop them.
@@ -243,12 +242,6 @@ const configValidationError = (config: CliConfig): string | undefined => {
   }
   if (config.analytics.enabled && config.analytics.backend !== "postgres")
     return "analytics.backend must be postgres for the experimental stack";
-  if (
-    config.storage.enabled &&
-    config.storage.vector.enabled &&
-    Object.keys(config.storage.vector.buckets).length > 0
-  )
-    return "storage.vector settings are unsupported by the experimental stack";
   if (config.db.major_version !== 15 && config.db.major_version !== 17)
     return "db.major_version must be 15 or 17 for the experimental stack";
 

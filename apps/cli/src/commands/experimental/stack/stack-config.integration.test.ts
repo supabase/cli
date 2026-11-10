@@ -450,6 +450,20 @@ backend = "bigquery"
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("accepts storage analytics and declared vector buckets", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-storage-buckets"
+[storage.analytics]
+enabled = true
+[storage.analytics.buckets.my-warehouse]
+[storage.vector.buckets.documents-openai]
+`);
+      const services = yield* (yield* load(root)).creations("stack-storage-buckets");
+      const storage = byService(services).get("storage");
+      expect(storage?.service === "storage" && storage.config.vectorEnabled).toBe(true);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect("rejects unsupported database versions before creating recipes", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-db-version"
