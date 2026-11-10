@@ -295,6 +295,12 @@ function unescapeBasicString(raw: string): string {
     } else if (next === "t") {
       result += "\t";
       i++;
+    } else if (next === "e") {
+      result += "\u001b";
+      i++;
+    } else if (next === "x") {
+      result += String.fromCodePoint(Number.parseInt(raw.slice(i + 2, i + 4), 16));
+      i += 3;
     } else if (next === "u") {
       result += String.fromCodePoint(Number.parseInt(raw.slice(i + 2, i + 6), 16));
       i += 5;

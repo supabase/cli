@@ -53,6 +53,7 @@ import {
   JSONC_APPEARED_MESSAGE,
   JSONC_CHANGED_NOTE,
   JSONC_REMOVED_NOTE,
+  JSONC_VANISHED_MESSAGE,
   jsoncRemovalFailureNote,
   tomlRemovalFailureMessage,
 } from "./convert.format.ts";
@@ -160,6 +161,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
     if (flags.dryRun) {
       const vscode = yield* trustSchemaDomainInVscode(cliSettings.workdir, true);
       const warnings = convertWarnings({
+        dryRun: true,
         moved: outcome.movedComments,
         vscodeFailure: vscode.failure,
       });
@@ -244,6 +246,22 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
           message: `supabase/config.toml changed on disk while config convert was running. ${note}`,
         });
       }
+      const published = yield* fs.readFileString(jsoncPath).pipe(
+        Effect.catchTag("PlatformError", (cause) =>
+          Predicate.isTagged(cause.reason, "NotFound")
+            ? Effect.void
+            : Effect.fail(
+                new ConfigConvertWriteError({
+                  message: `Could not re-read supabase/config.jsonc to confirm it is intact: ${cause.message}. supabase/config.toml was kept.`,
+                }),
+              ),
+        ),
+      );
+      if (published !== outcome.text) {
+        return yield* new ConfigConvertFileChangedError({
+          message: published === undefined ? JSONC_VANISHED_MESSAGE : JSONC_CHANGED_NOTE,
+        });
+      }
       yield* fs
         .remove(parsed.path)
         .pipe(
@@ -276,6 +294,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
           moved: outcome.movedComments,
           vscodeUpdated: vscode.updated,
           warnings: convertWarnings({
+            dryRun: false,
             moved: outcome.movedComments,
             vscodeFailure: vscode.failure,
           }),

@@ -27,6 +27,8 @@ const COMPATIBILITY_LINES = [
 
 export const MIN_VERSION_WARNING = `${COMPATIBILITY_LINES.join(" ")} To undo, run: ${UNDO_COMMAND}`;
 
+export const DRY_RUN_MIN_VERSION_WARNING = `${COMPATIBILITY_LINES.join(" ")} To undo after converting, run: ${UNDO_COMMAND}`;
+
 const TRUSTED_DOMAIN = "https://supabase.com/schemas/";
 
 const VSCODE_MANUAL_STEP = `Add "${TRUSTED_DOMAIN}": true under "json.schemaDownload.trustedDomains" to trust the config schema.`;
@@ -45,6 +47,9 @@ export const JSONC_APPEARED_MESSAGE =
 
 export const JSONC_REMOVED_NOTE =
   "Removed supabase/config.jsonc and kept supabase/config.toml; rerun the command to convert the current file.";
+
+export const JSONC_VANISHED_MESSAGE =
+  "supabase/config.jsonc was removed while config convert was running, so supabase/config.toml was kept; rerun the command to convert it.";
 
 export const JSONC_CHANGED_NOTE =
   "supabase/config.jsonc changed after config convert wrote it, so it was left as is alongside supabase/config.toml; supabase/config.jsonc takes precedence, so check which file you want to keep.";
@@ -70,12 +75,13 @@ function movedCommentsWarning(moved: ReadonlyArray<MovedTomlComment>): ReadonlyA
 }
 
 export function convertWarnings(input: {
+  readonly dryRun: boolean;
   readonly moved: ReadonlyArray<MovedTomlComment>;
   readonly vscodeFailure: string | undefined;
 }): ReadonlyArray<string> {
   return [
     ...movedCommentsWarning(input.moved),
-    MIN_VERSION_WARNING,
+    input.dryRun ? DRY_RUN_MIN_VERSION_WARNING : MIN_VERSION_WARNING,
     ...(input.vscodeFailure === undefined ? [] : [vscodeFailureWarning(input.vscodeFailure)]),
   ];
 }

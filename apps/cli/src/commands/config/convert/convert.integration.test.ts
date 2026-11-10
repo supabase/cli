@@ -16,9 +16,11 @@ import { renderCliConfigTemplate } from "../../../shared/init/project-init.templ
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { configConvert } from "./convert.handler.ts";
 import {
+  DRY_RUN_MIN_VERSION_WARNING,
   CONFIG_JSONC_MIN_CLI_VERSION,
   JSONC_APPEARED_MESSAGE,
   JSONC_CHANGED_NOTE,
+  JSONC_VANISHED_MESSAGE,
   MIN_VERSION_WARNING,
 } from "./convert.format.ts";
 
@@ -94,7 +96,13 @@ const denied = (method: string, pathOrDescriptor: string) =>
     pathOrDescriptor,
   });
 
-type FsFailure = "reread" | "remove" | "reread-and-jsonc-stuck" | "jsonc-appears" | "both-edited";
+type FsFailure =
+  | "reread"
+  | "remove"
+  | "reread-and-jsonc-stuck"
+  | "jsonc-appears"
+  | "both-edited"
+  | "jsonc-removed";
 
 const failingConfigTomlFsLayer = (failure: FsFailure) =>
   Layer.effect(
@@ -111,29 +119,39 @@ const failingConfigTomlFsLayer = (failure: FsFailure) =>
             ? real.writeFileString(jsonc, "{}\n").pipe(Effect.andThen(real.stat(path)))
             : real.stat(path),
         readFileString: (path, encoding) =>
-          failure === "both-edited" && path === target
+          failure === "jsonc-removed" && path === target
             ? real
                 .exists(jsonc)
                 .pipe(
                   Effect.flatMap((written) =>
                     written
-                      ? real
-                          .writeFileString(jsonc, '{ "edited": true }\n')
-                          .pipe(Effect.as('project_id = "edited"\n'))
+                      ? real.remove(jsonc).pipe(Effect.andThen(real.readFileString(path, encoding)))
                       : real.readFileString(path, encoding),
                   ),
                 )
-            : rereadFails && path === target
+            : failure === "both-edited" && path === target
               ? real
                   .exists(jsonc)
                   .pipe(
                     Effect.flatMap((written) =>
                       written
-                        ? Effect.fail(denied("readFileString", path))
+                        ? real
+                            .writeFileString(jsonc, '{ "edited": true }\n')
+                            .pipe(Effect.as('project_id = "edited"\n'))
                         : real.readFileString(path, encoding),
                     ),
                   )
-              : real.readFileString(path, encoding),
+              : rereadFails && path === target
+                ? real
+                    .exists(jsonc)
+                    .pipe(
+                      Effect.flatMap((written) =>
+                        written
+                          ? Effect.fail(denied("readFileString", path))
+                          : real.readFileString(path, encoding),
+                      ),
+                    )
+                : real.readFileString(path, encoding),
         remove: (path, options) =>
           (failure === "remove" && path === target) ||
           (failure === "reread-and-jsonc-stuck" && path === jsonc)
@@ -512,6 +530,7 @@ describe("config convert integration", () => {
           would_remove: "supabase/config.toml",
           would_update_vscode_settings: false,
           content: expect.stringContaining('"project_id": "demo"'),
+          warnings: expect.arrayContaining([DRY_RUN_MIN_VERSION_WARNING]),
         },
       });
       expect(message?.data).not.toHaveProperty("removed");
@@ -597,6 +616,24 @@ describe("config convert integration", () => {
       expect(error.message).toBe(JSONC_APPEARED_MESSAGE);
       expect(yield* readFile("supabase", "config.jsonc")).toBe("{}\n");
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("keeps config.toml when config.jsonc is removed mid-run", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+
+      const error = yield* run().pipe(
+        Effect.provide(Layer.provideMerge(failingConfigTomlFsLayer("jsonc-removed"), layer)),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("ConfigConvertFileChangedError");
+      expect(error.message).toBe(JSONC_VANISHED_MESSAGE);
+      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(BunServices.layer));
   });
 

@@ -186,6 +186,14 @@ describe("convertCliConfigTomlToJsonc: values", () => {
     );
   });
 
+  test("decodes hexadecimal and escape-character escapes in quoted keys", () => {
+    const { text } = converted('[functions."\\x61"]\nk = 1\n"\\e" = 2\n');
+    expect(parseJsonc(text)).toEqual({
+      $schema: CLI_CONFIG_SCHEMA_URL,
+      functions: { a: { k: 1, "\u001b": 2 } },
+    });
+  });
+
   test("expands dotted keys, implicit parents, and parents declared after their children", () => {
     const source = '[a.b]\nx = 1\n[c]\ny = true\n[a]\nz.w = "s"\n';
     expect(JSON.parse(converted(source).text)).toEqual({
