@@ -310,7 +310,7 @@ function renderLeafValue(value: ConfigEditLeafValue): string {
 // comments, table headers, and key-value lines (multi-line arrays/strings scanned as single
 // opaque spans). Never throws — an unrecognized construct yields an `{ error }` result instead.
 
-interface TomlHeaderToken {
+export interface TomlHeaderToken {
   readonly kind: "header";
   readonly start: number;
   readonly end: number;
@@ -318,7 +318,7 @@ interface TomlHeaderToken {
   readonly isArrayOfTables: boolean;
 }
 
-interface TomlKeyToken {
+export interface TomlKeyToken {
   readonly kind: "kv";
   readonly start: number;
   readonly end: number;
@@ -345,7 +345,7 @@ interface TomlCommentToken {
 
 type TomlToken = TomlHeaderToken | TomlKeyToken | TomlBlankToken | TomlCommentToken;
 
-interface TomlScanResult {
+export interface TomlScanResult {
   readonly source: string;
   readonly tokens: ReadonlyArray<TomlToken>;
   readonly headers: ReadonlyArray<TomlHeaderToken>;
@@ -353,7 +353,7 @@ interface TomlScanResult {
   readonly endsWithNewline: boolean;
 }
 
-interface TomlScanError {
+export interface TomlScanError {
   readonly error: string;
 }
 
@@ -653,7 +653,7 @@ function scanDottedKeyPath(source: string, pos: number): DottedKeyScan | null {
   return { segments, end: cursor };
 }
 
-function scanTomlDocument(source: string): TomlScanResult | TomlScanError {
+export function scanTomlDocument(source: string): TomlScanResult | TomlScanError {
   const tokens: Array<TomlToken> = [];
   const headers: Array<TomlHeaderToken> = [];
   const length = source.length;

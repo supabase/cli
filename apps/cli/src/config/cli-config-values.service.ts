@@ -9,6 +9,8 @@ import { Context } from "effect";
 
 import type { LinkedProjectRefReadError } from "../shared/config/project-link.ts";
 import type { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
+import type { CliConfigParseError } from "@supabase/config/effect";
+import type { CliConfigRemoteFailure } from "./cli-config-remote.ts";
 import type { CliConfigFamilyId } from "./cli-config-key-annotations.ts";
 import type { CliConfigFlagDeclaration } from "./cli-config-flags.ts";
 import type { CliConfigKey, CliConfigKeyOrigin, CliConfigValue } from "./cli-config-key.ts";
@@ -28,6 +30,10 @@ interface CliConfigLoadTarget {
   readonly tolerateUnreadableLinkedRef?: true;
   /** Leaves an invalid value out of the resolved config and lists it in `invalid`, instead of failing the load. */
   readonly tolerateInvalid?: true;
+  /** Selects `[remotes.<name>]` by name instead of by `projectRef`; without a `projectRef` no linked ref is read. */
+  readonly remoteName?: string;
+  /** Prints no notices, decodes with every schema issue reported, and implies `tolerateInvalid`. */
+  readonly validation?: true;
 }
 
 /** An env variable that held a value but was withheld because it belongs to the linked project. */
@@ -81,6 +87,12 @@ export interface ResolvedCliConfig {
   readonly origins: ReadonlyMap<string, CliConfigKeyOrigin>;
   /** Values `tolerateInvalid` left out; always empty otherwise. */
   readonly invalid: ReadonlyArray<CliConfigValueError>;
+  /** Remotes whose `project_id` is duplicated or malformed; a `validation` load reports them here instead of failing, and they are empty otherwise. */
+  readonly remoteFailures: ReadonlyArray<CliConfigRemoteFailure>;
+  /** Schema decode failures a `validation` load pruned past, in order; empty otherwise. */
+  readonly schemaFailures: ReadonlyArray<CliConfigParseError>;
+  /** The key paths a `validation` load deleted from the document so decoding could continue; empty otherwise. */
+  readonly pruned: ReadonlyArray<ReadonlyArray<string>>;
   /** The entry names of a family: those the registry declares plus those in the merged document. */
   readonly familyNames: (family: CliConfigFamilyId) => ReadonlyArray<string>;
   /** Whether the merged document holds a value or table at the dotted path. */

@@ -12,10 +12,17 @@ import {
   ConfigValidateError,
   type AuthInput,
   type ConfigValidationInput,
+  collectAuthExternalProviderIssues,
+  collectAuthSmsProviderIssues,
+  collectConfigValidationIssues,
   resolveEmailTemplateContentPath,
   validateResolvedConfig,
 } from "./config-validate.ts";
+import { CliConfigSchema } from "@supabase/config";
+import { Schema } from "effect";
 import { parseBoolLiteral } from "../shared/config/config-bool.ts";
+
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 describe("parseBoolLiteral", () => {
   it("accepts the true forms", () => {
@@ -1392,5 +1399,143 @@ describe("validateResolvedConfig", () => {
         "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
       );
     });
+  });
+});
+
+describe("collectConfigValidationIssues", () => {
+  it("reports independent failures together, in validation order", () => {
+    const issues = collectConfigValidationIssues(
+      minimalInput({
+        api: { enabled: true, port: 0, tls: { enabled: false, certPath: "", keyPath: "" } },
+        studio: { enabled: true, port: 0, apiUrl: "http://localhost:54321" },
+        auth: minimalAuthInput({ siteUrl: "" }),
+      }),
+    );
+
+    expect(issues.map((issue) => issue.path)).toEqual(["api.port", "studio.port", "auth.site_url"]);
+  });
+
+  it("reports nothing for a valid input", () => {
+    expect(collectConfigValidationIssues(minimalInput())).toEqual([]);
+  });
+
+  it("stops the db.major_version chain at its first failure", () => {
+    const issues = collectConfigValidationIssues(
+      minimalInput({ db: { port: 5432, majorVersion: 12 } }),
+    );
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.path).toBe("db.major_version");
+  });
+
+  it("does not check a hook's secrets when its uri is malformed", () => {
+    const issues = collectConfigValidationIssues(
+      minimalInput({
+        auth: minimalAuthInput({
+          hooks: [{ type: "send_sms", uri: "http://[::1", secrets: "bad" }],
+        }),
+      }),
+    );
+
+    expect(issues.map((issue) => issue.path)).toEqual(["auth.hook.send_sms.uri"]);
+  });
+
+  it("checks each hook independently", () => {
+    const issues = collectConfigValidationIssues(
+      minimalInput({
+        auth: minimalAuthInput({
+          hooks: [
+            { type: "send_sms", uri: "", secrets: "" },
+            { type: "send_email", uri: "https://example.test/hook", secrets: "bad" },
+          ],
+        }),
+      }),
+    );
+
+    expect(issues.map((issue) => issue.path)).toEqual([
+      "auth.hook.send_sms.uri",
+      "auth.hook.send_email.secrets",
+    ]);
+  });
+
+  it("reports cognito's region only once its user pool id is present", () => {
+    const [missingId] = collectConfigValidationIssues(
+      minimalInput({
+        auth: minimalAuthInput({ thirdParty: [{ provider: "cognito", requiredField: "" }] }),
+      }),
+    );
+    const [missingRegion] = collectConfigValidationIssues(
+      minimalInput({
+        auth: minimalAuthInput({ thirdParty: [{ provider: "cognito", requiredField: "pool" }] }),
+      }),
+    );
+
+    expect(missingId?.path).toBe("auth.third_party.aws_cognito.user_pool_id");
+    expect(missingRegion?.path).toBe("auth.third_party.aws_cognito.user_pool_region");
+  });
+
+  it("reports each incomplete provider and the one-provider rule", () => {
+    const issues = collectConfigValidationIssues(
+      minimalInput({
+        auth: minimalAuthInput({
+          thirdParty: [
+            { provider: "firebase", requiredField: "" },
+            { provider: "auth0", requiredField: "" },
+          ],
+        }),
+      }),
+    );
+
+    expect(issues.map((issue) => issue.path)).toEqual([
+      "auth.third_party.firebase.project_id",
+      "auth.third_party.auth0.tenant",
+      "auth.third_party",
+    ]);
+  });
+
+  it("keeps the throwing wrapper's first message identical to the first collected issue", () => {
+    const input = minimalInput({ db: { port: 0, majorVersion: 16 } });
+    const [first] = collectConfigValidationIssues(input);
+
+    expect(() => validateResolvedConfig(input)).toThrow(first?.message ?? "");
+  });
+});
+
+describe("collectAuthSmsProviderIssues", () => {
+  it("lists every missing field of the first enabled provider only", () => {
+    const { sms } = decodeCliConfig({}).auth;
+    const issues = collectAuthSmsProviderIssues({
+      ...sms,
+      twilio: { ...sms.twilio, enabled: true, account_sid: "", message_service_sid: "" },
+      vonage: { ...sms.vonage, enabled: true },
+    });
+
+    expect(issues.map((issue) => issue.path)).toEqual([
+      "auth.sms.twilio.account_sid",
+      "auth.sms.twilio.message_service_sid",
+      "auth.sms.twilio.auth_token",
+    ]);
+  });
+});
+
+describe("collectAuthExternalProviderIssues", () => {
+  it("reports a missing client id and secret for each enabled provider", () => {
+    const issues = collectAuthExternalProviderIssues({
+      github: { enabled: true, clientId: "", url: "", skipNonceCheck: false, emailOptional: false },
+      apple: { enabled: true, clientId: "", url: "", skipNonceCheck: false, emailOptional: false },
+      gitlab: {
+        enabled: false,
+        clientId: "",
+        url: "",
+        skipNonceCheck: false,
+        emailOptional: false,
+      },
+    });
+
+    expect(issues.map((issue) => issue.path)).toEqual([
+      "auth.external.github.client_id",
+      "auth.external.github.secret",
+      "auth.external.apple.client_id",
+    ]);
   });
 });

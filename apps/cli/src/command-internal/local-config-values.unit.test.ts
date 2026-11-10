@@ -1033,6 +1033,7 @@ describe("narrowConfigEnum", () => {
       new CliConfigValueError({
         path: "realtime.ip_version",
         tier: "config",
+        expected: "one of IPv4, IPv6",
         message: 'Invalid config for realtime.ip_version: "v9" must be one of "IPv4", "IPv6"',
       }),
     );

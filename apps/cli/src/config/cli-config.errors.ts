@@ -18,6 +18,8 @@ export class CliConfigValueError extends Data.TaggedError("CliConfigValueError")
   readonly source?: string;
   readonly envName?: string;
   readonly flag?: string;
+  /** What a valid value is, as in "expected …"; absent for failures that are not a codec rejection. */
+  readonly expected?: string;
   /** Per-entry decode failures, merged when several keys fail in one load. */
   readonly issues?: ReadonlyArray<string>;
 }> {

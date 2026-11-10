@@ -38,21 +38,28 @@ export const selectCliConfigRemote = (
   )?.name;
 };
 
-/**
- * The load failure for a duplicate or malformed remote `project_id`, if any. Runs on every load,
- * regardless of which remote is selected.
- */
-export const cliConfigRemoteFailure = (
+export interface CliConfigRemoteFailure {
+  readonly remote: string;
+  readonly message: string;
+}
+
+/** Every remote with a duplicate or malformed `project_id`, one failure per remote,. */
+export const cliConfigRemoteFailures = (
   remotes: Readonly<Record<string, unknown>>,
   lookup: EnvLookup,
-): string | undefined => {
+): ReadonlyArray<CliConfigRemoteFailure> => {
+  const failures = new Map<string, CliConfigRemoteFailure>();
   const seen = new Map<string, string>();
   for (const { name, block } of remoteBlocks(remotes)) {
     const projectId = matchProjectId(name, block, lookup);
     if (projectId === undefined) continue;
     const prior = seen.get(projectId);
     if (prior !== undefined) {
-      return `duplicate project_id for [remotes.${name}] and [remotes.${prior}]`;
+      failures.set(name, {
+        remote: name,
+        message: `duplicate project_id for [remotes.${name}] and [remotes.${prior}]`,
+      });
+      continue;
     }
     seen.set(projectId, name);
   }
@@ -62,9 +69,12 @@ export const cliConfigRemoteFailure = (
     const projectId =
       override ??
       (literal === undefined ? undefined : expandCliConfigEnvReference(literal, lookup));
-    if (projectId === undefined || !PROJECT_REF_PATTERN.test(projectId)) {
-      return `Invalid config for remotes.${name}.project_id. Must be like: abcdefghijklmnopqrst`;
+    if ((projectId === undefined || !PROJECT_REF_PATTERN.test(projectId)) && !failures.has(name)) {
+      failures.set(name, {
+        remote: name,
+        message: `Invalid config for remotes.${name}.project_id. Must be like: abcdefghijklmnopqrst`,
+      });
     }
   }
-  return undefined;
+  return [...failures.values()];
 };

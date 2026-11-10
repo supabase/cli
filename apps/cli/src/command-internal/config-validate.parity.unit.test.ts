@@ -9,7 +9,7 @@ import { withEnvVar, mockCommandSettings } from "../../tests/helpers/command-moc
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { readDbConfig } from "./db-config.read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
-import { resolveLocalConfigValues } from "./local-config-values.ts";
+import { collectLocalConfigIssues, resolveLocalConfigValues } from "./local-config-values.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
@@ -79,6 +79,28 @@ function failsWithL(
       resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
     );
     expect(error.message).toContain(message);
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+}
+
+/** Drives the collecting pipeline and asserts its first issue is the one the throwing pipeline fails with. */
+function collectsFirstWithL(
+  overrides: Record<string, unknown>,
+  message: string,
+  document?: Readonly<Record<string, unknown>>,
+) {
+  return Effect.gen(function* () {
+    const issues = yield* collectLocalConfigIssues(
+      baseConfig(overrides),
+      WORKDIR,
+      document,
+      undefined,
+    );
+    const config = baseConfig(overrides);
+    const thrown = yield* Effect.flip(
+      resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
+    );
+    expect(issues[0]?.message).toContain(message);
+    expect(issues[0]?.message).toBe(thrown.message);
   }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 }
 
@@ -326,9 +348,17 @@ describe("validateResolvedConfig cross-caller parity (D vs L)", () => {
       Effect.gen(function* () {
         yield* failsWithD(scenario.toml, scenario.message);
         yield* failsWithL(scenario.overrides, scenario.message, scenario.document);
+        yield* collectsFirstWithL(scenario.overrides, scenario.message, scenario.document);
       }),
     );
   }
+
+  it.effect("a valid config collects no issues", () =>
+    Effect.gen(function* () {
+      const issues = yield* collectLocalConfigIssues(baseConfig(), WORKDIR, undefined, undefined);
+      expect(issues).toEqual([]);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
 });
 
 // The `api.port` branch is L-only in the table above (D has no api section) but is shared with

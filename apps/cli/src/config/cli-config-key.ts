@@ -413,6 +413,7 @@ const invalidCliConfigValue = (
         tier: "flag",
         source,
         flag: origin.flag,
+        expected,
         message: `Invalid --${origin.flag}="${raw}" (sets ${path}): expected ${expected}.`,
       });
     case "shell":
@@ -426,6 +427,7 @@ const invalidCliConfigValue = (
         tier: origin.tier,
         source,
         envName: origin.envName,
+        expected,
         message: `Invalid ${origin.envName}="${raw}"${file} (sets ${path}): expected ${expected}.`,
       });
     }
@@ -435,6 +437,7 @@ const invalidCliConfigValue = (
         path,
         tier: "config",
         source,
+        expected,
         message: typeOnly
           ? `Invalid ${path}${where === "config" ? "" : ` in ${where}`}: expected ${expected}, got ${raw}.`
           : where === "config"
@@ -487,6 +490,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
           new CliConfigValueError({
             path: key.path,
             tier,
+            expected: "a secret that decrypts with the project's dotenv private key",
             message: `failed to parse config: ${decrypted.error}`,
           }),
         );
@@ -582,6 +586,7 @@ export const pickCliEnvName = <X>(
         new CliConfigValueError({
           path,
           tier: "shell",
+          expected: entry.codec.expected,
           source: `${entry.name} (shell)`,
           message: `Invalid ${entry.name}="${raw}" (sets ${path}): expected ${entry.codec.expected}.`,
           envName: entry.name,

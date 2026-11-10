@@ -1,8 +1,8 @@
 import { CLI_CONFIG_SCHEMA_URL, type CliConfigValueOrigin } from "@supabase/config";
+import { CliConfigParseError } from "@supabase/config/effect";
 import {
   decodeMergedCliConfig,
   ENV_CAPTURE_REGEX,
-  findUnknownCliConfigKeys,
   mergeParsedCliConfig,
   parseCliConfigDocumentFile,
   type MergedCliConfigDocument,
@@ -55,14 +55,15 @@ import {
 } from "./cli-config-key.ts";
 import {
   cliConfigFamilyEnvNames,
-  cliConfigDocumentOnlyPaths,
   cliConfigFamilyKey,
   cliConfigRegistry,
   cliRemoteProjectIdEnvName,
   staticCliConfigFamilyNames,
   type AnyCliConfigKey,
 } from "./cli-config-keys.ts";
-import { cliConfigRemoteFailure, selectCliConfigRemote } from "./cli-config-remote.ts";
+import { reportableUnknownCliConfigKeys } from "./cli-config-unknown-keys.ts";
+import { flattenSchemaIssues } from "./cli-config-schema-issues.ts";
+import { cliConfigRemoteFailures, selectCliConfigRemote } from "./cli-config-remote.ts";
 import {
   CliConfigValues,
   type CliConfigMaterialized,
@@ -77,6 +78,8 @@ class LoadKey extends Data.Class<{
   readonly ignoreConfigFile: boolean;
   readonly tolerateUnreadableLinkedRef: boolean;
   readonly tolerateInvalid: boolean;
+  readonly validation: boolean;
+  readonly remoteName: string | undefined;
 }> {}
 
 const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfigDocument => ({
@@ -95,25 +98,6 @@ const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfi
 const deprecatedKeyLine = (deprecatedPath: string): string => {
   const shown = escapeControlCharacters(deprecatedPath);
   return `WARN: ${shown} is deprecated and will be removed in v4, use ${shown.replace(/enable_signup$/, "enabled")} instead.\n`;
-};
-
-/** Unknown-key reports stop at the first unknown table, so a document-only table such as `auth.passkey` arrives whole. */
-const isDocumentOnlyKey = (key: ReadonlyArray<string>): boolean => {
-  const dotted = key.join(".");
-  return [...cliConfigDocumentOnlyPaths].some(
-    (known) => known === dotted || known.startsWith(`${dotted}.`) || dotted.startsWith(`${known}.`),
-  );
-};
-
-/** Custom `[auth.external.<name>]` providers have no schema entry, but `start` reads them from the raw document. */
-const isCustomAuthProvider = (rawDocument: unknown, key: ReadonlyArray<string>): boolean => {
-  const local = key[0] === "remotes" ? key.slice(2) : key;
-  return (
-    local.length === 3 &&
-    local[0] === "auth" &&
-    local[1] === "external" &&
-    isDocumentRecord(getDocumentValue(rawDocument, key))
-  );
 };
 
 const unrecognizedSchemaLine = (file: string, ref: string): string =>
@@ -211,6 +195,31 @@ const withEnvOrigins = <T extends { readonly valueOrigins?: ReadonlyArray<CliCon
         ),
       };
 
+const withoutRemotes = (document: Record<string, unknown>): Record<string, unknown> => {
+  const { remotes: _remotes, ...rest } = document;
+  return rest;
+};
+
+const MAX_PRUNE_ROUNDS = 5;
+
+/** The path to delete so a decode issue at `path` stops recurring: the key itself, the array holding it, or the deepest table that exists above an absent key. */
+const prunableSegments = (
+  draft: Record<string, unknown>,
+  path: ReadonlyArray<string>,
+  missingKey: boolean,
+): ReadonlyArray<string> => {
+  const target = missingKey ? path.slice(0, -1) : path;
+  let node: unknown = draft;
+  const kept: Array<string> = [];
+  for (const segment of target) {
+    if (!isDocumentRecord(node)) break;
+    if (!Object.hasOwn(node, segment)) break;
+    kept.push(segment);
+    node = node[segment];
+  }
+  return kept;
+};
+
 const materializedWrite = (
   key: AnyCliConfigKey,
   picked: CliConfigValue<unknown>,
@@ -274,17 +283,32 @@ export const cliConfigValuesLayer = Layer.effect(
       },
     );
 
+    const validationParsedDocuments = yield* Cache.makeWith(
+      (workdir: string) =>
+        withPlatform(
+          parseCliConfigDocumentFile(workdir, { search: false, tolerateRemovedKeys: true }),
+        ),
+      {
+        capacity: 8,
+        timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+      },
+    );
+
     const loadResolvedConfig = Effect.fn("CliConfigValues.load")(function* (target: LoadKey) {
       const [conflict] = flagInputs.conflicts;
       if (conflict !== undefined) return yield* cliConfigFlagConflictError(conflict);
 
       const parsed = target.ignoreConfigFile
         ? null
-        : yield* Cache.get(parsedDocuments, target.workdir);
-      for (const deprecatedPath of parsed?.deprecatedPaths ?? []) {
+        : yield* Cache.get(
+            target.validation ? validationParsedDocuments : parsedDocuments,
+            target.workdir,
+          );
+      const notices = !target.validation;
+      for (const deprecatedPath of notices ? (parsed?.deprecatedPaths ?? []) : []) {
         yield* printOnce(deprecatedKeyLine(deprecatedPath));
       }
-      if (parsed !== null) {
+      if (parsed !== null && notices) {
         const displayPath = (filePath: string) =>
           path.relative(target.workdir, filePath).replaceAll("\\", "/");
         const used = displayPath(parsed.path);
@@ -292,13 +316,9 @@ export const cliConfigValuesLayer = Layer.effect(
         if (declaration !== undefined && declaration.version === undefined) {
           yield* printOnce(unrecognizedSchemaLine(used, declaration.ref));
         }
-        const unknownKeys = findUnknownCliConfigKeys(parsed.rawDocument)
-          .filter(
-            (key) =>
-              !isDocumentOnlyKey(key[0] === "remotes" ? key.slice(2) : key) &&
-              !isCustomAuthProvider(parsed.rawDocument, key),
-          )
-          .map((key) => key.join("."));
+        const unknownKeys = reportableUnknownCliConfigKeys(parsed.rawDocument).map(
+          ({ path: key }) => key.join("."),
+        );
         if (unknownKeys.length > 0) {
           yield* printOnce(unknownKeysLine(used, unknownKeys));
         }
@@ -381,9 +401,12 @@ export const cliConfigValuesLayer = Layer.effect(
       }
 
       const remotes = parsed?.rawDocument?.["remotes"];
-      if (isDocumentRecord(remotes)) {
-        const failure = cliConfigRemoteFailure(remotes, lookupEnv);
-        if (failure !== undefined) return yield* new CliConfigLoadError({ message: failure });
+      const remoteFailures = isDocumentRecord(remotes)
+        ? cliConfigRemoteFailures(remotes, lookupEnv)
+        : [];
+      const [firstRemoteFailure] = remoteFailures;
+      if (firstRemoteFailure !== undefined && !target.validation) {
+        return yield* new CliConfigLoadError(firstRemoteFailure);
       }
 
       const merged =
@@ -391,6 +414,7 @@ export const cliConfigValuesLayer = Layer.effect(
           ? null
           : yield* mergeParsedCliConfig(parsed, {
               selectRemote: (candidates) =>
+                target.remoteName ??
                 selectCliConfigRemote(candidates, target.projectRef, lookupEnv),
             });
 
@@ -400,7 +424,12 @@ export const cliConfigValuesLayer = Layer.effect(
         "config.env_withheld": Option.isSome(foreignLinkedRef),
       });
 
-      const document = merged?.document;
+      const document =
+        target.validation &&
+        merged?.appliedRemote === undefined &&
+        isDocumentRecord(merged?.document)
+          ? withoutRemotes(merged.document)
+          : merged?.document;
       const remoteLeaves = new Set(merged?.remoteLeafPaths.map((leaf) => leaf.join(".")));
       const localLeaves = documentLeafPaths(merged?.rawDocument ?? {});
       const appliedRemote = merged?.appliedRemote;
@@ -547,16 +576,51 @@ export const cliConfigValuesLayer = Layer.effect(
         if (value !== undefined) envValues[name] = value;
       }
 
+      const allIssues = target.validation ? ({ allIssues: true } as const) : {};
       const mergedForDecode = merged ?? emptyMergedDocument(target.workdir, path.sep);
+      const schemaFailures: Array<CliConfigParseError> = [];
+      const pruned: Array<ReadonlyArray<string>> = [];
+      const decode = (
+        draft: Record<string, unknown>,
+        resolvedPaths: ReadonlyArray<ReadonlyArray<string>>,
+        reportFailures: boolean,
+      ) =>
+        Effect.gen(function* () {
+          for (let round = 0; ; round++) {
+            const result = yield* withPlatform(
+              decodeMergedCliConfig(mergedForDecode, {
+                envValues,
+                cliCompat: true,
+                document: draft,
+                resolvedPaths,
+                ...allIssues,
+              }),
+            ).pipe(Effect.result);
+            if (Result.isSuccess(result)) return result.success;
+            const error = result.failure;
+            if (
+              !target.validation ||
+              !(error instanceof CliConfigParseError) ||
+              round >= MAX_PRUNE_ROUNDS
+            ) {
+              return yield* error;
+            }
+            const targets = flattenSchemaIssues(error.cause)
+              .map((issue) =>
+                prunableSegments(draft, issue.path, issue.code === "missing_required"),
+              )
+              .filter((segments) => segments.length > 0);
+            if (targets.length === 0) return yield* error;
+            if (reportFailures) schemaFailures.push(error);
+            for (const segments of targets) {
+              if (!pruned.some((known) => sameDocumentValue(known, segments)))
+                pruned.push(segments);
+            }
+            pruneDocumentPaths(draft, targets, document);
+          }
+        });
       const loaded = withEnvOrigins(
-        yield* withPlatform(
-          decodeMergedCliConfig(mergedForDecode, {
-            envValues,
-            cliCompat: true,
-            document: declaredDraft,
-            resolvedPaths: declaredResolved,
-          }),
-        ),
+        yield* decode(declaredDraft, declaredResolved, true),
         declaredEnvOrigins,
       );
       const fileDeclared = withPlatform(
@@ -565,17 +629,11 @@ export const cliConfigValuesLayer = Layer.effect(
           cliCompat: true,
           document: fileDraft,
           resolvedPaths: fileResolved,
+          ...allIssues,
         }),
       ).pipe(Effect.map((decoded) => withEnvOrigins(decoded, fileEnvOrigins)));
       const materializedLoaded = withEnvOrigins(
-        yield* withPlatform(
-          decodeMergedCliConfig(mergedForDecode, {
-            envValues,
-            cliCompat: true,
-            document: materializedDraft,
-            resolvedPaths: materializedResolved,
-          }),
-        ),
+        yield* decode(materializedDraft, materializedResolved, false),
         materializedEnvOrigins,
       );
 
@@ -607,7 +665,7 @@ export const cliConfigValuesLayer = Layer.effect(
           return picked.success;
         }).pipe(tracksConfigFailureKey);
 
-      for (const message of overrideWarnings) yield* warnOnce(message);
+      if (notices) for (const message of overrideWarnings) yield* warnOnce(message);
       if (Option.isSome(debugLogger)) {
         for (const [originPath, origin] of origins) {
           if (origin.tier === "default") continue;
@@ -626,6 +684,9 @@ export const cliConfigValuesLayer = Layer.effect(
         materialized,
         origins,
         invalid,
+        remoteFailures: target.validation ? remoteFailures : [],
+        schemaFailures,
+        pruned,
         familyNames,
         declares: (configPath) => configAt(configPath) !== undefined,
         withheldEnv,
@@ -669,7 +730,9 @@ export const cliConfigValuesLayer = Layer.effect(
             projectRef: target.projectRef,
             ignoreConfigFile: target.ignoreConfigFile === true,
             tolerateUnreadableLinkedRef: target.tolerateUnreadableLinkedRef === true,
-            tolerateInvalid: target.tolerateInvalid === true,
+            tolerateInvalid: target.tolerateInvalid === true || target.validation === true,
+            validation: target.validation === true,
+            remoteName: target.remoteName,
           }),
         ).pipe(tracksConfigFailureKey),
       writeThrough: (write) => Effect.ensuring(write, invalidate),

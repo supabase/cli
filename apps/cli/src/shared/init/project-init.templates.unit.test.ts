@@ -218,7 +218,9 @@ describe("project init templates", () => {
       expect(uncommented).toContain("[auth.passkey]");
       expect(uncommented).toContain("[auth.webauthn]");
       expect(
-        findUnknownCliConfigKeys(SmolToml.parse(uncommented)).filter((key) => !isDocumentOnly(key)),
+        findUnknownCliConfigKeys(SmolToml.parse(uncommented))
+          .map(({ path }) => path)
+          .filter((key) => !isDocumentOnly(key)),
       ).toEqual([]);
     }
   });

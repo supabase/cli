@@ -37,8 +37,14 @@ import {
   type ApiInput,
   type AuthInput,
   type CaptchaInput,
+  collectAuthExternalProviderIssues,
+  collectAuthSmsProviderIssues,
+  collectConfigValidationIssues,
   ConfigValidateError,
   type ConfigValidationInput,
+  type ConfigValidationIssue,
+  invalidIssue,
+  missingApiTlsPath,
   type DbInput,
   emailContentPathReadErrorMessage,
   type ExperimentalInput,
@@ -173,6 +179,42 @@ const thrownError = (cause: unknown) =>
 
 const attempt = <A>(thunk: () => A) => Effect.try({ try: thunk, catch: thrownError });
 
+interface IssueMeta {
+  readonly reason: string;
+  readonly help?: string;
+  readonly code?: ConfigValidationIssue["code"];
+}
+
+const issueFrom = (path: string, message: string, meta: IssueMeta): ConfigValidationIssue =>
+  invalidIssue(path, message, meta.reason, meta.help, meta.code);
+
+const SIGNED_KEY_ISSUE: IssueMeta = {
+  reason: "could not be generated",
+  help: "set the key explicitly, or fix the signing keys configuration",
+};
+
+const CONTENT_PATH_ISSUE: IssueMeta = {
+  reason: "content_path is not a readable file inside the project",
+  help: "point content_path at an existing file under the project root, or use content_path instead of content",
+};
+
+/** Without a collector `effect` runs unchanged; with one a failure is recorded at `path` and `fallback` stands in. */
+const collecting = <A, E extends { readonly message: string }, R>(
+  collector: Array<ConfigValidationIssue> | undefined,
+  path: string,
+  effect: Effect.Effect<A, E, R>,
+  fallback: A,
+  meta: IssueMeta,
+): Effect.Effect<A, E, R> =>
+  collector === undefined
+    ? effect
+    : effect.pipe(
+        Effect.catch((error: E) => {
+          collector.push(issueFrom(path, error.message, meta));
+          return Effect.succeed(fallback);
+        }),
+      );
+
 /** Narrows a configured string to one of `allowed`, failing with the codec wording otherwise. */
 export const narrowConfigEnum = <const T extends string>(
   path: string,
@@ -184,6 +226,7 @@ export const narrowConfigEnum = <const T extends string>(
     throw new CliConfigValueError({
       path,
       tier: "config",
+      expected: `one of ${allowed.join(", ")}`,
       message: `Invalid config for ${path}: "${configured}" must be one of ${allowed
         .map((value) => `"${value}"`)
         .join(", ")}`,
@@ -347,20 +390,27 @@ const readApiTlsFiles = Effect.fnUntraced(function* (
   if (certPath === undefined || certPath.length === 0) return;
   if (keyPath === undefined || keyPath.length === 0) return;
 
+  yield* readApiTlsFile("cert", workdir, certPath);
+  yield* readApiTlsFile("key", workdir, keyPath);
+});
+
+const readApiTlsFile = Effect.fnUntraced(function* (
+  kind: "cert" | "key",
+  workdir: string,
+  configured: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs
-    .readFile(resolveApiTlsPath(path, workdir, certPath))
+    .readFile(resolveApiTlsPath(path, workdir, configured))
     .pipe(
       Effect.mapError(
-        (cause) => new ConfigValidateError(apiTlsCertReadErrorMessage(fsErrorCause(cause))),
-      ),
-    );
-  yield* fs
-    .readFile(resolveApiTlsPath(path, workdir, keyPath))
-    .pipe(
-      Effect.mapError(
-        (cause) => new ConfigValidateError(apiTlsKeyReadErrorMessage(fsErrorCause(cause))),
+        (cause) =>
+          new ConfigValidateError(
+            kind === "cert"
+              ? apiTlsCertReadErrorMessage(fsErrorCause(cause))
+              : apiTlsKeyReadErrorMessage(fsErrorCause(cause)),
+          ),
       ),
     );
 });
@@ -439,56 +489,56 @@ export function resolveAuthEmail(
 const readAuthEmailTemplateContent = Effect.fnUntraced(function* (
   email: ResolvedAuthEmail,
   workdir: string,
+  collector?: Array<ConfigValidationIssue>,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  for (const [name, tmpl] of Object.entries(email.template)) {
-    const path = yield* resolveEmailTemplateContentPath({
-      section: "template",
-      name,
-      contentPath: tmpl.content_path,
-      contentPresent: tmpl.content_present,
-      base: workdir,
-    }).pipe(
-      Effect.mapError((cause) =>
-        cause instanceof ConfigValidateError ? cause : thrownError(fsErrorCause(cause)),
-      ),
-    );
-    if (path === undefined) continue;
-    yield* fs
-      .readFile(path)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigValidateError(
-              emailContentPathReadErrorMessage("template", name, fsErrorCause(cause)),
-            ),
+  const readEntry = (
+    section: "template" | "notification",
+    name: string,
+    tmpl: ResolvedAuthEmailTemplate,
+  ) =>
+    Effect.gen(function* () {
+      const path = yield* resolveEmailTemplateContentPath({
+        section,
+        name,
+        contentPath: tmpl.content_path,
+        contentPresent: tmpl.content_present,
+        base: workdir,
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof ConfigValidateError ? cause : thrownError(fsErrorCause(cause)),
         ),
       );
+      if (path === undefined) return;
+      yield* fs
+        .readFile(path)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ConfigValidateError(
+                emailContentPathReadErrorMessage(section, name, fsErrorCause(cause)),
+              ),
+          ),
+        );
+    });
+  for (const [name, tmpl] of Object.entries(email.template)) {
+    yield* collecting(
+      collector,
+      `auth.email.template.${name}.content_path`,
+      readEntry("template", name, tmpl),
+      undefined,
+      CONTENT_PATH_ISSUE,
+    );
   }
   for (const [name, tmpl] of Object.entries(email.notification)) {
     if (!tmpl.enabled) continue;
-    const path = yield* resolveEmailTemplateContentPath({
-      section: "notification",
-      name,
-      contentPath: tmpl.content_path,
-      contentPresent: tmpl.content_present,
-      base: workdir,
-    }).pipe(
-      Effect.mapError((cause) =>
-        cause instanceof ConfigValidateError ? cause : thrownError(fsErrorCause(cause)),
-      ),
+    yield* collecting(
+      collector,
+      `auth.email.notification.${name}.content_path`,
+      readEntry("notification", name, tmpl),
+      undefined,
+      CONTENT_PATH_ISSUE,
     );
-    if (path === undefined) continue;
-    yield* fs
-      .readFile(path)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigValidateError(
-              emailContentPathReadErrorMessage("notification", name, fsErrorCause(cause)),
-            ),
-        ),
-      );
   }
 });
 
@@ -670,6 +720,8 @@ export function resolveAuthSms(sms: CliConfig["auth"]["sms"]): CliConfig["auth"]
   };
 }
 
+type ValueOf<T> = T[keyof T];
+
 /** Matches `GotrueExternalProviderInput`'s fields, kept separate to avoid a command-specific import. */
 export interface ResolvedAuthExternalProvider {
   readonly enabled: boolean;
@@ -698,6 +750,7 @@ export function rawUnmodeledBool(value: unknown, dottedFieldPath: string): boole
     throw new CliConfigValueError({
       path: dottedFieldPath,
       tier: "config",
+      expected: "a boolean",
       message: `Invalid config for ${dottedFieldPath}: "${raw}" is not a valid boolean`,
     });
   }
@@ -709,6 +762,28 @@ function strToArr(value: string): Array<string> {
   return value.length === 0 ? [] : value.split(",");
 }
 
+function resolveExternalProvider(
+  name: string,
+  provider: ValueOf<CliConfig["auth"]["external"]> | undefined,
+  rawProvider: Readonly<Record<string, unknown>> | undefined,
+): ResolvedAuthExternalProvider {
+  return {
+    enabled:
+      provider?.enabled ??
+      rawUnmodeledBool(rawProvider?.["enabled"], `auth.external.${name}.enabled`),
+    clientId: provider?.client_id ?? asString(rawProvider?.["client_id"]) ?? "",
+    secret: provider?.secret ?? asString(rawProvider?.["secret"]),
+    url: provider?.url ?? asString(rawProvider?.["url"]) ?? "",
+    redirectUri: provider?.redirect_uri ?? asString(rawProvider?.["redirect_uri"]),
+    skipNonceCheck:
+      provider?.skip_nonce_check ??
+      rawUnmodeledBool(rawProvider?.["skip_nonce_check"], `auth.external.${name}.skip_nonce_check`),
+    emailOptional:
+      provider?.email_optional ??
+      rawUnmodeledBool(rawProvider?.["email_optional"], `auth.external.${name}.email_optional`),
+  };
+}
+
 /**
  * Resolves `auth.external.<name>` entries, iterating the effective document's provider names
  * (not just the schema's fixed ~19) since custom providers decode with no schema at all.
@@ -718,6 +793,7 @@ function strToArr(value: string): Array<string> {
 export function resolveAuthExternalProviders(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   external: CliConfig["auth"]["external"],
+  failures?: Array<ConfigValidationIssue>,
 ): Record<string, ResolvedAuthExternalProvider> {
   const externalDoc = asRecord(authDocument?.["external"]);
 
@@ -728,24 +804,23 @@ export function resolveAuthExternalProviders(
     const provider = decodedProviders.get(name);
     const rawProvider = provider === undefined ? asRecord(externalDoc?.[name]) : undefined;
     if (provider === undefined && rawProvider === undefined) continue;
-    result[name] = {
-      enabled:
-        provider?.enabled ??
-        rawUnmodeledBool(rawProvider?.["enabled"], `auth.external.${name}.enabled`),
-      clientId: provider?.client_id ?? asString(rawProvider?.["client_id"]) ?? "",
-      secret: provider?.secret ?? asString(rawProvider?.["secret"]),
-      url: provider?.url ?? asString(rawProvider?.["url"]) ?? "",
-      redirectUri: provider?.redirect_uri ?? asString(rawProvider?.["redirect_uri"]),
-      skipNonceCheck:
-        provider?.skip_nonce_check ??
-        rawUnmodeledBool(
-          rawProvider?.["skip_nonce_check"],
-          `auth.external.${name}.skip_nonce_check`,
+    if (failures === undefined) {
+      result[name] = resolveExternalProvider(name, provider, rawProvider);
+      continue;
+    }
+    try {
+      result[name] = resolveExternalProvider(name, provider, rawProvider);
+    } catch (cause) {
+      failures.push(
+        invalidIssue(
+          `auth.external.${name}`,
+          cause instanceof Error ? cause.message : String(cause),
+          "expected booleans for enabled, skip_nonce_check and email_optional",
+          "use true or false",
+          "invalid_type",
         ),
-      emailOptional:
-        provider?.email_optional ??
-        rawUnmodeledBool(rawProvider?.["email_optional"], `auth.external.${name}.email_optional`),
-    };
+      );
+    }
   }
   return result;
 }
@@ -765,7 +840,7 @@ export function resolveAuthExternalProviders(
  * @throws {ConfigValidateError} for every other validation branch, deferred to a single call
  * to {@link validateResolvedConfig} at the end of this function.
  */
-export const resolveLocalConfigValues = Effect.fnUntraced(function* (
+export const resolveLocalConfigValues = (
   config: CliConfig,
   hostname: string,
   workdir: string,
@@ -776,6 +851,40 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
   document?: Readonly<Record<string, unknown>>,
   /** The loaded config file's path, so messages name it; `undefined` reads as `config.toml`. */
   configPath?: string,
+) => resolveLocalConfigValuesWith(config, hostname, workdir, document, configPath);
+
+/** Reports every config validation and config-file read failure instead of stopping at the first. */
+export const collectLocalConfigIssues = Effect.fn("LocalConfig.collectIssues")(function* (
+  config: CliConfig,
+  workdir: string,
+  document: Readonly<Record<string, unknown>> | undefined,
+  configPath: string | undefined,
+) {
+  const issues: Array<ConfigValidationIssue> = [];
+  yield* resolveLocalConfigValuesWith(
+    config,
+    "127.0.0.1",
+    workdir,
+    document,
+    configPath,
+    issues,
+  ).pipe(
+    Effect.catch((error: { readonly message: string }) =>
+      Effect.sync(() => {
+        issues.push(invalidIssue("", error.message, "could not be checked"));
+      }),
+    ),
+  );
+  return issues;
+});
+
+const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
+  config: CliConfig,
+  hostname: string,
+  workdir: string,
+  document: Readonly<Record<string, unknown>> | undefined,
+  configPath: string | undefined,
+  collector?: Array<ConfigValidationIssue>,
 ) {
   const resolvedProjectId = config.project_id ?? "";
 
@@ -784,29 +893,63 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
   const apiTlsCertPath = config.api.tls.cert_path;
   const apiTlsKeyPath = config.api.tls.key_path;
   if (apiEnabled && apiTlsEnabled) {
-    yield* readApiTlsFiles(workdir, apiTlsCertPath, apiTlsKeyPath);
+    if (collector === undefined) {
+      yield* readApiTlsFiles(workdir, apiTlsCertPath, apiTlsKeyPath);
+    } else if (missingApiTlsPath(apiTlsCertPath, apiTlsKeyPath) === undefined) {
+      for (const [kind, key, configured] of [
+        ["cert", "api.tls.cert_path", apiTlsCertPath],
+        ["key", "api.tls.key_path", apiTlsKeyPath],
+      ] as const) {
+        if (configured === undefined || configured.length === 0) continue;
+        yield* collecting(collector, key, readApiTlsFile(kind, workdir, configured), undefined, {
+          reason: `${kind === "cert" ? "certificate" : "private key"} file is not readable`,
+          help: "point it at an existing file, relative to the supabase/ directory",
+        });
+      }
+    }
   }
   const apiPort = config.api.port;
-  const apiExternalUrl = yield* attempt(() =>
-    resolveApiExternalUrl(
-      {
-        external_url: config.api.external_url,
-        port: apiPort,
-        tls: { enabled: apiTlsEnabled },
-      },
-      hostname,
+  const apiExternalUrl = yield* collecting(
+    collector,
+    "api.external_url",
+    attempt(() =>
+      resolveApiExternalUrl(
+        {
+          external_url: config.api.external_url,
+          port: apiPort,
+          tls: { enabled: apiTlsEnabled },
+        },
+        hostname,
+      ),
     ),
+    "",
+    {
+      reason: "not a valid URL",
+      help: "use a full URL such as https://api.example.com",
+    },
   );
   const dbPort = config.db.port;
   const majorVersion = config.db.major_version;
   // `db.root_key` isn't modeled in `@supabase/config`'s schema, so it's read off the document.
   // The resolved value is written verbatim into `/etc/postgresql-custom/pgsodium_root.key`.
   const rawRootKey = asRecord(document?.["db"])?.["root_key"];
+  const rootKeyMessage = "failed to parse config:\ndb.root_key: expected a table";
   if (rawRootKey !== undefined && typeof rawRootKey !== "string") {
-    return yield* new ConfigValidateError("failed to parse config:\ndb.root_key: expected a table");
+    if (collector === undefined) return yield* new ConfigValidateError(rootKeyMessage);
+    collector.push(
+      invalidIssue(
+        "db.root_key",
+        rootKeyMessage,
+        "expected a string",
+        "set root_key to a string",
+        "invalid_type",
+      ),
+    );
   }
   const rootKey =
-    rawRootKey === undefined || rawRootKey.length === 0 ? POSTGRES_DEFAULT_ROOT_KEY : rawRootKey;
+    typeof rawRootKey !== "string" || rawRootKey.length === 0
+      ? POSTGRES_DEFAULT_ROOT_KEY
+      : rawRootKey;
   const storageBucketNames =
     config.storage.buckets !== undefined ? Object.keys(config.storage.buckets) : [];
   const studioEnabled = config.studio.enabled;
@@ -814,7 +957,16 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
   const studioApiUrl = config.studio.api_url;
   const mailpitEnabled = config.local_smtp.enabled;
   const mailpitPort = config.local_smtp.port;
-  const jwtSecret = yield* attempt(() => resolveJwtSecret(config.auth.jwt_secret));
+  const jwtSecret = yield* collecting(
+    collector,
+    "auth.jwt_secret",
+    attempt(() => resolveJwtSecret(config.auth.jwt_secret)),
+    defaultJwtSecret,
+    {
+      reason: "too short",
+      help: `use at least ${MIN_JWT_SECRET_LENGTH} characters`,
+    },
+  );
   const signingKeysPath = config.auth.signing_keys_path;
   // The signing-keys file read only runs when auth is enabled, so a disabled auth section
   // never opens/parses `signing_keys_path`, even a stale or missing one. JWT-secret validation
@@ -827,18 +979,33 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
   // default key, not fall back to symmetric HS256.
   const signingKey =
     signingKeysPath !== undefined && signingKeysPath.length > 0
-      ? ((yield* resolveConfiguredSigningKeys(config, workdir)) ?? [DEFAULT_SIGNING_KEY])[0]
+      ? ((yield* collecting(
+          collector,
+          "auth.signing_keys_path",
+          resolveConfiguredSigningKeys(config, workdir),
+          undefined,
+          {
+            reason: "signing keys file is missing, unreadable or invalid",
+            help: "point signing_keys_path at a JSON array of JWKs, relative to the supabase/ directory",
+          },
+        )) ?? [DEFAULT_SIGNING_KEY])[0]
       : undefined;
   // This block only accumulates the inputs passkey/webauthn/hook/mfa/email/smtp/third_party
-  // validation needs; the checks themselves run once, later, in the single
-  // `validateResolvedConfig` call below (sms/external run separately after it).
+  // validation needs; the checks themselves run once, later, in the `validateResolvedConfig`
+  // call below (sms/external run separately after it).
   let authInput: AuthInput | undefined;
   if (authEnabled) {
     const passkeyDoc = asRecord(authDocument?.["passkey"]);
     const webauthnDoc = asRecord(authDocument?.["webauthn"]);
     const passkeyEnabled =
       passkeyDoc !== undefined &&
-      (yield* attempt(() => rawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled")));
+      (yield* collecting(
+        collector,
+        "auth.passkey.enabled",
+        attempt(() => rawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled")),
+        false,
+        { reason: "expected a boolean", help: "use true or false", code: "invalid_type" },
+      ));
     const rpId = asString(webauthnDoc?.["rp_id"]);
     const rpOrigins = rawOrigins(webauthnDoc?.["rp_origins"]);
     const passkey: PasskeyInput | undefined = passkeyEnabled
@@ -872,7 +1039,11 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
       },
     ];
 
-    yield* readAuthEmailTemplateContent(resolveAuthEmail(config.auth.email, authDocument), workdir);
+    yield* readAuthEmailTemplateContent(
+      resolveAuthEmail(config.auth.email, authDocument),
+      workdir,
+      collector,
+    );
 
     const resolvedSmtp = resolveAuthEmailSmtp(authDocument);
     const smtp: SmtpInput | undefined =
@@ -894,15 +1065,31 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
       hooks,
       mfa,
       smtp,
-      thirdParty: yield* attempt(() => resolveThirdPartyProviders(config.auth.third_party)),
+      thirdParty: yield* collecting(
+        collector,
+        "auth.third_party",
+        attempt(() => resolveThirdPartyProviders(config.auth.third_party)),
+        [],
+        { reason: "invalid third-party provider settings" },
+      ),
     };
   }
   const functionSlugs = Object.keys(config.functions);
   const denoVersion = config.edge_runtime.deno_version;
 
   const analyticsEnabled = config.analytics.enabled;
-  const analyticsBackend = yield* attempt(() =>
-    narrowConfigEnum("analytics.backend", config.analytics.backend, ["postgres", "bigquery"]),
+  const analyticsBackend = yield* collecting(
+    collector,
+    "analytics.backend",
+    attempt(() =>
+      narrowConfigEnum("analytics.backend", config.analytics.backend, ["postgres", "bigquery"]),
+    ),
+    "postgres" as const,
+    {
+      reason: "expected one of postgres, bigquery",
+      help: "use postgres or bigquery",
+      code: "invalid_enum",
+    },
   );
   const gcpProjectId = config.analytics.gcp_project_id;
   const gcpProjectNumber = config.analytics.gcp_project_number;
@@ -959,21 +1146,43 @@ export const resolveLocalConfigValues = Effect.fnUntraced(function* (
     experimental: experimentalInput,
     configFileName: configPath === undefined ? undefined : configFileName(configPath),
   };
-  yield* attempt(() => validateResolvedConfig(input));
-  if (authEnabled) {
-    yield* attempt(() => validateAuthSmsProviders(resolveAuthSms(config.auth.sms)));
-    yield* attempt(() =>
-      validateAuthExternalProviders(
-        resolveAuthExternalProviders(authDocument, config.auth.external),
-      ),
-    );
+  if (collector === undefined) {
+    yield* attempt(() => validateResolvedConfig(input));
+    if (authEnabled) {
+      yield* attempt(() => validateAuthSmsProviders(resolveAuthSms(config.auth.sms)));
+      yield* attempt(() =>
+        validateAuthExternalProviders(
+          resolveAuthExternalProviders(authDocument, config.auth.external),
+        ),
+      );
+    }
+  } else {
+    collector.push(...collectConfigValidationIssues(input));
+    if (authEnabled) {
+      collector.push(...collectAuthSmsProviderIssues(resolveAuthSms(config.auth.sms)));
+      collector.push(
+        ...collectAuthExternalProviderIssues(
+          resolveAuthExternalProviders(authDocument, config.auth.external, collector),
+        ),
+      );
+    }
   }
 
-  const anonKey = yield* attempt(() =>
-    resolveSignedKey(config.auth.anon_key, jwtSecret, signingKey, "anon"),
+  const anonKey = yield* collecting(
+    collector,
+    "auth.anon_key",
+    attempt(() => resolveSignedKey(config.auth.anon_key, jwtSecret, signingKey, "anon")),
+    "",
+    SIGNED_KEY_ISSUE,
   );
-  const serviceRoleKey = yield* attempt(() =>
-    resolveSignedKey(config.auth.service_role_key, jwtSecret, signingKey, "service_role"),
+  const serviceRoleKey = yield* collecting(
+    collector,
+    "auth.service_role_key",
+    attempt(() =>
+      resolveSignedKey(config.auth.service_role_key, jwtSecret, signingKey, "service_role"),
+    ),
+    "",
+    SIGNED_KEY_ISSUE,
   );
 
   return {

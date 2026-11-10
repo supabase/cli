@@ -248,81 +248,196 @@ export function validateApiTlsPresence(
   certPath: string | undefined,
   keyPath: string | undefined,
 ): void {
-  const hasCert = certPath !== undefined && certPath.length > 0;
-  const hasKey = keyPath !== undefined && keyPath.length > 0;
-  if (hasCert && !hasKey) {
-    throw new ConfigValidateError("Missing required field in config: api.tls.key_path");
-  }
-  if (hasKey && !hasCert) {
-    throw new ConfigValidateError("Missing required field in config: api.tls.cert_path");
+  const missing = missingApiTlsPath(certPath, keyPath);
+  if (missing !== undefined) {
+    throw new ConfigValidateError(`Missing required field in config: ${missing}`);
   }
 }
 
+/** The `api.tls` path that is unset while its counterpart is set, if any. */
+export function missingApiTlsPath(
+  certPath: string | undefined,
+  keyPath: string | undefined,
+): "api.tls.cert_path" | "api.tls.key_path" | undefined {
+  const hasCert = certPath !== undefined && certPath.length > 0;
+  const hasKey = keyPath !== undefined && keyPath.length > 0;
+  if (hasCert && !hasKey) return "api.tls.key_path";
+  if (hasKey && !hasCert) return "api.tls.cert_path";
+  return undefined;
+}
+
+export type ConfigValidationIssueCode =
+  | "missing_required"
+  | "invalid_value"
+  | "invalid_type"
+  | "invalid_enum";
+
 /**
- * Runs every validation branch this module owns, in established first-failure-wins order.
+ * One validation failure and the config key path it belongs to. `message` is the legacy text the
+ * throwing wrappers raise; `reason` and `help` are value-free and meant for `config validate`.
+ */
+export interface ConfigValidationIssue {
+  readonly path: string;
+  readonly message: string;
+  readonly code: ConfigValidationIssueCode;
+  readonly reason: string;
+  readonly help?: string;
+}
+
+const lastSegment = (path: string): string => path.split(".").at(-1) ?? path;
+
+const GATE_PATTERNS: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray) => string]> = [
+  [/^auth\.email\.smtp\./, () => "auth.email.smtp.enabled"],
+  [/^auth\.captcha\./, () => "auth.captcha.enabled"],
+  [/^auth\.webauthn\./, () => "auth.passkey.enabled"],
+  [/^auth\.sms\.(\w+)\./, (match) => `auth.sms.${match[1]}.enabled`],
+  [/^auth\.external\.([^.]+)\./, (match) => `auth.external.${match[1]}.enabled`],
+  [/^auth\.third_party\.(\w+)\./, (match) => `auth.third_party.${match[1]}.enabled`],
+  [/^auth\.hook\.(\w+)\./, (match) => `auth.hook.${match[1]}.enabled`],
+  [/^analytics\./, () => "analytics.enabled"],
+  [/^api\.tls\./, () => "api.tls.enabled"],
+  [/^(api|studio|local_smtp)\.port$/, (match) => `${match[1]}.enabled`],
+];
+
+const gateOf = (path: string): string | undefined => {
+  for (const [pattern, gate] of GATE_PATTERNS) {
+    const match = pattern.exec(path);
+    if (match !== null) return gate(match);
+  }
+  return undefined;
+};
+
+/** A required key that is empty or absent; the `enabled` switch that makes it required is inferred from the path. */
+export function missingIssue(
+  path: string,
+  message: string,
+  gate: string | undefined = gateOf(path),
+): ConfigValidationIssue {
+  return gate === undefined
+    ? {
+        path,
+        message,
+        code: "missing_required",
+        reason: "missing required key",
+        help: `set ${path}`,
+      }
+    : {
+        path,
+        message,
+        code: "missing_required",
+        reason: `required when ${gate} = true`,
+        help: `set ${lastSegment(path)}, or set ${lastSegment(gate)} = false`,
+      };
+}
+
+export function invalidIssue(
+  path: string,
+  message: string,
+  reason: string,
+  help?: string,
+  code: ConfigValidationIssueCode = "invalid_value",
+): ConfigValidationIssue {
+  return { path, message, code, reason, ...(help === undefined ? {} : { help }) };
+}
+
+const SUPPORTED_POSTGRES_MAJOR_VERSIONS: ReadonlyArray<number> = [13, 14, 15, 17];
+
+/**
+ * Runs every validation branch this module owns and returns each failure in the established
+ * order, so the first issue is the one {@link validateResolvedConfig} throws. Independent checks
+ * all report; a check that depends on a failed earlier one in the same chain is skipped.
  * Pure — no I/O, no Effect. Callers own their own per-section I/O reads (signing keys,
  * `api.tls` cert/key, email template/notification content) at the correct position
  * themselves, using the pure helpers exported below.
  */
-export function validateResolvedConfig(input: ConfigValidationInput): void {
+export function collectConfigValidationIssues(
+  input: ConfigValidationInput,
+): ReadonlyArray<ConfigValidationIssue> {
+  const issues: Array<ConfigValidationIssue> = [];
+  const report = (issue: ConfigValidationIssue): void => {
+    issues.push(issue);
+  };
+  const missing = (path: string, message: string): void => {
+    report(missingIssue(path, message));
+  };
   if (input.projectId !== undefined && input.projectId.length === 0) {
-    throw new ConfigValidateError("Missing required field in config: project_id");
+    missing("project_id", "Missing required field in config: project_id");
   }
 
-  // The actual cert/key file reads are caller-side I/O; this only checks the "exactly one of
-  // cert/key set" presence rule.
   if (input.api?.enabled) {
-    validateApiPort(input.api.enabled, input.api.port);
-    if (input.api.tls.enabled) {
-      validateApiTlsPresence(input.api.tls.certPath, input.api.tls.keyPath);
+    const api = input.api;
+    if (api.port === 0) missing("api.port", "Missing required field in config: api.port");
+    if (api.tls.enabled) {
+      const absent = missingApiTlsPath(api.tls.certPath, api.tls.keyPath);
+      if (absent !== undefined) missing(absent, `Missing required field in config: ${absent}`);
     }
   }
 
   if (input.db.port === 0) {
-    throw new ConfigValidateError("Missing required field in config: db.port");
+    missing("db.port", "Missing required field in config: db.port");
   }
   if (input.db.majorVersion === 0) {
-    throw new ConfigValidateError("Missing required field in config: db.major_version");
-  }
-  if (input.db.majorVersion === 12) {
-    throw new ConfigValidateError(
-      "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+    missing("db.major_version", "Missing required field in config: db.major_version");
+  } else if (input.db.majorVersion === 12) {
+    report(
+      invalidIssue(
+        "db.major_version",
+        "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+        "unsupported Postgres version",
+        "Postgres 12 is no longer supported; follow https://supabase.com/docs/guides/database#migrating-between-projects",
+      ),
     );
-  }
-  if (![13, 14, 15, 17].includes(input.db.majorVersion)) {
-    throw new ConfigValidateError(
-      `Failed reading config: Invalid db.major_version: ${input.db.majorVersion}.`,
+  } else if (!SUPPORTED_POSTGRES_MAJOR_VERSIONS.includes(input.db.majorVersion)) {
+    report(
+      invalidIssue(
+        "db.major_version",
+        `Failed reading config: Invalid db.major_version: ${input.db.majorVersion}.`,
+        "unsupported Postgres version",
+        `use one of ${SUPPORTED_POSTGRES_MAJOR_VERSIONS.join(", ")}`,
+      ),
     );
   }
 
   for (const name of input.storageBucketNames) {
     if (!BUCKET_NAME_PATTERN.test(name)) {
-      throw new ConfigValidateError(
-        `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${BUCKET_NAME_PATTERN.source})`,
+      report(
+        invalidIssue(
+          `storage.buckets.${name}`,
+          `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${BUCKET_NAME_PATTERN.source})`,
+          "invalid bucket name",
+          "use lowercase letters, numbers, dots, hyphens and spaces only",
+        ),
       );
     }
   }
 
   if (input.studio?.enabled) {
     if (input.studio.port === 0) {
-      throw new ConfigValidateError("Missing required field in config: studio.port");
+      missing("studio.port", "Missing required field in config: studio.port");
     }
     try {
       parseUrl(input.studio.apiUrl);
     } catch (cause) {
-      throw new ConfigValidateError(`Invalid config for studio.api_url: ${messageOf(cause)}`);
+      report(
+        invalidIssue(
+          "studio.api_url",
+          `Invalid config for studio.api_url: ${messageOf(cause)}`,
+          "not a valid URL",
+          "use a full URL such as http://127.0.0.1:54321",
+        ),
+      );
     }
   }
 
   if (input.localSmtp?.enabled && input.localSmtp.port === 0) {
-    throw new ConfigValidateError("Missing required field in config: local_smtp.port");
+    missing("local_smtp.port", "Missing required field in config: local_smtp.port");
   }
 
   if (input.auth !== undefined) {
     const auth = input.auth;
 
     if (auth.siteUrl.length === 0) {
-      throw new ConfigValidateError("Missing required field in config: auth.site_url");
+      missing("auth.site_url", "Missing required field in config: auth.site_url");
     }
 
     // The provider enum check runs before the `enabled` check since it's conceptually a
@@ -335,16 +450,24 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
         provider !== "hcaptcha" &&
         provider !== "turnstile"
       ) {
-        throw new ConfigValidateError(
-          "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
+        report(
+          invalidIssue(
+            "auth.captcha.provider",
+            "failed to parse config:\nauth.captcha.provider: must be one of hcaptcha, turnstile",
+            "expected one of hcaptcha, turnstile",
+            "use hcaptcha or turnstile",
+            "invalid_enum",
+          ),
         );
-      }
-      if (auth.captcha.enabled) {
+      } else if (auth.captcha.enabled) {
         if (auth.captcha.provider === undefined) {
-          throw new ConfigValidateError("Missing required field in config: auth.captcha.provider");
+          missing(
+            "auth.captcha.provider",
+            "Missing required field in config: auth.captcha.provider",
+          );
         }
         if (auth.captcha.secret === undefined || auth.captcha.secret.length === 0) {
-          throw new ConfigValidateError("Missing required field in config: auth.captcha.secret");
+          missing("auth.captcha.secret", "Missing required field in config: auth.captcha.secret");
         }
       }
     }
@@ -354,24 +477,32 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     // Caller only builds `passkey` when `[auth.passkey] enabled` is true.
     if (auth.passkey !== undefined) {
       if (!auth.passkey.webauthnPresent) {
-        throw new ConfigValidateError(
-          "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
-        );
-      }
-      if (auth.passkey.rpId === undefined || auth.passkey.rpId.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.webauthn.rp_id");
-      }
-      if (auth.passkey.rpOrigins === undefined || auth.passkey.rpOrigins.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.webauthn.rp_origins");
+        report({
+          ...missingIssue("auth.webauthn", "", "auth.passkey.enabled"),
+          message:
+            "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+          reason: "required when auth.passkey.enabled = true",
+          help: "add an [auth.webauthn] section, or set auth.passkey.enabled = false",
+        });
+      } else {
+        if (auth.passkey.rpId === undefined || auth.passkey.rpId.length === 0) {
+          missing("auth.webauthn.rp_id", "Missing required field in config: auth.webauthn.rp_id");
+        }
+        if (auth.passkey.rpOrigins === undefined || auth.passkey.rpOrigins.length === 0) {
+          missing(
+            "auth.webauthn.rp_origins",
+            "Missing required field in config: auth.webauthn.rp_origins",
+          );
+        }
       }
     }
 
     // Caller pre-filters to enabled-only hooks, pre-ordered by the fixed hook-type sequence.
     for (const hook of auth.hooks) {
+      const hookPath = `auth.hook.${hook.type}`;
       if (hook.uri.length === 0) {
-        throw new ConfigValidateError(
-          `Missing required field in config: auth.hook.${hook.type}.uri`,
-        );
+        missing(`${hookPath}.uri`, `Missing required field in config: auth.hook.${hook.type}.uri`);
+        continue;
       }
       // Uses `parseUrl`'s stricter semantics (the same port used for `studio.api_url`
       // above) so a malformed URI like an unterminated IPv6 host (`http://[::1`) fails the
@@ -380,38 +511,64 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       try {
         scheme = parseUrl(hook.uri).scheme;
       } catch (cause) {
-        throw new ConfigValidateError(`failed to parse template url: ${messageOf(cause)}`);
+        report(
+          invalidIssue(
+            `${hookPath}.uri`,
+            `failed to parse template url: ${messageOf(cause)}`,
+            "not a valid URI",
+            "use an http(s):// or pg-functions:// URI",
+          ),
+        );
+        continue;
       }
       if (scheme === "http" || scheme === "https") {
         if (hook.secrets.length === 0) {
-          throw new ConfigValidateError(
+          missing(
+            `${hookPath}.secrets`,
             `Missing required field in config: auth.hook.${hook.type}.secrets`,
           );
-        }
-        for (const secret of hook.secrets.split("|")) {
-          if (!HOOK_SECRET_PATTERN.test(secret)) {
-            throw new ConfigValidateError(
+        } else if (!hook.secrets.split("|").every((secret) => HOOK_SECRET_PATTERN.test(secret))) {
+          report(
+            invalidIssue(
+              `${hookPath}.secrets`,
               `Invalid hook config: auth.hook.${hook.type}.secrets must be formatted as "v1,whsec_<base64_encoded_secret>" with a minimum length of 32 characters.`,
-            );
-          }
+              "not a valid webhook secret",
+              'format it as "v1,whsec_<base64 secret>" with at least 32 characters; separate several with |',
+            ),
+          );
         }
       } else if (scheme === "pg-functions") {
         if (hook.secrets.length > 0) {
-          throw new ConfigValidateError(
-            `Invalid hook config: auth.hook.${hook.type}.secrets is unsupported for pg-functions URI`,
+          report(
+            invalidIssue(
+              `${hookPath}.secrets`,
+              `Invalid hook config: auth.hook.${hook.type}.secrets is unsupported for pg-functions URI`,
+              "not supported for a pg-functions URI",
+              "remove secrets, or use an http(s) URI",
+            ),
           );
         }
       } else {
-        throw new ConfigValidateError(
-          `Invalid hook config: auth.hook.${hook.type}.uri should be a HTTP, HTTPS, or pg-functions URI`,
+        report(
+          invalidIssue(
+            `${hookPath}.uri`,
+            `Invalid hook config: auth.hook.${hook.type}.uri should be a HTTP, HTTPS, or pg-functions URI`,
+            "unsupported URI scheme",
+            "use an http(s):// or pg-functions:// URI",
+          ),
         );
       }
     }
 
     for (const factor of auth.mfa) {
       if (factor.enrollEnabled && !factor.verifyEnabled) {
-        throw new ConfigValidateError(
-          `Invalid MFA config: auth.mfa.${factor.label}.enroll_enabled requires verify_enabled`,
+        report(
+          invalidIssue(
+            `auth.mfa.${factor.label}.enroll_enabled`,
+            `Invalid MFA config: auth.mfa.${factor.label}.enroll_enabled requires verify_enabled`,
+            "requires verify_enabled = true",
+            `set auth.mfa.${factor.label}.verify_enabled = true, or disable enroll_enabled`,
+          ),
         );
       }
     }
@@ -420,22 +577,20 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     // resolveEmailTemplateContentPath below.
 
     if (auth.smtp !== undefined && auth.smtp.enabled) {
-      if (auth.smtp.host.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.email.smtp.host");
-      }
-      if (auth.smtp.port === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.email.smtp.port");
-      }
-      if (auth.smtp.user.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.email.smtp.user");
-      }
-      if (auth.smtp.pass.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.email.smtp.pass");
-      }
-      if (auth.smtp.adminEmail.length === 0) {
-        throw new ConfigValidateError(
-          "Missing required field in config: auth.email.smtp.admin_email",
-        );
+      const smtpFields: ReadonlyArray<readonly [string, boolean]> = [
+        ["host", auth.smtp.host.length === 0],
+        ["port", auth.smtp.port === 0],
+        ["user", auth.smtp.user.length === 0],
+        ["pass", auth.smtp.pass.length === 0],
+        ["admin_email", auth.smtp.adminEmail.length === 0],
+      ];
+      for (const [field, isMissing] of smtpFields) {
+        if (isMissing) {
+          missing(
+            `auth.email.smtp.${field}`,
+            `Missing required field in config: auth.email.smtp.${field}`,
+          );
+        }
       }
     }
 
@@ -443,83 +598,94 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     // workos. Each provider's required fields are checked as encountered; "more than one
     // enabled" is checked only after every entry validates individually.
     for (const thirdParty of auth.thirdParty) {
+      const base = `auth.third_party.${thirdParty.provider === "cognito" ? "aws_cognito" : thirdParty.provider}`;
+      const missingMessage = (field: string) =>
+        `Invalid config: auth.third_party.${thirdParty.provider} is enabled but without a ${field}.`;
       switch (thirdParty.provider) {
         case "firebase": {
           if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
-            );
+            missing(`${base}.project_id`, missingMessage("project_id"));
           }
           break;
         }
         case "auth0": {
           if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.auth0 is enabled but without a tenant.",
-            );
+            missing(`${base}.tenant`, missingMessage("tenant"));
           }
           break;
         }
         case "cognito": {
           if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.",
-            );
-          }
-          if (
+            missing(`${base}.user_pool_id`, missingMessage("user_pool_id"));
+          } else if (
             thirdParty.cognitoUserPoolRegion === undefined ||
             thirdParty.cognitoUserPoolRegion.length === 0
           ) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.",
-            );
+            missing(`${base}.user_pool_region`, missingMessage("user_pool_region"));
           }
           break;
         }
         case "clerk": {
           if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.clerk is enabled but without a domain.",
-            );
-          }
-          if (!CLERK_DOMAIN_PATTERN.test(thirdParty.requiredField)) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.",
+            missing(`${base}.domain`, missingMessage("domain"));
+          } else if (!CLERK_DOMAIN_PATTERN.test(thirdParty.requiredField)) {
+            report(
+              invalidIssue(
+                `${base}.domain`,
+                "Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.",
+                "not a Clerk domain",
+                "use a domain like clerk.example.com or example.clerk.accounts.dev; see https://clerk.com/setup/supabase",
+              ),
             );
           }
           break;
         }
         case "workos": {
           if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.workos is enabled but without a issuer_url.",
-            );
+            missing(`${base}.issuer_url`, missingMessage("issuer_url"));
           }
           break;
         }
       }
     }
     if (auth.thirdParty.length > 1) {
-      throw new ConfigValidateError(
-        "Invalid config: Only one third_party provider allowed to be enabled at a time.",
+      report(
+        invalidIssue(
+          "auth.third_party",
+          "Invalid config: Only one third_party provider allowed to be enabled at a time.",
+          "more than one third-party provider is enabled",
+          "enable one auth.third_party provider and set enabled = false on the others",
+        ),
       );
     }
   }
 
   for (const slug of input.functionSlugs) {
     if (!FUNCTION_SLUG_PATTERN.test(slug)) {
-      throw new ConfigValidateError(
-        `Invalid Function name: ${slug}. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (${FUNCTION_SLUG_PATTERN.source})`,
+      report(
+        invalidIssue(
+          `functions.${slug}`,
+          `Invalid Function name: ${slug}. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (${FUNCTION_SLUG_PATTERN.source})`,
+          "invalid function name",
+          "start with a letter; use letters, digits, underscores and hyphens only",
+        ),
       );
     }
   }
 
   if (input.edgeRuntimeDenoVersion === 0) {
-    throw new ConfigValidateError("Missing required field in config: edge_runtime.deno_version");
-  }
-  if (input.edgeRuntimeDenoVersion !== 1 && input.edgeRuntimeDenoVersion !== 2) {
-    throw new ConfigValidateError(
-      `Failed reading config: Invalid edge_runtime.deno_version: ${input.edgeRuntimeDenoVersion}.`,
+    missing(
+      "edge_runtime.deno_version",
+      "Missing required field in config: edge_runtime.deno_version",
+    );
+  } else if (input.edgeRuntimeDenoVersion !== 1 && input.edgeRuntimeDenoVersion !== 2) {
+    report(
+      invalidIssue(
+        "edge_runtime.deno_version",
+        `Failed reading config: Invalid edge_runtime.deno_version: ${input.edgeRuntimeDenoVersion}.`,
+        "unsupported Deno version",
+        "use 1 or 2",
+      ),
     );
   }
 
@@ -532,39 +698,69 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     backend !== "postgres" &&
     backend !== "bigquery"
   ) {
-    throw new ConfigValidateError(
-      "failed to parse config:\nanalytics.backend: must be one of postgres, bigquery",
+    report(
+      invalidIssue(
+        "analytics.backend",
+        "failed to parse config:\nanalytics.backend: must be one of postgres, bigquery",
+        "expected one of postgres, bigquery",
+        "use postgres or bigquery",
+        "invalid_enum",
+      ),
     );
-  }
-  if (input.analytics.enabled && backend === "bigquery") {
+  } else if (input.analytics.enabled && backend === "bigquery") {
     if (input.analytics.gcpProjectId.length === 0) {
-      throw new ConfigValidateError("Missing required field in config: analytics.gcp_project_id");
+      missing(
+        "analytics.gcp_project_id",
+        "Missing required field in config: analytics.gcp_project_id",
+      );
     }
     if (input.analytics.gcpProjectNumber.length === 0) {
-      throw new ConfigValidateError(
+      missing(
+        "analytics.gcp_project_number",
         "Missing required field in config: analytics.gcp_project_number",
       );
     }
     if (input.analytics.gcpJwtPath.length === 0) {
-      throw new ConfigValidateError(
-        `Path to GCP Service Account Key must be provided in config, relative to ${input.configFileName ?? "config.toml"}: analytics.gcp_jwt_path`,
-      );
+      report({
+        ...missingIssue("analytics.gcp_jwt_path", "", "analytics.enabled"),
+        message: `Path to GCP Service Account Key must be provided in config, relative to ${input.configFileName ?? "config.toml"}: analytics.gcp_jwt_path`,
+        reason: "required when analytics.backend = bigquery",
+        help: "set gcp_jwt_path to the service account key file, relative to supabase/",
+      });
     }
   }
 
   if (input.experimental.webhooksPresent === true && input.experimental.webhooksEnabled !== true) {
-    throw new ConfigValidateError(
-      "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
+    report(
+      invalidIssue(
+        "experimental.webhooks.enabled",
+        "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
+        "webhooks cannot be deactivated",
+        "set enabled = true, or remove [experimental.webhooks]",
+      ),
     );
   }
   if (
     input.experimental.pgdeltaFormatOptions !== "" &&
     !isValidJson(input.experimental.pgdeltaFormatOptions)
   ) {
-    throw new ConfigValidateError(
-      "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
+    report(
+      invalidIssue(
+        "experimental.pgdelta.format_options",
+        "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
+        "not valid JSON",
+        "use a JSON object string",
+      ),
     );
   }
+
+  return issues;
+}
+
+/** Throws the first issue {@link collectConfigValidationIssues} reports, in established first-failure-wins order. */
+export function validateResolvedConfig(input: ConfigValidationInput): void {
+  const [first] = collectConfigValidationIssues(input);
+  if (first !== undefined) throw new ConfigValidateError(first.message);
 }
 
 function isValidJson(value: string): boolean {
@@ -739,61 +935,84 @@ export function apiTlsKeyReadErrorMessage(cause: unknown): string {
 }
 
 /**
- * Validates only the first enabled provider in the fixed priority order; a later
- * enabled-but-incomplete provider is never checked.
+ * Reports required-field failures for the first enabled provider in the fixed priority order; a
+ * later enabled-but-incomplete provider is never checked.
  */
-export function validateAuthSmsProviders(sms: CliConfig["auth"]["sms"]): void {
-  function requireField(provider: string, field: string, value: string | undefined): void {
-    if (value === undefined || value.length === 0) {
-      throw new ConfigValidateError(
-        `Missing required field in config: auth.sms.${provider}.${field}`,
-      );
+export function collectAuthSmsProviderIssues(
+  sms: CliConfig["auth"]["sms"],
+): ReadonlyArray<ConfigValidationIssue> {
+  const issues: Array<ConfigValidationIssue> = [];
+  const requireFields = (
+    provider: string,
+    fields: ReadonlyArray<readonly [string, string | undefined]>,
+  ): void => {
+    for (const [field, value] of fields) {
+      if (value === undefined || value.length === 0) {
+        issues.push(
+          missingIssue(
+            `auth.sms.${provider}.${field}`,
+            `Missing required field in config: auth.sms.${provider}.${field}`,
+          ),
+        );
+      }
     }
-  }
+  };
 
   if (sms.twilio.enabled) {
-    requireField("twilio", "account_sid", sms.twilio.account_sid);
-    requireField("twilio", "message_service_sid", sms.twilio.message_service_sid);
-    requireField("twilio", "auth_token", sms.twilio.auth_token);
-    return;
+    requireFields("twilio", [
+      ["account_sid", sms.twilio.account_sid],
+      ["message_service_sid", sms.twilio.message_service_sid],
+      ["auth_token", sms.twilio.auth_token],
+    ]);
+  } else if (sms.twilio_verify.enabled) {
+    requireFields("twilio_verify", [
+      ["account_sid", sms.twilio_verify.account_sid],
+      ["message_service_sid", sms.twilio_verify.message_service_sid],
+      ["auth_token", sms.twilio_verify.auth_token],
+    ]);
+  } else if (sms.messagebird.enabled) {
+    requireFields("messagebird", [
+      ["originator", sms.messagebird.originator],
+      ["access_key", sms.messagebird.access_key],
+    ]);
+  } else if (sms.textlocal.enabled) {
+    requireFields("textlocal", [
+      ["sender", sms.textlocal.sender],
+      ["api_key", sms.textlocal.api_key],
+    ]);
+  } else if (sms.vonage.enabled) {
+    requireFields("vonage", [
+      ["from", sms.vonage.from],
+      ["api_key", sms.vonage.api_key],
+      ["api_secret", sms.vonage.api_secret],
+    ]);
   }
-  if (sms.twilio_verify.enabled) {
-    requireField("twilio_verify", "account_sid", sms.twilio_verify.account_sid);
-    requireField("twilio_verify", "message_service_sid", sms.twilio_verify.message_service_sid);
-    requireField("twilio_verify", "auth_token", sms.twilio_verify.auth_token);
-    return;
-  }
-  if (sms.messagebird.enabled) {
-    requireField("messagebird", "originator", sms.messagebird.originator);
-    requireField("messagebird", "access_key", sms.messagebird.access_key);
-    return;
-  }
-  if (sms.textlocal.enabled) {
-    requireField("textlocal", "sender", sms.textlocal.sender);
-    requireField("textlocal", "api_key", sms.textlocal.api_key);
-    return;
-  }
-  if (sms.vonage.enabled) {
-    requireField("vonage", "from", sms.vonage.from);
-    requireField("vonage", "api_key", sms.vonage.api_key);
-    requireField("vonage", "api_secret", sms.vonage.api_secret);
-    return;
-  }
+  return issues;
+}
+
+/** Throws the first issue {@link collectAuthSmsProviderIssues} reports. */
+export function validateAuthSmsProviders(sms: CliConfig["auth"]["sms"]): void {
+  const [first] = collectAuthSmsProviderIssues(sms);
+  if (first !== undefined) throw new ConfigValidateError(first.message);
 }
 
 /**
- * Validates required fields for every enabled `auth.external.<name>` provider, including
+ * Reports required fields for every enabled `auth.external.<name>` provider, including
  * custom names `@supabase/config`'s schema drops at decode time, so `resolved` must come from
  * `resolveAuthExternalProviders` over the effective document rather than the decoded config.
  */
-export function validateAuthExternalProviders(
+export function collectAuthExternalProviderIssues(
   resolved: Readonly<Record<string, ResolvedAuthExternalProvider>>,
-): void {
+): ReadonlyArray<ConfigValidationIssue> {
+  const issues: Array<ConfigValidationIssue> = [];
   for (const [name, provider] of Object.entries(resolved)) {
     if (!provider.enabled) continue;
     if (provider.clientId.length === 0) {
-      throw new ConfigValidateError(
-        `Missing required field in config: auth.external.${name}.client_id`,
+      issues.push(
+        missingIssue(
+          `auth.external.${name}.client_id`,
+          `Missing required field in config: auth.external.${name}.client_id`,
+        ),
       );
     }
     if (
@@ -801,9 +1020,21 @@ export function validateAuthExternalProviders(
       name !== "google" &&
       (provider.secret === undefined || provider.secret.length === 0)
     ) {
-      throw new ConfigValidateError(
-        `Missing required field in config: auth.external.${name}.secret`,
+      issues.push(
+        missingIssue(
+          `auth.external.${name}.secret`,
+          `Missing required field in config: auth.external.${name}.secret`,
+        ),
       );
     }
   }
+  return issues;
+}
+
+/** Throws the first issue {@link collectAuthExternalProviderIssues} reports. */
+export function validateAuthExternalProviders(
+  resolved: Readonly<Record<string, ResolvedAuthExternalProvider>>,
+): void {
+  const [first] = collectAuthExternalProviderIssues(resolved);
+  if (first !== undefined) throw new ConfigValidateError(first.message);
 }
