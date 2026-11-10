@@ -136,7 +136,7 @@ const pruneWaitingForConcurrentPrune = Effect.fn("DockerRemoveAll.prune")(functi
   return stillBlocked
     ? {
         ...result,
-        stderr: `${result.stderr.trim()} (still running after waiting ${CONCURRENT_PRUNE_WAIT}, ${attempts} attempts)`,
+        stderr: `${result.stderr.trim()} (still running after retrying for up to ${CONCURRENT_PRUNE_WAIT}, ${attempts} attempts)`,
       }
     : result;
 });
