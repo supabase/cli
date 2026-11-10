@@ -3965,6 +3965,7 @@ content_path = "./supabase/templates/custom_notice.html"
         yield* start(flags({ exclude: ["postgrest", "edge-runtime"] })).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Started");
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
+        expect(analyticsInspects).toBe(3);
       }).pipe(
         Effect.provideService(HealthCheckTimeoutSeconds, 1),
         Effect.provide([BunServices.layer, BunCrypto.layer]),

@@ -1503,8 +1503,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // `rollbackStart` calls would miss a pure fiber interrupt between steps (see the `bringUp`
       // pipe's comment for why `onError`, not `tapError`, is required).
       yield* Effect.gen(function* () {
-        // 9. Bulk health check over every non-Postgres started container, at
-        // the generic 30s service timeout.
+        // 9. Bulk health check over every non-Postgres started container, at the service
+        // timeout (doubled when Logflare or Vector start; see SIDE_EFFECTS.md).
         if (output.format === "text") {
           yield* output.raw(START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
         }
