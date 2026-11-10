@@ -125,17 +125,6 @@ export class UnknownComputeSecretsScopeError extends Data.TaggedError(
   }
 }
 
-export class InvalidComputeSecretsScopeError extends Data.TaggedError(
-  "InvalidComputeSecretsScopeError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 export class MissingComputeExposureError extends Data.TaggedError("MissingComputeExposureError")<{
   readonly detail: string;
   readonly suggestion: string;

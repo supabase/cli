@@ -58,7 +58,6 @@ import {
   ComputeSourceMissingError,
   MissingComputeExposureError,
   UnknownComputeSecretsScopeError,
-  InvalidComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
 import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";

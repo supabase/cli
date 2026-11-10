@@ -53,7 +53,6 @@ import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import {
   MissingComputeNameError,
   ComputeDirectoryExistsError,
-  InvalidComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { loadComputeProject, validateComputeName, type ComputeProject } from "../compute.shared.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
