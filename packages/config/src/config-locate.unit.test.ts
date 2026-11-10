@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { cliConfigLineKeys, locateCliConfigKey } from "./config-locate.ts";
+import { cliConfigLineKeys, cliConfigValueSpans, locateCliConfigKey } from "./config-locate.ts";
 import { isSecretPath } from "./lib/secret-paths.ts";
 
 const toml = [
@@ -218,5 +218,41 @@ describe("cliConfigLineKeys", () => {
   test("is empty when the text does not parse", () => {
     expect(cliConfigLineKeys("[api\nport = 1", "toml").size).toBe(0);
     expect(cliConfigLineKeys('{ "api": { "port": 1 ', "json").size).toBe(0);
+  });
+});
+
+describe("cliConfigValueSpans", () => {
+  const textOf = (source: string, spans: ReturnType<typeof cliConfigValueSpans>) =>
+    (spans ?? []).map((span) => {
+      const lines = source.split("\n");
+      const first = lines[span.line - 1] ?? "";
+      if (span.endLine === undefined || span.endLine === span.line) {
+        return first.slice(span.column - 1, (span.endColumn ?? 1) - 1);
+      }
+      return [
+        first.slice(span.column - 1),
+        ...lines.slice(span.line, span.endLine - 1),
+        (lines[span.endLine - 1] ?? "").slice(0, (span.endColumn ?? 1) - 1),
+      ].join("\n");
+    });
+
+  test("covers a multi-line toml string and each value of an inline table", () => {
+    const source = 'a = """\n# x\nb=="""\nc = { d = 1, e = "two" }\nf = [1, 2]\n';
+    expect(textOf(source, cliConfigValueSpans(source, "toml"))).toEqual([
+      '"""\n# x\nb=="""',
+      "1",
+      '"two"',
+      "[1, 2]",
+    ]);
+  });
+
+  test("covers each json scalar, including those of a multi-line array", () => {
+    const source = '{\n  "a": [\n    "x",\n    2\n  ],\n  "b": { "c": true }\n}';
+    expect(textOf(source, cliConfigValueSpans(source, "json"))).toEqual(['"x"', "2", "true"]);
+  });
+
+  test("is undefined when the text does not parse", () => {
+    expect(cliConfigValueSpans('a = """\nx', "toml")).toBeUndefined();
+    expect(cliConfigValueSpans('{ "a": ', "json")).toBeUndefined();
   });
 });

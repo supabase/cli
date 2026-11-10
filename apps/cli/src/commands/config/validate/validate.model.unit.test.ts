@@ -40,7 +40,7 @@ describe("isPublicValuePath", () => {
     "auth.external.github.client_id",
     "remotes.staging.db.port",
   ])("shows the value of %s", (path) => {
-    expect(isPublicValuePath(path)).toBe(true);
+    expect(isPublicValuePath(path.split("."))).toBe(true);
   });
 
   it.each([
@@ -52,43 +52,60 @@ describe("isPublicValuePath", () => {
     "auth.hook.send_email.secrets",
     "api.not_a_key",
   ])("masks the value of %s", (path) => {
-    expect(isPublicValuePath(path)).toBe(false);
+    expect(isPublicValuePath(path.split("."))).toBe(false);
   });
 });
 
 describe("dedupeProblems", () => {
   it("drops a remote problem the base already reports", () => {
-    const base = problem({ code: "invalid_value", path: "db.port", reason: "expected a port" });
+    const base = problem({
+      code: "invalid_value",
+      path: ["db", "port"],
+      reason: "expected a port",
+    });
     const remote = { ...base, remote: "staging" };
     expect(dedupeProblems([base, remote], noRemoteWrites)).toEqual([base]);
   });
 
   it("keeps a remote problem on a key the remote writes itself", () => {
-    const base = problem({ code: "invalid_value", path: "db.port", reason: "expected a port" });
+    const base = problem({
+      code: "invalid_value",
+      path: ["db", "port"],
+      reason: "expected a port",
+    });
     const remote = { ...base, remote: "staging" };
     expect(
-      dedupeProblems([base, remote], (name, path) => name === "staging" && path === "db.port"),
+      dedupeProblems(
+        [base, remote],
+        (name, path) => name === "staging" && path.join(".") === "db.port",
+      ),
     ).toEqual([base, remote]);
   });
 
   it("reports a value-level key once even when the reason differs", () => {
-    const first = problem({ code: "invalid_value", path: "db.port", reason: "one" });
-    const second = problem({ code: "invalid_value", path: "db.port", reason: "two" });
+    const first = problem({ code: "invalid_value", path: ["db", "port"], reason: "one" });
+    const second = problem({ code: "invalid_value", path: ["db", "port"], reason: "two" });
     expect(dedupeProblems([first, second], noRemoteWrites)).toEqual([first]);
   });
 
   it("keeps the same key reported under different remotes", () => {
-    const a = problem({ code: "invalid_value", path: "db.port", remote: "a" });
-    const b = problem({ code: "invalid_value", path: "db.port", remote: "b" });
+    const a = problem({ code: "invalid_value", path: ["db", "port"], remote: "a" });
+    const b = problem({ code: "invalid_value", path: ["db", "port"], remote: "b" });
     expect(dedupeProblems([a, b], (name) => name !== "")).toEqual([a, b]);
   });
 });
 
 describe("withoutFollowOns", () => {
   it("drops problems at or below a pruned path and keeps the rest", () => {
-    const below = problem({ code: "missing_required", path: "auth.external.github.client_id" });
-    const at = problem({ code: "invalid_value", path: "auth.external.github" });
-    const other = problem({ code: "invalid_value", path: "auth.external.gitlab.client_id" });
+    const below = problem({
+      code: "missing_required",
+      path: ["auth", "external", "github", "client_id"],
+    });
+    const at = problem({ code: "invalid_value", path: ["auth", "external", "github"] });
+    const other = problem({
+      code: "invalid_value",
+      path: ["auth", "external", "gitlab", "client_id"],
+    });
     const pathless = problem({ code: "removed_env" });
     expect(
       withoutFollowOns([below, at, other, pathless], [["auth", "external", "github"]]),
@@ -115,26 +132,45 @@ describe("envReferences", () => {
 describe("withoutUnresolvedEnvErrors", () => {
   const baseRef = { name: "A", path: ["api"] };
   const remoteRef = { name: "B", path: ["api"], remote: "prod" };
+  const referencesFor =
+    (...references: ReadonlyArray<typeof baseRef | typeof remoteRef>) =>
+    (remote: string | undefined) =>
+      references.filter((reference) => Reflect.get(reference, "remote") === remote);
 
-  it("drops errors at or below an unresolved reference of the same pass", () => {
-    const base = problem({ code: "invalid_value", path: "api.max_rows" });
-    const remote = problem({ code: "invalid_value", path: "api.max_rows", remote: "prod" });
-    const result = withoutUnresolvedEnvErrors([base, remote], [baseRef]);
+  it("drops value errors at or below an unresolved reference of the same pass", () => {
+    const base = problem({ code: "invalid_value", path: ["api", "max_rows"] });
+    const remote = problem({ code: "invalid_value", path: ["api", "max_rows"], remote: "prod" });
+    const result = withoutUnresolvedEnvErrors([base, remote], referencesFor(baseRef));
 
     expect(result.kept).toEqual([remote]);
-    expect(result.blamed).toEqual([baseRef]);
+    expect(result.blamed).toEqual([{ reference: baseRef }]);
   });
 
   it("lets a remote reference drop only that remote's errors", () => {
-    const base = problem({ code: "invalid_value", path: "api.max_rows" });
-    const remote = problem({ code: "invalid_value", path: "api.max_rows", remote: "prod" });
+    const base = problem({ code: "invalid_value", path: ["api", "max_rows"] });
+    const remote = problem({ code: "invalid_value", path: ["api", "max_rows"], remote: "prod" });
 
-    expect(withoutUnresolvedEnvErrors([base, remote], [remoteRef]).kept).toEqual([base]);
+    expect(withoutUnresolvedEnvErrors([base, remote], referencesFor(remoteRef)).kept).toEqual([
+      base,
+    ]);
+  });
+
+  it("keeps errors that are not about the value the reference stands for", () => {
+    const unknown = problem({ code: "unknown_key", path: ["api", "prot"] });
+    const removed = problem({ code: "removed_key", path: ["api", "old"] });
+    const external = problem({ code: "invalid_value", path: ["api", "port"], external: true });
+    const problems = [unknown, removed, external];
+
+    expect(withoutUnresolvedEnvErrors(problems, referencesFor(baseRef)).kept).toEqual(problems);
   });
 
   it("never drops warnings", () => {
-    const warning = problem({ code: "deprecated_key", severity: "warning", path: "api.max_rows" });
-    expect(withoutUnresolvedEnvErrors([warning], [baseRef]).kept).toEqual([warning]);
+    const warning = problem({
+      code: "deprecated_key",
+      severity: "warning",
+      path: ["api", "max_rows"],
+    });
+    expect(withoutUnresolvedEnvErrors([warning], referencesFor(baseRef)).kept).toEqual([warning]);
   });
 });
 

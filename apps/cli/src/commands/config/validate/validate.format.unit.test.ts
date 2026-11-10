@@ -45,7 +45,7 @@ describe("validateReport", () => {
     const text = render([
       problem({
         code: "unknown_key",
-        path: "api.prot",
+        path: ["api", "prot"],
         reason: "unknown key",
         help: "did you mean `port`?",
         location: { line: 3, column: 1, endColumn: 5, exact: true },
@@ -70,7 +70,7 @@ describe("validateReport", () => {
   it("masks every configured value by default, including the context line", () => {
     const text = render([
       problem({
-        path: "api.port",
+        path: ["api", "port"],
         location: { line: 5, column: 8, endColumn: 9, exact: true },
       }),
     ]);
@@ -82,7 +82,7 @@ describe("validateReport", () => {
   it("shows the located value only when the problem allows it, still masking siblings on the line", () => {
     const text = render([
       problem({
-        path: "api.cfg.n",
+        path: ["api", "cfg", "n"],
         showValue: true,
         location: { line: 6, column: 32, endColumn: 37, exact: true },
       }),
@@ -95,7 +95,7 @@ describe("validateReport", () => {
   it("shows a known non-secret key's value on the context line", () => {
     const text = render([
       problem({
-        path: "api.cfg",
+        path: ["api", "cfg"],
         location: { line: 6, column: 1, endColumn: 4, exact: true },
       }),
     ]);
@@ -106,7 +106,7 @@ describe("validateReport", () => {
   it("masks a secret on the context line", () => {
     const text = render([
       problem({
-        path: "api.port",
+        path: ["api", "port"],
         location: { line: 5, column: 1, endColumn: 5, exact: true },
       }),
     ]);
@@ -118,7 +118,7 @@ describe("validateReport", () => {
   it("masks an unknown key's value on the context line", () => {
     const text = render([
       problem({
-        path: "api.secret",
+        path: ["api", "secret"],
         location: { line: 4, column: 1, endColumn: 7, exact: true },
       }),
     ]);
@@ -126,8 +126,73 @@ describe("validateReport", () => {
     expect(text).toContain("3 │ prot = ****");
   });
 
+  describe("multi-line secrets", () => {
+    const SECRET_SOURCE = [
+      "[auth.hook.send_email]",
+      'secrets = """',
+      "  # hunter2-do-not-print",
+      '  c2VjcmV0cGFzc3dvcmQ=="""',
+      "bogus = 1",
+    ].join("\n");
+
+    it("masks comment-looking and padded-base64 continuation lines on the problem's range", () => {
+      const text = render(
+        [
+          problem({
+            path: ["auth", "hook", "send_email", "secrets"],
+            location: { line: 2, column: 11, endLine: 4, endColumn: 29, exact: true },
+          }),
+        ],
+        { source: SECRET_SOURCE },
+      );
+
+      expect(text).not.toContain("hunter2");
+      expect(text).not.toContain("c2Vj");
+      expect(text).not.toContain("==");
+      expect(text).toContain("secrets = ****");
+    });
+
+    it("masks the closing line of a multi-line secret used as the context line", () => {
+      const text = render(
+        [
+          problem({
+            path: ["auth", "hook", "send_email", "bogus"],
+            location: { line: 5, column: 1, exact: true },
+          }),
+        ],
+        { source: SECRET_SOURCE },
+      );
+
+      expect(text).not.toContain("c2Vj");
+      expect(text).not.toContain("==");
+    });
+
+    it("masks every line of a multi-line array of secrets in JSON", () => {
+      const text = render(
+        [problem({ path: ["x"], location: { line: 2, column: 3, exact: true } })],
+        {
+          format: "json",
+          source: '{\n  "secrets": [\n    "hunter2",\n    // note\n    "other"\n  ]\n}',
+        },
+      );
+
+      expect(text).not.toContain("hunter2");
+      expect(text).not.toContain("other");
+    });
+
+    it("masks every non-blank line when the source cannot be parsed", () => {
+      const text = render(
+        [problem({ code: "syntax", location: { line: 3, column: 1, exact: true } })],
+        { source: 'secrets = """\n# hunter2-do-not-print\nhost = "x' },
+      );
+
+      expect(text).not.toContain("hunter2");
+      expect(text).not.toContain("host");
+    });
+  });
+
   it("labels remote problems and lists checked and skipped remotes", () => {
-    const text = render([problem({ path: "db.port", remote: "staging" })], {
+    const text = render([problem({ path: ["db", "port"], remote: "staging" })], {
       remotes: ["staging"],
       skippedRemotes: [{ name: "prod", reason: "no project id" }],
     });
@@ -138,7 +203,9 @@ describe("validateReport", () => {
   });
 
   it("reports a valid file with a warning count", () => {
-    const text = render([problem({ code: "deprecated_key", severity: "warning", path: "api.x" })]);
+    const text = render([
+      problem({ code: "deprecated_key", severity: "warning", path: ["api", "x"] }),
+    ]);
 
     expect(text).toContain("✓ supabase/config.toml is valid · 1 warning");
   });
@@ -152,7 +219,7 @@ describe("validateReport", () => {
   });
 
   it("neutralises control characters in a problem subject", () => {
-    const text = render([problem({ path: "a\u001b[31mb" })]);
+    const text = render([problem({ path: ["a\u001b[31mb"] })]);
 
     expect(text).not.toContain("\u001b");
   });
@@ -173,12 +240,12 @@ describe("validateJsonPayload", () => {
       report(
         [
           problem({
-            path: "db.port",
+            path: ["db", "port"],
             remote: "staging",
             help: "use a port",
             location: { line: 5, column: 8, endLine: 5, endColumn: 9, exact: true },
           }),
-          problem({ code: "deprecated_key", severity: "warning", path: "api.x" }),
+          problem({ code: "deprecated_key", severity: "warning", path: ["api", "x"] }),
         ],
         { remotes: ["staging"] },
       ),

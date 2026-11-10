@@ -23,8 +23,8 @@ type ProblemCode =
 export interface ConfigProblem {
   readonly code: ProblemCode;
   readonly severity: "error" | "warning";
-  /** The key's path with any `remotes.<name>.` prefix removed. */
-  readonly path?: string;
+  /** The key's path segments with any `remotes.<name>.` prefix removed. */
+  readonly path?: ReadonlyArray<string>;
   readonly remote?: string;
   /** Names the file a pathless problem is about when it is not the validated one. */
   readonly subject?: string;
@@ -77,8 +77,8 @@ const isPublicFamilyLeaf = (segments: ReadonlyArray<string>): boolean =>
  * Whether the value at a config key path may be printed: a schema leaf that is neither secret nor
  * secret-looking. Everything else, including keys the schema does not know, is masked.
  */
-export function isPublicValuePath(path: string): boolean {
-  const segments = splitRemotePath(path.split(".")).path;
+export function isPublicValuePath(path: ReadonlyArray<string>): boolean {
+  const segments = splitRemotePath(path).path;
   const local = segments.join(".");
   return (
     local !== ROOT_KEY_PATH &&
@@ -88,10 +88,13 @@ export function isPublicValuePath(path: string): boolean {
   );
 }
 
-const keyOf = (problem: ConfigProblem): string =>
-  `${problem.code}\0${problem.remote ?? ""}\0${problem.path ?? ""}\0${problem.subject ?? ""}`;
+/** A key path as shown to people; segments that contain dots are indistinguishable from nesting. */
+export const displayPath = (path: ReadonlyArray<string>): string => path.join(".");
 
-const KEYED_BY_PATH: ReadonlySet<ProblemCode> = new Set([
+const keyOf = (problem: ConfigProblem): string =>
+  `${problem.code}\0${problem.remote ?? ""}\0${problem.path?.join("\0") ?? ""}\0${problem.subject ?? ""}`;
+
+const VALUE_LEVEL_CODES: ReadonlySet<ProblemCode> = new Set([
   "invalid_type",
   "invalid_enum",
   "invalid_value",
@@ -105,7 +108,7 @@ const KEYED_BY_PATH: ReadonlySet<ProblemCode> = new Set([
  */
 export function dedupeProblems(
   problems: ReadonlyArray<ConfigProblem>,
-  remoteWrites: (remote: string, path: string) => boolean,
+  remoteWrites: (remote: string, path: ReadonlyArray<string>) => boolean,
 ): ReadonlyArray<ConfigProblem> {
   const base = new Set(
     problems
@@ -118,9 +121,9 @@ export function dedupeProblems(
     const inherited =
       problem.remote !== undefined &&
       base.has(`${keyOf({ ...problem, remote: undefined })}\0${problem.reason}`) &&
-      !remoteWrites(problem.remote, problem.path ?? "");
+      !remoteWrites(problem.remote, problem.path ?? []);
     if (inherited) return false;
-    const identity = KEYED_BY_PATH.has(problem.code) ? keyOf(problem) : full;
+    const identity = VALUE_LEVEL_CODES.has(problem.code) ? keyOf(problem) : full;
     if (seen.has(identity)) return false;
     seen.add(identity);
     return true;
@@ -138,7 +141,7 @@ export function withoutFollowOns(
   return problems.filter(
     (problem) =>
       problem.path === undefined ||
-      !removed.some((prefix) => atOrBelow(problem.path?.split(".") ?? [], prefix)),
+      !removed.some((prefix) => atOrBelow(problem.path ?? [], prefix)),
   );
 }
 
@@ -172,24 +175,40 @@ export function envReferences(document: unknown): ReadonlyArray<EnvReference> {
 }
 
 /**
- * Drops errors that sit at or below a key whose `env(NAME)` reference could not be resolved in the
- * same pass, and names the references that caused a drop.
+ * Drops value-level errors that sit at or below a key whose `env(NAME)` reference could not be
+ * resolved, since the literal reference text is what fails, and names the references that caused a
+ * drop. Errors about the key itself, and values an env variable supplied, always stay.
  */
 export function withoutUnresolvedEnvErrors(
   problems: ReadonlyArray<ConfigProblem>,
-  unresolved: ReadonlyArray<EnvReference>,
-): { readonly kept: ReadonlyArray<ConfigProblem>; readonly blamed: ReadonlyArray<EnvReference> } {
-  const blamed = new Set<EnvReference>();
+  unresolvedFor: (remote: string | undefined) => ReadonlyArray<EnvReference>,
+): {
+  readonly kept: ReadonlyArray<ConfigProblem>;
+  readonly blamed: ReadonlyArray<{ readonly reference: EnvReference; readonly remote?: string }>;
+} {
+  const blamed: Array<{ readonly reference: EnvReference; readonly remote?: string }> = [];
   const kept = problems.filter((problem) => {
-    if (problem.severity !== "error" || problem.path === undefined) return true;
-    const segments = problem.path.split(".");
-    const owners = unresolved.filter(
-      (reference) => reference.remote === problem.remote && atOrBelow(segments, reference.path),
+    if (
+      problem.severity !== "error" ||
+      problem.path === undefined ||
+      problem.external !== undefined ||
+      !VALUE_LEVEL_CODES.has(problem.code)
+    ) {
+      return true;
+    }
+    const { path } = problem;
+    const owners = unresolvedFor(problem.remote).filter((reference) =>
+      atOrBelow(path, reference.path),
     );
-    for (const owner of owners) blamed.add(owner);
+    for (const reference of owners) {
+      blamed.push({
+        reference,
+        ...(problem.remote === undefined ? {} : { remote: problem.remote }),
+      });
+    }
     return owners.length === 0;
   });
-  return { kept, blamed: [...blamed] };
+  return { kept, blamed };
 }
 
 const readPath = (root: unknown, path: ReadonlyArray<string>): unknown => {

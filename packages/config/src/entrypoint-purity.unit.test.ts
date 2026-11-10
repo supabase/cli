@@ -528,6 +528,7 @@ describe("src/internal.ts export surface", () => {
         "applyConfigEdits",
         "cliConfigFormatForPath",
         "cliConfigLineKeys",
+        "cliConfigValueSpans",
         "decodeCliConfigDocumentForValidationEffect",
         "decodeMergedCliConfig",
         "dualScopeProjectConfigPaths",

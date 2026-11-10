@@ -278,6 +278,8 @@ export type ConfigValidationIssueCode =
  */
 export interface ConfigValidationIssue {
   readonly path: string;
+  /** The key path split by segment, when a segment (such as a bucket name) can contain dots. */
+  readonly segments?: ReadonlyArray<string>;
   readonly message: string;
   readonly code: ConfigValidationIssueCode;
   readonly reason: string;
@@ -400,14 +402,15 @@ export function collectConfigValidationIssues(
 
   for (const name of input.storageBucketNames) {
     if (!BUCKET_NAME_PATTERN.test(name)) {
-      report(
-        invalidIssue(
+      report({
+        ...invalidIssue(
           `storage.buckets.${name}`,
           `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${BUCKET_NAME_PATTERN.source})`,
           "invalid bucket name",
           "use lowercase letters, numbers, dots, hyphens and spaces only",
         ),
-      );
+        segments: ["storage", "buckets", name],
+      });
     }
   }
 

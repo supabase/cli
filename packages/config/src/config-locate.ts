@@ -378,3 +378,56 @@ export function cliConfigLineKeys(
   const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   return format === "toml" ? tomlLineKeys(source) : jsonLineKeys(source);
 }
+
+function tomlValueSpans(source: string, span: Span): ReadonlyArray<Span> {
+  if (source[span.start] !== "{") return [span];
+  const entries = inlineTableEntries(source, span);
+  return entries === undefined
+    ? [span]
+    : entries.flatMap((entry) => tomlValueSpans(source, entry.value));
+}
+
+function jsonValueSpans(root: Node): ReadonlyArray<Span> {
+  const found: Array<Span> = [];
+  const walk = (node: Node): void => {
+    if (node.type === "object") {
+      for (const property of node.children ?? []) {
+        const value = property.children?.[1];
+        if (value !== undefined) walk(value);
+      }
+    } else if (node.type === "array") {
+      for (const child of node.children ?? []) walk(child);
+    } else {
+      found.push({ start: node.offset, end: node.offset + node.length });
+    }
+  };
+  walk(root);
+  return found;
+}
+
+/**
+ * The span of every scalar or array value in raw config text, including ones that cover several
+ * lines; undefined when the text cannot be parsed.
+ */
+export function cliConfigValueSpans(
+  text: string,
+  format: ConfigFormat,
+): ReadonlyArray<CliConfigLocation> | undefined {
+  const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  if (format === "toml") {
+    const { scan, starts } = scanOnce(source);
+    if (isScanError(scan)) return undefined;
+    return scan.tokens
+      .filter((token): token is TomlKeyToken => token.kind === "kv")
+      .flatMap((token) => tomlValueSpans(source, { start: token.valueStart, end: token.valueEnd }))
+      .filter((span) => span.end > span.start)
+      .map((span) => toLocation(starts, span, true));
+  }
+  const errors: Array<ParseError> = [];
+  const root = parseTree(source, errors, { allowTrailingComma: true, disallowComments: false });
+  if (root === undefined || errors.length > 0) return undefined;
+  const starts = lineStarts(source);
+  return jsonValueSpans(root)
+    .filter((span) => span.end > span.start)
+    .map((span) => toLocation(starts, span, true));
+}

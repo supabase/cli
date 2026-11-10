@@ -55,7 +55,7 @@ Each stage reports every problem it finds; a run stops after a stage only when t
 
 ### `--output-format text`
 
-stdout is one report: every problem in file order, each as `<key>  <reason>` with `file:line:column`, a code frame, an optional `help:` line and a `[remote: <name>]` label, then a total. Colour only on a TTY, per `NO_COLOR`/`CLICOLOR`. Values are masked as `****` unless the key is a known non-secret setting; `env(NAME)` references stay visible. Nothing is written to stderr by the command itself.
+stdout is one report: every problem in file order, each as `<key>  <reason>` with `file:line:column`, a code frame, an optional `help:` line and a `[remote: <name>]` label, then a total. Colour only on a TTY, per `NO_COLOR`/`CLICOLOR`. Values are masked as `****`, on every line they span, unless the key is a known non-secret setting; `env(NAME)` references stay visible. A document that cannot be parsed is masked line by line in full. Nothing is written to stderr by the command itself.
 
 ### `--output-format json`
 
@@ -69,5 +69,5 @@ Same structured result as `json`, delivered as an NDJSON `result` event.
 
 - No config or project file is created or changed and no Management API call is made. The CLI still writes `telemetry.json`, and the global update notice that follows every command can fetch the latest release tag and write `cli-latest` and print a notice on stderr; this command does not change that behaviour.
 - Every `[remotes.<name>]` block is validated merged over the base config, whatever the linked project is.
-- An unresolved `env(NAME)` is a warning when its nearest `enabled` gate is not `false` (or the key is an optional placeholder `supabase init` writes), and errors it causes at or below that key are not reported.
+- An unresolved `env(NAME)` is a warning when its nearest `enabled` gate is not `false` (or the key is an optional placeholder `supabase init` writes), and value errors (type, enum, value, missing) it causes at or below that key are not reported; unknown-key, removed-key and `SUPABASE_*`-sourced errors still are. A base reference a remote inherits is checked against that remote's own gates. A `remotes` key or `remotes.<name>` entry that is not a table is an `invalid_type` error. An error whose value a `SUPABASE_*` variable supplies names the variable and carries no file location.
 - `-o/--output` is rejected in favour of `--output-format`.

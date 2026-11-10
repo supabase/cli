@@ -1,7 +1,11 @@
 import { escapeControlCharacters } from "../../../shared/output/escape-control-characters.ts";
-import { cliConfigLineKeys, type CliConfigLocation } from "@supabase/config/internal";
+import {
+  cliConfigLineKeys,
+  cliConfigValueSpans,
+  type CliConfigLocation,
+} from "@supabase/config/internal";
 
-import { isPublicValuePath, type ConfigProblem } from "./validate.model.ts";
+import { displayPath, isPublicValuePath, type ConfigProblem } from "./validate.model.ts";
 
 /** ANSI styling applied to the text report; the handler passes stream-gated colours. */
 export interface ReportStyle {
@@ -83,19 +87,7 @@ interface Span {
 const KEY_VALUE =
   /^(\s*(?:(?:#|\/\/)\s*)?(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+))*\s*[=:]\s*)(.*)$/;
 const ENV_REFERENCE_VALUE = /^["']env\([A-Za-z_][A-Za-z0-9_]*\)["']\s*,?\s*$/;
-const NO_VALUE = /^\s*(?:(?:#|\/\/).*|\[\[?[^\]=]*\]\]?\s*(?:#.*)?|[\][{},\s]*|("""|''')\s*,?)\s*$/;
-
-/** The parts of a source line that hold a value: everything right of a key, or a bare value line. */
-function valueSpans(text: string): ReadonlyArray<Span> {
-  const pair = KEY_VALUE.exec(text);
-  if (pair?.[1] !== undefined && pair[2] !== undefined) {
-    const value = pair[2];
-    if (ENV_REFERENCE_VALUE.test(value) || /^[[{]?\s*$/.test(value)) return [];
-    return [{ column: pair[1].length + 1 }];
-  }
-  if (NO_VALUE.test(text)) return [];
-  return [{ column: text.length - text.trimStart().length + 1 }];
-}
+const TRAILING_COMMENT = /^[\s,}\]]*(#|\/\/)/;
 
 interface MaskedLine {
   readonly text: string;
@@ -135,36 +127,58 @@ function maskLine(text: string, spans: ReadonlyArray<Span>): MaskedLine {
   };
 }
 
-const maskedLine = (text: string): MaskedLine => maskLine(text, valueSpans(text));
+const isBefore = (line: number, column: number, otherLine: number, otherColumn: number) =>
+  line < otherLine || (line === otherLine && column < otherColumn);
 
-const TOKEN = /"(?:[^"\\]|\\.)*"|'[^']*'|[^\s,{}[\]:="']+/g;
-const KEY_AHEAD = /^\s*[=:]/;
-
-/** The values in an inline fragment such as `{ a = 1, b = "x" }`: every token that is not a key or an `env()` reference. */
-function inlineValueSpans(text: string, from: number, to: number): ReadonlyArray<Span> {
-  const spans: Array<Span> = [];
-  for (const match of text.slice(from, to).matchAll(TOKEN)) {
-    const start = from + match.index;
-    const end = start + match[0].length;
-    if (KEY_AHEAD.test(text.slice(end, to)) || ENV_REFERENCE_VALUE.test(match[0])) continue;
-    spans.push({ column: start + 1, endColumn: end + 1 });
-  }
-  return spans;
-}
+const isWithin = (value: CliConfigLocation, shown: CliConfigLocation): boolean =>
+  !isBefore(value.line, value.column, shown.line, shown.column) &&
+  !isBefore(
+    shown.endLine ?? shown.line,
+    shown.endColumn ?? shown.column,
+    value.endLine ?? value.line,
+    value.endColumn ?? value.column,
+  );
 
 /**
- * A line whose located value the report may show: the keys stay readable, but every other value on
- * it is masked, since an inline table or array can hold more than the one that failed.
+ * A source line with every value masked, whichever lines it spans, except the values inside
+ * `shown`. Lines of text that cannot be parsed are masked in full.
  */
-function shownLine(text: string, location: CliConfigLocation | undefined): MaskedLine {
-  if (location === undefined) return maskedLine(text);
-  const pair = KEY_VALUE.exec(text);
-  const headStart = pair?.[1]?.length ?? text.length - text.trimStart().length;
-  const valueEnd = location.endColumn === undefined ? text.length : location.endColumn - 1;
-  return maskLine(text, [
-    ...inlineValueSpans(text, headStart, location.column - 1),
-    ...inlineValueSpans(text, valueEnd, text.length),
-  ]);
+function maskedAt(
+  { lines, valuesByLine }: SourceView,
+  lineNumber: number,
+  shown?: CliConfigLocation,
+): MaskedLine {
+  const text = lines[lineNumber - 1] ?? "";
+  const indent = text.length - text.trimStart().length;
+  if (text.trim() === "") return maskLine(text, []);
+  if (valuesByLine === undefined) return maskLine(text, [{ column: indent + 1 }]);
+
+  const spans: Array<Span> = [];
+  for (const value of valuesByLine.get(lineNumber) ?? []) {
+    if (shown !== undefined && isWithin(value, shown)) continue;
+    const startsHere = value.line === lineNumber;
+    const endsHere = (value.endLine ?? value.line) === lineNumber;
+    const column = startsHere ? value.column : indent + 1;
+    const endColumn = endsHere ? value.endColumn : undefined;
+    if (
+      startsHere &&
+      endsHere &&
+      ENV_REFERENCE_VALUE.test(text.slice(column - 1, (endColumn ?? text.length + 1) - 1))
+    ) {
+      continue;
+    }
+    spans.push(endColumn === undefined ? { column } : { column, endColumn });
+  }
+  if (spans.length === 0) {
+    const pair = /^\s*(?:#|\/\/)/.test(text) ? KEY_VALUE.exec(text) : null;
+    return maskLine(text, pair?.[1] === undefined ? [] : [{ column: pair[1].length + 1 }]);
+  }
+  const lastEnd = Math.max(...spans.map((span) => span.endColumn ?? text.length + 1)) - 1;
+  const comment = TRAILING_COMMENT.exec(text.slice(lastEnd));
+  if (comment !== null) {
+    spans.push({ column: lastEnd + comment[0].length - comment[1]!.length + 1 });
+  }
+  return maskLine(text, spans);
 }
 
 function windowAround(text: string, caretOffset: number): { text: string; caretOffset: number } {
@@ -180,6 +194,8 @@ interface SourceView {
   readonly lines: ReadonlyArray<string>;
   /** 1-based lines holding a single non-secret schema leaf, whose value context lines may show. */
   readonly publicLines: ReadonlySet<number>;
+  /** The value spans touching each 1-based line; undefined when the source cannot be parsed. */
+  readonly valuesByLine: ReadonlyMap<number, ReadonlyArray<CliConfigLocation>> | undefined;
 }
 
 function sourceView(report: ValidateReport): SourceView {
@@ -189,16 +205,25 @@ function sourceView(report: ValidateReport): SourceView {
     report.source,
     report.format === "toml" ? "toml" : "json",
   )) {
-    if (isPublicValuePath(path.join("."))) publicLines.add(line);
+    if (isPublicValuePath(path)) publicLines.add(line);
   }
-  return { lines, publicLines };
+  const values = cliConfigValueSpans(report.source, report.format === "toml" ? "toml" : "json");
+  if (values === undefined) return { lines, publicLines, valuesByLine: undefined };
+  const valuesByLine = new Map<number, Array<CliConfigLocation>>();
+  for (const value of values) {
+    for (let line = value.line; line <= (value.endLine ?? value.line); line++) {
+      valuesByLine.set(line, [...(valuesByLine.get(line) ?? []), value]);
+    }
+  }
+  return { lines, publicLines, valuesByLine };
 }
 
 function frameLines(
   problem: ConfigProblem,
-  { lines, publicLines }: SourceView,
+  view: SourceView,
   style: ReportStyle,
 ): ReadonlyArray<string> {
+  const { lines, publicLines } = view;
   const location = problem.location;
   const first = location === undefined ? undefined : lines[location.line - 1];
   if (location === undefined || first === undefined) return [];
@@ -213,8 +238,9 @@ function frameLines(
   const out: Array<string> = [];
 
   if (location.line > 1) {
-    const previous = lines[location.line - 2] ?? "";
-    const before = publicLines.has(location.line - 1) ? previous : maskedLine(previous).text;
+    const before = publicLines.has(location.line - 1)
+      ? (lines[location.line - 2] ?? "")
+      : maskedAt(view, location.line - 1).text;
     const shown = display(before).trimEnd();
     const clipped = shown.length > MAX_FRAME_WIDTH ? `${shown.slice(0, MAX_FRAME_WIDTH)}…` : shown;
     out.push(
@@ -222,10 +248,8 @@ function frameLines(
     );
   }
 
-  const render = (text: string, isFirst: boolean) =>
-    problem.showValue ? shownLine(text, isFirst ? location : undefined) : maskedLine(text);
-
-  const current = render(first, true);
+  const shown = problem.showValue && location.exact ? location : undefined;
+  const current = maskedAt(view, location.line, shown);
   const start = current.map(location.column - 1);
   const singleLine = location.endLine === undefined || location.endLine === location.line;
   const end =
@@ -242,7 +266,7 @@ function frameLines(
     `    ${style.dim(gutter(""))} ${" ".repeat(windowed.caretOffset)}${style.red("^".repeat(caretLength))}`,
   );
   for (let line = location.line + 1; line <= lastLine; line++) {
-    const text = display(render(lines[line - 1] ?? "", false).text).trimEnd();
+    const text = display(maskedAt(view, line, shown).text).trimEnd();
     const clipped = text.length > MAX_FRAME_WIDTH ? `${text.slice(0, MAX_FRAME_WIDTH)}…` : text;
     out.push(`  ${style.red(">")} ${style.dim(gutter(String(line)))} ${clipped}`);
   }
@@ -275,7 +299,9 @@ function renderProblem(
   style: ReportStyle,
 ): ReadonlyArray<string> {
   const glyph = problem.severity === "error" ? style.red("✗") : style.yellow("⚠");
-  const subject = safe(problem.path ?? problem.subject ?? report.file);
+  const subject = safe(
+    problem.path === undefined ? (problem.subject ?? report.file) : displayPath(problem.path),
+  );
   const remote =
     problem.remote === undefined ? "" : `  ${style.dim(`[remote: ${safe(problem.remote)}]`)}`;
   const out = [`  ${glyph} ${style.bold(subject)}  ${safe(problem.reason)}${remote}`];
@@ -338,17 +364,18 @@ export function validateReport(
 }
 
 function payloadProblem(problem: ConfigProblem) {
+  const path = problem.path === undefined ? undefined : displayPath(problem.path);
   const key =
-    problem.path === undefined
+    path === undefined
       ? undefined
       : problem.remote === undefined
-        ? problem.path
-        : `remotes.${problem.remote}.${problem.path}`;
+        ? path
+        : `remotes.${problem.remote}.${path}`;
   const { location } = problem;
   return {
     code: problem.code,
     severity: problem.severity,
-    ...(key === undefined ? {} : { key, path: problem.path }),
+    ...(key === undefined ? {} : { key, path }),
     ...(problem.remote === undefined ? {} : { remote: problem.remote }),
     ...(problem.subject === undefined ? {} : { file: problem.subject }),
     reason: problem.reason,
