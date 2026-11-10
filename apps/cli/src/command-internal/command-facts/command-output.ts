@@ -52,10 +52,10 @@ export const emit =
 export const withHandler =
   <Input, A, I, E, R, E2, R2>(
     spec: CommandOutputSpec<A, I>,
-    handler: (input: Input) => Effect.Effect<A, E, R>,
+    handler: (input: NoInfer<Input>) => Effect.Effect<A, E, R>,
     around: (
       effect: Effect.Effect<void, E, R | Output>,
-      input: Input,
+      input: NoInfer<Input>,
     ) => Effect.Effect<unknown, E2, R2>,
   ) =>
   <Name extends string, ContextInput, XE, XR>(
