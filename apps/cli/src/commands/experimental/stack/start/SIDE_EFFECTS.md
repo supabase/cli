@@ -149,6 +149,7 @@ When Functions is selected, the CLI reads and validates `supabase/functions/.env
 `start`, skipping reserved `SUPABASE_*` entries with a warning. That file overrides
 `edge_runtime.secrets`, per-function `.env` files are not read, and `functions.<name>.env`
 provides per-function values from project environment references. Multiline values are supported.
+Functions receive `SUPABASE_DB_URL` for the `postgres` role, like legacy `start`.
 `--debug` runs the Functions runtime verbose; `status` does not report it as drift. Per-function
 enabled/JWT policies, entrypoints, import maps and static files are forwarded to the worker
 bootstrap. Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a

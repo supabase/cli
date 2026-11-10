@@ -817,7 +817,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
               database !== undefined &&
               endpointNames(database.creation).includes("sql")
             )
-              values.databaseUrl = yield* operations.output(database.id, "databaseUrl");
+              values.databaseUrl = yield* operations.output(database.id, "functionsDatabaseUrl");
             if (Object.keys(values).length > 0) {
               return yield* operations.updateCreation(entry.id, values);
             }

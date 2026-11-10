@@ -146,7 +146,8 @@ fails the command.
 Per-function TOML `env` remains the final override for that function. Multiline values and names
 the process environment cannot carry reach the runtime through its Functions config. `--debug`
 runs the runtime verbose for the command lifetime. A temporary service uses the API port of a
-running REST, Auth, Storage or Realtime service, else the configured `api.port`.
+running REST, Auth, Storage or Realtime service, else the configured `api.port`. Functions receive
+`SUPABASE_DB_URL` for the `postgres` role, like legacy serve.
 Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
 per-function `import_map.json` is not read and does not fail the command.
 

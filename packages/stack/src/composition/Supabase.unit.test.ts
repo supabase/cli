@@ -150,6 +150,14 @@ it.live(
         if (configuredStudio?.creation.service !== "studio")
           return yield* Effect.die("Studio was not configured");
         expect(configuredStudio.creation.config.functionsUrl).toBe(`url::${functionsId}`);
+        const configuredFunctions = configured.find(
+          ({ creation }) => creation.service === "functions",
+        );
+        if (configuredFunctions?.creation.service !== "functions")
+          return yield* Effect.die("Functions was not configured");
+        expect(configuredFunctions.creation.config.databaseUrl).toBe(
+          `functionsDatabaseUrl::${idFor("database")}`,
+        );
 
         const orchestrator = yield* Orchestrator.make<Orchestrator.RegisteredInstance>();
         const database = yield* makeInstance(orchestrator, idFor("database"), {
