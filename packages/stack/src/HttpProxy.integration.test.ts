@@ -1,17 +1,18 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Queue } from "effect";
+import { Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Queue, Ref } from "effect";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { connect as tlsConnect } from "node:tls";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
 import { captureLogs } from "../tests/logs.ts";
 import { ProxyError } from "./Proxy.ts";
-import { makeHttpProxy, type HttpAccess, type HttpRoute } from "./HttpProxy.ts";
+import { API_TLS_CHECK_PATH, makeHttpProxy, type HttpAccess, type HttpRoute } from "./HttpProxy.ts";
+import { externalAddress, onCi, runCommand } from "../tests/api-tls.ts";
 import { sharedRoutes } from "./host/Endpoints.ts";
 
 const listen = (server: Server | NetServer, options?: { readonly beforeClose?: () => void }) =>
@@ -2081,16 +2082,15 @@ const testPair = Effect.gen(function* () {
   };
 });
 
-/* Writes `head` over plain TCP or TLS to the proxy and answers with every byte it sent back. */
-const exchange = (port: number, head: string, ca?: string) =>
+/* Writes `head` over plain TCP or TLS to the proxy at `host` and answers with every byte it sent
+   back. */
+const exchange = (port: number, head: string, ca?: string, host = "127.0.0.1") =>
   Effect.callback<string, HttpProxyTestError>((resume) => {
     let text = "";
     const socket =
       ca === undefined
-        ? new Socket().connect(port, "127.0.0.1", () => socket.write(head))
-        : tlsConnect({ host: "127.0.0.1", port, ca, servername: "localhost" }, () =>
-            socket.write(head),
-          );
+        ? new Socket().connect(port, host, () => socket.write(head))
+        : tlsConnect({ host, port, ca, servername: "localhost" }, () => socket.write(head));
     socket.on("data", (chunk: Buffer) => {
       text += chunk.toString("latin1");
     });
@@ -2099,13 +2099,11 @@ const exchange = (port: number, head: string, ca?: string) =>
     return Effect.sync(() => socket.destroy());
   });
 
-it.live("serves TLS to every peer and plain HTTP on the same port only to admitted peers", () =>
+it.live("serves TLS to every peer and plain HTTP on the same port only from loopback", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { cert, key } = yield* testPair;
-      const seen: Array<string> = [];
-      const learned: Array<{ readonly peer: string; readonly local: string }> = [];
-      let admit = false;
+      const lan = yield* externalAddress;
       const backend = yield* listen(
         createServer((incoming, outgoing) =>
           outgoing.end(
@@ -2113,19 +2111,7 @@ it.live("serves TLS to every peer and plain HTTP on the same port only to admitt
           ),
         ),
       );
-      const proxy = yield* makeHttpProxy({
-        host: "127.0.0.1",
-        port: 0,
-        tls: {
-          cert,
-          key,
-          plainPeer: (peer) => {
-            seen.push(peer);
-            return admit || learned.some((arrival) => arrival.peer === peer);
-          },
-          learn: { path: "/__self_check/secret", add: (arrival) => learned.push(arrival) },
-        },
-      });
+      const proxy = yield* makeHttpProxy({ host: "0.0.0.0", port: 0, tls: { cert, key } });
       yield* proxy.setRoutes([
         { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backend) },
         {
@@ -2141,20 +2127,6 @@ it.live("serves TLS to every peer and plain HTTP on the same port only to admitt
       const local = `127.0.0.1:${proxy.port}`;
 
       expect(yield* exchange(proxy.port, at(local), cert)).toMatch(/^HTTP\/1\.1 404 /u);
-      expect(yield* exchange(proxy.port, at(local))).toBe("");
-      expect(seen).toEqual(["127.0.0.1"]);
-      expect(yield* exchange(proxy.port, "GET /__self_check/wrong HTTP/1.0\r\n\r\n")).toBe("");
-      expect(learned).toHaveLength(0);
-      expect(
-        yield* exchange(proxy.port, `GET /__self_check/secret HTTP/1.0\r\nHost: ${local}\r\n\r\n`),
-      ).toMatch(/^HTTP\/1\.1 404 /u);
-      expect(learned).toEqual([{ peer: "127.0.0.1", local: "127.0.0.1" }]);
-      expect(yield* exchange(proxy.port, at(local, "/api"))).toMatch(
-        new RegExp(`proto=http port=${proxy.port}$`, "u"),
-      );
-      learned.length = 0;
-
-      admit = true;
       expect(yield* exchange(proxy.port, at(local, "/api"), cert)).toMatch(
         new RegExp(`proto=https port=${proxy.port}$`, "u"),
       );
@@ -2163,6 +2135,11 @@ it.live("serves TLS to every peer and plain HTTP on the same port only to admitt
       );
       expect(yield* exchange(proxy.port, at(local, "/api"))).toMatch(
         new RegExp(`proto=http port=${proxy.port}$`, "u"),
+      );
+      /* A peer on this host's LAN address gets no plain byte, but TLS from the same address. */
+      expect(yield* exchange(proxy.port, at(local, "/api"), undefined, lan)).toBe("");
+      expect(yield* exchange(proxy.port, at(local, "/api"), cert, lan)).toMatch(
+        new RegExp(`proto=https port=${proxy.port}$`, "u"),
       );
       /* `pg_net` SQL may name the bridge gateway or this host by IP. */
       expect(yield* exchange(proxy.port, at(`172.17.0.1:${proxy.port}`, "/api"))).toMatch(
@@ -2185,6 +2162,166 @@ it.live("serves TLS to every peer and plain HTTP on the same port only to admitt
         expect(yield* exchange(proxy.port, head), head).toMatch(/^HTTP\/1\.1 421 /u);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+class RoutedPeerError extends Data.TaggedError("RoutedPeerError")<{ readonly message: string }> {}
+
+/* docker0's IPv4, when sudo works without a password, curl is installed and docker0 holds a /16
+   or wider IPv4 network to carve a /24 from. */
+const routedPrerequisites = Effect.gen(function* () {
+  const sudo = yield* runCommand("sudo", ["-n", "true"]);
+  const curl = yield* runCommand("curl", ["--version"]);
+  const address = yield* runCommand("ip", ["-4", "-o", "addr", "show", "docker0"]);
+  const [, gateway, prefix] = /\binet (\d+\.\d+\.\d+\.\d+)\/(\d+)/u.exec(address.stdout) ?? [];
+  if (sudo.code !== 0 || curl.code !== 0 || gateway === undefined || Number(prefix) > 16)
+    return undefined;
+  return gateway;
+}).pipe(Effect.orElseSucceed(() => undefined));
+
+const routedGateway =
+  process.platform === "linux"
+    ? await Effect.runPromise(routedPrerequisites.pipe(Effect.provide(NodeServices.layer)))
+    : undefined;
+const ci = Effect.runSync(onCi);
+
+/* A network namespace whose veth peer holds `<a.b>.<n>.5/24` inside docker0's network, `<n>` taken
+   from its id, routed to this host by a narrower /24 on `<a.b>.<n>.1`. Its exact netns and links
+   are removed when the scope closes, and the close fails when any is left. `exec` runs a command
+   inside it as root. */
+const routedNamespace = (gateway: string) =>
+  Effect.gen(function* () {
+    const id = randomUUID().slice(0, 8);
+    const namespace = `sbt-${id}`;
+    const hostSide = `sbh${id}`;
+    const peerSide = `sbp${id}`;
+    const [first, second] = gateway.split(".");
+    const subnet = `${first}.${second}.${100 + (Number.parseInt(id.slice(0, 2), 16) % 150)}`;
+    const inside = ["ip", "netns", "exec", namespace];
+    const steps = [
+      ["ip", "netns", "add", namespace],
+      ["ip", "link", "add", hostSide, "type", "veth", "peer", "name", peerSide],
+      ["ip", "link", "set", peerSide, "netns", namespace],
+      ["ip", "addr", "add", `${subnet}.1/24`, "dev", hostSide],
+      ["ip", "link", "set", hostSide, "up"],
+      [...inside, "ip", "addr", "add", `${subnet}.5/24`, "dev", peerSide],
+      [...inside, "ip", "link", "set", peerSide, "up"],
+      [...inside, "ip", "link", "set", "lo", "up"],
+      [...inside, "ip", "route", "add", "default", "via", `${subnet}.1`],
+    ];
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        yield* runCommand("sudo", ["-n", "ip", "netns", "del", namespace]);
+        yield* runCommand("sudo", ["-n", "ip", "link", "del", hostSide]);
+        const namespaces = yield* runCommand("ip", ["netns", "list"]);
+        const link = yield* runCommand("ip", ["link", "show", hostSide]);
+        if (namespaces.stdout.split("\n").some((line) => line.split(" ")[0] === namespace))
+          return yield* Effect.die(`the routed-peer test left netns ${namespace}`);
+        if (link.code === 0) return yield* Effect.die(`the routed-peer test left link ${hostSide}`);
+      }).pipe(Effect.orDie),
+    );
+    yield* Effect.forEach(steps, (step) =>
+      runCommand("sudo", ["-n", ...step]).pipe(
+        Effect.filterOrFail(
+          ({ code }) => code === 0,
+          ({ stderr }) => new RoutedPeerError({ message: `${step.join(" ")} failed: ${stderr}` }),
+        ),
+      ),
+    );
+    return {
+      exec: (args: ReadonlyArray<string>) => runCommand("sudo", ["-n", ...inside, ...args]),
+    };
+  });
+
+/* The reviewer's routed peer: an address inside docker0's network that this host reaches through
+   a narrower route, as a VPN or second bridge would, is not loopback however it is routed. */
+it.live.skipIf(process.platform !== "linux" || (routedGateway === undefined && !ci))(
+  "gives a routed peer inside the bridge network no plain byte, but TLS",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (routedGateway === undefined)
+          return yield* Effect.die(
+            "the routed-peer test needs `sudo -n`, curl and a /16 or wider docker0 IPv4 on Linux CI",
+          );
+        const proxy = yield* makeHttpProxy({ host: "0.0.0.0", port: 0, tls: yield* testPair });
+        const namespace = yield* routedNamespace(routedGateway);
+        const plain = yield* namespace.exec([
+          "bash",
+          "-c",
+          `exec 3<>/dev/tcp/${routedGateway}/${proxy.port} && printf 'GET /x HTTP/1.0\\r\\nHost: 127.0.0.1:${proxy.port}\\r\\n\\r\\n' >&3 && { IFS= read -r -d '' -t 5 reply <&3; printf '%s %s' "$?" "$reply"; }`,
+        ]);
+        /* Connected and asked, then closed with nothing read. */
+        expect(plain.stdout, plain.stderr).toMatch(/^\d+ $/u);
+        const secure = yield* namespace.exec([
+          "curl",
+          "-sk",
+          "--max-time",
+          "10",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          `https://${routedGateway}:${proxy.port}/x`,
+        ]);
+        expect(secure.stdout, secure.stderr).toBe("404");
+        /* The same listener still serves loopback in plain. */
+        expect(
+          yield* exchange(proxy.port, `GET /x HTTP/1.0\r\nHost: 127.0.0.1:${proxy.port}\r\n\r\n`),
+        ).toMatch(/^HTTP\/1\.1 404 /u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  30_000,
+);
+
+it.live(
+  "answers the readiness route in plain with the armed body, and leaves it to routing otherwise",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cert, key } = yield* testPair;
+        let routed = 0;
+        const backend = yield* listen(
+          createServer((_incoming, outgoing) => {
+            routed += 1;
+            outgoing.end("routed");
+          }),
+        );
+        const armed = yield* Ref.make<string | undefined>(undefined);
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: { cert, key, check: Ref.get(armed) },
+        });
+        yield* proxy.setRoutes([
+          { id: "api", prefix: "/", gateway: true, target: Effect.succeed(backend) },
+        ]);
+        const local = `127.0.0.1:${proxy.port}`;
+        const probe = (method = "GET", host = local) =>
+          `${method} ${API_TLS_CHECK_PATH} HTTP/1.1\r\nHost: ${host}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`;
+        const routedTo = (reply: string) =>
+          reply.startsWith("HTTP/1.1 200 ") && reply.endsWith("routed");
+
+        expect(routedTo(yield* exchange(proxy.port, probe()))).toBe(true);
+        expect(routed).toBe(1);
+        yield* Ref.set(armed, "supabase-stack s1 n1");
+        const reply = yield* exchange(proxy.port, probe());
+        const [head = "", body] = reply.split("\r\n\r\n");
+        expect(head).toMatch(/^HTTP\/1\.1 200 /u);
+        const headers = head.toLowerCase().split("\r\n");
+        expect(headers).toContain("content-type: text/plain; charset=utf-8");
+        expect(headers).toContain("x-content-type-options: nosniff");
+        expect(headers).toContain("cache-control: no-store");
+        expect(body).toBe("supabase-stack s1 n1");
+        expect(routed).toBe(1);
+        /* Over TLS and for any other method, the path is the gateway's like any other. */
+        expect(routedTo(yield* exchange(proxy.port, probe(), cert))).toBe(true);
+        expect(routedTo(yield* exchange(proxy.port, probe("POST")))).toBe(true);
+        expect(routed).toBe(3);
+        expect(yield* exchange(proxy.port, probe("GET", `evil.example:${proxy.port}`))).toMatch(
+          /^HTTP\/1\.1 421 /u,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 /* A raw connection, over TLS with `ca`, that sends `head`, collecting what comes back until the
@@ -2243,28 +2380,17 @@ it.live(
         const admitted = yield* makeHttpProxy({
           host: "127.0.0.1",
           port: 0,
-          tls: { ...pair, deadlines, plainPeer: () => true },
-        });
-        const rejected = yield* makeHttpProxy({
-          host: "127.0.0.1",
-          port: 0,
-          tls: {
-            ...pair,
-            deadlines,
-            plainPeer: () => false,
-            learn: { path: "/__self_check/secret", add: () => undefined },
-          },
+          tls: { ...pair, deadlines },
         });
         const idle = yield* held(
           admitted.port,
           `GET /x HTTP/1.1\r\nHost: 127.0.0.1:${admitted.port}\r\n\r\n`,
         );
         const stalled = yield* Effect.all([
-          held(rejected.port, ""),
+          held(admitted.port, ""),
           held(admitted.port, "G"),
           held(admitted.port, `GET /x HTTP/1.1\r\nHost: 127.0.0.1:${admitted.port}\r\n`),
-          held(rejected.port, Buffer.from([0x16])),
-          held(rejected.port, "GET /__self_check/sec"),
+          held(admitted.port, Buffer.from([0x16])),
         ]);
         yield* Effect.forEach([...stalled, idle], ({ socket }) => closed(socket), {
           concurrency: "unbounded",
@@ -2300,11 +2426,7 @@ it.effect(
         const proxy = yield* makeHttpProxy({
           host: "127.0.0.1",
           port: 0,
-          tls: {
-            ...pair,
-            deadlines: { headers: 1_000, request: 1_000, idle: 60_000 },
-            plainPeer: () => true,
-          },
+          tls: { ...pair, deadlines: { headers: 1_000, request: 1_000, idle: 60_000 } },
         });
         yield* proxy.setRoutes([
           { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backendAddress) },
@@ -2363,11 +2485,7 @@ const keepAlive = (
     const proxy = yield* makeHttpProxy({
       host: "127.0.0.1",
       port: 0,
-      tls: {
-        ...pair,
-        deadlines: { headers: 12_000, request: 300_000, idle: 75_000 },
-        plainPeer: () => true,
-      },
+      tls: { ...pair, deadlines: { headers: 12_000, request: 300_000, idle: 75_000 } },
     });
     yield* proxy.setRoutes([
       { id: "api", prefix: "/api", gateway: true, target: woken.pipe(Effect.as(backend)) },
@@ -2543,24 +2661,36 @@ for (const mode of ["plain", "tls"] as const) {
   );
 }
 
-it.live("fails to listen when the certificate and key are not a pair", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const pair = yield* testPair;
-      const other = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey;
-      for (const tls of [
-        { cert: pair.cert, key: other.export({ type: "pkcs8", format: "pem" }).toString() },
-        { cert: pair.cert, key: "not a pem" },
-        { cert: "not a pem", key: pair.key },
-        { cert: "", key: "" },
-      ]) {
-        const error = yield* Effect.flip(
-          makeHttpProxy({ host: "127.0.0.1", port: 0, tls: { ...tls, plainPeer: () => true } }),
+it.live(
+  "fails to listen when the certificate and key are not a pair, or it has no IP SAN for 127.0.0.1",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pair = yield* testPair;
+        const other = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey;
+        for (const tls of [
+          { cert: pair.cert, key: other.export({ type: "pkcs8", format: "pem" }).toString() },
+          { cert: pair.cert, key: "not a pem" },
+          { cert: "not a pem", key: pair.key },
+          { cert: "", key: "" },
+        ]) {
+          const error = yield* Effect.flip(makeHttpProxy({ host: "127.0.0.1", port: 0, tls }));
+          expect(error.message).toMatch(/^api\.tls: invalid certificate or key: /u);
+        }
+        /* A matching pair whose certificate names 127.0.0.1 only by CN, beside DNS:localhost. */
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dnsOnly = yield* fs.readFileString(
+          path.join(import.meta.dirname, "..", "tests", "certs", "dns-only.crt"),
         );
-        expect(error.message).toMatch(/^api\.tls: invalid certificate or key: /u);
-      }
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+        const uncovered = yield* Effect.flip(
+          makeHttpProxy({ host: "127.0.0.1", port: 0, tls: { cert: dnsOnly, key: pair.key } }),
+        );
+        expect(uncovered.message).toBe(
+          "api.tls: invalid certificate or key: the certificate has no IP subject alternative name for 127.0.0.1 (for example `mkcert localhost 127.0.0.1`)",
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.live(
@@ -2573,7 +2703,7 @@ it.live(
           host: "127.0.0.1",
           port: 0,
           onAccess: (access) => Queue.offer(accesses, access),
-          tls: { ...(yield* testPair), plainPeer: () => true },
+          tls: yield* testPair,
         });
         const head = `GET /email/invite?token=secret HTTP/1.1\r\nHost: evil.example:${proxy.port}\r\nConnection: close\r\n\r\n`;
         expect(yield* exchange(proxy.port, head)).toMatch(/^HTTP\/1\.1 421 /u);
@@ -2606,7 +2736,7 @@ it.live(
         const proxy = yield* makeHttpProxy({
           host: "127.0.0.1",
           port: 0,
-          tls: { ...(yield* testPair), plainPeer: () => true },
+          tls: yield* testPair,
         });
         const upgrade = [
           "GET /socket HTTP/1.1",

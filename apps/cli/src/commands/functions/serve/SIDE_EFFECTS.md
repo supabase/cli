@@ -149,6 +149,9 @@ runs the runtime verbose for the command lifetime. A temporary service uses the 
 running REST, Auth, Storage or Realtime service, else the configured `api.port`; on a stack
 started with `[api.tls]` it also gets `SUPABASE_INTERNAL_HOST_URL=https://127.0.0.1:<api>`, which
 its banner prints, like a composed one.
+On a Docker or Podman stack serving `[api.tls]` with its database running, starting the Functions
+instance runs the `stack start` api.tls check; a failure stops the stack's services and fails serve
+with that error.
 Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
 per-function `import_map.json` is not read and does not fail the command.
 

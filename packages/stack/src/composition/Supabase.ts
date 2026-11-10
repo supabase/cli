@@ -227,7 +227,7 @@ export interface SupabaseCompositionOptions {
    * endpoint start eagerly, and other members start on their first connection.
    */
   readonly eager?: boolean;
-  /** Serves the shared API port over HTTPS with this PEM pair, and plain HTTP to stack peers. */
+  /** Serves the shared API port over HTTPS with this PEM pair; plain HTTP only from loopback. */
   readonly apiTls?: { readonly cert: string; readonly key: string };
 }
 

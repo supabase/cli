@@ -690,7 +690,7 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
     ),
 );
 
-/* The connection's own proto, so a TLS port also forwards http for its plain peers. */
+/* The connection's own proto, so a TLS port also forwards http for its plain requests. */
 const encrypted = (request: IncomingMessage) => request.socket instanceof TLSSocket;
 
 /** Container-facing names plain requests on a TLS port may carry, each with the API port. */
@@ -715,23 +715,18 @@ export const plainHostAllowed = (host: string | undefined, port: number): boolea
   return RUNTIME_HOSTS.includes(name) || IP_LITERAL.test(name);
 };
 
+/** The readiness route a TLS port answers in plain while `HttpProxyTls.check` holds a reply. */
+export const API_TLS_CHECK_PATH = "/__api_tls_check";
+
 /**
  * Serves a TLS ClientHello with this PEM pair on the API port; any other first byte is plain HTTP
- * for the peers `plainPeer` admits by their address and the local address they connected to, and
- * every other connection closes before any HTTP byte.
+ * from loopback, and every other connection closes before any HTTP byte.
  */
 export interface HttpProxyTls {
   readonly cert: string;
   readonly key: string;
-  readonly plainPeer: (peer: string, local: string) => boolean;
-  /**
-   * A rejected peer whose first bytes are `GET <path> ` is learned with the local address it
-   * connected to, so `plainPeer` admits it.
-   */
-  readonly learn?: {
-    readonly path: string;
-    readonly add: (arrival: { readonly peer: string; readonly local: string }) => void;
-  };
+  /** The body `GET API_TLS_CHECK_PATH` answers in plain with 200; undefined routes it normally. */
+  readonly check?: Effect.Effect<string | undefined>;
   /** The plain listener's clocks unless a test shortens them. */
   readonly deadlines?: HttpDeadlines;
 }
@@ -769,25 +764,43 @@ const invalidApiTls = (cause: unknown) =>
     cause,
   });
 
-/* Fails on a certificate and key that are not a matching PEM pair; an empty pair still makes a
-   secure context, so the pair is parsed and matched as well. */
+/* Fails on a certificate and key that are not a matching PEM pair, or whose certificate does not
+   cover the advertised `https://127.0.0.1`; an empty pair still makes a secure context, so the
+   pair is parsed and matched as well. */
 export const apiTlsContext = (tls: { readonly cert: string; readonly key: string }) =>
   Effect.try({
-    try: () => ({
-      context: createSecureContext({ cert: tls.cert, key: tls.key }),
-      matches: new X509Certificate(tls.cert).checkPrivateKey(createPrivateKey(tls.key)),
-    }),
+    try: () => {
+      const cert = new X509Certificate(tls.cert);
+      return {
+        context: createSecureContext({ cert: tls.cert, key: tls.key }),
+        matches: cert.checkPrivateKey(createPrivateKey(tls.key)),
+        covers: cert.checkIP("127.0.0.1") !== undefined,
+      };
+    },
     catch: invalidApiTls,
   }).pipe(
     Effect.filterOrFail(
       ({ matches }) => matches,
       () => invalidApiTls("the certificate does not match the key"),
     ),
+    Effect.filterOrFail(
+      ({ covers }) => covers,
+      () =>
+        invalidApiTls(
+          "the certificate has no IP subject alternative name for 127.0.0.1 (for example `mkcert localhost 127.0.0.1`)",
+        ),
+    ),
     Effect.map(({ context }) => context),
   );
 
 const unmapped = (address: string | undefined) =>
   address?.startsWith("::ffff:") === true ? address.slice(7) : (address ?? "");
+
+/** Whether a socket's remote address is loopback, the only peer plain HTTP is served to under TLS. */
+export const loopbackPeer = (address: string | undefined) => {
+  const peer = unmapped(address);
+  return peer === "::1" || /^127\.\d+\.\d+\.\d+$/u.test(peer);
+};
 
 /* Hands each connection to `server` by its first byte, as `HttpProxyTls` describes; a rejected
    peer is destroyed before `server` sees any of its bytes. */
@@ -865,8 +878,6 @@ const sniffing = (
     if (deadline !== undefined) disarm(deadline);
     pending.delete(request.socket);
   });
-  const learn = tls.learn;
-  const learning = learn === undefined ? undefined : Buffer.from(`GET ${learn.path} `);
   /* Reads `size` bytes without consuming them, or `undefined` when the peer ends first. */
   const peek = (socket: Socket, size: number, next: (bytes: Buffer | undefined) => void) => {
     const bytes: Buffer | null = socket.read(size);
@@ -885,7 +896,7 @@ const sniffing = (
       sockets.delete(socket);
     });
     socket.on("error", () => socket.destroy());
-    const peer = unmapped(socket.remoteAddress);
+    const plain = loopbackPeer(socket.remoteAddress);
     peek(socket, 1, (first) => {
       if (first === undefined) return socket.destroy();
       if (first[0] === 0x16) {
@@ -893,14 +904,8 @@ const sniffing = (
         secure.on("error", () => secure.destroy());
         return handOff(deadline, secure);
       }
-      const local = unmapped(socket.localAddress);
-      if (tls.plainPeer(peer, local)) return handOff(deadline, socket);
-      if (learn === undefined || learning === undefined) return socket.destroy();
-      peek(socket, learning.length, (head) => {
-        if (head === undefined || !head.equals(learning)) return socket.destroy();
-        learn.add({ peer, local });
-        handOff(deadline, socket);
-      });
+      if (plain) return handOff(deadline, socket);
+      socket.destroy();
     });
   });
 };
@@ -951,6 +956,20 @@ export const makeHttpProxy = (options: {
               if (misdirected(request)) {
                 response.setHeader("content-type", "text/plain; charset=utf-8");
                 respond(response, sent, 421, "Misdirected Request");
+                return;
+              }
+              const check =
+                tls?.check === undefined ||
+                encrypted(request) ||
+                request.method !== "GET" ||
+                request.url !== API_TLS_CHECK_PATH
+                  ? undefined
+                  : yield* tls.check;
+              if (check !== undefined) {
+                response.setHeader("content-type", "text/plain; charset=utf-8");
+                response.setHeader("x-content-type-options", "nosniff");
+                response.setHeader("cache-control", "no-store");
+                respond(response, sent, 200, check);
                 return;
               }
               const route = yield* Ref.get(routes).pipe(

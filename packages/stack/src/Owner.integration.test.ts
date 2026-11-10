@@ -1,7 +1,19 @@
 import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Option, Redacted, Ref, Schema, Stream } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Redacted,
+  Ref,
+  Schema,
+  Stream,
+} from "effect";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
@@ -15,6 +27,9 @@ import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack } from "./StackNamespace.ts";
 import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
 import { apiTlsRuntimeLabel } from "./runtime/ApiTlsSupport.ts";
+import { API_TLS_CHECK_PATH } from "./HttpProxy.ts";
+import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
+import { containerPeer, isLoopback } from "../tests/api-tls.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
@@ -1490,81 +1505,166 @@ it.live(
   120_000,
 );
 
-/* Counts the start check's container probes and, while `refuse` is set, fails them as a blocked
-   container path would, passing every other engine command through. */
-const probingEngine = (probes: { count: number; refuse: boolean }) =>
+/* What `probingEngine` does with the start check's probes. */
+interface Probes {
+  count: number;
+  /* Fails each probe's exec as an engine error would. */
+  refuse: boolean;
+  /* Runs each probe with this host's bash at loopback, saving what it read into `dir`. */
+  onHost: boolean;
+  dir?: string;
+  /* Holds the next probe until a lifecycle engine command arrives or the guard elapses. */
+  hold?: { readonly started: Deferred.Deferred<void>; readonly intruded: Deferred.Deferred<void> };
+  /* Whether a probe is held now. */
+  holding: boolean;
+}
+
+const probesFor = (onHost: boolean): Probes => ({
+  count: 0,
+  refuse: false,
+  onHost,
+  holding: false,
+});
+
+const LIFECYCLE_VERBS = new Set(["create", "start", "stop", "kill", "rm", "restart"]);
+
+/* Counts the start check's container probes, passing every other engine command through. Off
+   `onHost`, a probe runs in the database container as in production. Reading to EOF behaves the
+   same on bash 3.2, so plain `bash` is enough here. */
+const probingEngine = (probes: Probes) =>
   Layer.effect(
     ChildProcessSpawner.ChildProcessSpawner,
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
       return ChildProcessSpawner.make((command) => {
-        const probe =
-          ChildProcess.isStandardCommand(command) &&
-          command.args.some(
-            (arg) => typeof arg === "string" && arg.includes("__api_tls_self_check"),
-          );
-        if (!probe) return delegate.spawn(command);
+        if (!ChildProcess.isStandardCommand(command)) return delegate.spawn(command);
+        const args = command.args.map(String);
+        const script = args.at(-1) ?? "";
+        if (!script.includes(API_TLS_CHECK_PATH)) {
+          const hold = probes.hold;
+          if (
+            hold !== undefined &&
+            probes.holding &&
+            LIFECYCLE_VERBS.has(args[engineTarget.argv.length] ?? "")
+          )
+            Deferred.doneUnsafe(hold.intruded, Effect.void);
+          return delegate.spawn(command);
+        }
         probes.count += 1;
-        return delegate.spawn(probes.refuse ? ChildProcess.make("false") : command);
+        const index = probes.count;
+        const hold = probes.hold;
+        /* An overlapping restart's first lifecycle command releases the probe into it, failing the
+           start; serialised, nothing does, and the guard only bounds that wait. */
+        const held =
+          hold === undefined
+            ? Effect.void
+            : Effect.sync(() => {
+                probes.holding = true;
+              }).pipe(
+                Effect.andThen(Deferred.succeed(hold.started, undefined)),
+                Effect.andThen(
+                  Effect.raceFirst(Deferred.await(hold.intruded), Effect.sleep("2 seconds")),
+                ),
+                Effect.andThen(
+                  Effect.sync(() => {
+                    probes.hold = undefined;
+                    probes.holding = false;
+                  }),
+                ),
+              );
+        const spawned = probes.refuse
+          ? ChildProcess.make("false")
+          : probes.onHost
+            ? ChildProcess.make("bash", [
+                "-c",
+                `${script.replaceAll(DOCKER_HOST_ALIAS, "127.0.0.1")}; printf '%s' "$reply" > '${probes.dir}/probe-${index}'`,
+              ])
+            : command;
+        return held.pipe(Effect.andThen(delegate.spawn(spawned)));
       });
     }),
   ).pipe(Layer.provide(NodeServices.layer));
 
+/* A container stack with `[api.tls]` composed over a database and REST, owned by this scope. */
+const tlsStack = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const certs = `${import.meta.dirname}/../tests/certs`;
+    const apiTls = {
+      cert: yield* fs.readFileString(`${certs}/trusted.crt`),
+      key: yield* fs.readFileString(`${certs}/localhost.key`),
+    };
+    const stackId = `${name}-${randomUUID().slice(0, 8)}`;
+    const dataRoot = yield* makeDockerDatabaseRoot(`stack-${name}-`, stackId);
+    const tempRoot = yield* fs.makeTempDirectoryScoped({ prefix: `stack-${name}-` });
+    const stack = initialContainer(stackId);
+    const state = yield* stateFor(`${tempRoot}/state`);
+    yield* state.save(stack);
+    const owner = yield* ownerFor({ saved: stack, state, root: dataRoot, cacheRoot, engineTarget });
+    yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+    const database: ServiceCreationInput = {
+      service: "database",
+      pin: selection.database,
+      config: {
+        databasePassword: Redacted.make(`${name}-password`),
+        jwtSecret: Redacted.make(`${name}-jwt-secret-long-enough-to-sign`),
+        jwtExpiry: 3600,
+      },
+      endpoints: { sql: { port: "auto" } },
+    };
+    const rest: ServiceCreationInput = {
+      service: "rest",
+      pin: selection.rest,
+      config: {},
+      endpoints: { http: { port: "auto" } },
+    };
+    const stopped = (ids: ReadonlyArray<string>) =>
+      Effect.forEach(ids, (id) =>
+        owner.rpc.status({ id }).pipe(Effect.map(({ lifecycle }) => lifecycle)),
+      );
+    return {
+      stackId,
+      apiTls,
+      owner,
+      database,
+      rest,
+      stopped,
+      savedTls: state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls)),
+    };
+  });
+
+const tlsLayer = (probes: Probes) =>
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    NodeHttpClient.layerNodeHttp,
+    PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+    probingEngine(probes),
+  );
+
 it.live(
   "checks container reach under api.tls after every start and restart, and keeps it on a database recompose",
   () => {
-    const tlsProbes = { count: 0, refuse: false };
+    const probes = probesFor(false);
     return Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const certs = `${import.meta.dirname}/../tests/certs`;
-        const apiTls = {
-          cert: yield* fs.readFileString(`${certs}/trusted.crt`),
-          key: yield* fs.readFileString(`${certs}/localhost.key`),
-        };
-        const stackId = `owner-api-tls-${randomUUID().slice(0, 8)}`;
-        const dataRoot = yield* makeDockerDatabaseRoot("stack-owner-api-tls-", stackId);
-        const tempRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-api-tls-" });
-        const stack = initialContainer(stackId);
-        const state = yield* stateFor(`${tempRoot}/state`);
-        yield* state.save(stack);
-        const owner = yield* ownerFor({
-          saved: stack,
-          state,
-          root: dataRoot,
-          cacheRoot,
-          engineTarget,
-        });
-        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
-        const database: ServiceCreationInput = {
-          service: "database",
-          pin: selection.database,
-          config: {
-            databasePassword: Redacted.make("owner-api-tls-password"),
-            jwtSecret: Redacted.make("owner-api-tls-jwt-secret-long-enough-to-sign"),
-            jwtExpiry: 3600,
-          },
-          endpoints: { sql: { port: "auto" } },
-        };
-        const rest: ServiceCreationInput = {
-          service: "rest",
-          pin: selection.rest,
-          config: {},
-          endpoints: { http: { port: "auto" } },
-        };
-        const savedTls = state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls));
+        /* Whether this engine's containers reach this host from loopback, measured on its own. */
+        const peer = yield* containerPeer(engineTarget);
+        const { apiTls, owner, database, rest, stopped, savedTls } =
+          yield* tlsStack("owner-api-tls");
+        const runtime = apiTlsRuntimeLabel(engineTarget);
 
         const [first] = yield* owner.rpc.supabaseComposition({ services: [database], apiTls });
         if (first === undefined) return yield* Effect.die("no database was composed");
         const reuseIds = [first.id];
+        /* A database alone opens no API listener, so there is nothing to check. */
         yield* owner.rpc.startComposition();
-        expect(tlsProbes.count).toBe(0);
-        const running = (yield* savedTls)?.selfCheck;
+        expect(probes.count).toBe(0);
         const rejected = yield* Effect.flip(
           owner.rpc.supabaseComposition({ services: [database] }),
         );
         expect(rejected.message).toContain("Composition is already configured");
-        expect((yield* savedTls)?.selfCheck).toBe(running);
+        expect(yield* savedTls).toEqual(apiTls);
         yield* owner.rpc.stopComposition();
 
         const created = yield* owner.rpc.supabaseComposition({
@@ -1572,44 +1672,108 @@ it.live(
           reuseIds,
           apiTls,
         });
-        const token = (yield* savedTls)?.selfCheck;
-        expect(token).toBeDefined();
+        const ids = created.map(({ id }) => id);
         yield* owner.rpc.supabaseComposition({
           services: [database],
           reuseIds,
           retainMembers: true,
         });
-        expect((yield* savedTls)?.selfCheck).toBe(token);
-        yield* owner.rpc.startComposition();
-        expect(tlsProbes.count).toBe(1);
-        yield* owner.rpc.restartComposition();
-        expect(tlsProbes.count).toBe(2);
+        expect(yield* savedTls).toEqual(apiTls);
+        if (isLoopback(peer)) {
+          yield* owner.rpc.startComposition();
+          yield* owner.rpc.restartComposition();
+        } else
+          for (const operation of [owner.rpc.startComposition(), owner.rpc.restartComposition()]) {
+            const unsupported = yield* Effect.flip(operation);
+            expect(unsupported.message).toContain(
+              `api.tls: unsupported networking on ${runtime}: `,
+            );
+            expect(yield* stopped(ids)).toEqual(ids.map(() => "stopped"));
+          }
+        expect(probes.count).toBe(2);
 
-        tlsProbes.refuse = true;
+        probes.refuse = true;
         const refused = yield* Effect.flip(owner.rpc.restartComposition());
-        expect(refused.message).toContain(
-          `api.tls: containers can't reach the api on ${apiTlsRuntimeLabel(engineTarget)} (`,
+        expect(refused.message).toMatch(
+          new RegExp(
+            `^api\\.tls: containers can't reach the api port \\d+ on ${runtime} \\(probe failed for ${DOCKER_HOST_ALIAS}:\\d+: `,
+            "u",
+          ),
         );
-        for (const { id } of created)
-          expect((yield* owner.rpc.status({ id })).lifecycle, id).toBe("stopped");
+        expect(yield* stopped(ids)).toEqual(ids.map(() => "stopped"));
 
-        yield* owner.rpc.supabaseComposition({
-          services: [database, rest],
-          reuseIds: created.map(({ id }) => id),
-        });
+        yield* owner.rpc.supabaseComposition({ services: [database, rest], reuseIds: ids });
         expect(yield* savedTls).toBeUndefined();
       }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          NodeServices.layer,
-          NodeCrypto.layer,
-          NodeHttpClient.layerNodeHttp,
-          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
-          probingEngine(tlsProbes),
-        ),
-      ),
-    );
+    ).pipe(Effect.provide(tlsLayer(probes)));
+  },
+  { timeout: 240_000 },
+);
+
+it.live(
+  "checks overlapping starts and restarts one at a time, and an instance started or restarted alone",
+  () => {
+    const probes = probesFor(true);
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        probes.dir = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-api-tls-probes-" });
+        const { stackId, apiTls, owner, database, rest, stopped } =
+          yield* tlsStack("owner-api-tls-order");
+        const created = yield* owner.rpc.supabaseComposition({
+          services: [database, rest],
+          apiTls,
+        });
+        const ids = created.map(({ id }) => id);
+        const api = created.find(({ creation }) => creation.service === "rest")?.id;
+        if (api === undefined) return yield* Effect.die("no REST was composed");
+
+        /* A restart that overlapped a start's check would stop its containers or clear its reply, so
+           the start fails; serialised, both pass and each check reads its own reply. */
+        const hold = {
+          started: yield* Deferred.make<void>(),
+          intruded: yield* Deferred.make<void>(),
+        };
+        probes.hold = hold;
+        const starting = yield* Effect.forkChild(owner.rpc.startComposition());
+        yield* Deferred.await(hold.started);
+        const restarting = yield* Effect.forkChild(owner.rpc.restartComposition());
+        yield* Fiber.join(starting);
+        yield* Fiber.join(restarting);
+        expect(probes.count).toBe(2);
+        /* Each check armed its own reply for this stack. */
+        const bodies = yield* Effect.forEach([1, 2], (index) =>
+          fs
+            .readFileString(`${probes.dir}/probe-${index}`)
+            .pipe(Effect.map((reply) => reply.slice(reply.indexOf("\r\n\r\n") + 4))),
+        );
+        for (const body of bodies)
+          expect(body).toMatch(new RegExp(`^supabase-stack ${stackId} [0-9a-f-]{36}$`, "u"));
+        expect(bodies[0]).not.toBe(bodies[1]);
+
+        yield* owner.rpc.stopService({ id: api });
+        yield* owner.rpc.startService({ id: api });
+        expect(probes.count).toBe(3);
+        yield* owner.rpc.restartService({ id: api });
+        expect(probes.count).toBe(4);
+
+        /* A failed check stops the instance alone and the composition too. */
+        const refusedWith = <A, E extends { readonly message: string }>(
+          operation: Effect.Effect<A, E>,
+        ) =>
+          Effect.gen(function* () {
+            probes.refuse = true;
+            const refused = yield* Effect.flip(operation);
+            probes.refuse = false;
+            expect(refused.message).toContain("api.tls: containers can't reach the api port ");
+            expect(yield* stopped(ids)).toEqual(ids.map(() => "stopped"));
+          });
+        yield* refusedWith(owner.rpc.restartService({ id: api }));
+        yield* owner.rpc.startComposition();
+        yield* owner.rpc.stopService({ id: api });
+        yield* refusedWith(owner.rpc.startService({ id: api }));
+      }),
+    ).pipe(Effect.provide(tlsLayer(probes)));
   },
   { timeout: 240_000 },
 );

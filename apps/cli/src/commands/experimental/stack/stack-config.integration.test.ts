@@ -387,6 +387,32 @@ key_path = "certs/local.key"
         );
       }
 
+      /* A matching pair whose certificate names localhost, and 127.0.0.1 only by CN, not by IP SAN. */
+      const stackCerts = path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "..",
+        "..",
+        "..",
+        "..",
+        "packages",
+        "stack",
+        "tests",
+        "certs",
+      );
+      yield* fs.writeFileString(
+        path.join(certs, "local.crt"),
+        yield* fs.readFileString(path.join(stackCerts, "dns-only.crt")),
+      );
+      yield* fs.writeFileString(
+        path.join(certs, "local.key"),
+        yield* fs.readFileString(path.join(stackCerts, "localhost.key")),
+      );
+      expect((yield* Effect.flip((yield* load(custom)).apiTls)).message).toMatch(
+        /^Invalid config for api\.tls: failed to load TLS key pair from \S+certs\/local\.crt and \S+certs\/local\.key: the certificate has no IP subject alternative name for 127\.0\.0\.1 \(for example `mkcert localhost 127\.0\.0\.1`\)$/u,
+      );
+
       const halfPair = yield* project(`project_id = "stack-config-tls-half"
 [api.tls]
 enabled = true

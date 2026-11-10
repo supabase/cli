@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { plainHostAllowed } from "./HttpProxy.ts";
+import { loopbackPeer, plainHostAllowed } from "./HttpProxy.ts";
 
 describe("plain Host allowlist on a TLS API port", () => {
   it("admits a stack alias, localhost or an IP literal only with the API port", () => {
@@ -37,5 +37,23 @@ describe("plain Host allowlist on a TLS API port", () => {
     expect(plainHostAllowed("localhost:8080", 80)).toBe(false);
     expect(plainHostAllowed("evil.example", 80)).toBe(false);
     expect(plainHostAllowed("localhost", 8080)).toBe(false);
+  });
+});
+
+describe("plain peer rule on a TLS API port", () => {
+  it("admits loopback peers only, IPv4-mapped included", () => {
+    for (const peer of ["127.0.0.1", "127.9.9.9", "::1", "::ffff:127.0.0.1"])
+      expect(loopbackPeer(peer), peer).toBe(true);
+    for (const peer of [
+      "::2",
+      "",
+      undefined,
+      "127x.0.0.1",
+      "128.0.0.1",
+      "::ffff:192.168.1.2",
+      "::7f00:1",
+      "172.17.42.5",
+    ])
+      expect(loopbackPeer(peer), String(peer)).toBe(false);
   });
 });

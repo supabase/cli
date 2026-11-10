@@ -1,12 +1,5 @@
 import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import {
-  apiTlsSelfCheckPath,
-  plainPeerAdmitted,
-  type ApiTlsArrival,
-  type ApiTlsNetwork,
-  type HostAddresses,
-} from "./runtime/ApiTlsSupport.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { makePorts, probeVacant, type PortError } from "./Ports.ts";
@@ -98,13 +91,14 @@ export interface Interface {
   ) => Effect.Effect<boolean, PortError, Scope.Scope>;
   /** The shared API listener's port while it is open and serves TLS. */
   readonly apiTlsPort: Effect.Effect<number | undefined>;
-  /** Where the self-check with this token was let in from, and at, outside the saved peer rule. */
-  readonly learnedApi: (token: string) => Effect.Effect<ReadonlyArray<ApiTlsArrival>>;
-  /** Admits these engine networks, when any, in place of the saved ones for this token. */
-  readonly adoptApiNetworks: (
-    token: string,
-    networks: ReadonlyArray<ApiTlsNetwork>,
-  ) => Effect.Effect<void>;
+  /**
+   * Runs `check` while the readiness route answers with `body`. One caller at a time: a
+   * concurrent one would clear the first one's body.
+   */
+  readonly checkApi: <A, E, R>(
+    body: string,
+    check: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   /**
    * Reopens the open shared API listener on its port with its routes when the saved TLS changed
    * since it opened, so the TLS a stopped stack takes is the one it serves. When that fails,
@@ -134,16 +128,12 @@ const joinClaim = (
     ? Effect.fail(errorFor("bind", "Shared API port differs from existing claim"))
     : Effect.succeed({ port: existing.claim, listener: { proxy: existing.proxy } });
 
-type SavedApiTls = NonNullable<StackNamespace.SavedStack["apiTls"]>;
-
 const makeNetwork = (options: {
   readonly stackId: string;
   readonly runtime: NetworkRuntime;
   readonly state: StackNamespace.Interface;
   readonly platform?: NodeJS.Platform;
   readonly onAccess?: HttpAccessSink;
-  /** This host's addresses and interfaces for the plain peer rule, when a test stands in for them. */
-  readonly hostAddresses?: () => HostAddresses;
 }) =>
   Effect.gen(function* () {
     const ports = yield* makePorts(options.state).pipe(
@@ -161,7 +151,7 @@ const makeNetwork = (options: {
           /** The port its first claimant requested, which a reopen requests again. */
           readonly requested: number | "auto";
           /** The saved TLS it serves, which host addresses follow; none is plain. */
-          readonly tls: SavedApiTls | undefined;
+          readonly tls: StackNamespace.ApiTls | undefined;
         }
       | undefined
     >(undefined);
@@ -180,39 +170,16 @@ const makeNetwork = (options: {
       Effect.mapError((cause) => errorFor("tls", cause)),
     );
 
-    /* Owned by this network per self-check token, so a start that sets TLS again starts from its
-       own saved arrivals and networks rather than an earlier generation's. */
-    const learned = new Map<
-      string,
-      { readonly arrivals: Map<string, ApiTlsArrival>; networks: ReadonlyArray<ApiTlsNetwork> }
-    >();
-    const arrivalKey = ({ peer, local }: ApiTlsArrival) => `${peer}>${local}`;
-    const proxyTls = (tls: SavedApiTls): HttpProxyTls => {
-      const current = learned.get(tls.selfCheck) ?? {
-        arrivals: new Map(
-          (tls.learnedArrivals ?? []).map((arrival) => [arrivalKey(arrival), arrival]),
-        ),
-        networks: tls.networks,
-      };
-      learned.set(tls.selfCheck, current);
-      return {
-        cert: tls.cert,
-        key: tls.key,
-        plainPeer: (peer, local) =>
-          plainPeerAdmitted(
-            current.networks,
-            [...current.arrivals.values()],
-            options.hostAddresses,
-          )(peer, local),
-        learn: {
-          path: apiTlsSelfCheckPath(tls.selfCheck),
-          add: (arrival) => current.arrivals.set(arrivalKey(arrival), arrival),
-        },
-      };
-    };
+    /* The body the readiness route answers with while a start check runs. */
+    const checking = yield* Ref.make<string | undefined>(undefined);
+    const proxyTls = (tls: StackNamespace.ApiTls): HttpProxyTls => ({
+      cert: tls.cert,
+      key: tls.key,
+      check: Ref.get(checking),
+    });
 
     /** Opens the shared API listener, serving the saved TLS when there is one. */
-    const openApi = (host: string, port: number, tls: SavedApiTls | undefined) =>
+    const openApi = (host: string, port: number, tls: StackNamespace.ApiTls | undefined) =>
       Effect.gen(function* () {
         yield* probe("api", host, port);
         const proxy = yield* makeHttpProxy({
@@ -267,7 +234,7 @@ const makeNetwork = (options: {
     });
 
     /** Opens the shared listener at `requested` serving `tls`, with the routes owed to it. */
-    const openShared = (requested: number | "auto", tls: SavedApiTls | undefined) =>
+    const openShared = (requested: number | "auto", tls: StackNamespace.ApiTls | undefined) =>
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const scope = yield* Scope.fork(owner, "sequential");
@@ -549,7 +516,7 @@ const makeNetwork = (options: {
           const current = yield* Ref.get(shared);
           if (current === undefined) return yield* reviveApi;
           const tls = yield* apiTls;
-          if (tls?.selfCheck === current.tls?.selfCheck) return;
+          if (tls?.cert === current.tls?.cert && tls?.key === current.tls?.key) return;
           /* Same-port binds can't overlap portably, so the old listener closes first and stays
              owed until a replacement, or failing that the previous TLS again, opens. */
           yield* loseApi;
@@ -589,12 +556,12 @@ const makeNetwork = (options: {
       apiTlsPort: Ref.get(shared).pipe(
         Effect.map((current) => (current?.tls === undefined ? undefined : current.claim)),
       ),
-      learnedApi: (token) => Effect.sync(() => [...(learned.get(token)?.arrivals.values() ?? [])]),
-      adoptApiNetworks: (token, networks) =>
-        Effect.sync(() => {
-          const current = learned.get(token);
-          if (current !== undefined && networks.length > 0) current.networks = networks;
-        }),
+      checkApi: (body, check) =>
+        Effect.acquireUseRelease(
+          Ref.set(checking, body),
+          () => check,
+          () => Ref.set(checking, undefined),
+        ),
       reopenApi,
     } satisfies Interface;
   });
@@ -604,8 +571,6 @@ export const layer = (options: {
   readonly runtime: NetworkRuntime;
   /** Receives the shared API listener's completed requests. */
   readonly onAccess?: HttpAccessSink;
-  /** This host's addresses and interfaces for the plain peer rule, when a test stands in for them. */
-  readonly hostAddresses?: () => HostAddresses;
 }) =>
   Layer.effect(
     Service,

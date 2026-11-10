@@ -313,66 +313,81 @@ const sharedLayers = (output: ReturnType<typeof mockOutput>, args: string[]) => 
   );
 };
 
+/**
+ * One stack project in-process with automatic ports, its stacks destroyed when the scope closes:
+ * `start` runs `stack start` there.
+ */
+const stackProject = Effect.fn("Contract.stackProject")(function* (
+  runtime: "native" | "docker",
+  tls?: ContractTls,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const host = yield* RuntimeInfo;
+  const root = yield* fs.makeTempDirectoryScoped({
+    prefix: `contract-${runtime}-`,
+    /* Linux Edge Runtime overlays /tmp with a private worker filesystem, so native functions need a visible host path. */
+    ...(runtime === "native" && host.platform === "linux" ? { directory: host.homeDir } : {}),
+  });
+  yield* writeContractProject(root, sanitizeProjectId(path.basename(root)), undefined, tls);
+  const trust =
+    tls === undefined
+      ? undefined
+      : tls === "default"
+        ? KONG_LOCAL_TLS_CERT
+        : yield* customPair.pipe(
+            Effect.tap(({ cert, key }) =>
+              Effect.all([
+                fs.makeDirectory(path.join(root, "supabase", "certs"), { recursive: true }),
+                fs.writeFileString(path.join(root, "supabase", "certs", "api.crt"), cert),
+                fs.writeFileString(path.join(root, "supabase", "certs", "api.key"), key),
+              ]),
+            ),
+            Effect.map(({ cert }) => cert),
+          );
+  const cacheRoot = path.join(root, "cache", "stack");
+  const stateRoot = path.join(root, "stacks");
+  yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
+  yield* fs.makeDirectory(path.dirname(cacheRoot), { recursive: true });
+  yield* fs.symlink(stackArtifactCacheRoot, cacheRoot);
+  const output = mockOutput({ format: "json" });
+  const layers = Layer.mergeAll(
+    sharedLayers(output, ["stack", "start"]),
+    stackTargetResolverLayer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(mockCommandSettings({ workdir: root, supabaseHome: root }), stackApiLayer),
+      ),
+    ),
+    stackCatalogSetupLayer,
+  );
+  const context = yield* Layer.build(layers.pipe(Layer.provideMerge(hostServices)));
+  yield* Effect.addFinalizer(() =>
+    StackApi.use((stackApi) => destroyTestStacks(stackApi, stateRoot, cacheRoot)).pipe(
+      Effect.provide(context),
+    ),
+  );
+  const start = stackStart({
+    exclude: [],
+    stack: Option.none(),
+    stackId: Option.none(),
+    runtime,
+    preparation: "background",
+    frozen: false,
+    eager: false,
+  }).pipe(Effect.provide(context), guardStart);
+  const stackIds = StackApi.use((stackApi) => stackApi.discover({ stateRoot })).pipe(
+    Effect.map((found) => found.map(({ definition }) => definition.id)),
+    Effect.provide(context),
+  );
+  return { context, output, trust, start, stackIds };
+});
+
 /** Starts one stack in-process with automatic ports and destroys it when the scope closes. */
 export const stackTarget = (runtime: "native" | "docker", tls?: ContractTls) =>
   Layer.effectContext(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const host = yield* RuntimeInfo;
-      const root = yield* fs.makeTempDirectoryScoped({
-        prefix: `contract-${runtime}-`,
-        /* Linux Edge Runtime overlays /tmp with a private worker filesystem, so native functions need a visible host path. */
-        ...(runtime === "native" && host.platform === "linux" ? { directory: host.homeDir } : {}),
-      });
-      yield* writeContractProject(root, sanitizeProjectId(path.basename(root)), undefined, tls);
-      const trust =
-        tls === undefined
-          ? undefined
-          : tls === "default"
-            ? KONG_LOCAL_TLS_CERT
-            : yield* customPair.pipe(
-                Effect.tap(({ cert, key }) =>
-                  Effect.all([
-                    fs.makeDirectory(path.join(root, "supabase", "certs"), { recursive: true }),
-                    fs.writeFileString(path.join(root, "supabase", "certs", "api.crt"), cert),
-                    fs.writeFileString(path.join(root, "supabase", "certs", "api.key"), key),
-                  ]),
-                ),
-                Effect.map(({ cert }) => cert),
-              );
-      const cacheRoot = path.join(root, "cache", "stack");
-      yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
-      yield* fs.makeDirectory(path.dirname(cacheRoot), { recursive: true });
-      yield* fs.symlink(stackArtifactCacheRoot, cacheRoot);
-      const output = mockOutput({ format: "json" });
-      const layers = Layer.mergeAll(
-        sharedLayers(output, ["stack", "start"]),
-        stackTargetResolverLayer.pipe(
-          Layer.provideMerge(
-            Layer.mergeAll(
-              mockCommandSettings({ workdir: root, supabaseHome: root }),
-              stackApiLayer,
-            ),
-          ),
-        ),
-        stackCatalogSetupLayer,
-      );
-      const context = yield* Layer.build(layers.pipe(Layer.provideMerge(hostServices)));
-      yield* Effect.addFinalizer(() =>
-        StackApi.use((stackApi) =>
-          destroyTestStacks(stackApi, path.join(root, "stacks"), cacheRoot),
-        ).pipe(Effect.provide(context)),
-      );
-      yield* stackStart({
-        exclude: [],
-        stack: Option.none(),
-        stackId: Option.none(),
-        runtime,
-        preparation: "background",
-        frozen: false,
-        eager: false,
-      }).pipe(Effect.provide(context), guardStart);
+      const { context, output, trust, start } = yield* stackProject(runtime, tls);
+      yield* start;
       const { env } = yield* startedEnv(output, Schema.Struct({ env: ContractEnv }));
       if (trust !== undefined) yield* servesApiTls(env.API_URL).pipe(Effect.provide(context));
       const reset = resetOn("stack").pipe(Effect.provide(context));
@@ -382,6 +397,51 @@ export const stackTarget = (runtime: "native" | "docker", tls?: ContractTls) =>
       );
     }),
   ).pipe(Layer.provide(hostServices));
+
+/**
+ * Runs `stack start` for a container stack serving `[api.tls]` with legacy's embedded pair,
+ * expecting it to fail: answers its error, the project's stack ids, and the service containers of
+ * each still running afterwards (the stack-wide volume helper outlives its services by design).
+ */
+export const refusedTlsStart = Effect.gen(function* () {
+  const { start, stackIds } = yield* stackProject("docker", "default");
+  const error = yield* Effect.flip(start);
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const ids = yield* stackIds;
+  const running = yield* Effect.forEach(ids, (id) =>
+    spawnContainerCli(
+      spawner,
+      [
+        "ps",
+        "--filter",
+        `label=com.supabase.stack=${id}`,
+        "--filter",
+        "label=com.supabase.service",
+        "--format",
+        "{{.Names}}",
+      ],
+      { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+    ).pipe(
+      Effect.flatMap((child) =>
+        Effect.all(
+          [
+            child.stdout.pipe(Stream.decodeText, Stream.mkString),
+            child.stderr.pipe(Stream.decodeText, Stream.mkString),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        ),
+      ),
+      Effect.scoped,
+      Effect.map(([names, stderr, code]) => ({
+        code: Number(code),
+        stderr,
+        names: names.split("\n").filter((name) => name.length > 0),
+      })),
+    ),
+  );
+  return { message: error.message, ids, running };
+}).pipe(Effect.scoped, Effect.provide(hostServices));
 
 /* Works around a legacy start readiness gap: Realtime seeds through a throwaway node on :4000 before
    it execs the server, so its healthcheck can pass early. Wait for the line the stack treats as ready. */

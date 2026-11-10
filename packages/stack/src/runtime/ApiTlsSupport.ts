@@ -1,27 +1,11 @@
-import { networkInterfaces } from "node:os";
 import { Data, Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { DOCKER_HOST_ALIAS, runRaw, type EngineTarget } from "./Container.ts";
 
-const IPV4 = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
-const IPV4_CIDR = /^(?:\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/u;
-
 const platformName = (platform: NodeJS.Platform) =>
   platform === "darwin" ? "macos" : platform === "win32" ? "windows" : platform;
 
-/** An engine network the plain peer rule admits: its IPv4 subnet and its gateway address. */
-export interface ApiTlsNetwork {
-  readonly subnet: string;
-  readonly gateway: string;
-}
-
-/** Where a self-check's request came from and the address of this host it connected to. */
-export interface ApiTlsArrival {
-  readonly peer: string;
-  readonly local: string;
-}
-
-/** The runtime a failed self-check names, like `macos rootless podman`. */
+/** The runtime a failed start check names, like `macos rootless podman`. */
 export const apiTlsRuntimeLabel = (
   target: EngineTarget,
   platform: NodeJS.Platform = process.platform,
@@ -30,203 +14,73 @@ export const apiTlsRuntimeLabel = (
   return `${platformName(platform)} ${rootless}${target.engine}`;
 };
 
-/**
- * Reads the IPv4 subnets and gateways of the engine's default network, the one every stack
- * container joins; an unreadable inspect is logged and leaves them out for the self-check, which
- * reads the database container's own networks.
- */
-export const apiTlsPeers = Effect.fn("ApiTlsSupport.peers")(function* (
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-  target: EngineTarget | undefined,
-) {
-  if (target === undefined) return [];
-  const [network, field] =
-    target.engine === "docker" ? ["bridge", ".IPAM.Config"] : ["podman", ".Subnets"];
-  const text = yield* runRaw(
-    spawner,
-    target.engine,
-    [
-      "network",
-      "inspect",
-      network,
-      "--format",
-      `{{range ${field}}}{{.Subnet}} {{.Gateway}}{{println}}{{end}}`,
-    ],
-    target.argv,
-  ).pipe(
-    Effect.catch((error) =>
-      Effect.logWarning(
-        `api.tls: can't read the ${target.engine} ${network} network's subnets, so only the start check admits containers: ${error.message}`,
-      ).pipe(Effect.as("")),
-    ),
-  );
-  return parseNetworks(text);
-});
-
-const ipv4ToInt = (address: string) =>
-  address.split(".").reduce((value, octet) => value * 256 + Number(octet), 0);
-
-const inSubnet = (address: string, cidr: string) => {
-  const [network = "", bits = "32"] = cidr.split("/");
-  const size = 2 ** (32 - Number(bits));
-  return (
-    IPV4.test(address) &&
-    Math.floor(ipv4ToInt(address) / size) === Math.floor(ipv4ToInt(network) / size)
-  );
-};
-
-const ipv4FromInt = (value: number) =>
-  [24, 16, 8, 0].map((shift) => Math.floor(value / 2 ** shift) % 256).join(".");
-
-/* One `<address>/<bits> <gateway>` per line; a line without both in IPv4 is left out. */
-const parseNetworks = (text: string): ReadonlyArray<ApiTlsNetwork> =>
-  text.split("\n").flatMap((line) => {
-    const [cidr = "", gateway = ""] = line.trim().split(/\s+/u);
-    if (!IPV4_CIDR.test(cidr) || !IPV4.test(gateway)) return [];
-    const [address = "", bits = "32"] = cidr.split("/");
-    const size = 2 ** (32 - Number(bits));
-    const base = ipv4FromInt(Math.floor(ipv4ToInt(address) / size) * size);
-    return [{ subnet: `${base}/${bits}`, gateway }];
-  });
-
-/** This host's addresses now, and its non-internal IPv4 interfaces as `<address>/<bits>`. */
-export interface HostAddresses {
-  readonly addresses: ReadonlySet<string>;
-  readonly interfaces: ReadonlyArray<string>;
-}
-
-/* A packet from outside carrying one of these addresses is dropped as martian. */
-const hostAddresses = (): HostAddresses => {
-  const entries = Object.values(networkInterfaces()).flatMap((entry) => entry ?? []);
-  return {
-    addresses: new Set(entries.map((entry) => entry.address)),
-    interfaces: entries.flatMap((entry) =>
-      entry.family === "IPv4" && !entry.internal && entry.cidr !== null ? [entry.cidr] : [],
-    ),
-  };
-};
-
-/* Whether two `<address>/<bits>` ranges share an address. */
-const overlaps = (a: string, b: string) => {
-  const [left = "", leftBits = "32"] = a.split("/");
-  const [right = "", rightBits = "32"] = b.split("/");
-  const size = 2 ** (32 - Math.min(Number(leftBits), Number(rightBits)));
-  return (
-    IPV4_CIDR.test(a) &&
-    IPV4_CIDR.test(b) &&
-    Math.floor(ipv4ToInt(left) / size) === Math.floor(ipv4ToInt(right) / size)
-  );
-};
-
-const loopbackPeer = (peer: string) => peer === "::1" || inSubnet(peer, "127.0.0.0/8");
-
-/**
- * Plain HTTP on a TLS API port: loopback, an address of this host (host processes and user-mode
- * relays connect from one), or a peer in an engine network that connected to that network's
- * gateway, the address its containers reach this host at; a routed LAN or VPN peer inside the same
- * range connects to another address of this host.
- */
-export const plainPeerAllowed =
-  (
-    networks: ReadonlyArray<ApiTlsNetwork>,
-    localAddresses: () => ReadonlySet<string> = () => hostAddresses().addresses,
-  ) =>
-  (peer: string, local: string): boolean =>
-    loopbackPeer(peer) ||
-    localAddresses().has(peer) ||
-    networks.some(
-      (network) =>
-        network.gateway !== "" && local === network.gateway && inSubnet(peer, network.subnet),
-    );
-
-/* Each network, and again at the local address a self-check from inside it arrived on when this
-   host holds its gateway, no other interface of this host is in its range (a LAN peer there gets
-   its replies through that interface), that address is outside it, and the peer is not loopback
-   or this host. */
-const arrivalGateways = (
-  networks: ReadonlyArray<ApiTlsNetwork>,
-  arrivals: ReadonlyArray<ApiTlsArrival>,
-  host: HostAddresses,
-) => {
-  const inside = arrivals.filter(
-    ({ peer }) => IPV4.test(peer) && !inSubnet(peer, "127.0.0.0/8") && !host.addresses.has(peer),
-  );
-  return networks.flatMap((network) => [
-    network,
-    ...(network.gateway !== "" &&
-    host.addresses.has(network.gateway) &&
-    !host.interfaces.some(
-      (cidr) => !cidr.startsWith(`${network.gateway}/`) && overlaps(cidr, network.subnet),
-    )
-      ? inside
-          .filter(
-            ({ peer, local }) =>
-              local !== network.gateway &&
-              inSubnet(peer, network.subnet) &&
-              !inSubnet(local, network.subnet),
-          )
-          .map(({ local }) => ({ subnet: network.subnet, gateway: local }))
-      : []),
-  ]);
-};
-
-/**
- * `plainPeerAllowed`, plus each self-check arrival on its exact peer and local address, and the
- * peers of its engine network at that arrival's local address, as `arrivalGateways` derives them.
- */
-export const plainPeerAdmitted =
-  (
-    networks: ReadonlyArray<ApiTlsNetwork>,
-    arrivals: ReadonlyArray<ApiTlsArrival>,
-    localAddresses: () => HostAddresses = hostAddresses,
-  ) =>
-  (peer: string, local: string): boolean => {
-    if (loopbackPeer(peer)) return true;
-    if (arrivals.some((arrival) => arrival.peer === peer && arrival.local === local)) return true;
-    /* One snapshot per connection. */
-    const host = localAddresses();
-    return plainPeerAllowed(arrivalGateways(networks, arrivals, host), () => host.addresses)(
-      peer,
-      local,
-    );
-  };
-
-/** The self-check request target; its secret token, redacted in access logs, lets an unlisted peer be learned. */
-export const apiTlsSelfCheckPath = (token: string) => `/__api_tls_self_check?token=${token}`;
-
-/** The stack the self-check probes from, by its primary database instance. */
+/** The stack the start check probes from, by its primary database instance. */
 interface ApiTlsStack {
   readonly id: string;
   readonly root: string;
   readonly database: string | undefined;
 }
 
-class ApiTlsSelfCheckError extends Data.TaggedError("ApiTlsSelfCheckError")<{
+class ApiTlsCheckError extends Data.TaggedError("ApiTlsCheckError")<{
   readonly message: string;
-  /** What the probe saw: no database container, the engine's error, or the reply's first bytes. */
+  /** What the probe saw: no database container, the engine's error, or the reply. */
   readonly detail: string;
+  /** What to do once the stack's services stopped. */
+  readonly next: string;
 }> {}
 
 /**
- * One plain request from the running database container (its `host-gateway` alias is the one
- * `pg_net` uses) to the API port, proving containers reach it before start reports success, then
- * the container's networks, which every stack container shares. Bash builtins only: the slim
- * image has no coreutils.
+ * Classifies the probe's output, `<read status> <bytes read>`: only status 1 (the end of the reply)
+ * with a 200 and exactly `body` passes; above 128 is a timeout, 0 a NUL byte.
  */
-export const selfCheckApiTls = Effect.fn("ApiTlsSupport.selfCheck")(function* (
+export const readApiTlsCheck = (
+  output: string,
+  body: string,
+  readSeconds: number,
+):
+  | { readonly outcome: "passed" }
+  | { readonly outcome: "closed" }
+  | { readonly outcome: "foreign"; readonly detail: string } => {
+  const space = output.indexOf(" ");
+  const status = output.slice(0, space);
+  const reply = output.slice(space + 1);
+  if (reply === "" && status === "1") return { outcome: "closed" };
+  if (Number(status) > 128)
+    return { outcome: "foreign", detail: `no complete reply within ${readSeconds} s` };
+  const [head = "", ...rest] = reply.split("\r\n\r\n");
+  const statusLine = (head.split("\r\n")[0] ?? "").slice(0, 40).replace(/[^\x20-\x7e]/gu, "?");
+  if (!/^HTTP\/1\.[01] 200\b/u.test(statusLine))
+    return {
+      outcome: "foreign",
+      detail: statusLine === "" ? "replied without a status line" : `replied ${statusLine}`,
+    };
+  if (status !== "1") return { outcome: "foreign", detail: "a 200 with a NUL byte" };
+  return rest.join("\r\n\r\n") === body
+    ? { outcome: "passed" }
+    : { outcome: "foreign", detail: "a 200 with another body" };
+};
+
+/**
+ * One plain `GET` from the running database container to the API port's readiness route, read to
+ * its end. Bash builtins only: the slim image has no coreutils.
+ */
+export const probeApiTls = Effect.fn("ApiTlsSupport.probe")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   target: EngineTarget,
   stack: ApiTlsStack,
   runtime: string,
-  port: number,
-  path: string,
+  check: { readonly port: number; readonly path: string; readonly body: string },
+  readSeconds = 5,
 ) {
-  const failedWith = (detail: string) =>
-    new ApiTlsSelfCheckError({
-      message: `api.tls: containers can't reach the api on ${runtime}`,
+  const failed = (message: string, detail: string, next: string) =>
+    new ApiTlsCheckError({ message, detail, next });
+  const unreachable = (detail: string) =>
+    failed(
+      `api.tls: containers can't reach the api port ${check.port} on ${runtime}`,
       detail,
-    });
-  if (stack.database === undefined) return yield* failedWith("no database container");
+      `let ${runtime} containers reach the api port, or turn off \`[api.tls]\`, then start the stack again`,
+    );
+  if (stack.database === undefined) return yield* unreachable("no database container");
   const names = yield* runRaw(
     spawner,
     target.engine,
@@ -244,135 +98,96 @@ export const selfCheckApiTls = Effect.fn("ApiTlsSupport.selfCheck")(function* (
       "{{.Names}}",
     ],
     target.argv,
-  ).pipe(Effect.mapError((error) => failedWith(error.message)));
+  ).pipe(Effect.mapError((error) => unreachable(error.message)));
   /* One-off jobs of the database instance carry its labels too, under a `-task-` name. */
   const name = names
     .split("\n")
     .map((line) => line.trim())
     .find((line) => line.length > 0 && !/-task-[^-]+$/u.test(line));
-  if (name === undefined) return yield* failedWith("no database container");
-  const authority = `${DOCKER_HOST_ALIAS}:${port}`;
-  const script = `exec 3<>/dev/tcp/${DOCKER_HOST_ALIAS}/${port} && printf 'GET ${path} HTTP/1.0\\r\\nHost: ${authority}\\r\\n\\r\\n' >&3 && { read -r -t 5 -n 9 reply <&3; printf %s "$reply"; }`;
-  const reply = yield* runRaw(
+  if (name === undefined) return yield* unreachable("no database container");
+  const authority = `${DOCKER_HOST_ALIAS}:${check.port}`;
+  /* Once connected it exits 0 and prints what `readApiTlsCheck` reads. */
+  const script = `exec 3<>/dev/tcp/${DOCKER_HOST_ALIAS}/${check.port} && printf 'GET ${check.path} HTTP/1.0\\r\\nHost: ${authority}\\r\\nConnection: close\\r\\n\\r\\n' >&3 && { IFS= read -r -d '' -t ${readSeconds} reply <&3; printf '%s %s' "$?" "$reply"; }`;
+  const output = yield* runRaw(
     spawner,
     target.engine,
     ["exec", name, "bash", "-c", script],
     target.argv,
-  ).pipe(Effect.mapError((error) => failedWith(error.message)));
-  if (reply === "") return yield* failedWith("no HTTP reply");
-  if (!reply.startsWith("HTTP/1.")) return yield* failedWith(`reply ${reply.slice(0, 40)}`);
-  return yield* runRaw(
-    spawner,
-    target.engine,
-    [
-      "inspect",
-      name,
-      "--format",
-      "{{range .NetworkSettings.Networks}}{{.IPAddress}}/{{.IPPrefixLen}} {{.Gateway}}{{println}}{{end}}",
-    ],
-    target.argv,
   ).pipe(
-    Effect.map(parseNetworks),
-    Effect.catch((error) =>
-      Effect.logWarning(
-        `api.tls: can't read the database container's networks, so later owners keep the default network's: ${error.message}`,
-      ).pipe(Effect.as([])),
-    ),
+    Effect.mapError((error) => unreachable(`probe failed for ${authority}: ${error.message}`)),
   );
+  const read = readApiTlsCheck(output, check.body, readSeconds);
+  if (read.outcome === "closed")
+    return yield* failed(
+      `api.tls: unsupported networking on ${runtime}: containers must reach the api from loopback`,
+      "the database container's plain request was closed without a reply",
+      "turn off `[api.tls]`, or use a runtime whose containers reach this host from loopback (on macOS: Docker Desktop, colima or Podman machine), then start the stack again",
+    );
+  if (read.outcome === "foreign")
+    return yield* failed(
+      `api.tls: the api port ${check.port} on ${runtime} isn't answering this stack's start check`,
+      read.detail,
+      `check what else listens on port ${check.port}, then start the stack again`,
+    );
 });
 
 /**
- * The self-check after a start or restart, when the API listener serves TLS. A failed read of the
- * saved TLS or a failed probe stops the stack's services and fails with the detail, the probe's
- * token redacted.
+ * The start check after a start or restart, when the API listener serves TLS: a failed probe
+ * stops the stack's services and fails with what the probe saw.
  */
 export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* (options: {
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly target: EngineTarget;
   readonly stack: ApiTlsStack;
-  /** Named by the failure when containers can't reach the API. */
+  /** The engine every failure names, like `linux docker`. */
   readonly runtime: string;
-  readonly apiTls: Effect.Effect<
-    { readonly selfCheck: string } | undefined,
-    { readonly message: string }
-  >;
-  /** The API listener's port while it serves TLS; none has nothing to check. */
+  /** The API listener's port while it serves TLS; undefined skips the check. */
   readonly port: number | undefined;
+  readonly path: string;
+  /** Runs the probe while the readiness route answers with this body. */
+  readonly answering: <A, E>(body: string, check: Effect.Effect<A, E>) => Effect.Effect<A, E>;
+  readonly body: Effect.Effect<string>;
   readonly stop: Effect.Effect<unknown, { readonly message: string }>;
-  /**
-   * Admits the database container's networks found by the probe, none when unread, and returns
-   * the arrivals the probe was let in as; both are saved so later owners admit them too.
-   */
-  readonly learned: (
-    token: string,
-    networks: ReadonlyArray<ApiTlsNetwork>,
-  ) => Effect.Effect<ReadonlyArray<ApiTlsArrival>>;
-  readonly saveLearned: (learned: {
-    readonly learnedArrivals: ReadonlyArray<ApiTlsArrival>;
-    readonly networks: ReadonlyArray<ApiTlsNetwork>;
-  }) => Effect.Effect<void, { readonly message: string }>;
+  readonly readSeconds?: number;
 }) {
   const { stack } = options;
-  /* `next` is what to do once the services stopped. */
-  const stopThenFail = (message: string, detail: string, next: string) =>
-    Effect.gen(function* () {
-      yield* Effect.logWarning(`${message}: ${detail}`);
-      const unstopped = yield* options.stop.pipe(
-        Effect.as(undefined),
-        Effect.catch((cause) =>
-          Effect.logError(`api.tls: stopping the stack failed: ${cause.message}`).pipe(
-            Effect.as(cause.message),
-          ),
-        ),
-      );
-      const recovery =
-        unstopped === undefined
-          ? `; its services stopped: ${next}`
-          : `; its services did not stop (${unstopped}), run \`supabase stack stop --stack-id ${stack.id}\` to stop them`;
-      return yield* new ApiTlsSelfCheckError({
-        message: `${message} (${detail})${recovery}`,
-        detail,
-      });
-    });
   if (options.port === undefined) return;
-  const apiTls = yield* options.apiTls.pipe(
-    Effect.catch((cause) =>
-      stopThenFail(
-        "api.tls: can't read the stack's saved TLS",
-        cause.message,
-        "start the stack again",
-      ),
-    ),
-  );
-  if (apiTls === undefined) return;
-  const networks = yield* selfCheckApiTls(
-    options.spawner,
-    options.target,
-    stack,
-    options.runtime,
-    options.port,
-    apiTlsSelfCheckPath(apiTls.selfCheck),
-  ).pipe(
-    Effect.catchTag("ApiTlsSelfCheckError", (error) =>
-      stopThenFail(
-        error.message,
-        error.detail.replaceAll(apiTls.selfCheck, "<redacted>"),
-        `let ${options.runtime} containers reach the api port, or turn off \`[api.tls]\`, then start the stack again`,
-      ),
-    ),
-  );
-  const learned = yield* options.learned(apiTls.selfCheck, networks);
-  if (learned.length > 0)
-    yield* Effect.logInfo(
-      `api.tls: plain api peers learned by the self-check: ${learned.map(({ peer, local }) => `${peer}@${local}`)}`,
-    );
-  if (learned.length === 0 && networks.length === 0) return;
-  /* Best effort: this owner keeps them in memory, only a later owner would miss them. */
+  const port = options.port;
+  const body = yield* options.body;
   yield* options
-    .saveLearned({ learnedArrivals: learned, networks })
+    .answering(
+      body,
+      probeApiTls(
+        options.spawner,
+        options.target,
+        stack,
+        options.runtime,
+        { port, path: options.path, body },
+        options.readSeconds,
+      ),
+    )
     .pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning(`api.tls: can't save the peers the start check let in: ${cause.message}`),
+      Effect.catchTag("ApiTlsCheckError", (error) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning(`${error.message}: ${error.detail}`);
+          const unstopped = yield* options.stop.pipe(
+            Effect.as(undefined),
+            Effect.catch((cause) =>
+              Effect.logError(`api.tls: stopping the stack failed: ${cause.message}`).pipe(
+                Effect.as(cause.message),
+              ),
+            ),
+          );
+          const recovery =
+            unstopped === undefined
+              ? `; its services stopped: ${error.next}`
+              : `; its services did not stop (${unstopped}), run \`supabase stack stop --stack-id ${stack.id}\` to stop them`;
+          return yield* new ApiTlsCheckError({
+            message: `${error.message} (${error.detail})${recovery}`,
+            detail: error.detail,
+            next: error.next,
+          });
+        }),
       ),
     );
 });

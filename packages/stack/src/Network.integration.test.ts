@@ -15,28 +15,23 @@ import {
   Ref,
 } from "effect";
 import { randomUUID } from "node:crypto";
-import { networkInterfaces } from "node:os";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import * as Tls from "node:tls";
 import { createServer, type RequestListener } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpBody, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { makeHttpProxy, type HttpAccess, type HttpAccessSink } from "./HttpProxy.ts";
+import { API_TLS_CHECK_PATH, type HttpAccess, type HttpAccessSink } from "./HttpProxy.ts";
 import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import {
-  plainPeerAllowed,
-  type ApiTlsNetwork,
-  type HostAddresses,
-} from "./runtime/ApiTlsSupport.ts";
 import { emailTemplateFile, freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
 import { readResolvedFile } from "./namespace/drivers/FileSystem.ts";
 import type { ServiceCreation } from "./services/Catalog.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { selection } from "../tests/pins.ts";
 import { captureLogs } from "../tests/logs.ts";
+import { externalAddress } from "../tests/api-tls.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(StackNamespace.layer({ root })).pipe(
@@ -47,14 +42,12 @@ const makeTestNetwork = (options: {
   readonly runtime: Network.NetworkRuntime;
   readonly state: StackNamespace.Interface;
   readonly onAccess?: HttpAccessSink | undefined;
-  readonly hostAddresses?: () => HostAddresses;
 }) =>
   Layer.build(
     Network.layer({
       stackId: options.stackId,
       runtime: options.runtime,
       ...(options.onAccess === undefined ? {} : { onAccess: options.onAccess }),
-      ...(options.hostAddresses === undefined ? {} : { hostAddresses: options.hostAddresses }),
     }).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, options.state))),
   ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
 
@@ -794,7 +787,6 @@ const emailTemplates = (
   runtime: Network.NetworkRuntime,
   onAccess?: HttpAccessSink,
   apiTls?: NonNullable<StackNamespace.SavedStack["apiTls"]>,
-  hostAddresses?: () => HostAddresses,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -840,7 +832,7 @@ const emailTemplates = (
         yield* Effect.addFinalizer(() => network.releaseStack.pipe(Effect.ignore));
         return { namespace, port: binding.port };
       });
-    const network = yield* makeTestNetwork({ stackId, runtime, state, onAccess, hostAddresses });
+    const network = yield* makeTestNetwork({ stackId, runtime, state, onAccess });
     const { namespace, port } = yield* serve(network);
     return {
       root,
@@ -853,30 +845,23 @@ const emailTemplates = (
       network,
       state,
       stackId,
-      /** A later owner's network over the same saved state, serving the same routes. */
-      reopened: makeTestNetwork({ stackId, runtime, state, hostAddresses }).pipe(
-        Effect.flatMap((next) =>
-          serve(next).pipe(Effect.map((served) => ({ ...served, network: next }))),
-        ),
-      ),
     };
   });
 
 /**
- * Sends a request head verbatim, Host included, over plain TCP from `localAddress` when given, or
- * TLS, and answers the raw reply.
+ * Sends a request head verbatim, Host included, over plain TCP or TLS, and answers the raw reply.
  */
 const rawHead = (
   port: number,
   lines: ReadonlyArray<string>,
-  options: { readonly host?: string; readonly ca?: string; readonly localAddress?: string } = {},
+  options: { readonly host?: string; readonly ca?: string } = {},
 ) =>
   Effect.callback<string, FixtureError>((resume) => {
     const host = options.host ?? "127.0.0.1";
     const head = `${lines.join("\r\n")}\r\n\r\n`;
     const socket =
       options.ca === undefined
-        ? Net.connect({ host, port, localAddress: options.localAddress }, () => socket.write(head))
+        ? Net.connect({ host, port }, () => socket.write(head))
         : Tls.connect({ host, port, ca: options.ca, servername: "localhost" }, () =>
             socket.write(head),
           );
@@ -1123,16 +1108,6 @@ it.live("sends no CORS header on any template response", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-const external = Object.values(networkInterfaces())
-  .flat()
-  .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address;
-
-/* A LAN test that cannot reach the external interface fails rather than skips. */
-const externalAddress =
-  external === undefined
-    ? Effect.die("no external IPv4 address to reach the API from the LAN side")
-    : Effect.succeed(external);
-
 it.live("keeps a template behind its token on the external address, and off it on native", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1376,18 +1351,12 @@ const localTls = Effect.gen(function* () {
   };
 });
 
-const savedTls = (tls: { readonly cert: string; readonly key: string }) => ({
-  ...tls,
-  networks: [],
-  selfCheck: "self-check-token",
-});
-
 for (const runtime of ["docker", "native"] as const)
   it.live(`serves the ${runtime} API over TLS and runtimes plain HTTP on the same port`, () =>
     Effect.scoped(
       Effect.gen(function* () {
         const tls = yield* localTls;
-        const { port, namespace } = yield* emailTemplates(runtime, undefined, savedTls(tls));
+        const { port, namespace } = yield* emailTemplates(runtime, undefined, tls);
         const host = yield* namespace.address("http", "host");
         const inside = yield* namespace.address("http", "runtime");
         expect(host).toMatchObject({ host: "127.0.0.1", port, scheme: "https" });
@@ -1430,13 +1399,21 @@ for (const runtime of ["docker", "native"] as const)
           expect(yield* rawHead(port, get("/auth/v1/health", head)), head).toMatch(
             /^HTTP\/1\.1 421 /u,
           );
-        /* The external address is this host's own, so a host client there stays admitted. */
+        /* Plain HTTP is for loopback only, even from this host's own LAN address. */
         const lan = yield* externalAddress;
-        if (runtime === "docker")
-          expect(yield* rawHead(port, get("/auth/v1/health", at), { host: lan })).toMatch(
-            /^HTTP\/1\.1 200 /u,
-          );
-        else yield* Effect.flip(rawHead(port, get("/auth/v1/health", at), { host: lan }));
+        if (runtime === "docker") {
+          expect(
+            yield* rawHead(port, get("/auth/v1/health", at), { host: lan }).pipe(
+              Effect.orElseSucceed(() => ""),
+            ),
+          ).toBe("");
+          expect(
+            yield* rawHead(port, get("/auth/v1/health", `Host: localhost:${port}`), {
+              host: lan,
+              ca: tls.cert,
+            }),
+          ).toMatch(/^HTTP\/1\.1 200 /u);
+        } else yield* Effect.flip(rawHead(port, get("/auth/v1/health", at), { host: lan }));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -1462,130 +1439,11 @@ it.live("keeps every listener, URL and scheme of the API without TLS", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-/* This host holds only a fake gateway, so its LAN address connecting to loopback stands in for a
-   container's self-check arriving at a `host-gateway` set to another address of this host. */
-const gatewayOnly = () => ({ addresses: new Set(["192.0.2.1"]), interfaces: [] });
-
-/** The LAN address, its /24 network with the held fake gateway, and a sibling address in it. */
-const lanNetwork = Effect.gen(function* () {
-  const lan = yield* externalAddress;
-  const [a, b, c, d] = lan.split(".").map(Number);
-  return {
-    lan,
-    network: { subnet: `${a}.${b}.${c}.0/24`, gateway: "192.0.2.1" },
-    sibling: `${a}.${b}.${c}.${d === 254 ? 253 : (d ?? 0) + 1}`,
-  };
-});
-
-/* A plain API request from `from`, to `to`; a refused peer reads as "". */
-const plainFrom = (port: number, from: string, to = "127.0.0.1") =>
-  rawHead(
-    port,
-    ["GET /auth/v1/health HTTP/1.1", `Host: host.supabase.internal:${port}`, "Connection: close"],
-    { host: to, localAddress: from },
-  ).pipe(Effect.orElseSucceed(() => ""));
-
-const selfCheckFrom = (port: number, from: string) =>
-  rawHead(
-    port,
-    [
-      "GET /__api_tls_self_check?token=self-check-token HTTP/1.0",
-      `Host: host.supabase.internal:${port}`,
-    ],
-    { localAddress: from },
-  );
-
-/* Windows refuses a LAN source address to the loopback port (EADDRNOTAVAIL), so these run on POSIX. */
-it.live.skipIf(process.platform === "win32")(
-  "admits a saved arrival's network at its address once that network is adopted",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const tls = yield* localTls;
-        const { lan, network: lanNet, sibling } = yield* lanNetwork;
-        const { port, network } = yield* emailTemplates(
-          "docker",
-          undefined,
-          { ...savedTls(tls), learnedArrivals: [{ peer: sibling, local: "127.0.0.1" }] },
-          gatewayOnly,
-        );
-        expect(yield* plainFrom(port, lan)).toBe("");
-        yield* network.adoptApiNetworks("self-check-token", [lanNet]);
-        expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live.skipIf(process.platform === "win32")(
-  "admits a learned self-check only at the exact address it arrived on",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const tls = yield* localTls;
-        const { lan, network: lanNet } = yield* lanNetwork;
-        const { port, network } = yield* emailTemplates(
-          "docker",
-          undefined,
-          savedTls(tls),
-          gatewayOnly,
-        );
-        expect(yield* plainFrom(port, lan)).toBe("");
-        expect(yield* selfCheckFrom(port, lan)).toMatch(/^HTTP\/1\./u);
-        expect(yield* network.learnedApi("self-check-token")).toEqual([
-          { peer: lan, local: "127.0.0.1" },
-        ]);
-        expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
-        expect(yield* plainFrom(port, lan, lan)).toBe("");
-        /* The arrival's own network adds its address, never another one. */
-        yield* network.adoptApiNetworks("self-check-token", [lanNet]);
-        expect(yield* plainFrom(port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
-        expect(yield* plainFrom(port, lan, lan)).toBe("");
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live.skipIf(process.platform === "win32")(
-  "admits saved arrivals on a later owner's listener until a start sets TLS again",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const tls = yield* localTls;
-        const { lan, network: lanNet } = yield* lanNetwork;
-        const first = yield* emailTemplates("docker", undefined, savedTls(tls), gatewayOnly);
-        expect(yield* selfCheckFrom(first.port, lan)).toMatch(/^HTTP\/1\./u);
-        /* What the start check saves for later owners. */
-        yield* first.state.save({
-          ...stack(first.stackId),
-          apiTls: {
-            ...savedTls(tls),
-            networks: [lanNet],
-            learnedArrivals: yield* first.network.learnedApi("self-check-token"),
-          },
-        });
-        yield* first.namespace.close;
-        const later = yield* first.reopened;
-        expect(yield* plainFrom(later.port, lan)).toMatch(/^HTTP\/1\.1 200 /u);
-        yield* later.namespace.close;
-        yield* first.state.save({
-          ...stack(first.stackId),
-          apiTls: { ...savedTls(tls), networks: [lanNet], selfCheck: "next-start" },
-        });
-        const [binding] = yield* later.namespace.bind;
-        expect(yield* plainFrom(binding?.port ?? later.port, lan)).toBe("");
-        expect(yield* later.network.learnedApi("next-start")).toEqual([]);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-);
-
 it.live("advertises the scheme the open API listener serves, not the saved TLS", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const tls = yield* localTls;
-      const { namespace, state, stackId } = yield* emailTemplates(
-        "docker",
-        undefined,
-        savedTls(tls),
-      );
+      const { namespace, state, stackId } = yield* emailTemplates("docker", undefined, tls);
       expect(yield* namespace.address("http", "host")).toMatchObject({ scheme: "https" });
       yield* state.save(stack(stackId));
       expect(yield* namespace.address("http", "host")).toMatchObject({ scheme: "https" });
@@ -1596,43 +1454,27 @@ it.live("advertises the scheme the open API listener serves, not the saved TLS",
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live(
-  "refuses plain HTTP from a peer outside the rule and serves it over TLS on the same port",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const tls = yield* localTls;
-        const lan = yield* externalAddress;
-        /* The real rule, with this host's addresses left out so its LAN address stands in for a
-         routed peer connecting to it. */
-        const listener = (networks: ReadonlyArray<ApiTlsNetwork>) =>
-          makeHttpProxy({
-            host: "0.0.0.0",
-            port: 0,
-            tls: { ...tls, plainPeer: plainPeerAllowed(networks, () => new Set()) },
-          }).pipe(Effect.map(({ port }) => port));
-        const get = (port: number) => [
-          "GET / HTTP/1.1",
-          `Host: host.supabase.internal:${port}`,
-          "Connection: close",
-        ];
-        const plain = (port: number, host: string) =>
-          rawHead(port, get(port), { host }).pipe(Effect.orElseSucceed(() => ""));
-
-        const outside = yield* listener([]);
-        expect(yield* plain(outside, lan)).toBe("");
-        expect(yield* rawHead(outside, get(outside), { host: lan, ca: tls.cert })).toMatch(
-          /^HTTP\/1\.1 404 /u,
-        );
-        expect(yield* plain(outside, "127.0.0.1")).toMatch(/^HTTP\/1\.1 404 /u);
-
-        const subnet = `${lan}/32`;
-        expect(yield* plain(yield* listener([{ subnet, gateway: lan }]), lan)).toMatch(
-          /^HTTP\/1\.1 404 /u,
-        );
-        expect(yield* plain(yield* listener([{ subnet, gateway: "127.0.0.1" }]), lan)).toBe("");
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+it.live("answers the API's readiness route only while a start check runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const tls = yield* localTls;
+      const { port, network } = yield* emailTemplates("docker", undefined, tls);
+      const probe = rawHead(port, [
+        `GET ${API_TLS_CHECK_PATH} HTTP/1.1`,
+        `Host: ${DOCKER_HOST_ALIAS}:${port}`,
+        "Connection: close",
+      ]);
+      expect(yield* probe).toMatch(/^HTTP\/1\.1 404 /u);
+      const during = yield* network.checkApi("supabase-stack s1 n1", probe);
+      expect(during).toMatch(/^HTTP\/1\.1 200 /u);
+      expect(during.endsWith("\r\n\r\nsupabase-stack s1 n1")).toBe(true);
+      expect(yield* probe).toMatch(/^HTTP\/1\.1 404 /u);
+      yield* Effect.flip(
+        network.checkApi("supabase-stack s1 n2", new FixtureError({ message: "probe failed" })),
+      );
+      expect(yield* probe).toMatch(/^HTTP\/1\.1 404 /u);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.live(
@@ -1696,7 +1538,7 @@ const closeServer = (server: Net.Server) =>
     return Effect.void;
   });
 
-/* A shared API listener serving trusted TLS (self-check "first"), and from the first state read
+/* A shared API listener serving trusted TLS, and from the first state read
    that finds its port free, the one a reopen makes once the old listener closed, a test listener
    that holds the port for `hold.reads` more reads; the next `hold.failures` reads fail. */
 const tlsReopen = Effect.gen(function* () {
@@ -1712,9 +1554,8 @@ const tlsReopen = Effect.gen(function* () {
       path.join(import.meta.dirname, "..", "tests", "certs", "untrusted.crt"),
     ),
   };
-  const saveTls = (tls: typeof trusted, selfCheck: string) =>
-    state.save({ ...stack(stackId), apiTls: { ...savedTls(tls), selfCheck } });
-  yield* saveTls(trusted, "first");
+  const saveTls = (tls: typeof trusted) => state.save({ ...stack(stackId), apiTls: tls });
+  yield* saveTls(trusted);
   const hold: { port: number; reads: number; failures: number; server: Net.Server | undefined } = {
     port: 0,
     reads: 0,
@@ -1769,7 +1610,7 @@ const tlsReopen = Effect.gen(function* () {
       ["GET /rest/v1/health HTTP/1.1", `Host: localhost:${port}`, "Connection: close"],
       { ca },
     ).pipe(Effect.orElseSucceed(() => ""));
-  const savedCheck = state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls?.selfCheck));
+  const savedCert = state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls?.cert));
   expect(yield* served(trusted.cert)).toContain("backend");
   return {
     state,
@@ -1783,9 +1624,67 @@ const tlsReopen = Effect.gen(function* () {
     namespace,
     port,
     served,
-    savedCheck,
+    savedCert,
   };
 });
+
+/* A kept-alive TLS request loop on the API port trusting `ca`: `ask` answers the next reply, or
+   "closed" once the proxy closed the connection. */
+const keptAlive = (port: number, ca: string) =>
+  Effect.acquireRelease(
+    Effect.callback<Tls.TLSSocket, FixtureError>((resume) => {
+      const socket = Tls.connect({ host: "127.0.0.1", port, ca, servername: "localhost" }, () =>
+        resume(Effect.succeed(socket)),
+      );
+      socket.once("error", (cause) =>
+        resume(Effect.fail(new FixtureError({ message: cause.message }))),
+      );
+      return Effect.sync(() => socket.destroy());
+    }),
+    (socket) => Effect.sync(() => socket.destroy()),
+  ).pipe(
+    Effect.map((socket) => {
+      socket.on("error", () => socket.destroy());
+      const closed = Effect.callback<string>((resume) => {
+        if (socket.destroyed) return resume(Effect.succeed("closed"));
+        const onClose = () => resume(Effect.succeed("closed"));
+        socket.once("close", onClose);
+        return Effect.sync(() => socket.off("close", onClose));
+      });
+      const reply = Effect.callback<string>((resume) => {
+        let text = "";
+        const onData = (chunk: Buffer) => {
+          text += chunk.toString();
+          if (text.includes("backend")) resume(Effect.succeed(text));
+        };
+        socket.on("data", onData);
+        socket.write(`GET /rest/v1/health HTTP/1.1\r\nHost: localhost:${port}\r\n\r\n`);
+        return Effect.sync(() => socket.off("data", onData));
+      });
+      return { ask: Effect.raceFirst(reply, closed), closed };
+    }),
+  );
+
+it.live(
+  "keeps the API listener and its connections when the same pair is saved again, and rebinds for a new one",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { trusted, untrusted, saveTls, network, port, served } = yield* tlsReopen;
+        const connection = yield* keptAlive(port, trusted.cert);
+        expect(yield* connection.ask).toContain("backend");
+        /* A recompose of the stopped stack saves its unchanged pair again. */
+        yield* saveTls(trusted);
+        yield* network.reopenApi(Effect.void);
+        expect(yield* connection.ask).toContain("backend");
+        expect(yield* network.apiTlsPort).toBe(port);
+        yield* saveTls(untrusted);
+        yield* network.reopenApi(Effect.void);
+        expect(yield* connection.closed).toBe("closed");
+        expect(yield* served(untrusted.cert)).toContain("backend");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.live(
   "keeps serving the API with its TLS when a reopen can't listen, and opens it again once the port frees",
@@ -1794,29 +1693,26 @@ it.live(
       Effect.gen(function* () {
         const { trusted, untrusted, saveTls, hold, free, network, namespace, port, served } =
           yield* tlsReopen;
-        const savedAgain = saveTls(untrusted, "second");
+        const savedAgain = saveTls(untrusted);
 
         /* The replacement can't listen, so the TLS it served is saved and opens again. */
-        yield* saveTls(untrusted, "second");
+        yield* saveTls(untrusted);
         hold.port = port;
-        yield* Effect.flip(network.reopenApi(saveTls(trusted, "first")));
+        yield* Effect.flip(network.reopenApi(saveTls(trusted)));
         expect(hold.server).toBeUndefined();
         expect(yield* network.apiTlsPort).toBe(port);
         expect(yield* served(trusted.cert)).toContain("backend");
         expect(yield* served(untrusted.cert)).toBe("");
 
-        yield* saveTls(untrusted, "second");
+        yield* saveTls(untrusted);
         yield* network.reopenApi(Effect.void);
         expect(yield* served(untrusted.cert)).toContain("backend");
         expect(yield* served(trusted.cert)).toBe("");
 
         /* Neither can listen: the next shared bind, then the next reopen, opens it again with the
            TLS saved again. */
-        for (const [reopen, selfCheck] of [
-          [namespace.bind, "third"],
-          [network.reopenApi(Effect.void), "fourth"],
-        ] as const) {
-          yield* saveTls(trusted, selfCheck);
+        for (const reopen of [namespace.bind, network.reopenApi(Effect.void)]) {
+          yield* saveTls(trusted);
           hold.port = port;
           hold.reads = Number.POSITIVE_INFINITY;
           yield* Effect.flip(network.reopenApi(savedAgain));
@@ -1846,19 +1742,19 @@ it.live(
           namespace,
           port,
           served,
-          savedCheck,
+          savedCert,
         } = yield* tlsReopen;
         yield* state.save(stack(stackId));
         hold.port = port;
         hold.reads = Number.POSITIVE_INFINITY;
-        yield* Effect.flip(network.reopenApi(saveTls(trusted, "first")));
+        yield* Effect.flip(network.reopenApi(saveTls(trusted)));
         expect(yield* network.apiTlsPort).toBeUndefined();
 
         /* The bind waits on the network until the TLS it served is saved again. */
         yield* free;
         yield* namespace.bind;
         expect(yield* network.apiTlsPort).toBe(port);
-        expect(yield* savedCheck).toBe("first");
+        expect(yield* savedCert).toBe(trusted.cert);
         expect(yield* served(trusted.cert)).toContain("backend");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
@@ -1869,16 +1765,16 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCheck } =
+        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCert } =
           yield* tlsReopen;
-        yield* saveTls(untrusted, "second");
+        yield* saveTls(untrusted);
         hold.port = port;
         const error = yield* Effect.flip(
           network.reopenApi(Effect.fail(new FixtureError({ message: "read-only state" }))),
         );
         expect(error).toBeInstanceOf(FixtureError);
         expect(yield* network.apiTlsPort).toBeUndefined();
-        expect(yield* savedCheck).toBe("second");
+        expect(yield* savedCert).toBe(untrusted.cert);
 
         yield* namespace.bind;
         expect(hold.server).toBeUndefined();
@@ -1894,9 +1790,9 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCheck } =
+        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCert } =
           yield* tlsReopen;
-        yield* saveTls(untrusted, "second");
+        yield* saveTls(untrusted);
         hold.failures = 1;
         const error = yield* Effect.flip(
           network.reopenApi(Effect.fail(new FixtureError({ message: "read-only state" }))),
@@ -1907,7 +1803,7 @@ it.live(
 
         yield* namespace.bind;
         expect(yield* network.apiTlsPort).toBe(port);
-        expect(yield* savedCheck).toBe("second");
+        expect(yield* savedCert).toBe(untrusted.cert);
         expect(yield* served(untrusted.cert)).toContain("backend");
         expect(yield* served(trusted.cert)).toBe("");
       }),
@@ -1919,9 +1815,9 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCheck } =
+        const { trusted, untrusted, saveTls, hold, network, namespace, port, served, savedCert } =
           yield* tlsReopen;
-        yield* saveTls(untrusted, "second");
+        yield* saveTls(untrusted);
         hold.failures = 1;
         const restoring = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
@@ -1948,7 +1844,7 @@ it.live(
 
         yield* namespace.bind;
         expect(yield* network.apiTlsPort).toBe(port);
-        expect(yield* savedCheck).toBe("second");
+        expect(yield* savedCert).toBe(untrusted.cert);
         expect(yield* served(untrusted.cert)).toContain("backend");
         expect(yield* served(trusted.cert)).toBe("");
       }),

@@ -344,6 +344,13 @@ while `db.orioledb_version` is set, an `edge_runtime.deno_version` other than 2 
 is enabled, and `analytics.backend = "bigquery"` or a non-empty `analytics.gcp_*` value while
 Analytics is enabled. The error names the setting.
 
+`[api.tls]` serves the API port over HTTPS, with plain HTTP only from loopback. The certificate must
+have an IP subject alternative name for `127.0.0.1` (for example `mkcert localhost 127.0.0.1`; stack
+`storage` commands then also need `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`), and
+containers must reach the host from loopback: on macOS, Docker Desktop, colima and Podman machine
+do; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta don't, so start fails with
+`api.tls: unsupported networking`. The `stack start` side effects list every start error.
+
 Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
 uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions
 bundling) in `tmp`, the release-check cache in `cli-latest`, and service versions come from

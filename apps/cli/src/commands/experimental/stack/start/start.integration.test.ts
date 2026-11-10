@@ -805,41 +805,57 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("rejects an api.tls pair that does not load before creating a stack", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-pair-" });
-      yield* fs.makeDirectory(`${root}/supabase/certs`, { recursive: true });
-      yield* fs.writeFileString(
-        `${root}/supabase/config.toml`,
-        '[api.tls]\nenabled = true\ncert_path = "certs/api.crt"\nkey_path = "certs/api.key"\n',
-      );
-      yield* fs.writeFileString(`${root}/supabase/certs/api.crt`, "not a pem");
-      yield* fs.writeFileString(`${root}/supabase/certs/api.key`, "not a pem");
-      let created = false;
-      const fixture = fakeStack();
-      const base = layers(root, fixture, mockOutput(), false);
-      const api = Layer.succeed(StackApi, {
-        create: () =>
-          Effect.sync(() => {
-            created = true;
-            return fixture.stack;
-          }),
-        open: () => Effect.succeed(fixture.stack),
-        discover: () => Effect.succeed([]),
-        find: () => Effect.die("identity not used"),
-        findDeleted: () => Effect.die("identity not used"),
-      });
-      const result = yield* stackStart(flags()).pipe(
-        Effect.flip,
-        Effect.provide(Layer.merge(base, api)),
-      );
-      expect(result).toMatchObject({
-        reason: "invalid-config",
-        message: expect.stringContaining("Invalid config for api.tls: failed to load TLS key pair"),
-      });
-      expect(created).toBe(false);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  it.effect(
+    "rejects an api.tls pair that does not load, or has no IP SAN for 127.0.0.1, before creating a stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const certs = `${import.meta.dirname}/../../../../../../../packages/stack/tests/certs`;
+        const pairs = [
+          { cert: "not a pem", key: "not a pem", reason: "" },
+          {
+            cert: yield* fs.readFileString(`${certs}/dns-only.crt`),
+            key: yield* fs.readFileString(`${certs}/localhost.key`),
+            reason: "the certificate has no IP subject alternative name for 127.0.0.1",
+          },
+        ];
+        for (const { cert, key, reason } of pairs) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-pair-" });
+          yield* fs.makeDirectory(`${root}/supabase/certs`, { recursive: true });
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            '[api.tls]\nenabled = true\ncert_path = "certs/api.crt"\nkey_path = "certs/api.key"\n',
+          );
+          yield* fs.writeFileString(`${root}/supabase/certs/api.crt`, cert);
+          yield* fs.writeFileString(`${root}/supabase/certs/api.key`, key);
+          let created = false;
+          const fixture = fakeStack();
+          const base = layers(root, fixture, mockOutput(), false);
+          const api = Layer.succeed(StackApi, {
+            create: () =>
+              Effect.sync(() => {
+                created = true;
+                return fixture.stack;
+              }),
+            open: () => Effect.succeed(fixture.stack),
+            discover: () => Effect.succeed([]),
+            find: () => Effect.die("identity not used"),
+            findDeleted: () => Effect.die("identity not used"),
+          });
+          const result = yield* stackStart(flags()).pipe(
+            Effect.flip,
+            Effect.provide(Layer.merge(base, api)),
+          );
+          expect(result).toMatchObject({
+            reason: "invalid-config",
+            message: expect.stringContaining(
+              "Invalid config for api.tls: failed to load TLS key pair",
+            ),
+          });
+          expect(result.message).toContain(reason);
+          expect(created).toBe(false);
+        }
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("composes the stack with the api.tls pair only while api.tls is enabled", () =>
