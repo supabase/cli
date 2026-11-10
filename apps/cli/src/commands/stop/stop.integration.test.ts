@@ -674,9 +674,31 @@ describe("stop integration", () => {
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("fails once another stack's prune outlasts the retry budget", () =>
+  it.effect("keeps waiting while another stack's prune holds the daemon for tens of seconds", () =>
     Effect.gen(function* () {
+      let pruneLockHeld = true;
+      const route = defaultRoute();
       const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: (args) =>
+          pruneLockHeld && args[0] === "container" && args[1] === "prune"
+            ? { exitCode: 1, stderr: [PRUNE_RUNNING] }
+            : route(args),
+      });
+      const fiber = yield* stop(flags()).pipe(Effect.provide(layer), Effect.exit, Effect.forkChild);
+      yield* TestClock.adjust("100 millis").pipe(Effect.repeat({ times: 300 }));
+      expect(fiber.pollUnsafe()).toBeUndefined();
+
+      pruneLockHeld = false;
+      const exit = yield* joinAdvancingClock(fiber);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(networkPrunes(child.spawned)).toHaveLength(1);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("fails naming the wait once another stack's prune outlasts it", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* setup({
         configuredProjectId: "demo",
         route: networkPruneRoute(Number.POSITIVE_INFINITY, PRUNE_RUNNING),
       });
@@ -685,9 +707,10 @@ describe("stop integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopNetworkPruneError");
-        expect(Cause.pretty(exit.cause)).toContain("a prune operation is already running");
+        expect(Cause.pretty(exit.cause)).toContain(
+          "a prune operation is already running (still running after waiting 60 seconds",
+        );
       }
-      expect(networkPrunes(child.spawned)).toHaveLength(41);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
