@@ -173,7 +173,9 @@ export function parseSecretsScopeCustom(secretsNames: string) {
     return [];
   }
 
-  return secretsNames.split(",").map((secretName) => secretName.trim());
+  return secretsNames.split(",")
+    .map((name) => name.trim())
+    .filter(name => !!name);
 }
 
 export function formatSecretsScope(secretsScope: string | string[]) {
