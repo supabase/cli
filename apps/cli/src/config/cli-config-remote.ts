@@ -43,7 +43,7 @@ export interface CliConfigRemoteFailure {
   readonly message: string;
 }
 
-/** Every remote with a duplicate or malformed `project_id`, one failure per remote,. */
+/** Every remote with a duplicate or malformed `project_id`, one failure per remote. */
 export const cliConfigRemoteFailures = (
   remotes: Readonly<Record<string, unknown>>,
   lookup: EnvLookup,

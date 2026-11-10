@@ -287,6 +287,7 @@ export interface ConfigValidationIssue {
 }
 
 const lastSegment = (path: string): string => path.split(".").at(-1) ?? path;
+const parentOf = (path: string): string => path.split(".").slice(0, -1).join(".");
 
 const GATE_PATTERNS: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray) => string]> = [
   [/^auth\.email\.smtp\./, () => "auth.email.smtp.enabled"],
@@ -328,7 +329,7 @@ export function missingIssue(
         message,
         code: "missing_required",
         reason: `required when ${gate} = true`,
-        help: `set ${lastSegment(path)}, or set ${lastSegment(gate)} = false`,
+        help: `set ${lastSegment(path)}, or set ${parentOf(gate) === parentOf(path) ? lastSegment(gate) : gate} = false`,
       };
 }
 
@@ -711,17 +712,18 @@ export function collectConfigValidationIssues(
       ),
     );
   } else if (input.analytics.enabled && backend === "bigquery") {
+    const missingForBigquery = (path: string, key: string): void => {
+      report({
+        ...missingIssue(path, `Missing required field in config: ${path}`, "analytics.enabled"),
+        reason: "required when analytics.backend = bigquery",
+        help: `set ${key}, or set backend = "postgres"`,
+      });
+    };
     if (input.analytics.gcpProjectId.length === 0) {
-      missing(
-        "analytics.gcp_project_id",
-        "Missing required field in config: analytics.gcp_project_id",
-      );
+      missingForBigquery("analytics.gcp_project_id", "gcp_project_id");
     }
     if (input.analytics.gcpProjectNumber.length === 0) {
-      missing(
-        "analytics.gcp_project_number",
-        "Missing required field in config: analytics.gcp_project_number",
-      );
+      missingForBigquery("analytics.gcp_project_number", "gcp_project_number");
     }
     if (input.analytics.gcpJwtPath.length === 0) {
       report({

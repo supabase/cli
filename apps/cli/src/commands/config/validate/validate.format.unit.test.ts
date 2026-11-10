@@ -191,6 +191,118 @@ describe("validateReport", () => {
     });
   });
 
+  describe("shown values", () => {
+    it("masks the nested values of an inline table at a shown location", () => {
+      const source = '[api]\nmax_rows = { secret = "hunter2" }';
+      const text = render(
+        [
+          problem({
+            path: ["api", "max_rows"],
+            showValue: true,
+            location: { line: 2, column: 12, endColumn: 39, exact: true },
+          }),
+        ],
+        { source },
+      );
+
+      expect(text).not.toContain("hunter2");
+    });
+
+    it("masks a table nested in a shown array", () => {
+      const source = '[api]\nschemas = ["a", { secret = "hunter2" }]';
+      const text = render(
+        [
+          problem({
+            path: ["api", "schemas"],
+            showValue: true,
+            location: { line: 2, column: 11, endColumn: 44, exact: true },
+          }),
+        ],
+        { source },
+      );
+
+      expect(text).not.toContain("hunter2");
+    });
+
+    it("shows a flat array of scalars", () => {
+      const source = '[api]\nschemas = ["a", "b"]';
+      const text = render(
+        [
+          problem({
+            path: ["api", "schemas"],
+            showValue: true,
+            location: { line: 2, column: 11, endColumn: 21, exact: true },
+          }),
+        ],
+        { source },
+      );
+
+      expect(text).toContain('schemas = ["a", "b"]');
+    });
+
+    const URL_SOURCE = [
+      "[studio]",
+      'api_url = "https://user:pw-secret@host.test/x?token=tok-secret#top"',
+      'port = "bad"',
+    ].join("\n");
+
+    it("redacts credentials and the query string of a shown problem value", () => {
+      const text = render(
+        [
+          problem({
+            path: ["studio", "api_url"],
+            showValue: true,
+            location: {
+              line: 2,
+              column: 11,
+              endColumn: (URL_SOURCE.split("\n")[1]?.length ?? 0) + 1,
+              exact: true,
+            },
+          }),
+        ],
+        { source: URL_SOURCE },
+      );
+
+      expect(text).toContain('api_url = "https://****@host.test/x?****#top"');
+      expect(text).not.toContain("pw-secret");
+      expect(text).not.toContain("tok-secret");
+    });
+
+    it("redacts a public URL on the context line", () => {
+      const text = render(
+        [
+          problem({
+            path: ["studio", "port"],
+            location: { line: 3, column: 8, endColumn: 13, exact: true },
+          }),
+        ],
+        { source: URL_SOURCE },
+      );
+
+      expect(text).toContain('api_url = "https://****@host.test/x?****#top"');
+      expect(text).not.toContain("pw-secret");
+      expect(text).not.toContain("tok-secret");
+    });
+  });
+
+  it("keeps the caret inside a windowed long value", () => {
+    const source = `[api]\nschemas = "${"x".repeat(300)}"`;
+    const text = render(
+      [
+        problem({
+          path: ["api", "schemas"],
+          showValue: true,
+          location: { line: 2, column: 11, endColumn: 313, exact: true },
+        }),
+      ],
+      { source },
+    );
+    const carets = text.split("\n").find((line) => line.includes("^")) ?? "";
+    const frame = text.split("\n").find((line) => line.startsWith("  > 2")) ?? "";
+
+    expect(carets.trimEnd().length).toBeLessThanOrEqual(frame.length);
+  });
+
   it("labels remote problems and lists checked and skipped remotes", () => {
     const text = render([problem({ path: ["db", "port"], remote: "staging" })], {
       remotes: ["staging"],

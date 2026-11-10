@@ -32,6 +32,7 @@ import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
 } from "../../../command-internal/workdir-project.ts";
+import { cliRemoteProjectIdEnvName } from "../../../config/cli-config-keys.ts";
 import { CLI_CONFIG_OPTIONAL_ENV_PATHS } from "../../../config/cli-config-key-annotations.ts";
 import {
   describeCliConfigOrigin,
@@ -185,10 +186,14 @@ function locateProblem(
   }
   const segments = item.path;
   const target = KEY_TARGET_CODES.has(item.code) ? "key" : "value";
-  const attempts = [
-    ...(item.remote === undefined ? [] : [["remotes", item.remote, ...segments]]),
-    segments,
-  ].map((path) => locateCliConfigKey(source, format, path, target));
+  const remotePath = item.remote === undefined ? undefined : ["remotes", item.remote, ...segments];
+  const candidates =
+    remotePath === undefined
+      ? [segments]
+      : item.code === "remote_project_id"
+        ? [remotePath]
+        : [remotePath, segments];
+  const attempts = candidates.map((path) => locateCliConfigKey(source, format, path, target));
   return (
     attempts.find((found) => found?.exact === true) ?? attempts.find((found) => found !== undefined)
   );
@@ -376,9 +381,9 @@ export const configValidate = Effect.fn("config.validate")(function* () {
     format: FileFormat,
     stoppedAt: StopStage,
     problems: ReadonlyArray<ConfigProblem>,
-    options: { readonly readSource: boolean } = { readSource: true },
+    options: { readonly readSource: boolean; readonly source?: string } = { readSource: true },
   ) {
-    const source = options.readSource ? yield* readSource(file) : "";
+    const source = options.source ?? (options.readSource ? yield* readSource(file) : "");
     const display = relativeConfigPath(workdir, file);
     return {
       file: display,
@@ -431,13 +436,19 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       if (error instanceof CliConfigSchemaVersionError) {
         const source = yield* readSource(error.path);
         return yield* emit(
-          yield* stopReport(error.path, error.format, "schema_version", [
-            problem("schema_version", {
-              reason: error.message,
-              location: locateSchemaDeclaration(source, reportFormat(error.path, error.format)),
-              showValue: true,
-            }),
-          ]),
+          yield* stopReport(
+            error.path,
+            error.format,
+            "schema_version",
+            [
+              problem("schema_version", {
+                reason: error.message,
+                location: locateSchemaDeclaration(source, reportFormat(error.path, error.format)),
+                showValue: true,
+              }),
+            ],
+            { readSource: true, source },
+          ),
         );
       }
       if (error instanceof CliConfigParseError) {
@@ -519,7 +530,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
           case "CliConfigValueError":
             return failed([invalidValueProblem(error, file)]);
           case "CliConfigRemovedEnvError":
-            return failed([problem("removed_env", { reason: error.message })]);
+            return failed([problem("removed_env", { reason: error.message })], "removed_env");
           case "CliConfigLoadError":
             return failed([envLoadProblem(error)], "env_file");
           default:
@@ -580,24 +591,13 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       return yield* emit(report);
     }
 
-    const failedRemotes = new Map(
-      (base.resolved?.remoteFailures ?? []).map((failure) => [failure.remote, failure]),
-    );
-    const skippedRemotes = remoteNames
-      .filter((name) => failedRemotes.has(name))
-      .map((name) => ({ name, reason: "invalid project_id" }));
-    const checkedRemotes = remoteNames.filter((name) => !failedRemotes.has(name));
-    const remotePasses = yield* Effect.forEach(checkedRemotes, (name) => pass(name), {
-      concurrency: 1,
-    }).pipe(Effect.withSpan("config.validate.remotes"));
-    const passes = new Map<string | undefined, PassResult>([
-      [undefined, base],
-      ...checkedRemotes.map((name, index): [string, PassResult] => [name, remotePasses[index]!]),
-    ]);
-
     const references = envReferences(parsed.rawDocument);
-    const unresolved = yield* Effect.gen(function* () {
-      if (references.length === 0) return [] as ReadonlyArray<EnvReference>;
+    const { unresolved, unresolvedProjectIdRemotes } = yield* Effect.gen(function* () {
+      const none = {
+        unresolved: [] as ReadonlyArray<EnvReference>,
+        unresolvedProjectIdRemotes: new Set<string>(),
+      };
+      if (references.length === 0) return none;
       const resolved: ResolvedCliConfig | undefined =
         base.resolved ??
         (yield* configValues
@@ -608,12 +608,52 @@ export const configValidate = Effect.fn("config.validate")(function* () {
             validation: true,
           })
           .pipe(Effect.option, Effect.map(Option.getOrUndefined)));
-      if (resolved === undefined) return [];
+      if (resolved === undefined) return none;
+      const projectIdRemotes = references.flatMap((reference) =>
+        reference.remote !== undefined && reference.path.join(".") === "project_id"
+          ? [reference.remote]
+          : [],
+      );
       const values = yield* resolved
-        .envValues(references.map((reference) => reference.name))
+        .envValues([
+          ...references.map((reference) => reference.name),
+          ...projectIdRemotes.map(cliRemoteProjectIdEnvName),
+        ])
         .pipe(Effect.orElseSucceed((): Record<string, string> => ({})));
-      return references.filter((reference) => values[reference.name] === undefined);
+      const unresolvedRefs = references.filter((reference) => values[reference.name] === undefined);
+      return {
+        unresolved: unresolvedRefs,
+        unresolvedProjectIdRemotes: new Set(
+          unresolvedRefs.flatMap((reference) =>
+            reference.remote !== undefined &&
+            reference.path.join(".") === "project_id" &&
+            values[cliRemoteProjectIdEnvName(reference.remote)] === undefined
+              ? [reference.remote]
+              : [],
+          ),
+        ),
+      };
     }).pipe(Effect.withSpan("config.validate.env"));
+
+    const failedRemotes = new Map(
+      (base.resolved?.remoteFailures ?? []).map((failure) => [failure.remote, failure]),
+    );
+    const skippedRemotes = remoteNames
+      .filter((name) => failedRemotes.has(name))
+      .map((name) => ({
+        name,
+        reason: unresolvedProjectIdRemotes.has(name)
+          ? "project_id is an unset env() reference"
+          : "invalid project_id",
+      }));
+    const checkedRemotes = remoteNames.filter((name) => !failedRemotes.has(name));
+    const remotePasses = yield* Effect.forEach(checkedRemotes, (name) => pass(name), {
+      concurrency: 1,
+    }).pipe(Effect.withSpan("config.validate.remotes"));
+    const passes = new Map<string | undefined, PassResult>([
+      [undefined, base],
+      ...checkedRemotes.map((name, index): [string, PassResult] => [name, remotePasses[index]!]),
+    ]);
 
     const remoteWrites = (remote: string, path: ReadonlyArray<string>): boolean =>
       isDocumentRecord(rawRemotes) && getDocumentValue(rawRemotes[remote], path) !== undefined;
@@ -638,7 +678,11 @@ export const configValidate = Effect.fn("config.validate")(function* () {
           ...notices,
           ...base.problems,
           ...(base.resolved?.remoteFailures ?? [])
-            .filter((failure) => remoteNames.includes(failure.remote))
+            .filter(
+              (failure) =>
+                remoteNames.includes(failure.remote) &&
+                !unresolvedProjectIdRemotes.has(failure.remote),
+            )
             .map(remoteFailureProblem),
           ...remotePasses.flatMap((item) => item.problems),
         ],
@@ -664,10 +708,17 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         showValue: true,
         ...(remote === undefined ? {} : { remote }),
       });
+    const isOverridden = (reference: EnvReference, context: string | undefined): boolean => {
+      const origin = passes
+        .get(context)
+        ?.resolved?.materialized.originAt(displayPath(reference.path));
+      return origin?.tier === "shell" || origin?.tier === "projectEnv" || origin?.tier === "flag";
+    };
     const envWarnings = unresolved.flatMap((reference) => {
       const warns = (context: string | undefined) =>
-        blamed.some((item) => item.reference === reference && item.remote === context) ||
-        isRelevantIn(reference, context);
+        !isOverridden(reference, context) &&
+        (blamed.some((item) => item.reference === reference && item.remote === context) ||
+          isRelevantIn(reference, context));
       if (reference.remote !== undefined) {
         return warns(reference.remote) ? [envWarning(reference, reference.remote)] : [];
       }

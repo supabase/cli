@@ -7,7 +7,7 @@ Checks the project config file (`supabase/config.toml`, `config.json` or `config
 1. The file parses (TOML or JSONC).
 2. The schema version is one this CLI reads.
 3. Only one config file applies: `config.json` and `config.jsonc` together is an error, and a JSON file next to `config.toml` is reported as shadowed.
-4. The env files load, so `env(NAME)` references and `SUPABASE_*` overrides resolve.
+4. The env files load and no removed `SUPABASE_*` variable is set, so `env(NAME)` references and overrides resolve.
 5. Removed keys, unknown keys (with a `did you mean` suggestion when one is close), values of the wrong type, enum or range, and missing required keys.
 6. The validations `supabase start` applies, such as a missing provider secret or an unreadable `content_path` file.
 7. Every `[remotes.<name>]` block, merged over the base config. Its problems carry the remote name.

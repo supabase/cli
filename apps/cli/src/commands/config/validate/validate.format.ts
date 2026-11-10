@@ -28,13 +28,14 @@ export const PLAIN_REPORT_STYLE: ReportStyle = {
   code: plain,
 };
 
-export type StopStage = "syntax" | "schema_version" | "file_conflict" | "env_file";
+export type StopStage = "syntax" | "schema_version" | "file_conflict" | "env_file" | "removed_env";
 
 const STOP_LABELS: Readonly<Record<StopStage, string>> = {
   syntax: "the syntax check",
   schema_version: "the schema version check",
   file_conflict: "the config file check",
   env_file: "loading the env files",
+  removed_env: "resolving the environment variables",
 };
 
 const PAYLOAD_VERSION = 1;
@@ -87,6 +88,8 @@ interface Span {
 const KEY_VALUE =
   /^(\s*(?:(?:#|\/\/)\s*)?(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+))*\s*[=:]\s*)(.*)$/;
 const ENV_REFERENCE_VALUE = /^["']env\([A-Za-z_][A-Za-z0-9_]*\)["']\s*,?\s*$/;
+const URL_USERINFO = /[a-z][a-z0-9+.-]*:\/\/([^\s/?#"']*)@/gi;
+const URL_QUERY = /[a-z][a-z0-9+.-]*:\/\/[^\s"'?#]*\?([^\s"'#]*)/gi;
 const TRAILING_COMMENT = /^[\s,}\]]*(#|\/\/)/;
 
 interface MaskedLine {
@@ -127,6 +130,50 @@ function maskLine(text: string, spans: ReadonlyArray<Span>): MaskedLine {
   };
 }
 
+/** The credentials and query string of every URL in `text` from `from` to `to` (1-based, `to` exclusive). */
+function urlSpans(text: string, from: number, to: number): ReadonlyArray<Span> {
+  const slice = text.slice(from - 1, to - 1);
+  const spans: Array<Span> = [];
+  for (const match of slice.matchAll(URL_USERINFO)) {
+    const userinfo = match[1] ?? "";
+    const start = from + match.index + match[0].length - 1 - userinfo.length;
+    if (userinfo.length > 0) spans.push({ column: start, endColumn: start + userinfo.length });
+  }
+  for (const match of slice.matchAll(URL_QUERY)) {
+    const query = match[1] ?? "";
+    const start = from + match.index + match[0].length - query.length;
+    if (query.length > 0) spans.push({ column: start, endColumn: start + query.length });
+  }
+  return spans;
+}
+
+/** A scalar or a flat array of scalars; a table, or anything nested, may hold values the problem is not about. */
+function isShowable(lines: ReadonlyArray<string>, location: CliConfigLocation): boolean {
+  const first = lines[location.line - 1] ?? "";
+  const last = location.endLine ?? location.line;
+  const text =
+    last === location.line
+      ? first.slice(location.column - 1, (location.endColumn ?? first.length + 1) - 1)
+      : [
+          first.slice(location.column - 1),
+          ...lines.slice(location.line, last - 1),
+          (lines[last - 1] ?? "").slice(0, (location.endColumn ?? 1) - 1),
+        ].join("\n");
+  const head = text.trimStart()[0];
+  if (head === "{") return false;
+  if (head !== "[") return true;
+  let quote: string | undefined;
+  for (let index = text.indexOf("[") + 1; index < text.length; index++) {
+    const character = text[index];
+    if (quote !== undefined) {
+      if (character === "\\" && quote === '"') index++;
+      else if (character === quote) quote = undefined;
+    } else if (character === '"' || character === "'") quote = character;
+    else if (character === "{" || character === "[") return false;
+  }
+  return true;
+}
+
 const isBefore = (line: number, column: number, otherLine: number, otherColumn: number) =>
   line < otherLine || (line === otherLine && column < otherColumn);
 
@@ -154,12 +201,16 @@ function maskedAt(
   if (valuesByLine === undefined) return maskLine(text, [{ column: indent + 1 }]);
 
   const spans: Array<Span> = [];
+  const redactions: Array<Span> = [];
   for (const value of valuesByLine.get(lineNumber) ?? []) {
-    if (shown !== undefined && isWithin(value, shown)) continue;
     const startsHere = value.line === lineNumber;
     const endsHere = (value.endLine ?? value.line) === lineNumber;
     const column = startsHere ? value.column : indent + 1;
     const endColumn = endsHere ? value.endColumn : undefined;
+    if (shown !== undefined && isWithin(value, shown)) {
+      redactions.push(...urlSpans(text, column, endColumn ?? text.length + 1));
+      continue;
+    }
     if (
       startsHere &&
       endsHere &&
@@ -171,14 +222,17 @@ function maskedAt(
   }
   if (spans.length === 0) {
     const pair = /^\s*(?:#|\/\/)/.test(text) ? KEY_VALUE.exec(text) : null;
-    return maskLine(text, pair?.[1] === undefined ? [] : [{ column: pair[1].length + 1 }]);
+    return maskLine(text, [
+      ...redactions,
+      ...(pair?.[1] === undefined ? [] : [{ column: pair[1].length + 1 }]),
+    ]);
   }
   const lastEnd = Math.max(...spans.map((span) => span.endColumn ?? text.length + 1)) - 1;
   const comment = TRAILING_COMMENT.exec(text.slice(lastEnd));
   if (comment !== null) {
     spans.push({ column: lastEnd + comment[0].length - comment[1]!.length + 1 });
   }
-  return maskLine(text, spans);
+  return maskLine(text, [...spans, ...redactions]);
 }
 
 function windowAround(text: string, caretOffset: number): { text: string; caretOffset: number } {
@@ -238,8 +292,9 @@ function frameLines(
   const out: Array<string> = [];
 
   if (location.line > 1) {
+    const previous = lines[location.line - 2] ?? "";
     const before = publicLines.has(location.line - 1)
-      ? (lines[location.line - 2] ?? "")
+      ? maskLine(previous, urlSpans(previous, 1, previous.length + 1)).text
       : maskedAt(view, location.line - 1).text;
     const shown = display(before).trimEnd();
     const clipped = shown.length > MAX_FRAME_WIDTH ? `${shown.slice(0, MAX_FRAME_WIDTH)}…` : shown;
@@ -248,7 +303,8 @@ function frameLines(
     );
   }
 
-  const shown = problem.showValue && location.exact ? location : undefined;
+  const shown =
+    problem.showValue && location.exact && isShowable(lines, location) ? location : undefined;
   const current = maskedAt(view, location.line, shown);
   const start = current.map(location.column - 1);
   const singleLine = location.endLine === undefined || location.endLine === location.line;
@@ -259,8 +315,13 @@ function frameLines(
         ? start + 1
         : current.text.length;
   const caretOffset = display(current.text.slice(0, start)).length;
-  const caretLength = Math.max(1, display(current.text.slice(start, end)).length);
   const windowed = windowAround(display(current.text).trimEnd(), caretOffset);
+  const visible =
+    windowed.text.length - windowed.caretOffset - (windowed.text.endsWith("…") ? 1 : 0);
+  const caretLength = Math.max(
+    1,
+    Math.min(display(current.text.slice(start, end)).length, visible),
+  );
   out.push(`  ${style.red(">")} ${style.dim(gutter(String(location.line)))} ${windowed.text}`);
   out.push(
     `    ${style.dim(gutter(""))} ${" ".repeat(windowed.caretOffset)}${style.red("^".repeat(caretLength))}`,

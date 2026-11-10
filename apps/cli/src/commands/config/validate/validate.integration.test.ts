@@ -740,6 +740,113 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("skips a remote whose project_id is an unset env() reference and warns instead", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[remotes.prod]\nproject_id = "env(UNSET_REF)"\n'),
+      );
+
+      expect(result.exitCode).toBeUndefined();
+      expect(result.stdout).toContain("⚠ project_id  UNSET_REF is not set");
+      expect(result.stdout).toContain("[remote: prod]");
+      expect(result.stdout).toContain(
+        "Skipped remotes: prod (project_id is an unset env() reference)",
+      );
+      expect(result.stdout).not.toContain("✗");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("still reports a malformed literal remote project_id", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[remotes.prod]\nproject_id = "nope"\n'),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { code: "remote_project_id", remote: "prod", line: 3 },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("locates a remote without project_id inside that remote, not on the base key", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[remotes.prod]\n[remotes.prod.api]\nmax_rows = 1\n'),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { code: "remote_project_id", remote: "prod", line: 2 },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("names the bigquery backend when a gcp key is missing", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[analytics]\nenabled = true\nbackend = "bigquery"\ngcp_jwt_path = "k.json"\n',
+        ),
+      );
+
+      expect(result.stdout).toContain(
+        "analytics.gcp_project_id  required when analytics.backend = bigquery",
+      );
+      expect(result.stdout).toContain('help: set gcp_project_id, or set backend = "postgres"');
+      expect(result.stdout).toContain('help: set gcp_project_number, or set backend = "postgres"');
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("names auth.passkey.enabled as the switch for missing webauthn keys", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.passkey]\nenabled = true\n[auth.webauthn]\nrp_display_name = "x"\n',
+        ),
+      );
+
+      expect(result.stdout).toContain("help: set rp_id, or set auth.passkey.enabled = false");
+      expect(result.stdout).not.toContain("set enabled = false");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "stays quiet about an unresolved reference when a SUPABASE_* variable supplies the value",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile('project_id = "demo"\n[db]\nport = "env(UNSET_DB_PORT)"\n'),
+          { env: { SUPABASE_DB_PORT: "5432" } },
+        );
+
+        expect(result.stdout).toBe("✓ supabase/config.toml is valid\n");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reports a removed env variable as an incomplete run", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(tomlFile('project_id = "demo"\n'), {
+        format: "json",
+        env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "15" },
+      });
+
+      expect(payloadOf(result)).toMatchObject({
+        valid: false,
+        complete: false,
+        stopped_at: "removed_env",
+      });
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { code: "removed_env" },
+      ]);
+
+      const text = yield* validate(tomlFile('project_id = "demo"\n'), {
+        env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "15" },
+      });
+      expect(text.stdout).toContain("Stopped after resolving the environment variables.");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("locates keys in a TOML file that starts with a byte order mark", () =>
     Effect.gen(function* () {
       const result = yield* validate(
@@ -839,6 +946,38 @@ describe("config validate integration", () => {
           leaks(result);
           expect(result.stdout).not.toContain(padded.slice(0, 8));
         }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("masks the nested values of an inline table at a located value", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile(`project_id = "demo"\n[api]\nmax_rows = { secret = "${SECRET}" }\n`),
+        );
+
+        expect(result.stdout).toContain("api.max_rows");
+        leaks(result);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("redacts credentials and query strings of a public URL value", () =>
+      Effect.gen(function* () {
+        const url = "https://user:pass-secret@host.test/x?token=tok-secret";
+        const context = yield* validate(
+          tomlFile(`project_id = "demo"\n[auth]\nsite_url = "${url}"\nbogus = 1\n`),
+        );
+        expect(context.stdout).toContain('site_url = "https://****@host.test/x?****"');
+        expect(context.stdout).not.toContain("pass-secret");
+        expect(context.stdout).not.toContain("tok-secret");
+
+        const own = yield* validate(
+          tomlFile(
+            'project_id = "demo"\n[studio]\napi_url = "http://u:pass-secret@[bad/x?token=tok-secret"\n',
+          ),
+        );
+        expect(own.stdout).toContain("studio.api_url");
+        expect(own.stdout).not.toContain("pass-secret");
+        expect(own.stdout).not.toContain("tok-secret");
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect("masks db.root_key and a hook secret in JSON mode and in JSONC frames", () =>
