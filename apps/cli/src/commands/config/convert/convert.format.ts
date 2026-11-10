@@ -18,17 +18,21 @@ export function jsonPrecedenceMessage(jsonFile: string): string {
 
 export const CONVERTED_MESSAGE = "Converted supabase/config.toml to supabase/config.jsonc.";
 
-export const REMOVED_MESSAGE =
-  "Removed supabase/config.toml; supabase/config.jsonc is now the project config.";
+const UNDO_COMMAND = "git restore supabase/config.toml && rm supabase/config.jsonc";
 
-export const MIN_VERSION_WARNING = `Older Supabase CLIs (before ${CONFIG_JSONC_MIN_CLI_VERSION}) ignore config.jsonc and run with defaults; some commands (init, functions new) create a new config.toml that newer CLIs then ignore. Upgrade every machine and CI job that runs supabase for this project. To undo, run: git restore supabase/config.toml && rm supabase/config.jsonc`;
+const COMPATIBILITY_LINES = [
+  `Supabase CLI versions before ${CONFIG_JSONC_MIN_CLI_VERSION} ignore config.jsonc and run with defaults.`,
+  "Upgrade the Supabase CLI on every machine and CI job that uses this project.",
+] as const;
+
+export const MIN_VERSION_WARNING = `${COMPATIBILITY_LINES.join(" ")} To undo, run: ${UNDO_COMMAND}`;
 
 const TRUSTED_DOMAIN = "https://supabase.com/schemas/";
 
-export const trustedDomainMessage = `Added ${TRUSTED_DOMAIN} to json.schemaDownload.trustedDomains in .vscode/settings.json.`;
+const VSCODE_MANUAL_STEP = `Add "${TRUSTED_DOMAIN}": true under "json.schemaDownload.trustedDomains" to trust the config schema.`;
 
-export function vscodeFailureWarning(detail: string): string {
-  return `Could not update .vscode/settings.json: ${detail}. Add "${TRUSTED_DOMAIN}": true under "json.schemaDownload.trustedDomains" to trust the config schema.`;
+function vscodeFailureWarning(detail: string): string {
+  return `Could not update .vscode/settings.json: ${detail}. ${VSCODE_MANUAL_STEP}`;
 }
 
 export function refusalMessage(error: CliConfigConvertError): string {
@@ -74,6 +78,94 @@ export function convertWarnings(input: {
     MIN_VERSION_WARNING,
     ...(input.vscodeFailure === undefined ? [] : [vscodeFailureWarning(input.vscodeFailure)]),
   ];
+}
+
+/** ANSI styling applied to the text report; the handler passes stream-gated colours. */
+export interface ReportStyle {
+  readonly bold: (text: string) => string;
+  readonly dim: (text: string) => string;
+  readonly green: (text: string) => string;
+  readonly red: (text: string) => string;
+  readonly yellow: (text: string) => string;
+  readonly blue: (text: string) => string;
+  readonly code: (text: string) => string;
+}
+
+const plain = (text: string) => text;
+
+export const PLAIN_REPORT_STYLE: ReportStyle = {
+  bold: plain,
+  dim: plain,
+  green: plain,
+  red: plain,
+  yellow: plain,
+  blue: plain,
+  code: plain,
+};
+
+/** Renders the text-mode summary of a conversion, or of the conversion `--dry-run` previews. */
+export function convertReport(
+  input: {
+    readonly dryRun: boolean;
+    readonly moved: ReadonlyArray<MovedTomlComment>;
+    readonly vscodeUpdated: boolean;
+    readonly vscodeFailure: string | undefined;
+  },
+  style: ReportStyle = PLAIN_REPORT_STYLE,
+): string {
+  const { bold, dim, green, red, yellow, blue, code } = style;
+  const verb = (planned: string, done: string) => (input.dryRun ? planned : done);
+  const lines: Array<string> = input.dryRun
+    ? [
+        `${green("✓")} ${bold("Config conversion preview")}`,
+        `  ${dim("Dry run. No files were changed.")}`,
+      ]
+    : [`${green("✓")} ${bold("Converted supabase/config.toml to supabase/config.jsonc")}`];
+
+  lines.push(
+    "",
+    `  ${bold(verb("Planned changes", "Changes"))}`,
+    `    ${green("+")} ${verb("Create", "Created")}  ${code("supabase/config.jsonc")}`,
+    `    ${red("-")} ${verb("Delete", "Deleted")}  ${code("supabase/config.toml")}`,
+  );
+  if (input.vscodeUpdated) {
+    lines.push(
+      `    ${yellow("~")} ${verb("Update", "Updated")}  ${code(".vscode/settings.json")} ${dim(`(trusts ${TRUSTED_DOMAIN})`)}`,
+    );
+  }
+
+  if (input.moved.length > 0) {
+    const count = input.moved.length;
+    lines.push(
+      "",
+      `  ${blue("ℹ")} ${bold(`${count} ${count === 1 ? "comment" : "comments"} relocated`)}`,
+      `    ${dim("Comments inside multi-line values move to the line above their key.")}`,
+      ...input.moved.map(
+        (comment) =>
+          `    line ${comment.line} → ${code(comment.anchor.join("."))}  ${dim(comment.text)}`,
+      ),
+    );
+  }
+
+  if (input.vscodeFailure !== undefined) {
+    lines.push(
+      "",
+      `  ${yellow("⚠")} ${bold("Could not update .vscode/settings.json")}`,
+      `    ${input.vscodeFailure}.`,
+      `    ${VSCODE_MANUAL_STEP}`,
+    );
+  }
+
+  lines.push(
+    "",
+    `  ${yellow("⚠")} ${bold("Compatibility")}`,
+    ...COMPATIBILITY_LINES.map((line) => `    ${line}`),
+    "",
+    `  ${dim(verb("To undo after converting:", "To undo:"))}`,
+    `    ${code(UNDO_COMMAND)}`,
+    "",
+  );
+  return lines.join("\n");
 }
 
 interface PayloadInput {

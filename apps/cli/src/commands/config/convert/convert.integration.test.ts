@@ -189,11 +189,21 @@ describe("config convert integration", () => {
         expect(yield* materializedConfig()).toEqual(before);
 
         expect(out.stdoutText.split("\n")).toEqual([
-          "Converted supabase/config.toml to supabase/config.jsonc.",
-          "Removed supabase/config.toml; supabase/config.jsonc is now the project config.",
+          "✓ Converted supabase/config.toml to supabase/config.jsonc",
+          "",
+          "  Changes",
+          "    + Created  supabase/config.jsonc",
+          "    - Deleted  supabase/config.toml",
+          "",
+          "  ⚠ Compatibility",
+          "    Supabase CLI versions before 3.1.0 ignore config.jsonc and run with defaults.",
+          "    Upgrade the Supabase CLI on every machine and CI job that uses this project.",
+          "",
+          "  To undo:",
+          "    git restore supabase/config.toml && rm supabase/config.jsonc",
           "",
         ]);
-        expect(out.stderrText.split("\n")).toEqual([MIN_VERSION_WARNING, ""]);
+        expect(out.stderrText).toBe("");
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(BunServices.layer));
     },
@@ -242,7 +252,7 @@ describe("config convert integration", () => {
       yield* run().pipe(Effect.provide(layer));
 
       expect(yield* readFile("supabase", "config.jsonc")).toContain('"public", // keep');
-      expect(out.stderrText).not.toContain("Moved");
+      expect(out.stdoutText).not.toContain("relocated");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -256,8 +266,8 @@ describe("config convert integration", () => {
 
       yield* run().pipe(Effect.provide(layer));
 
-      expect(out.stderrText).toContain(
-        "Moved 1 comment(s) that were inside multi-line values to the line above their key:\n  line 3 → api.schemas: # keep\n",
+      expect(out.stdoutText).toContain(
+        "  ℹ 1 comment relocated\n    Comments inside multi-line values move to the line above their key.\n    line 3 → api.schemas  # keep\n",
       );
       expect(yield* readFile("supabase", "config.jsonc")).toContain("// keep");
     }).pipe(Effect.provide(BunServices.layer));
@@ -381,7 +391,7 @@ describe("config convert integration", () => {
         "json.schemaDownload.trustedDomains": { "https://supabase.com/schemas/": true },
       });
       expect(out.stdoutText).toContain(
-        "Added https://supabase.com/schemas/ to json.schemaDownload.trustedDomains in .vscode/settings.json.\n",
+        "    ~ Updated  .vscode/settings.json (trusts https://supabase.com/schemas/)\n",
       );
     }).pipe(Effect.provide(BunServices.layer));
   });
@@ -394,7 +404,7 @@ describe("config convert integration", () => {
       yield* run().pipe(Effect.provide(layer));
 
       expect(yield* exists(".vscode")).toBe(false);
-      expect(out.stdoutText).not.toContain("trustedDomains");
+      expect(out.stdoutText).not.toContain(".vscode/settings.json");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -409,8 +419,8 @@ describe("config convert integration", () => {
       expect(yield* exists("supabase", "config.jsonc")).toBe(true);
       expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(yield* readFile(".vscode", "settings.json")).toBe("{ nope");
-      expect(out.stderrText).toContain("Could not update .vscode/settings.json: ");
-      expect(out.stderrText).toContain(
+      expect(out.stdoutText).toContain("  ⚠ Could not update .vscode/settings.json\n");
+      expect(out.stdoutText).toContain(
         'Add "https://supabase.com/schemas/": true under "json.schemaDownload.trustedDomains" to trust the config schema.',
       );
     }).pipe(Effect.provide(BunServices.layer));
@@ -431,23 +441,30 @@ describe("config convert integration", () => {
         project_id: "demo",
         api: { port: 54321 },
       });
-      expect(out.stderrText.split("\n")[0]).toBe(
-        "Dry run: would write supabase/config.jsonc, delete supabase/config.toml, and add the schema domain to .vscode/settings.json.",
+      expect(out.stderrText).toContain(
+        [
+          "✓ Config conversion preview",
+          "  Dry run. No files were changed.",
+          "",
+          "  Planned changes",
+          "    + Create  supabase/config.jsonc",
+          "    - Delete  supabase/config.toml",
+          "    ~ Update  .vscode/settings.json (trusts https://supabase.com/schemas/)",
+        ].join("\n"),
       );
-      expect(out.stderrText).toContain(MIN_VERSION_WARNING);
+      expect(out.stderrText).toContain("  To undo after converting:\n");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("--dry-run omits the VS Code clause when settings need no change", () => {
+  it.effect("--dry-run lists no VS Code change when settings need none", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
 
       yield* run(true).pipe(Effect.provide(layer));
 
-      expect(out.stderrText.split("\n")[0]).toBe(
-        "Dry run: would write supabase/config.jsonc and delete supabase/config.toml.",
-      );
+      expect(out.stderrText).toContain("    - Delete  supabase/config.toml\n\n");
+      expect(out.stderrText).not.toContain(".vscode/settings.json");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -527,11 +544,11 @@ describe("config convert integration", () => {
       yield* run().pipe(Effect.provide(layer));
 
       expect(yield* readFile(".vscode", "settings.json")).toBe(settings);
-      expect(out.stdoutText).not.toContain("trustedDomains");
+      expect(out.stdoutText).not.toContain(".vscode/settings.json");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("prints the version warning before a failed config.toml removal", () => {
+  it.effect("prints no conversion report when config.toml cannot be removed", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
@@ -542,8 +559,9 @@ describe("config convert integration", () => {
       );
 
       expect(error._tag).toBe("ConfigConvertWriteError");
+      expect(error.message).toContain("could not remove supabase/config.toml");
       expect(yield* exists("supabase", "config.jsonc")).toBe(true);
-      expect(out.stderrText).toContain(MIN_VERSION_WARNING);
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(BunServices.layer));
   });
 

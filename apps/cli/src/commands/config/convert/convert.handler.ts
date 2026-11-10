@@ -7,6 +7,16 @@ import { CliConfigParseError } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import {
+  aqua,
+  blue,
+  bold,
+  type ColorStream,
+  dim,
+  green,
+  red,
+  yellow,
+} from "../../../command-internal/colors.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
@@ -33,19 +43,18 @@ import {
   alreadyConvertedPayload,
   CONVERTED_MESSAGE,
   convertPayload,
+  convertReport,
   convertWarnings,
   dryRunMessage,
   dryRunPayload,
   jsonPrecedenceMessage,
   refusalMessage,
-  REMOVED_MESSAGE,
+  type ReportStyle,
   JSONC_APPEARED_MESSAGE,
   JSONC_CHANGED_NOTE,
   JSONC_REMOVED_NOTE,
   jsoncRemovalFailureNote,
   tomlRemovalFailureMessage,
-  trustedDomainMessage,
-  vscodeFailureWarning,
 } from "./convert.format.ts";
 
 const trustSchemaDomainInVscode = Effect.fn("config.convert.vscode")(function* (
@@ -65,6 +74,16 @@ const trustSchemaDomainInVscode = Effect.fn("config.convert.vscode")(function* (
   );
   yield* Effect.annotateCurrentSpan("config.vscode_updated", result.updated);
   return result;
+});
+
+const reportStyle = (stream: ColorStream): ReportStyle => ({
+  bold: (text) => bold(text, stream),
+  dim: (text) => dim(text, stream),
+  green: (text) => green(text, stream),
+  red: (text) => red(text, stream),
+  yellow: (text) => yellow(text, stream),
+  blue: (text) => blue(text, stream),
+  code: (text) => aqua(text, stream),
 });
 
 export const configConvert = Effect.fn("config.convert")(function* (flags: ConfigConvertFlags) {
@@ -138,11 +157,6 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       "config.moved_comment_count": outcome.movedComments.length,
     });
 
-    const emitWarnings = (warnings: ReadonlyArray<string>) =>
-      output.format === "text"
-        ? Effect.forEach(warnings, (line) => output.raw(`${line}\n`, "stderr"), { discard: true })
-        : Effect.void;
-
     if (flags.dryRun) {
       const vscode = yield* trustSchemaDomainInVscode(cliSettings.workdir, true);
       const warnings = convertWarnings({
@@ -151,9 +165,19 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       });
       const message = dryRunMessage(vscode.updated);
       if (output.format === "text") {
-        yield* output.raw(`${message}\n`, "stderr");
         yield* output.raw(outcome.text);
-        yield* emitWarnings(warnings);
+        yield* output.raw(
+          `\n${convertReport(
+            {
+              dryRun: true,
+              moved: outcome.movedComments,
+              vscodeUpdated: vscode.updated,
+              vscodeFailure: vscode.failure,
+            },
+            reportStyle(process.stderr),
+          )}`,
+          "stderr",
+        );
       } else {
         yield* output.success(
           message,
@@ -168,10 +192,6 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       }
       return;
     }
-
-    yield* emitWarnings(
-      convertWarnings({ moved: outcome.movedComments, vscodeFailure: undefined }),
-    );
 
     const jsoncPath = path.join(configDir, "config.jsonc");
     yield* Effect.gen(function* () {
@@ -237,14 +257,17 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
     const vscode = yield* trustSchemaDomainInVscode(cliSettings.workdir, false);
 
     if (output.format === "text") {
-      yield* output.raw(`${CONVERTED_MESSAGE}\n`);
-      yield* output.raw(`${REMOVED_MESSAGE}\n`);
-      if (vscode.updated) {
-        yield* output.raw(`${trustedDomainMessage}\n`);
-      }
-      if (vscode.failure !== undefined) {
-        yield* emitWarnings([vscodeFailureWarning(vscode.failure)]);
-      }
+      yield* output.raw(
+        convertReport(
+          {
+            dryRun: false,
+            moved: outcome.movedComments,
+            vscodeUpdated: vscode.updated,
+            vscodeFailure: vscode.failure,
+          },
+          reportStyle(process.stdout),
+        ),
+      );
     } else {
       yield* output.success(
         CONVERTED_MESSAGE,

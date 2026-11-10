@@ -50,21 +50,37 @@
 
 ### `--output-format text`
 
-stdout:
+stdout is one report, printed after the files are written (colour only on a TTY, per `NO_COLOR`/`CLICOLOR`):
 
-- `Converted supabase/config.toml to supabase/config.jsonc.`
-- `Removed supabase/config.toml; supabase/config.jsonc is now the project config.`
-- `Added https://supabase.com/schemas/ to json.schemaDownload.trustedDomains in .vscode/settings.json.` when the VS Code settings changed
+```text
+✓ Converted supabase/config.toml to supabase/config.jsonc
 
-stderr (warnings; the first two are printed before anything is written, in this order):
+  Changes
+    + Created  supabase/config.jsonc
+    - Deleted  supabase/config.toml
+    ~ Updated  .vscode/settings.json (trusts https://supabase.com/schemas/)
 
-- `Moved N comment(s) that were inside multi-line values to the line above their key:` followed by one `  line N → <key>: # …` line per comment, only for comments in nested arrays or inline tables
-- `Older Supabase CLIs (before 3.1.0) ignore config.jsonc and run with defaults; some commands (init, functions new) create a new config.toml that newer CLIs then ignore. Upgrade every machine and CI job that runs supabase for this project. To undo, run: git restore supabase/config.toml && rm supabase/config.jsonc`
-- `Could not update .vscode/settings.json: <detail>. …` after the write, when the settings file cannot be parsed, written, or edited without dropping its comments
+  ℹ 1 comment relocated
+    Comments inside multi-line values move to the line above their key.
+    line 13 → api.extra  # first
+
+  ⚠ Could not update .vscode/settings.json
+    <detail>.
+    Add "https://supabase.com/schemas/": true under "json.schemaDownload.trustedDomains" to trust the config schema.
+
+  ⚠ Compatibility
+    Supabase CLI versions before 3.1.0 ignore config.jsonc and run with defaults.
+    Upgrade the Supabase CLI on every machine and CI job that uses this project.
+
+  To undo:
+    git restore supabase/config.toml && rm supabase/config.jsonc
+```
+
+The `~ Updated` line appears only when the settings changed, the `ℹ` section only for comments in nested arrays or inline tables (`N comments relocated` when more than one), and the VS Code warning only when the settings file cannot be parsed, written, or edited without dropping its comments. A failed write prints no report.
 
 With only `config.json[c]` present, stdout is `supabase/config.jsonc is already the project config; nothing to convert.` (naming the actual file).
 
-With `--dry-run`, stdout is the converted JSONC only; stderr gets `Dry run: would write supabase/config.jsonc and delete supabase/config.toml.` (with `.vscode/settings.json` changing: `Dry run: would write supabase/config.jsonc, delete supabase/config.toml, and add the schema domain to .vscode/settings.json.`) and the warnings.
+With `--dry-run`, stdout is the converted JSONC only; stderr gets a blank line and the same report headed `✓ Config conversion preview` / `  Dry run. No files were changed.`, with `Planned changes`, `Create`/`Delete`/`Update`, and `To undo after converting:`.
 
 ### `--output-format json`
 
