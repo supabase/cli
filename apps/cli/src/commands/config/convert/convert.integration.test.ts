@@ -22,6 +22,7 @@ import {
   JSONC_SYMLINK_MESSAGE,
   minVersionWarning,
   NOT_UTF8_MESSAGE,
+  TEMP_SYMLINK_MESSAGE,
   TOML_SYMLINK_MESSAGE,
   tomlChangedMessage,
   undoCommand,
@@ -742,6 +743,24 @@ describe("config convert integration", () => {
       expect(error.message).toBe(TOML_SYMLINK_MESSAGE);
       expect(yield* fs.readLink(yield* configTomlPath)).toBe("../shared/real.toml");
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("refuses when supabase/.temp links outside the project and moves nothing", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* writeFile(["supabase", "config.toml"], SIMPLE_TOML);
+      yield* writeFile(["outside", "placeholder"], "");
+      yield* fs.symlink(yield* projectPath("outside"), yield* projectPath("supabase", ".temp"));
+
+      const error = yield* run().pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error._tag).toBe("ConfigConvertUnsupportedError");
+      expect(error.message).toBe(TEMP_SYMLINK_MESSAGE);
+      expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
+      expect(yield* exists("supabase", "config.jsonc")).toBe(false);
+      expect(yield* fs.readDirectory(yield* projectPath("outside"))).toEqual(["placeholder"]);
     }).pipe(Effect.provide(BunServices.layer));
   });
 

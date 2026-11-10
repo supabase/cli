@@ -43,7 +43,7 @@
 | `1`  | `config.json` and `config.jsonc` both exist                                                                                                                                                  |
 | `1`  | `config.toml` exists next to `config.json[c]`, which takes precedence                                                                                                                        |
 | `1`  | conversion refused (not valid UTF-8, a TOML date, a non-finite float, failed re-parse check)                                                                                                 |
-| `1`  | `config.toml` is a symbolic link, or `config.jsonc` is a dangling symbolic link; nothing is written                                                                                          |
+| `1`  | `config.toml` or `supabase/.temp` is a symbolic link, or `config.jsonc` is a dangling symbolic link; nothing is written                                                                      |
 | `1`  | `config.jsonc` could not be written, or appeared while the command ran; an existing `config.jsonc` is never replaced and `config.toml` is kept                                               |
 | `1`  | `config.toml` could not be moved to the backup; the new `config.jsonc` is removed while it still holds what the command wrote, and `config.toml` is kept                                     |
 | `1`  | `config.toml` changed while the command ran; the backup holds the latest version and the message gives the restore command                                                                   |
