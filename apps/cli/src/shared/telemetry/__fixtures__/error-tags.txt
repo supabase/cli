@@ -303,6 +303,8 @@ InvalidProjectRefError
 InvalidRemoteProjectIdError
 InvalidSecretPairError
 InvalidServiceVersionTagError
+IssuesHealthUnsupportedError
+IssuesOutputFlagUnsupportedError
 KongReloadError
 LinkApiKeysNetworkError
 LinkAuthTokenError

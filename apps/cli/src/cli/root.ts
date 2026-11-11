@@ -29,6 +29,7 @@ import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { inspectCommand } from "../commands/inspect/inspect.command.ts";
+import { issuesCommand } from "../commands/issues/issues.command.ts";
 import { issueCommand } from "../commands/issue/issue.command.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
 import { logsCommandFor } from "../commands/logs/logs.command.ts";
@@ -177,6 +178,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       initCommand,
       inspectCommand,
       issueCommand,
+      issuesCommand,
       linkCommand,
       loginCommand,
       logoutCommand,

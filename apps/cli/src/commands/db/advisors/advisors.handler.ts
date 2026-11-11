@@ -77,11 +77,9 @@ const setExposedSchemas = Effect.fn("DbAdvisors.setExposedSchemas")(function* (
 });
 
 /** Gathers lints from a local (or `--db-url`) database connection. */
-const runLocal = Effect.fn("db.advisors.runLocal")(function* (
+export const collectLocalAdvisorLints = Effect.fn("db.advisors.runLocal")(function* (
   target: Exclude<ResolvedTarget, { readonly kind: "linked" }>,
   dnsResolver: "native" | "https",
-  advisorType: string,
-  level: string,
 ) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -120,11 +118,11 @@ const runLocal = Effect.fn("db.advisors.runLocal")(function* (
     }),
   );
 
-  return filterAdvisorLints(lints, advisorType, level);
+  return lints;
 });
 
 /** Gathers the linked project's lints from the Management API, never from its database. */
-const runLinked = Effect.fn("db.advisors.runLinked")(function* (
+const collectLinkedAdvisorLints = Effect.fn("db.advisors.runLinked")(function* (
   target: Extract<ResolvedTarget, { readonly kind: "linked" }>,
   advisorType: string,
   level: string,
@@ -225,14 +223,22 @@ const runAdvisors = Effect.fnUntraced(function* (
   // Linked goes through the Management API; local and `--db-url` read the database directly.
   const filtered =
     target.kind === "linked"
-      ? yield* runLinked(target, advisorType, level)
-      : yield* runLocal(target, dnsResolver, advisorType, level);
+      ? yield* collectLinkedAdvisorLints(target, advisorType, level)
+      : filterAdvisorLints(
+          yield* collectLocalAdvisorLints(target, dnsResolver),
+          advisorType,
+          level,
+        );
   yield* Effect.annotateCurrentSpan("advisor.reported_count", filtered.length);
 
   yield* outputAndCheck(filtered, failOn);
 });
 
 export const dbAdvisors = Effect.fn("db.advisors")(function* (flags: DbAdvisorsFlags) {
+  yield* (yield* Output).raw(
+    "supabase db advisors is deprecated; use supabase issues instead.\n",
+    "stderr",
+  );
   const dnsResolver = yield* DnsResolverFlag;
   const telemetryState = yield* TelemetryState;
   // Flush telemetry on success and failure. Command-level instrumentation /
