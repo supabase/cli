@@ -55,7 +55,7 @@ const config = {
     Flag.map(parseSecretsScopeCustom),
     Flag.withMetavar("SECRET_NAMES"),
     Flag.withDescription(
-      "Controls whether secrets are available, overriding `secrets_scope` with a comma separed list of allowed secret names. Falls back to the recorded value, then all.",
+      "Controls whether secrets are available, overriding `secrets_scope` with a comma separated list of allowed secret names. Falls back to the recorded value, then all.",
     ),
     Flag.filter(
       (secretNames) => secretNames != undefined && secretNames.length > 0,
