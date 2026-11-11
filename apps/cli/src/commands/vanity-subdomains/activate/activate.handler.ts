@@ -2,7 +2,6 @@ import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
-import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -68,26 +67,7 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
         })
         .pipe(
           Effect.tapError(() => activating?.fail() ?? Effect.void),
-          Effect.catch((cause) =>
-            mapActivateError(cause).pipe(
-              Effect.catchTag("VanitySubdomainsActivateUnexpectedStatusError", (mapped) =>
-                Effect.gen(function* () {
-                  const upgradeSuggested = yield* suggestUpgrade({
-                    projectRef: ref,
-                    statusCode: mapped.status,
-                    response: gateResponse(cause),
-                  });
-                  return yield* new VanitySubdomainsActivateUnexpectedStatusError({
-                    status: mapped.status,
-                    body: mapped.body,
-                    message: mapped.message,
-                    upgradeSuggested,
-                    entitlement: mapped.entitlement,
-                  });
-                }),
-              ),
-            ),
-          ),
+          Effect.catch(mapActivateError),
         );
       yield* activating?.clear ?? Effect.void;
 
