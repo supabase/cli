@@ -2376,7 +2376,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* () {
         const pair = yield* testPair;
-        const deadlines = { headers: 150, request: 60_000, idle: 150 };
+        const deadlines = { headers: 2_000, request: 60_000, idle: 150 };
         const admitted = yield* makeHttpProxy({
           host: "127.0.0.1",
           port: 0,

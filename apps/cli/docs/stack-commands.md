@@ -345,8 +345,9 @@ is enabled, and `analytics.backend = "bigquery"` or a non-empty `analytics.gcp_*
 Analytics is enabled. The error names the setting.
 
 `[api.tls]` serves the API port over HTTPS, with plain HTTP only from loopback. The certificate must
-have an IP subject alternative name for `127.0.0.1` (for example `mkcert localhost 127.0.0.1`; stack
-`storage` commands then also need `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`), and
+have an IP subject alternative name for `127.0.0.1` (for example `mkcert localhost 127.0.0.1`;
+bucket seeding and stack `storage` commands then also need
+`NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`), and
 containers must reach the host from loopback: on macOS, Docker Desktop, colima and Podman machine
 do; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta don't, so a start that
 serves the API over TLS fails there with `api.tls: unsupported networking`. The `stack start` side

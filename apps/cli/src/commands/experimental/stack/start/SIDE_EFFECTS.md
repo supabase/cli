@@ -98,10 +98,10 @@ stack's start check (<what the probe saw>); its services stopped: check what els
 <port>, then start the stack again`; if they don't stop, the error says to run `supabase stack stop`
 instead.
 
-Stack `storage` commands use the saved certificate, never `config.toml`, so editing `api.tls`
-applies at the next start. A saved certificate with a self-signed root is the only trusted CA; a
-CA-issued one is verified against Bun's default trust store and `NODE_EXTRA_CA_CERTS`. Without TLS
-every listener, URL and output is unchanged.
+Bucket seeding and stack `storage` commands use the saved certificate, never `config.toml`, so
+editing `api.tls` applies at the next start. A saved certificate with a self-signed root is the only
+trusted CA; a CA-issued one is verified against Bun's default trust store and `NODE_EXTRA_CA_CERTS`.
+Without TLS every listener, URL and output is unchanged.
 
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) is a `local.services.database.version`
 request for that OrioleDB build instead of the stock major, resolved like any other version (see
