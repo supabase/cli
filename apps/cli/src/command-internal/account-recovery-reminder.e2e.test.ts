@@ -42,14 +42,18 @@ describe("mock account recovery reminder", () => {
       expect(regular.split(reminder)).toHaveLength(2);
       expect(regular).toContain("https://supabase.com/dashboard/account/security");
       expect(
-        stripAnsi(runWithTerminal(["telemetry", "status"], {
-          SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK: "missing",
-        })),
+        stripAnsi(
+          runWithTerminal(["telemetry", "status"], {
+            SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK: "missing",
+          }),
+        ),
       ).toContain("You have no recovery codes");
       expect(
-        stripAnsi(runWithTerminal(["telemetry", "status"], {
-          SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK: "low",
-        })),
+        stripAnsi(
+          runWithTerminal(["telemetry", "status"], {
+            SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK: "low",
+          }),
+        ),
       ).toContain("You have few recovery codes left");
 
       for (const args of [
