@@ -339,11 +339,19 @@ The flag is local CLI configuration in `supabase/config.toml` or `supabase/confi
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
-Stack mode rejects an enabled `[api.tls]` while the API is enabled, a `db.major_version` other than
-15 or 17, a non-empty `experimental.s3_*` value while `db.orioledb_version` is set, an
-`edge_runtime.deno_version` other than 2 while Edge Runtime is enabled, and
-`analytics.backend = "bigquery"` or a non-empty `analytics.gcp_*` value while Analytics is enabled.
-The error names the setting.
+Stack mode rejects a `db.major_version` other than 15 or 17, a non-empty `experimental.s3_*` value
+while `db.orioledb_version` is set, an `edge_runtime.deno_version` other than 2 while Edge Runtime
+is enabled, and `analytics.backend = "bigquery"` or a non-empty `analytics.gcp_*` value while
+Analytics is enabled. The error names the setting.
+
+`[api.tls]` serves the API port over HTTPS, with plain HTTP only from loopback. The certificate must
+have an IP subject alternative name for `127.0.0.1` (for example `mkcert localhost 127.0.0.1`;
+bucket seeding and stack `storage` commands then also need
+`NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`), and
+containers must reach the host from loopback: on macOS, Docker Desktop, colima and Podman machine
+do; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta don't, so a start that
+serves the API over TLS fails there with `api.tls: unsupported networking`. The `stack start` side
+effects list its errors.
 
 Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
 uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions
@@ -455,15 +463,17 @@ unaffected by the flag either way.
 
 Under the stack backend, local Storage operations resolve their endpoint and credential from
 the selected composition rather than `[api]`/`[api.tls]`: the endpoint is the Storage member's
-observed HTTP binding plus `/storage/v1/...`, and the service-role JWT is generated from the
-primary database member's observed JWT secret. The stack is located by the project root
-(workdir realpath) through the `@supabase/stack` API, which reads stack state under
-`SUPABASE_HOME`.
+observed HTTP binding plus `/storage/v1/...`, and the service-role JWT is the one the stack saved
+with its credentials. The stack is located by the project root (workdir realpath) through the
+`@supabase/stack` API, which reads stack state under `SUPABASE_HOME`. A stack started with
+`[api.tls]` serves that endpoint over HTTPS, and Storage uses the certificate saved at start,
+not `config.toml`: a saved certificate with a self-signed root is the only trusted CA; a CA-issued
+one is verified against Bun's default trust store and `NODE_EXTRA_CA_CERTS`.
 Neither `storage` nor `seed buckets` ever creates a stack; the legacy `[api]`
 port/external-URL/TLS fields, their `SUPABASE_API_*` overrides, `SUPABASE_AUTH_JWT_SECRET`/
-`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_SERVICES_HOSTNAME`, the Docker daemon hostname, and
-the embedded Kong CA are all legacy-backend only and are not consulted on this path. The
-service-role JWT is never printed or logged.
+`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_SERVICES_HOSTNAME` and the Docker daemon hostname are
+legacy-backend only and are not consulted on this path. The service-role JWT is never printed or
+logged.
 
 Storage's capability state gates these operations:
 
