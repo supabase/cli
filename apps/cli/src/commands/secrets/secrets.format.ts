@@ -10,5 +10,5 @@ export function renderSecretsListTable(
   secrets: ReadonlyArray<{ readonly name: string; readonly value: string }>,
 ): string {
   const rows = secrets.map((s) => [s.name, s.value]);
-  return renderGlamourTable(SECRETS_HEADERS, rows);
+  return renderGlamourTable(SECRETS_HEADERS, rows, process.stdout, "No secrets set");
 }

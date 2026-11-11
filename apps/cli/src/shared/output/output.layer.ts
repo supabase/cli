@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import {
   autocomplete,
   cancel,
@@ -12,11 +13,13 @@ import {
   select,
   spinner,
   text,
+  updateSettings,
 } from "@clack/prompts";
 import { Writable } from "node:stream";
 import { styleText } from "node:util";
 import {
   DateTime,
+  Clock,
   Effect,
   Fiber,
   Layer,
@@ -28,6 +31,12 @@ import {
   Stream,
 } from "effect";
 
+import { muted } from "../../command-internal/colors.ts";
+import { formatDuration } from "../../command-internal/duration.ts";
+import { CLI_VERSION } from "../cli/version.ts";
+import { type Glyph, errorBlock, gutterStream, indentLines, statusLine } from "./gutter.ts";
+import { pickOne, pickWithSearch } from "./picker.ts";
+import { leaveDebugRun } from "./debug-run.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import { CommandTarget } from "./command-target.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
@@ -66,6 +75,101 @@ const withCommandTarget = Effect.fnUntraced(function* (data: unknown) {
   const target = yield* cell.value.json;
   return Option.isSome(target) ? { ...data, target: target.value } : data;
 });
+
+/** Renders a clack call into a string instead of writing it to `process.stdout`. */
+function renderClack(draw: (output: Writable) => void): string {
+  let rendered = "";
+  draw(
+    new Writable({
+      write(chunk, _encoding, done) {
+        rendered += String(chunk);
+        done();
+      },
+    }),
+  );
+  return rendered;
+}
+
+const HTTP_STATUS_TEXT: Readonly<Record<string, string>> = {
+  "400": "Bad Request",
+  "401": "Unauthorized",
+  "403": "Forbidden",
+  "404": "Not Found",
+  "409": "Conflict",
+  "422": "Unprocessable Entity",
+  "429": "Too Many Requests",
+  "500": "Internal Server Error",
+  "502": "Bad Gateway",
+  "503": "Service Unavailable",
+};
+
+/**
+ * Rewords the established `unexpected <action> status <code>: <body>` failures for people: the
+ * action and status as the headline, the response body as detail.
+ */
+function readableHttpFailure(message: string): { message: string; detail?: string } {
+  const match = /^unexpected (.+?) status (\d{3}): ?([\s\S]*)$/.exec(message);
+  if (match === null) {
+    // A response body glued to the headline moves to the detail line.
+    const body = /^(.+?): (\{[\s\S]*\})$/.exec(message);
+    return body === null ? { message } : { message: `${body[1]}.`, detail: body[2] ?? "" };
+  }
+  const [, action = "", status = "", body = ""] = match;
+  const statusText = HTTP_STATUS_TEXT[status];
+  return {
+    message: `Couldn't ${action}. The API returned ${status}${statusText ? ` ${statusText}` : ""}.`,
+    ...(body.trim() === "" ? {} : { detail: body.trim() }),
+  };
+}
+
+/**
+ * Redraws an established `Warning: …` line as a `!` status line when a person reads stderr on a
+ * terminal, so every warning follows the gutter without each caller changing.
+ */
+function asGutterWarning(text: string): string {
+  if (!process.stderr.isTTY) return text;
+  const plain = stripVTControlCharacters(text);
+  if (!plain.startsWith("Warning: ")) return text;
+  return statusLine("warning", plain.slice("Warning: ".length).replace(/\n$/, ""), process.stderr);
+}
+
+const OUTCOME_VERB =
+  /^(Created|Deleted|Disabled|Enabled|Updated|Finished|Removed|Linked|Unlinked|Deployed|Pushed|Applied|Restored|Paused|Unpaused|Set|Unset|Reverified|Activated|Saved|Wrote|Generated|Started|Stopped|Renamed|Uploaded|Downloaded|Copied|Moved|Repaired|Squashed|Reset|Signed|Logged|Successfully)\b/;
+
+/**
+ * Redraws an established one-line outcome (`Disabled preview branching for project: …`) as a `✓`
+ * result line with a blank line above it, so every command's result looks the same on a terminal.
+ */
+function asGutterOutcome(text: string): string {
+  const plain = stripVTControlCharacters(text).replace(/\n$/, "");
+  if (plain.includes("\n") || !OUTCOME_VERB.test(plain)) return text;
+  // "Deleted preview branch: abc" reads as "Deleted preview branch abc"; a dangling colon goes.
+  const sentence = plain.replace(/:\s*$/, "").replace(/: (\S+)$/, " $1");
+  return `\n${statusLine("success", sentence)}`;
+}
+
+const SECRET_FLAG = /pass|token|key|secret/i;
+
+/** The invoked command with `--debug` added; values of secret-looking flags are left out. */
+function rerunWithDebug(): string {
+  const args = process.argv.slice(2);
+  const shown = args.map((arg, index) => {
+    const previous = args[index - 1] ?? "";
+    if (/^--?[\w-]+=/.test(arg) && SECRET_FLAG.test(arg.split("=")[0] ?? "")) {
+      return `${arg.split("=")[0]}=…`;
+    }
+    return previous.startsWith("-") && SECRET_FLAG.test(previous) && !arg.startsWith("-")
+      ? "…"
+      : arg;
+  });
+  return ["supabase", ...shown, "--debug"].join(" ");
+}
+
+/** The command a text run opens with on a terminal: its space-joined path and short description. */
+export interface CommandHeader {
+  readonly path: string;
+  readonly description: string;
+}
 
 function formatTaskMessage(message: string | undefined): string | undefined {
   if (message === undefined || !message.includes("\n")) {
@@ -153,14 +257,73 @@ const stdioWriter = (stdio: typeof Stdio.Stdio.Service) => {
  * Each layer binds the shared `Output` contract to one transport policy:
  * interactive terminal output, single-shot JSON, or NDJSON streaming.
  */
-export const textOutputLayer = Layer.effect(
-  Output,
+const makeTextOutput = (header: CommandHeader | undefined) =>
   Effect.gen(function* () {
     const tty = yield* Tty;
-    const write = stdioWriter(yield* Stdio.Stdio);
+    const writeRaw = stdioWriter(yield* Stdio.Stdio);
+    // Normal output after a run of debug lines starts with a blank line.
+    const write = (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+      writeRaw(typeof chunk === "string" ? `${leaveDebugRun(chunk)}${chunk}` : chunk, stream);
     const scope = yield* Effect.scope;
 
+    // On a terminal, output follows the status gutter in gutter.ts: a glyph in column 0, text from
+    // column 2, and no clack guide lines. Piped output keeps clack's plain log lines.
+    const gutter = tty.stdoutIsTty;
+    if (gutter) updateSettings({ withGuide: false });
+    const statusEmitter =
+      (glyph: Glyph) =>
+      (message: string, opts: { output: Writable } = { output: process.stdout }) => {
+        opts.output.write(`${leaveDebugRun()}${statusLine(glyph, message)}`);
+      };
+    const statusLog = gutter
+      ? {
+          // The outcome starts a new phase, so a blank line separates it from what came before.
+          success: (message: string, opts: { output: Writable } = { output: process.stdout }) => {
+            opts.output.write("\n");
+            statusEmitter("success")(message, opts);
+          },
+          info: statusEmitter("none"),
+          warn: statusEmitter("warning"),
+          error: statusEmitter("error"),
+        }
+      : log;
+    const promptOutput = (stream: NodeJS.WriteStream = process.stdout) =>
+      gutter
+        ? { output: gutterStream(stream) }
+        : stream === process.stdout
+          ? {}
+          : { output: stream };
+    // A command run on a terminal opens with the CLI version and its description, on stderr, before
+    // its first output.
+    // The description shows how long the command took to reach its first output, unless a prompt
+    // came first: time spent waiting on a person says nothing about the command.
+    let opened = !gutter || header === undefined;
+    let timed = true;
+    const startedAt = yield* Clock.currentTimeMillis;
+    const open = Effect.gen(function* () {
+      if (opened || header === undefined) return;
+      opened = true;
+      const took = (yield* Clock.currentTimeMillis) - startedAt;
+      const timing = timed
+        ? ` ${muted(`[${formatDuration(Math.round(took) * 1_000_000)}]`, process.stderr)}`
+        : "";
+      yield* write(
+        `${muted(`Supabase CLI ${CLI_VERSION}`, process.stderr)}\n\n${statusLine("context", `${header.description}${timing}`, process.stderr)}`,
+        "stderr",
+      );
+    });
+    // A command that fails before any output still opens, so its error sits under its description.
+    yield* Effect.addFinalizer(() => open.pipe(Effect.ignore));
+    const openForPrompt = Effect.suspend(() => {
+      timed = false;
+      return open;
+    });
+    const afterOpen = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      open.pipe(Effect.andThen(effect));
+
     const DEFAULT_AUTOCOMPLETE_THRESHOLD = 10;
+    // clack otherwise fills the terminal's height with options.
+    const DEFAULT_MAX_ITEMS = 8;
     const buildSelectOptions = (
       options: ReadonlyArray<{
         readonly value: string;
@@ -243,6 +406,21 @@ export const textOutputLayer = Layer.effect(
         // clack defaults these to `process.stdout`; only override when a
         // caller explicitly asks for stderr.
         const clackOutput = behavior.stream === "stderr" ? process.stderr : undefined;
+        const prompted = promptOutput(clackOutput);
+        if (gutter) {
+          const picked = yield* (effectiveMode === "autocomplete" ? pickWithSearch : pickOne)(
+            message,
+            options,
+            {
+              maxItems: behavior.maxItems ?? DEFAULT_MAX_ITEMS,
+              stream: clackOutput ?? process.stdout,
+            },
+          );
+          if (picked === undefined) {
+            return yield* Effect.interrupt;
+          }
+          return picked;
+        }
         const value = yield* Effect.promise(() =>
           effectiveMode === "autocomplete"
             ? autocomplete<string>({
@@ -251,14 +429,14 @@ export const textOutputLayer = Layer.effect(
                 ...(behavior.placeholder !== undefined
                   ? { placeholder: behavior.placeholder }
                   : {}),
-                ...(behavior.maxItems !== undefined ? { maxItems: behavior.maxItems } : {}),
-                ...(clackOutput !== undefined ? { output: clackOutput } : {}),
+                maxItems: behavior.maxItems ?? DEFAULT_MAX_ITEMS,
+                ...prompted,
               })
             : select<string>({
                 message,
                 options: buildSelectOptions(options),
-                ...(behavior.maxItems !== undefined ? { maxItems: behavior.maxItems } : {}),
-                ...(clackOutput !== undefined ? { output: clackOutput } : {}),
+                maxItems: behavior.maxItems ?? DEFAULT_MAX_ITEMS,
+                ...prompted,
               }),
         );
         if (isCancel(value)) {
@@ -282,8 +460,10 @@ export const textOutputLayer = Layer.effect(
       Effect.gen(function* () {
         const value = yield* Effect.promise(() =>
           multiselect<string>({
+            ...promptOutput(),
             message,
             options: buildMultiSelectOptions(options),
+            maxItems: DEFAULT_MAX_ITEMS,
           }),
         );
         if (isCancel(value)) {
@@ -351,31 +531,33 @@ export const textOutputLayer = Layer.effect(
       emit: (message: string, opts: { spacing?: number; output: Writable }) => void,
       message: string,
     ) =>
-      withSpinnerPaused((spinnerPaused) => {
-        let rendered = "";
-        const output = new Writable({
-          write(chunk, _encoding, done) {
-            rendered += String(chunk);
-            done();
-          },
-        });
-        emit(message, spinnerPaused ? { spacing: 0, output } : { output });
-        return write(rendered);
-      });
+      afterOpen(
+        withSpinnerPaused((spinnerPaused) =>
+          write(
+            renderClack((output) =>
+              emit(message, spinnerPaused ? { spacing: 0, output } : { output }),
+            ),
+          ),
+        ),
+      );
 
     return Output.of({
       format: "text" as const,
       interactive: tty.stdoutIsTty,
-      intro: (title: string) => Effect.sync(() => intro(title)),
-      outro: (message: string) => Effect.sync(() => outro(message)),
-      info: (message: string) => logAround(log.info, message),
-      warn: (message: string) => logAround(log.warn, message),
-      error: (message: string) => logAround(log.error, message),
+      intro: (title: string) => (gutter ? open : Effect.sync(() => intro(title))),
+      outro: (message: string) =>
+        Effect.sync(() => {
+          if (gutter) statusLog.success(message);
+          else outro(message);
+        }),
+      info: (message: string) => logAround(statusLog.info, message),
+      warn: (message: string) => logAround(statusLog.warn, message),
+      error: (message: string) => logAround(statusLog.error, message),
       event: (event: StreamEvent) =>
         (event.type === "log-entry"
           ? Effect.succeed(`[${event.service}] ${event.line}`)
           : encodeJson(event)
-        ).pipe(Effect.flatMap((message) => logAround(log.info, message))),
+        ).pipe(Effect.flatMap((message) => logAround(statusLog.info, message))),
       task: (message: string) =>
         Effect.gen(function* () {
           let shown = false;
@@ -395,7 +577,11 @@ export const textOutputLayer = Layer.effect(
               log.step(currentMessage);
               return;
             }
-            shownSpinner = { handle: spinner(), message: currentMessage, pauses: 0 };
+            shownSpinner = {
+              handle: spinner(promptOutput()),
+              message: currentMessage,
+              pauses: 0,
+            };
             shown = true;
             shownSpinner.handle.start(currentMessage);
             activeSpinner = shownSpinner;
@@ -421,6 +607,18 @@ export const textOutputLayer = Layer.effect(
               else settle();
             }).pipe(Effect.andThen(Fiber.interrupt(pendingStart)));
 
+          // The spinner clears first, so the opening lines and the outcome never draw over it.
+          const settleWith = (nextMessage: string | undefined, emit: (line: string) => void) =>
+            finish(() => {
+              if (shown) shownSpinner?.handle.clear();
+            }).pipe(
+              Effect.andThen(
+                nextMessage === undefined
+                  ? Effect.void
+                  : afterOpen(Effect.sync(() => emit(nextMessage))),
+              ),
+            );
+
           return {
             message: (nextMessage: string) =>
               Effect.sync(() => {
@@ -439,34 +637,10 @@ export const textOutputLayer = Layer.effect(
                 }
               }),
             succeed: (nextMessage?: string) =>
-              finish(() => {
-                if (shown) {
-                  shownSpinner?.handle.stop(formatTaskMessage(nextMessage));
-                  return;
-                }
-                if (nextMessage !== undefined) {
-                  log.success(nextMessage);
-                }
-              }),
+              settleWith(nextMessage, (line) => statusLog.success(line)),
             fail: (nextMessage?: string) =>
-              finish(() => {
-                if (shown) {
-                  shownSpinner?.handle.error(formatTaskMessage(nextMessage));
-                  return;
-                }
-                if (nextMessage !== undefined) {
-                  log.error(nextMessage);
-                }
-              }),
-            info: (nextMessage?: string) =>
-              finish(() => {
-                if (shown) {
-                  shownSpinner?.handle.clear();
-                }
-                if (nextMessage !== undefined) {
-                  log.info(nextMessage);
-                }
-              }),
+              settleWith(nextMessage, (line) => statusLog.error(line)),
+            info: (nextMessage?: string) => settleWith(nextMessage, (line) => statusLog.info(line)),
             cancel: (nextMessage?: string) =>
               finish(() => {
                 if (shown) {
@@ -489,9 +663,11 @@ export const textOutputLayer = Layer.effect(
         opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
       ) =>
         Effect.gen(function* () {
+          yield* openForPrompt;
           const validate = opts?.validate;
           const value = yield* Effect.promise(() =>
             text({
+              ...promptOutput(),
               message,
               validate: validate ? (v: string | undefined) => validate(v ?? "") : undefined,
               defaultValue: opts?.defaultValue,
@@ -505,7 +681,8 @@ export const textOutputLayer = Layer.effect(
         }),
       promptPassword: (message: string) =>
         Effect.gen(function* () {
-          const value = yield* Effect.promise(() => password({ message }));
+          yield* openForPrompt;
+          const value = yield* Effect.promise(() => password({ ...promptOutput(), message }));
           if (isCancel(value)) {
             cancel("Operation cancelled.");
             return yield* Effect.interrupt;
@@ -514,8 +691,10 @@ export const textOutputLayer = Layer.effect(
         }),
       promptConfirm: (message: string, opts?: { defaultValue?: boolean }) =>
         Effect.gen(function* () {
+          yield* openForPrompt;
           const value = yield* Effect.promise(() =>
             confirm({
+              ...promptOutput(),
               message,
               initialValue: opts?.defaultValue,
             }),
@@ -526,20 +705,24 @@ export const textOutputLayer = Layer.effect(
           }
           return value;
         }),
-      promptSelect,
-      promptMultiSelect,
+      promptSelect: (message, options, behavior) =>
+        openForPrompt.pipe(Effect.andThen(promptSelect(message, options, behavior))),
+      promptMultiSelect: (message, options) =>
+        openForPrompt.pipe(Effect.andThen(promptMultiSelect(message, options))),
       progress: (opts: { max: number }) =>
-        Effect.sync(() => {
-          const bar = clackProgress({ max: opts.max, style: "heavy" });
-          return {
-            start: (msg: string) => Effect.sync(() => bar.start(msg)),
-            advance: (step: number, msg?: string) => Effect.sync(() => bar.advance(step, msg)),
-            message: (msg: string) => Effect.sync(() => bar.message(msg)),
-            stop: (msg: string) => Effect.sync(() => bar.stop(msg)),
-          };
-        }),
+        afterOpen(
+          Effect.sync(() => {
+            const bar = clackProgress({ max: opts.max, style: "heavy" });
+            return {
+              start: (msg: string) => Effect.sync(() => bar.start(msg)),
+              advance: (step: number, msg?: string) => Effect.sync(() => bar.advance(step, msg)),
+              message: (msg: string) => Effect.sync(() => bar.message(msg)),
+              stop: (msg: string) => Effect.sync(() => bar.stop(msg)),
+            };
+          }),
+        ),
       result: () => Effect.void,
-      success: (message: string) => logAround(log.success, message),
+      success: (message: string) => logAround(statusLog.success, message),
       fail: (err: {
         code: string;
         message: string;
@@ -554,18 +737,35 @@ export const textOutputLayer = Layer.effect(
             activeSpinner.pauses = 0;
             activeSpinner = undefined;
           }
-          // Bypasses clack's `log.error` framing (`│` guide + `■` icon): a
-          // red-styled message on stderr, optionally followed by a suggestion.
+          const debugHint =
+            err.suggestion === undefined &&
+            err.message !== CONTEXT_CANCELED_MESSAGE &&
+            !process.argv.includes("--debug");
+          if (process.stderr.isTTY) {
+            const headline = readableHttpFailure(err.message);
+            process.stderr.write(
+              `${leaveDebugRun("\n")}\n${errorBlock({
+                message: headline.message,
+                detail:
+                  [headline.detail, err.detail !== err.message ? err.detail : undefined]
+                    .filter((line) => line !== undefined)
+                    .join("\n") || undefined,
+                suggestion: err.suggestion,
+                recovery: debugHint
+                  ? { instruction: "See what went wrong", command: rerunWithDebug() }
+                  : undefined,
+              })}`,
+            );
+            return;
+          }
+          // Piped stderr keeps the established plain format.
           process.stderr.write(styleText("red", err.message) + "\n");
           if (err.detail !== undefined && err.detail !== err.message) {
             process.stderr.write(styleText("gray", err.detail) + "\n");
           }
           if (err.suggestion !== undefined) {
             process.stderr.write(err.suggestion + "\n");
-          } else if (
-            err.message !== CONTEXT_CANCELED_MESSAGE &&
-            !process.argv.includes("--debug")
-          ) {
+          } else if (debugHint) {
             // Withheld for the canceled sentinel: declining a prompt is a
             // user decision, not something to troubleshoot.
             process.stderr.write(
@@ -574,12 +774,29 @@ export const textOutputLayer = Layer.effect(
           }
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        withSpinnerPaused(() => write(text, stream)),
+        withSpinnerPaused(() =>
+          open.pipe(
+            Effect.andThen(
+              write(
+                (stream === "stdout" ? tty.stdoutIsTty : process.stderr.isTTY)
+                  ? indentLines(asGutterOutcome(stream === "stderr" ? asGutterWarning(text) : text))
+                  : text,
+                stream,
+              ),
+            ),
+          ),
+        ),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        withSpinnerPaused(() => write(bytes, stream)),
+        withSpinnerPaused(() => open.pipe(Effect.andThen(write(bytes, stream)))),
     });
-  }),
-);
+  });
+
+/** Text output with no opening lines, for runs that render no command's own output. */
+export const textOutputLayer = Layer.effect(Output, makeTextOutput(undefined));
+
+/** Text output that opens with `header` on a terminal. */
+export const commandTextOutputLayer = (header: CommandHeader | undefined) =>
+  Layer.effect(Output, makeTextOutput(header));
 
 // JSON mode keeps prompts disabled and emits one final machine-readable payload.
 export const jsonOutputLayer = Layer.effect(
@@ -764,10 +981,11 @@ export const streamJsonOutputLayer = Layer.effect(
 
 export function outputLayerFor(
   format: OutputFormat,
+  header?: CommandHeader,
 ): Layer.Layer<Output, never, Stdio.Stdio | Tty> {
   switch (format) {
     case "text":
-      return textOutputLayer;
+      return header === undefined ? textOutputLayer : commandTextOutputLayer(header);
     case "json":
       return jsonOutputLayer;
     case "stream-json":

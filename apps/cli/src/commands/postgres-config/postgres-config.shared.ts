@@ -40,6 +40,8 @@ function renderPostgresConfigTable(config: PostgresConfigMap): string {
   return renderGlamourTable(
     ["Parameter", "Value"],
     sortConfigEntries(config).map(([key, value]) => [key, formatPrettyValue(value)]),
+    process.stdout,
+    "No custom Postgres config overrides",
   );
 }
 
@@ -320,7 +322,7 @@ export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output
     return;
   }
 
-  yield* output.raw("- Custom Postgres Config -\n", "stderr");
+  if (!output.interactive) yield* output.raw("- Custom Postgres Config -\n", "stderr");
   yield* output.raw(renderPostgresConfigTable(config));
-  yield* output.raw("- End of Custom Postgres Config -\n", "stderr");
+  if (!output.interactive) yield* output.raw("- End of Custom Postgres Config -\n", "stderr");
 });

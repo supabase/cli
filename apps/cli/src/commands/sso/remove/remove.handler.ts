@@ -25,6 +25,8 @@ import {
 import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
 import { warnIfProjectUnhealthy } from "../sso.request-policy.ts";
 import type { SsoRemoveFlags } from "./remove.command.ts";
+import { CommandTarget } from "../../../shared/output/command-target.service.ts";
+import { detailRows } from "../../../shared/output/gutter.ts";
 
 const mapStatusOrNetwork = mapHttpError({
   networkError: SsoRemoveNetworkError,
@@ -70,9 +72,13 @@ export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlag
   yield* Effect.gen(function* () {
     const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
+    yield* CommandTarget.use((target) => target.holdAsParent);
     const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
+      yield* CommandTarget.use((target) =>
+        target.announceSubject({ name: "SSO provider", id: providerId }),
+      );
       yield* requireHostedMutationConsent({ action: `Remove SSO provider ${providerId}` });
 
       const removing =
@@ -115,6 +121,12 @@ export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlag
         return;
       }
 
+      if (output.interactive) {
+        const domains = (response.domains ?? []).map((entry) => entry.domain).filter(Boolean);
+        yield* output.success(`Removed SSO provider ${domains[0] ?? providerId}`);
+        if (domains.length > 0) yield* output.raw(detailRows([["Domains", domains.join(", ")]]));
+        return;
+      }
       yield* output.raw(renderSingleProvider(response));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));

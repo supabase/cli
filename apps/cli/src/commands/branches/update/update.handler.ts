@@ -22,8 +22,9 @@ import {
 } from "../branches.errors.ts";
 import { renderBranchesListTable } from "../branches.format.ts";
 import { promptBranchId } from "../branches.prompt.ts";
-import { resolveBranchProjectRef } from "../branches.resolver.ts";
+import { resolveBranchProjectRef, announceBranchTarget } from "../branches.resolver.ts";
 import type { BranchesUpdateFlags } from "./update.command.ts";
+import { CommandTarget } from "../../../shared/output/command-target.service.ts";
 
 type UpdatedBranch = typeof V1UpdateABranchConfigOutput.Type;
 
@@ -43,6 +44,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
+  yield* CommandTarget.use((target) => target.holdAsParent);
   const ref = yield* resolveProjectTarget(
     { remote: flags.remote, projectRef: flags.projectRef },
     { parent: true },
@@ -52,6 +54,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.branchId, ref);
     const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
+    yield* announceBranchTarget(branchInput, branchRef);
 
     yield* requireHostedMutationConsent({
       action: `Update preview branch ${branchInput}`,
@@ -131,7 +134,9 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
       return;
     }
 
-    yield* output.raw("Updated preview branch:\n", "stderr");
+    yield* output.interactive
+      ? output.success(`Updated preview branch ${updated.name}`)
+      : output.raw("Updated preview branch:\n", "stderr");
     yield* output.raw(renderBranchesListTable([updated]));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

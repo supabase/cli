@@ -12,8 +12,9 @@ import {
   BranchesPauseUnexpectedStatusError,
 } from "../branches.errors.ts";
 import { promptBranchId } from "../branches.prompt.ts";
-import { resolveBranchProjectRef } from "../branches.resolver.ts";
+import { resolveBranchProjectRef, announceBranchTarget } from "../branches.resolver.ts";
 import type { BranchesPauseFlags } from "./pause.command.ts";
+import { CommandTarget } from "../../../shared/output/command-target.service.ts";
 
 const mapPauseError = mapHttpError({
   networkError: BranchesPauseNetworkError,
@@ -30,6 +31,7 @@ export const branchesPause = Effect.fn("branches.pause")(function* (flags: Branc
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
+  yield* CommandTarget.use((target) => target.holdAsParent);
   const ref = yield* resolveProjectTarget(
     { remote: flags.remote, projectRef: flags.projectRef },
     { parent: true },
@@ -39,6 +41,7 @@ export const branchesPause = Effect.fn("branches.pause")(function* (flags: Branc
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.name, ref);
     const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
+    yield* announceBranchTarget(branchInput, branchRef);
 
     yield* requireHostedMutationConsent({
       action: `Pause preview branch ${branchInput}`,

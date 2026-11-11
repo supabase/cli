@@ -2,6 +2,9 @@ import { DateTime, Effect, Layer } from "effect";
 
 import { DebugFlag } from "./global-flags.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
+import { GUTTER } from "../shared/output/gutter.ts";
+import { enterDebugRun } from "../shared/output/debug-run.ts";
+import { muted } from "./colors.ts";
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 
@@ -21,7 +24,13 @@ export const debugLoggerLayer = Layer.effect(
 
     const writeLine = (message: string) =>
       Effect.sync(() => {
-        if (debug) process.stderr.write(`${message}\n`);
+        // On a terminal, debug lines sit on the gutter, dim, so they read as diagnostics.
+        if (debug)
+          process.stderr.write(
+            process.stderr.isTTY
+              ? `${enterDebugRun()}${GUTTER}${muted(message, process.stderr)}\n`
+              : `${message}\n`,
+          );
       });
 
     return DebugLogger.of({

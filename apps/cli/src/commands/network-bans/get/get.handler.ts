@@ -15,6 +15,8 @@ import {
   NetworkBansGetUnexpectedStatusError,
 } from "../network-bans.errors.ts";
 import type { NetworkBansGetFlags } from "./get.command.ts";
+import { GUTTER, detailRows } from "../../../shared/output/gutter.ts";
+import { muted } from "../../../command-internal/colors.ts";
 
 const mapGetError = mapHttpError({
   networkError: NetworkBansGetNetworkError,
@@ -51,6 +53,16 @@ export const networkBansGet = Effect.fn("network-bans.get")(function* (flags: Ne
         (output.format === "json" || output.format === "stream-json")
       ) {
         yield* output.success("", response);
+        return;
+      }
+
+      if (outputFlagFormat === undefined && output.interactive) {
+        const banned = response.banned_ipv4_addresses;
+        yield* output.raw(
+          banned.length === 0
+            ? `\n${GUTTER}${muted("No banned IPs", process.stdout)}\n`
+            : detailRows([["Banned IPs", banned.join(", ")]]),
+        );
         return;
       }
 

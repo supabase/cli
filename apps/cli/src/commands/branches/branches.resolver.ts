@@ -6,6 +6,7 @@ import {
   BranchesGetNetworkError,
   BranchesGetUnexpectedStatusError,
 } from "./branches.errors.ts";
+import { CommandTarget } from "../../shared/output/command-target.service.ts";
 
 const mapFindError = mapHttpError({
   networkError: BranchesFindNetworkError,
@@ -28,3 +29,13 @@ const mapGetError = mapHttpError({
 export function resolveBranchProjectRef(input: string, projectRef: string) {
   return resolveBranchProjectRefShared(input, projectRef, { mapGetError, mapFindError });
 }
+
+/** Names the branch a command acts on as its target, under which the parent project follows. */
+export const announceBranchTarget = (input: string, branchRef: string | undefined) =>
+  CommandTarget.use((target) =>
+    target.announceSubject({
+      name: input === branchRef ? undefined : input,
+      id: branchRef,
+      preview: true,
+    }),
+  );

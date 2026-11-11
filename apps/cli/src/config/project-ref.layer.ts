@@ -83,11 +83,22 @@ export const projectRefLayer = Layer.effect(
         ),
       );
       const names = new Map(projects.map((project) => [project.id, project.name] as const));
-      const options = projects.map((project) => ({
-        value: project.id,
-        label: project.id,
-        hint: `name: ${project.name}, org: ${project.organization_slug}, region: ${project.region}`,
-      }));
+      // Organization names make rows readable; without them the slug still identifies the org.
+      const organizations = yield* api.v1.listAllOrganizations().pipe(
+        Effect.map((orgs) => new Map(orgs.map((org) => [org.id, org.name] as const))),
+        Effect.orElseSucceed(() => new Map<string, string>()),
+      );
+      const options = projects.map((project) => {
+        const organization =
+          organizations.get(project.organization_slug) ??
+          organizations.get(project.organization_id) ??
+          project.organization_slug;
+        return {
+          value: project.id,
+          label: `${project.name} (${organization})`,
+          detail: `id:${project.id}, ${project.region}`,
+        };
+      });
       const chosen = yield* output.promptSelect(title, options).pipe(
         Effect.mapError(
           (cause) =>
@@ -194,7 +205,7 @@ export const projectRefLayer = Layer.effect(
             resolved = { ref: yield* assertValid(cliSettings.projectId.value) };
           } else if (tty.stdinIsTty && output.interactive) {
             // `resolveForLink` skips the ref-file fallback that `resolveRef` uses.
-            const picked = yield* pickProject("Select a project:");
+            const picked = yield* pickProject("Choose remote project");
             resolved = {
               ref: yield* assertValid(picked.ref),
               ...(picked.name === undefined ? {} : { name: picked.name }),

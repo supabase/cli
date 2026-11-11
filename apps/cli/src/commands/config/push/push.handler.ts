@@ -35,6 +35,7 @@ import {
   configProviderDisableWarnings,
   configScopeLine,
   type ConfigEnvOriginLookup,
+  configPlural,
 } from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
@@ -86,7 +87,11 @@ import {
   type PushEnvSourced,
   type PushForced,
   type PushUnencodable,
+  pushResourceTitle,
+  pushTerminalSection,
 } from "./push.format.ts";
+import { detailRows, nextStep } from "../../../shared/output/gutter.ts";
+import { emphasis, muted, property, success } from "../../../command-internal/colors.ts";
 import { comparePaths, isRecord } from "./push.paths.ts";
 import {
   PUSH_ADDON_GATES,
@@ -194,6 +199,9 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
 
 export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushFlags) {
   const output = yield* Output;
+  // A person at a terminal gets the plan as a diff, a result line and warnings; everyone else
+  // keeps the established lines.
+  const terminal = output.format === "text" && output.interactive;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -338,7 +346,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     const scope = configApiScope(attributes);
     // Always echoed (family consistency with `config diff`/`config pull`),
     // not just when a block is missing.
-    yield* output.raw(configScopeLine(scope), "stderr");
+    if (!terminal) yield* output.raw(configScopeLine(scope), "stderr");
     if (scope.present.length === 0) {
       return yield* new ConfigPushConfigEmptyError({
         message: `The API returned no configuration for project ${sanitizeInlineName(ref)}; nothing was pushed. Check that your access token can read the project's configuration.`,
@@ -532,11 +540,24 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     let authWriteRan = false;
     let secretsSent: ReadonlyArray<ReadonlyArray<string>> = [];
 
+    const terminalSections: Array<string> = [];
+    const upToDate: Array<string> = [];
+    let changeCount = 0;
     for (const resource of PUSH_RESOURCES) {
       const resourcePlan = resourcePlans.get(resource);
       if (resourcePlan === undefined) continue;
       const { changes, encoded, secrets: resourceSecrets } = resourcePlan;
       unencodable.push(...encoded.unencodable);
+      if (terminal) {
+        if (encoded.body !== undefined) {
+          const communicated = changesCommunicated(changes, encoded.encoded);
+          changeCount += communicated.length;
+          terminalSections.push(pushTerminalSection(pushResourceTitle(resource), communicated));
+        } else if (encoded.unencodable.length === 0) {
+          upToDate.push(pushResourceTitle(resource));
+        }
+        continue;
+      }
       if (encoded.body !== undefined) {
         const communicated = changesCommunicated(changes, encoded.encoded);
         yield* output.raw(
@@ -561,7 +582,27 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         yield* output.raw(pushUpToDateLine(resource), "stderr");
       }
     }
-    if (webhooksEnabled) {
+    if (terminal) {
+      if (webhooksEnabled) {
+        changeCount += 1;
+        terminalSections.push(
+          `${emphasis("Database webhooks", process.stderr)}\n    ${success("+", process.stderr)} ${property("enable webhooks", process.stderr)}\n`,
+        );
+      }
+      const upToDateRow =
+        upToDate.length === 0
+          ? ""
+          : detailRows(
+              [["Up to date", muted(upToDate.join(", "), process.stderr)]],
+              process.stderr,
+            );
+      yield* output.raw(
+        changeCount === 0
+          ? upToDateRow
+          : `\n${configPlural(changeCount, "change", "changes")} to push\n\n${terminalSections.join("\n")}\n${upToDateRow}\n`,
+        "stderr",
+      );
+    } else if (webhooksEnabled) {
       yield* output.raw(
         `Would enable webhooks for project: ${sanitizeInlineName(ref)}\n`,
         "stderr",
@@ -665,6 +706,26 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // below doesn't apply — that's specific to a credential whose own value was unresolved.
     const authUnavailable =
       services.find((service) => service.service === "auth")?.status === "unavailable";
+    if (terminal) {
+      const updated = services.filter((service) => service.status === "updated");
+      yield* updated.length === 0
+        ? output.success("Config is already up to date")
+        : output.success(
+            `Pushed ${configPlural(changeCount, "change", "changes")} to ${sanitizeInlineName(ref)}`,
+          );
+      if (updated.length > 0) {
+        yield* output.raw(
+          detailRows(
+            updated.map((service) => [
+              service.service === "experimental.webhooks"
+                ? "Webhooks"
+                : pushResourceTitle(service.service),
+              service.service === "experimental.webhooks" ? "enabled" : "updated",
+            ]),
+          ),
+        );
+      }
+    }
     const notes = pushNotes({
       unsupported,
       unencodable,
@@ -676,7 +737,15 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       remoteOnly: plan.remoteOnly,
       configPath,
     });
-    if (notes !== "") {
+    if (notes !== "" && terminal) {
+      yield* output.raw("\n", "stderr");
+      for (const note of notes.trimEnd().split("\n")) {
+        yield* output.warn(
+          note.replace(/^Note: /, "").replace(/ \(config push no longer[^)]*\)/, ""),
+        );
+      }
+      if (plan.remoteOnly > 0) yield* output.raw(nextStep("See them", "supabase config diff"));
+    } else if (notes !== "") {
       yield* output.raw(notes, "stderr");
     }
     yield* Effect.annotateCurrentSpan(

@@ -14,6 +14,7 @@ import { promptBlocker } from "./hosted-consent.prompt.ts";
 import type { PromptBlocker } from "./hosted-consent.prompt.ts";
 import type { HostedMutationConsent } from "./hosted-consent.token.ts";
 import { ignoredYesFiles, resolveHostedYes } from "./hosted-consent.yes.ts";
+import { statusLine } from "../../shared/output/gutter.ts";
 
 export interface HostedMutationRequest {
   /** An imperative, sentence-case phrase with no trailing period, such as "Apply 3 migrations". */
@@ -103,7 +104,12 @@ export const requireHostedMutationConsent = Effect.fn("HostedConsent.require")(f
 
   const approvedBy = yield* resolveHostedYes;
   if (Option.isSome(approvedBy)) {
-    yield* output.raw(`Confirmed by ${approvedBy.value}: ${request.action}${onTarget}\n`, "stderr");
+    yield* output.raw(
+      output.format === "text" && process.stderr.isTTY
+        ? statusLine("success", `Confirmed with ${approvedBy.value}`, process.stderr)
+        : `Confirmed by ${approvedBy.value}: ${request.action}${onTarget}\n`,
+      "stderr",
+    );
     yield* Effect.annotateCurrentSpan("consent.via", "yes");
     return grant(request.action, "yes");
   }

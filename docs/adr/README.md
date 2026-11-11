@@ -75,6 +75,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0031 | [Go CLI Removal](0031-go-cli-removal.md)                                                                       | accepted   |
 | 0032 | [Config Value Precedence](0032-config-value-precedence.md)                                                     | proposed   |
 | 0033 | [Target Selection and Hosted-Mutation Consent](0033-target-selection-and-hosted-mutation-consent.md)           | proposed   |
+| 0034 | [CLI Colour System](0034-cli-colour-system.md)                                                                 | proposed   |
 
 ## Template
 

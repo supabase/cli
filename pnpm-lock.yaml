@@ -313,6 +313,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.120.0
         version: 0.120.0(zod@4.5.4)
+      '@clack/core':
+        specifier: ^1.4.3
+        version: 1.4.3
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0

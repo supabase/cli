@@ -13,6 +13,8 @@ import {
   resolveStorageTarget,
 } from "../storage.frame.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
+import { GUTTER } from "../../../shared/output/gutter.ts";
+import { muted } from "../../../command-internal/colors.ts";
 
 /**
  * `supabase storage ls [path]` — list objects by path prefix.
@@ -68,6 +70,9 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
     );
 
     yield* Effect.annotateCurrentSpan({ "file.count": count });
+    if (count === 0 && output.format === "text" && output.interactive) {
+      yield* output.raw(`\n${GUTTER}${muted("No objects found", process.stdout)}\n`);
+    }
 
     if (output.format !== "text") {
       yield* output.success("", { paths });

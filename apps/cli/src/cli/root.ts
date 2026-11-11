@@ -68,6 +68,7 @@ import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import { extractCommandPath, type CliRootCommand } from "../shared/cli/run.ts";
+import { commandHeaderFor } from "../shared/cli/command-docs.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
 import type { OutputFormat } from "../shared/output/types.ts";
 import {
@@ -158,54 +159,55 @@ const agentDefaultOutputFormatFor = (
     ? "stream-json"
     : "json";
 
-export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
-  Command.make("supabase").pipe(
+export const rootCommandForFeatures = (options: RootCommandFeatures = {}) => {
+  const subcommands = [
+    backupsCommand,
+    bootstrapCommand,
+    branchesCommand,
+    completionCommand,
+    ...(options.computeEnabled ? [computeCommand] : []),
+    configCommand,
+    dbCommand,
+    domainsCommand,
+    encryptionCommand,
+    feedbackCommand,
+    functionsCommand,
+    genCommand,
+    initCommand,
+    inspectCommand,
+    issueCommand,
+    linkCommand,
+    loginCommand,
+    logoutCommand,
+    logsCommandFor(),
+    migrationCommand,
+    networkBansCommand,
+    networkRestrictionsCommand,
+    notebooksCommand,
+    orgsCommand,
+    postgresConfigCommand,
+    projectsCommand,
+    pullCommand,
+    secretsCommand,
+    seedCommand,
+    servicesCommand,
+    snippetsCommand,
+    sslEnforcementCommand,
+    ssoCommand,
+    ...(options.stackBackend === "stack" ? [stackCommand] : []),
+    options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
+    options.stackBackend === "stack" ? stackStatusAliasCommand : statusCommand,
+    options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
+    storageCommand,
+    telemetryCommand,
+    testCommand,
+    unlinkCommand,
+    vanitySubdomainsCommand,
+    whoamiCommand,
+  ];
+  return Command.make("supabase").pipe(
     Command.withDescription(rootDescription(CLI_VERSION)),
-    Command.withSubcommands([
-      backupsCommand,
-      bootstrapCommand,
-      branchesCommand,
-      completionCommand,
-      ...(options.computeEnabled ? [computeCommand] : []),
-      configCommand,
-      dbCommand,
-      domainsCommand,
-      encryptionCommand,
-      feedbackCommand,
-      functionsCommand,
-      genCommand,
-      initCommand,
-      inspectCommand,
-      issueCommand,
-      linkCommand,
-      loginCommand,
-      logoutCommand,
-      logsCommandFor(),
-      migrationCommand,
-      networkBansCommand,
-      networkRestrictionsCommand,
-      notebooksCommand,
-      orgsCommand,
-      postgresConfigCommand,
-      projectsCommand,
-      pullCommand,
-      secretsCommand,
-      seedCommand,
-      servicesCommand,
-      snippetsCommand,
-      sslEnforcementCommand,
-      ssoCommand,
-      ...(options.stackBackend === "stack" ? [stackCommand] : []),
-      options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
-      options.stackBackend === "stack" ? stackStatusAliasCommand : statusCommand,
-      options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
-      storageCommand,
-      telemetryCommand,
-      testCommand,
-      unlinkCommand,
-      vanitySubdomainsCommand,
-      whoamiCommand,
-    ]),
+    Command.withSubcommands(subcommands),
     Command.provide(
       Layer.unwrap(
         Effect.gen(function* () {
@@ -231,7 +233,10 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
           // (db query's human default) and no `-o` keep the normal text/json layers.
           const outputLayer = isMachineResourceFormat(resourceOutput)
             ? quietProgressTextOutputLayer
-            : outputLayerFor(outputFormat);
+            : outputLayerFor(
+                outputFormat,
+                commandHeaderFor(subcommands, extractCommandPath(cliArgs.args)),
+              );
 
           // A command that provides its own `machineErrorContextLayer` shadows the default cell.
           return Layer.mergeAll(
@@ -250,6 +255,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
     ),
     Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
   ) satisfies CliRootCommand;
+};
 
 /** Pairs the root with the agent default `runCli` applies before this root parses. */
 export const cliEntrypointForFeatures = (

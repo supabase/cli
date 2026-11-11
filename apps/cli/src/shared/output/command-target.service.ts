@@ -28,9 +28,21 @@ export const CommandTargetJson = Schema.Union([
 ]).pipe(Schema.toTaggedUnion("kind"));
 export type CommandTargetJson = typeof CommandTargetJson.Type;
 
-/** A target as announced to the user (`text`) and to machine consumers (`json`). */
+/** The parts of a target a terminal row shows: what it is, its ID, and where it points. */
+export interface TargetView {
+  /** The project name, or a label such as `Local stack` when there is no project. */
+  readonly name?: string | undefined;
+  readonly id?: string | undefined;
+  readonly branch?: string | undefined;
+  readonly production?: boolean | undefined;
+  readonly preview?: boolean | undefined;
+  readonly note?: string | undefined;
+}
+
+/** A target as announced to the user (`text`, `view`) and to machine consumers (`json`). */
 export interface RenderedTarget {
   readonly text: string;
+  readonly view?: TargetView;
   readonly json: CommandTargetJson;
 }
 
@@ -40,6 +52,13 @@ interface CommandTargetShape {
    * announced target also becomes the run's {@link CommandTargetJson}.
    */
   readonly announce: (rendered: RenderedTarget) => Effect.Effect<void>;
+  /**
+   * Marks the next announced target as the parent of what the command acts on: a terminal holds
+   * it back and prints it as a `Project` row after the {@link announceSubject} row.
+   */
+  readonly holdAsParent: Effect.Effect<void>;
+  /** Prints the thing the command acts on as the `Target` row, followed by any held parent. */
+  readonly announceSubject: (view: TargetView) => Effect.Effect<void>;
   /** Appends `hint` to the banner of a local target announced later in this run. */
   readonly hintLocal: (hint: string) => Effect.Effect<void>;
   /** The first announced target's JSON form, or `None` before any announcement. */

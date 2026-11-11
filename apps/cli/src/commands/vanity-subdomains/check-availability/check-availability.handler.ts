@@ -114,6 +114,12 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
           return;
         }
 
+        if (output.interactive) {
+          yield* response.available
+            ? output.success(`${desiredSubdomain} is available`)
+            : output.warn(`${desiredSubdomain} is already taken`);
+          return;
+        }
         yield* output.raw(`Subdomain ${desiredSubdomain} available: ${response.available}\n`);
       }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
     }).pipe(Effect.ensuring(telemetryState.flush));
