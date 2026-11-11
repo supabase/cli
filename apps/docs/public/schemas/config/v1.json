@@ -4247,6 +4247,7 @@
                     }
                   ],
                   "description": "controls whether secrets are available: `all` gives access to all defined secrets,\n`supabase` exposes only the `SUPABASE_*` defaults, `none` hides all\nsecrets, `string[]` gives only the secrets named in the list.",
+                  "default": "all",
                   "examples": ["all", ["STRIPE_KEY", "LLM_APIKEY"]]
                 },
                 "instances": {
@@ -8858,6 +8859,7 @@
                                   }
                                 ],
                                 "description": "controls whether secrets are available: `all` gives access to all defined secrets,\n`supabase` exposes only the `SUPABASE_*` defaults, `none` hides all\nsecrets, `string[]` gives only the secrets named in the list.",
+                                "default": "all",
                                 "examples": ["all", ["STRIPE_KEY", "LLM_APIKEY"]]
                               },
                               "instances": {
