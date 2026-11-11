@@ -55,6 +55,9 @@ const resourceTypes = new Map([
 export const unescapeIssueText = (text: string): string => text.replaceAll("\\`", "`");
 export const isUnavailableCheck = (lint: AdvisorLint): boolean =>
   lint.name === "advisor_check_unavailable" || lint.name === "project_not_active";
+const encodeAffectedIdentity = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(Schema.NullOr(Schema.String))),
+);
 const severityRank = { info: 0, warning: 1, critical: 2 };
 export const severityAtLeast = (severity: IssueSeverity, minimum: IssueSeverity): boolean =>
   severityRank[severity] >= severityRank[minimum];
@@ -95,7 +98,13 @@ export const groupIssues = Effect.fnUntraced(function* (
     const affected = {
       id:
         lint.cacheKey ||
-        JSON.stringify([lint.name, resource.type, resource.schema, resource.name, lint.detail]),
+        encodeAffectedIdentity([
+          lint.name,
+          resource.type,
+          resource.schema,
+          resource.name,
+          lint.detail,
+        ]),
       resource,
       detail: unescapeIssueText(lint.detail),
       severity,

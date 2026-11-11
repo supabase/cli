@@ -102,9 +102,14 @@ const runIssues = Effect.fn("issues.run")(function* (flags: IssuesFlags) {
       lints.push(...found.map((lint) => ({ ...lint, categories: [category.toUpperCase()] })));
     }
   });
+  const task = yield* output.task("Checking project issues");
+  const checked = collect.pipe(
+    Effect.tap(() => task.succeed()),
+    Effect.tapError(() => task.fail()),
+  );
   if (target.kind === "linked")
-    yield* collect.pipe(Effect.ensuring((yield* LinkedProjectCache).cache(target.ref)));
-  else yield* collect;
+    yield* checked.pipe(Effect.ensuring((yield* LinkedProjectCache).cache(target.ref)));
+  else yield* checked;
   const issues = yield* groupIssues(lints, minimum);
   yield* Effect.annotateCurrentSpan("issues.count", issues.length);
   if (output.format === "text") yield* output.raw(encodeHtmlSafeJsonIndented({ issues, checks }));
