@@ -1,5 +1,5 @@
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Path, type Redacted, Schema } from "effect";
+import { Cause, Effect, FileSystem, Layer, Option, Path, type Redacted, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import { publish } from "@supabase/stack/effect";
 
@@ -141,7 +141,13 @@ export const linkedProjectCacheLayer = Layer.effect(
           });
 
           yield* identifyProjectGroups(analytics, linked);
-        }).pipe(Effect.withSpan("LinkedProjectCache.cache"), Effect.ignore),
+        }).pipe(
+          Effect.withSpan("LinkedProjectCache.cache"),
+          Effect.ignore,
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+          ),
+        ),
     });
   }),
 );
