@@ -519,6 +519,7 @@ describe("src/internal.ts export surface", () => {
     expect(Object.keys(internalEntrypoint).sort()).toMatchInlineSnapshot(`
       [
         "AUTH_HOOK_NAMES",
+        "CliConfigConvertError",
         "CliConfigWriteError",
         "DEFAULT_MIGRATION_CHECK_SEVERITY",
         "ENV_CAPTURE_REGEX",
@@ -527,6 +528,8 @@ describe("src/internal.ts export surface", () => {
         "PROVIDER_SIGNUP_ALIASES",
         "applyConfigEdits",
         "cliConfigFormatForPath",
+        "convertCliConfigTomlToJsonc",
+        "createCliConfigDocumentText",
         "decodeCliConfigDocumentForValidationEffect",
         "decodeMergedCliConfig",
         "dualScopeProjectConfigPaths",
@@ -544,6 +547,7 @@ describe("src/internal.ts export surface", () => {
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "unmappedSecretApiPaths",
+        "updateJsonDocument",
         "withoutSafeIntegerBounds",
         "writeCliConfigDocumentText",
       ]

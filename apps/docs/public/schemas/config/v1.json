@@ -3,6 +3,7 @@
   "$id": "https://supabase.com/schemas/config/v1.json",
   "title": "Supabase CLI config (CliConfig)",
   "description": "The Supabase CLI's local project config document (supabase/config.toml or supabase/config.json).",
+  "allowTrailingCommas": true,
   "type": "object",
   "properties": {
     "project_id": {

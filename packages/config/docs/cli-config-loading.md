@@ -97,7 +97,7 @@ to check only that exact directory, with no ancestor climb.
 
 Within one discovered `supabase/` directory, `config.json` or `config.jsonc` takes precedence over
 `config.toml` when both exist. Discovery never fails on a `config.json` + `config.jsonc` pair; loading
-and saving do.
+and saving do. `supabase config convert` migrates a `config.toml` project to `config.jsonc`.
 
 This produces a `CliProjectPaths` (the type is exported from `@supabase/config`):
 
