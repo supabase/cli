@@ -5864,6 +5864,22 @@ content_path = "./supabase/templates/custom_notice.html"
       ).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("maps SUPABASE_API_DB_POOL to PostgREST's PGRST_DB_POOL", () =>
+      withEnvVar(
+        "SUPABASE_API_DB_POOL",
+        "10",
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const restCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_rest_"),
+          );
+          expect(restCreate?.env["PGRST_DB_POOL"]).toBe("10");
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_API_MAX_ROWS",
       () =>

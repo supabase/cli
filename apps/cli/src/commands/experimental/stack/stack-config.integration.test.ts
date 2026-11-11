@@ -199,6 +199,24 @@ max_rows = 250
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("hands REST [api] db_pool only when set", () =>
+    Effect.gen(function* () {
+      const restConfig = (name: string, apiSection: string) =>
+        Effect.gen(function* () {
+          const config = yield* load(yield* project(`project_id = "${name}"\n${apiSection}`));
+          const rest = byService(yield* config.creations(name)).get("rest");
+          return rest?.service === "rest" ? rest.config : undefined;
+        });
+
+      expect(yield* restConfig("stack-config-pool", "[api]\ndb_pool = 10\n")).toMatchObject({
+        dbPool: 10,
+      });
+      const unset = yield* restConfig("stack-config-no-pool", "");
+      expect(unset).toMatchObject({ maxRows: 1000 });
+      expect(unset).not.toHaveProperty("dbPool");
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
     Effect.gen(function* () {
       const root = yield* project(renderCliConfigTemplate("stack-config-init", false, true));

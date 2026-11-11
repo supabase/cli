@@ -877,6 +877,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const apiSchemas = config.api.schemas;
     const apiExtraSearchPath = config.api.extra_search_path;
     const apiMaxRows = config.api.max_rows;
+    const apiDbPool = config.api.db_pool;
 
     // `smtp_port`/`pop3_port` have no TOML default, so `?? 0` preserves the "unconfigured" signal
     // `mailpit.service.ts`'s `!== 0` publish guard checks.
@@ -1046,6 +1047,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               schemas: apiSchemas,
               extraSearchPath: apiExtraSearchPath,
               maxRows: apiMaxRows,
+              dbPool: apiDbPool,
               dbUrl: values.dbUrl,
               jwks,
             }),
