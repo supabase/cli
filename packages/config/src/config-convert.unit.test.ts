@@ -494,6 +494,18 @@ describe("convertCliConfigTomlToJsonc: commented-out examples", () => {
     }
   });
 
+  test("prose above a commented header of an existing table stays above its resolved keys", () => {
+    const source =
+      "[auth.hook.send_sms]\nenabled = true\n\n# Only enable this in development.\n# [auth]\n# hook.custom_access_token.enabled = true\n";
+    const lines = converted(source).text.split("\n");
+    const prose = lines.findIndex((line) => line.includes("// Only enable this in development."));
+    expect(lines[prose + 1]?.trim()).toBe('// "custom_access_token": { "enabled": true },');
+    expect(uncommented(lines.join("\n"))).toMatchObject({
+      auth: { hook: { custom_access_token: { enabled: true }, send_sms: { enabled: true } } },
+    });
+    expectEachCommentOnce(source, lines.join("\n"));
+  });
+
   test("commented dotted keys in an active table share one commented object", () => {
     const source = '[auth]\nenabled = true\n# hook.a.enabled = true\n# hook.a.uri = "x"\n';
     const { text } = converted(source);

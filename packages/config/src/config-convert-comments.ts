@@ -421,9 +421,10 @@ function placeResolved(
   at: number,
   blankBefore: boolean,
 ): PlacedComment | undefined {
-  const byHost = new Map<CommentHost, Array<CommentedLine>>([[table, [...lead]]]);
+  const byHost = new Map<CommentHost, Array<CommentedLine>>([[table, []]]);
+  let firstHost: CommentHost | undefined;
   let lastHost = table;
-  let prose: Array<CommentedLine> = [];
+  let prose: Array<CommentedLine> = [...lead];
   for (const line of lines) {
     if (line.kind !== "kv") {
       prose.push(toCommentedLine(line));
@@ -435,16 +436,18 @@ function placeResolved(
       ...prose,
       { kind: "kv", path, value: line.value },
     ]);
+    firstHost ??= host;
     lastHost = host;
     prose = [];
   }
   byHost.get(lastHost)?.push(...prose);
+  firstHost ??= table;
   let own: PlacedComment | undefined;
   for (const [host, source] of byHost) {
     if (source.length === 0) {
       continue;
     }
-    const block = { at, source, blankBefore: host === table && blankBefore };
+    const block = { at, source, blankBefore: host === firstHost && blankBefore };
     host.placed.push(block);
     if (host === table) {
       own = block;
