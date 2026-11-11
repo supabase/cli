@@ -194,12 +194,12 @@ the timing ranges, API calls per command, and the slowest phases. It reports:
 The baseline API calls per workload on `develop` (a project-scoped command
 also refreshes the linked-project cache, so it makes two calls):
 
-| Workload                                   | API calls                                                              |
-| ------------------------------------------ | ---------------------------------------------------------------------- |
-| `version`, `help`, `init`, `migration-new` | 0                                                                      |
-| `projects-list`                            | 1: `GET /v1/projects`                                                  |
-| `gen-types`                                | 2: `GET /v1/projects/{ref}/types/typescript`, `GET /v1/projects/{ref}` |
-| `functions-list`                           | 2: `GET /v1/projects/{ref}/functions`, `GET /v1/projects/{ref}`        |
+| Workload                                                     | API calls                                                              |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `version`, `help`, `init`, `migration-new`, `config-convert` | 0                                                                      |
+| `projects-list`                                              | 1: `GET /v1/projects`                                                  |
+| `gen-types`                                                  | 2: `GET /v1/projects/{ref}/types/typescript`, `GET /v1/projects/{ref}` |
+| `functions-list`                                             | 2: `GET /v1/projects/{ref}/functions`, `GET /v1/projects/{ref}`        |
 
 `SUPABASE_NO_KEYRING=1` disables the keyring (`CommandCredentials.load` reports
 `keyring.enabled=false`); the value `true` is not recognized. Counts come from the untimed traced

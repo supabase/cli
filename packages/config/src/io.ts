@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Clock, Effect, FileSystem, Option, Path, Predicate, Redacted } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
@@ -933,6 +934,57 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
     ignoredPaths: [],
     deprecatedPaths: [],
   } satisfies LoadedCliConfig;
+});
+
+const succeedUnlessExists = (error: PlatformError) =>
+  Predicate.isTagged(error.reason, "AlreadyExists") ? Effect.succeed(false) : Effect.fail(error);
+
+/** Publishes a new file with exactly `mode`, never replacing an existing one: `false` means the
+ * target already existed and was left untouched. Where hard links are unsupported, it falls back
+ * to an exclusive create, which readers can observe mid-write. */
+export const createCliConfigDocumentText = Effect.fn("CliConfig.createDocument")(function* (
+  filePath: string,
+  content: string,
+  mode: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const now = yield* Clock.currentTimeMillis;
+  const tmpPath = `${filePath}.tmp.${now}.${randomBytes(3).toString("hex")}`;
+
+  const createExclusive = Effect.scoped(
+    Effect.gen(function* () {
+      const file = yield* fs.open(filePath, { flag: "wx", mode });
+      yield* Effect.gen(function* () {
+        yield* fs.chmod(filePath, mode);
+        yield* file.writeAll(new TextEncoder().encode(content));
+      }).pipe(Effect.onError(() => fs.remove(filePath).pipe(Effect.ignore)));
+      return true;
+    }),
+  ).pipe(Effect.catchTag("PlatformError", succeedUnlessExists));
+
+  const created = yield* Effect.gen(function* () {
+    yield* fs.writeFileString(tmpPath, content, { mode });
+    yield* fs.chmod(tmpPath, mode);
+    return yield* fs.link(tmpPath, filePath).pipe(
+      Effect.as(true),
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "AlreadyExists") ? Effect.succeed(false) : createExclusive,
+      ),
+    );
+  }).pipe(
+    Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)),
+    Effect.catchTag("PlatformError", (cause) =>
+      Effect.fail(
+        new CliConfigWriteError({
+          path: filePath,
+          cause,
+          message: `Failed to write ${filePath}: ${cause.message}`,
+        }),
+      ),
+    ),
+  );
+  yield* Effect.annotateCurrentSpan("config.created", created);
+  return created;
 });
 
 /** Atomically replaces text while applying the target mode at creation to protect sensitive files. */

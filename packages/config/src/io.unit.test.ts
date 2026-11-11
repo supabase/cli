@@ -36,6 +36,7 @@ import {
   remoteNameForProjectRef,
   remoteProjectIdEntries,
   saveCliConfig,
+  createCliConfigDocumentText,
   writeCliConfigDocumentText,
 } from "./io.ts";
 import { loadCliConfig as loadCliConfigFromNode } from "./node.ts";
@@ -1210,6 +1211,24 @@ major_version = 16
         const written = yield* fs.readFileString(tomlPath);
         expect(written.split("\n")[0]).toBe(directive);
         expect(written).toContain('project_id = "ref_123"');
+      }),
+    ));
+
+  test("saving TOML keeps a #:schema directive that has trailing whitespace", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
+        const directive = "#:schema https://example.com/config.schema.json";
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(tomlPath, `${directive}  \nproject_id = "old_ref"\n`);
+
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        const written = yield* fs.readFileString(tomlPath);
+        expect(written.split("\n")[0]?.trimEnd()).toBe(directive);
       }),
     ));
 
@@ -3124,6 +3143,91 @@ describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
     expect(remoteProjectIdEntries("garbage")).toEqual([]);
     expect(remoteProjectIdEntries(["array"])).toEqual([]);
   });
+});
+
+describe("createCliConfigDocumentText", () => {
+  function targetIn() {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const dir = join(yield* makeTempProject(), "supabase");
+      yield* fs.makeDirectory(dir, { recursive: true });
+      return { dir, filePath: join(dir, "config.jsonc") };
+    });
+  }
+
+  test("creates the file with the requested mode and no temp file left behind", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+
+        const created = yield* createCliConfigDocumentText(filePath, "{}\n", 0o600);
+
+        expect(created).toBe(true);
+        expect(yield* fs.readFileString(filePath)).toBe("{}\n");
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+
+  test("applies the requested mode exactly, whatever the umask", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { filePath } = yield* targetIn();
+
+        yield* createCliConfigDocumentText(filePath, "{}\n", 0o666);
+
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o666);
+      }),
+    ));
+
+  test("creates the file exclusively when the filesystem has no hard links", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+        const noLinks: FileSystem.FileSystem = {
+          ...fs,
+          link: (from) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "link",
+                pathOrDescriptor: from,
+                description: "operation not supported",
+              }),
+            ),
+        };
+        const create = (content: string) =>
+          createCliConfigDocumentText(filePath, content, 0o600).pipe(
+            Effect.provideService(FileSystem.FileSystem, noLinks),
+          );
+
+        expect(yield* create("{}\n")).toBe(true);
+        expect(yield* create('{ "second": true }\n')).toBe(false);
+        expect(yield* fs.readFileString(filePath)).toBe("{}\n");
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+
+  test("returns false and leaves an existing file untouched", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+        yield* fs.writeFileString(filePath, '{ "kept": true }\n');
+
+        const created = yield* createCliConfigDocumentText(filePath, "{}\n", 0o600);
+
+        expect(created).toBe(false);
+        expect(yield* fs.readFileString(filePath)).toBe('{ "kept": true }\n');
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
 });
 
 describe("writeCliConfigDocumentText", () => {

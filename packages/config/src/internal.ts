@@ -23,7 +23,13 @@ export {
   type ConfigEditRefusal,
   type ConfigEditRefusalReason,
   type ConfigEditValue,
+  updateJsonDocument,
 } from "./config-edit.ts";
+export {
+  CliConfigConvertError,
+  convertCliConfigTomlToJsonc,
+  type MovedTomlComment,
+} from "./config-convert.ts";
 export { projectConfigApiBlockKeys } from "./project-config/api-attributes.ts";
 export { dualScopeProjectConfigPaths } from "./project-config/project-config.ts";
 export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";
@@ -43,6 +49,7 @@ export {
   type ParseMergeCliConfigOptions,
   remoteNameForProjectRef,
   remoteProjectIdEntries,
+  createCliConfigDocumentText,
   writeCliConfigDocumentText,
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,
