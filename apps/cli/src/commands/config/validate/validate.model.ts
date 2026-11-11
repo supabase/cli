@@ -26,6 +26,8 @@ export interface ConfigProblem {
   readonly remote?: string;
   /** Names the file a pathless problem is about when it is not the validated one. */
   readonly subject?: string;
+  /** Names a pathless problem's subject in the text report when no file is associated with it. */
+  readonly label?: string;
   /** What is wrong, short and free of configured values. */
   readonly reason: string;
   readonly help?: string;

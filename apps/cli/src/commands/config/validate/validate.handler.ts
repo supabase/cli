@@ -39,6 +39,7 @@ import {
   describeCliConfigOrigin,
   type CliConfigKeyOrigin,
 } from "../../../config/cli-config-key.ts";
+import type { CliConfigRemoteFailure } from "../../../config/cli-config-remote.ts";
 import { getDocumentValue, isDocumentRecord } from "../../../config/cli-config-document.ts";
 import { flattenSchemaIssues } from "../../../config/cli-config-schema-issues.ts";
 import {
@@ -111,26 +112,27 @@ const withRemote = (
 const reportFormat = (file: string, format: FileFormat): ReportFormat =>
   format === "toml" ? "toml" : file.endsWith(".jsonc") ? "jsonc" : "json";
 
-const stripBrackets = (key: string): string => key.replace(/^\[|\]$/g, "");
+const TOML_BARE_KEY = /^[A-Za-z0-9_-]+$/;
+
+const tomlSegment = (segment: string): string =>
+  TOML_BARE_KEY.test(segment) ? segment : JSON.stringify(segment);
 
 function removedKeyProblems(
   parsed: ParsedCliConfigDocument,
   format: ReportFormat,
 ): ReadonlyArray<ConfigProblem> {
-  return parsed.removedKeys.map(({ key, replacement }) => {
-    const split = splitRemotePath(stripBrackets(key).split("."));
-    const local = displayPath(split.path);
-    const replacementLocal = splitRemotePath(stripBrackets(replacement).split(".")).path.join(".");
-    const isTable = key.startsWith("[");
-    const scope = split.remote === undefined ? "" : `remotes.${split.remote}.`;
+  return parsed.removedKeys.map(({ key, path, replacementPath, remote }) => {
+    const scope = remote === undefined ? [] : ["remotes", remote];
+    const tomlTable = (segments: ReadonlyArray<string>): string =>
+      `[${[...scope, ...segments].map(tomlSegment).join(".")}]`;
     return problem("removed_key", {
-      path: split.path,
+      path,
       reason: "removed",
       help:
-        isTable && format === "toml"
-          ? `rename [${scope}${local}] to [${scope}${replacementLocal}]`
-          : `use ${replacementLocal} instead`,
-      ...(split.remote === undefined ? {} : { remote: split.remote }),
+        key.startsWith("[") && format === "toml"
+          ? `rename ${tomlTable(path)} to ${tomlTable(replacementPath)}`
+          : `use ${displayPath(replacementPath)} instead`,
+      ...(remote === undefined ? {} : { remote }),
     });
   });
 }
@@ -313,7 +315,7 @@ function envLoadProblem(error: CliConfigLoadError): ConfigProblem {
   const { file } = error;
   if (file === undefined) {
     return problem("env_file", {
-      subject: "environment variables",
+      label: "environment variables",
       reason: "could not be resolved",
       help: "check the variables set in your shell",
     });
@@ -341,25 +343,22 @@ function remotesShapeProblems(rawRemotes: unknown): ReadonlyArray<ConfigProblem>
 }
 
 function remoteFailureProblem(
-  failure: { remote: string; message: string; envName?: string },
+  failure: Pick<CliConfigRemoteFailure, "remote" | "kind" | "duplicateOf" | "envName">,
   file: string,
 ): ConfigProblem {
-  const duplicate = /^duplicate project_id for \[remotes\.[^\]]+\] and \[remotes\.([^\]]+)\]$/.exec(
-    failure.message,
-  );
   return problem("remote_project_id", {
     path: ["project_id"],
     remote: failure.remote,
     reason:
-      duplicate?.[1] === undefined
-        ? "not a project ref"
-        : `same project_id as remotes.${duplicate[1]}`,
+      failure.kind === "duplicate"
+        ? `same project_id as remotes.${failure.duplicateOf}`
+        : "not a project ref",
     ...(failure.envName === undefined
       ? {
           help:
-            duplicate?.[1] === undefined
-              ? "use the 20-character ref from your project's dashboard URL"
-              : "give each remote its own project_id",
+            failure.kind === "duplicate"
+              ? "give each remote its own project_id"
+              : "use the 20-character ref from your project's dashboard URL",
         }
       : {
           external: true as const,
@@ -620,51 +619,62 @@ export const configValidate = Effect.fn("config.validate")(function* () {
     }
 
     const references = envReferences(parsed.rawDocument);
-    const { unresolved, unresolvedProjectIdRemotes } = yield* Effect.gen(function* () {
-      const none = {
-        unresolved: [] as ReadonlyArray<EnvReference>,
-        unresolvedProjectIdRemotes: new Set<string>(),
-      };
-      if (references.length === 0) return none;
-      const resolved: ResolvedCliConfig | undefined =
-        base.resolved ??
-        (yield* configValues
-          .load({
-            workdir,
-            projectRef: Option.none(),
-            ignoreConfigFile: true,
-            validation: true,
-          })
-          .pipe(Effect.option, Effect.map(Option.getOrUndefined)));
-      if (resolved === undefined) return none;
-      const projectIdRemotes = references.flatMap((reference) =>
-        reference.remote !== undefined && reference.path.join(".") === "project_id"
-          ? [reference.remote]
-          : [],
-      );
-      const values = yield* resolved
-        .envValues([
-          ...references.map((reference) => reference.name),
-          ...projectIdRemotes.map(cliRemoteProjectIdEnvName),
-        ])
-        .pipe(Effect.orElseSucceed((): Record<string, string> => ({})));
-      const unresolvedRefs = references.filter((reference) => values[reference.name] === undefined);
-      return {
-        unresolved: unresolvedRefs,
-        unresolvedProjectIdRemotes: new Set(
-          unresolvedRefs.flatMap((reference) =>
-            reference.remote !== undefined &&
-            reference.path.join(".") === "project_id" &&
-            values[cliRemoteProjectIdEnvName(reference.remote)] === undefined
-              ? [reference.remote]
-              : [],
+    const { unresolved, unresolvedProjectIdRemotes, overriddenProjectIdRemotes } =
+      yield* Effect.gen(function* () {
+        const none = {
+          unresolved: [] as ReadonlyArray<EnvReference>,
+          unresolvedProjectIdRemotes: new Set<string>(),
+          overriddenProjectIdRemotes: new Set<string>(),
+        };
+        if (references.length === 0) return none;
+        const resolved: ResolvedCliConfig | undefined =
+          base.resolved ??
+          (yield* configValues
+            .load({
+              workdir,
+              projectRef: Option.none(),
+              ignoreConfigFile: true,
+              validation: true,
+            })
+            .pipe(Effect.option, Effect.map(Option.getOrUndefined)));
+        if (resolved === undefined) return none;
+        const projectIdRemotes = references.flatMap((reference) =>
+          reference.remote !== undefined && reference.path.join(".") === "project_id"
+            ? [reference.remote]
+            : [],
+        );
+        const values = yield* resolved
+          .envValues([
+            ...references.map((reference) => reference.name),
+            ...projectIdRemotes.map(cliRemoteProjectIdEnvName),
+          ])
+          .pipe(Effect.orElseSucceed((): Record<string, string> => ({})));
+        const unresolvedRefs = references.filter(
+          (reference) => values[reference.name] === undefined,
+        );
+        return {
+          unresolved: unresolvedRefs,
+          overriddenProjectIdRemotes: new Set(
+            projectIdRemotes.filter(
+              (name) => values[cliRemoteProjectIdEnvName(name)] !== undefined,
+            ),
           ),
-        ),
-      };
-    }).pipe(Effect.withSpan("config.validate.env"));
+          unresolvedProjectIdRemotes: new Set(
+            unresolvedRefs.flatMap((reference) =>
+              reference.remote !== undefined &&
+              reference.path.join(".") === "project_id" &&
+              values[cliRemoteProjectIdEnvName(reference.remote)] === undefined
+                ? [reference.remote]
+                : [],
+            ),
+          ),
+        };
+      }).pipe(Effect.withSpan("config.validate.env"));
 
     const failedRemotes = new Map(
-      (base.resolved?.remoteFailures ?? []).map((failure) => [failure.remote, failure]),
+      (base.resolved?.remoteFailures ?? [])
+        .filter((failure) => failure.kind === "invalid")
+        .map((failure) => [failure.remote, failure]),
     );
     const skippedRemotes = remoteNames
       .filter((name) => failedRemotes.has(name))
@@ -719,15 +729,16 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       unresolvedFor,
     );
 
-    const isRelevantIn = (reference: EnvReference, context: string | undefined): boolean => {
-      if (CLI_CONFIG_OPTIONAL_ENV_PATHS[displayPath(reference.path)] !== undefined) return false;
+    const isGateOpen = (reference: EnvReference, context: string | undefined): boolean => {
       const owner = passes.get(context)?.resolved;
-      const gate = nearestEnabledGate(
-        [owner?.materialized.config, owner?.loaded.document],
-        reference.path,
+      return (
+        nearestEnabledGate([owner?.materialized.config, owner?.loaded.document], reference.path) !==
+        false
       );
-      return gate !== false;
     };
+    const isRelevantIn = (reference: EnvReference, context: string | undefined): boolean =>
+      CLI_CONFIG_OPTIONAL_ENV_PATHS[displayPath(reference.path)] === undefined &&
+      isGateOpen(reference, context);
     const envWarning = (reference: EnvReference, remote: string | undefined) =>
       problem("env_unresolved", {
         severity: "warning",
@@ -745,8 +756,16 @@ export const configValidate = Effect.fn("config.validate")(function* () {
     const envWarnings = unresolved.flatMap((reference) => {
       const warns = (context: string | undefined) =>
         !isOverridden(reference, context) &&
-        (blamed.some((item) => item.reference === reference && item.remote === context) ||
-          isRelevantIn(reference, context));
+        (blamed.some((item) => item.reference === reference && item.remote === context)
+          ? isGateOpen(reference, context)
+          : isRelevantIn(reference, context));
+      if (
+        reference.remote !== undefined &&
+        reference.path.join(".") === "project_id" &&
+        overriddenProjectIdRemotes.has(reference.remote)
+      ) {
+        return [];
+      }
       if (reference.remote !== undefined) {
         return warns(reference.remote) ? [envWarning(reference, reference.remote)] : [];
       }

@@ -71,6 +71,17 @@ describe("locateCliConfigKey (toml)", () => {
     expect(location?.endColumn).toBe(2 + "auth.external.github".length);
   });
 
+  test("spans a header whose quoted segment contains a closing bracket", () => {
+    const header = '[storage.buckets."photos]archive"]';
+    const location = locateCliConfigKey(
+      `${header}\npublic = true\n`,
+      "toml",
+      ["storage", "buckets", "photos]archive"],
+      "key",
+    );
+    expect(location).toMatchObject({ line: 1, column: 2, endColumn: header.length, exact: true });
+  });
+
   test("falls back to the parent header for a missing leaf", () => {
     expect(
       locateCliConfigKey(toml, "toml", ["auth", "external", "github", "secret"], "key"),

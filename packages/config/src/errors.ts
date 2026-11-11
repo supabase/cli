@@ -22,7 +22,13 @@ export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")
 export class CliConfigRemovedKeyError extends Data.TaggedError("CliConfigRemovedKeyError")<{
   readonly path: string;
   readonly format: ConfigFormat;
-  readonly removedKeys: ReadonlyArray<{ readonly key: string; readonly replacement: string }>;
+  readonly removedKeys: ReadonlyArray<{
+    readonly key: string;
+    readonly replacement: string;
+    readonly path: ReadonlyArray<string>;
+    readonly replacementPath: ReadonlyArray<string>;
+    readonly remote?: string;
+  }>;
 }> {
   override get message(): string {
     const file = this.path.split(/[\\/]/).slice(-2).join("/");

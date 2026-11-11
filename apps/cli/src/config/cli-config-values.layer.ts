@@ -732,6 +732,7 @@ export const cliConfigValuesLayer = Layer.effect(
     const invalidate = Effect.all([
       Cache.invalidateAll(cache),
       Cache.invalidateAll(parsedDocuments),
+      Cache.invalidateAll(validationParsedDocuments),
     ]).pipe(Effect.asVoid);
 
     return CliConfigValues.of({

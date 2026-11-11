@@ -422,6 +422,50 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("still validates a duplicate remote and names a bracketed original", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          `project_id = "demo"\n[remotes."a]b"]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.b]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.b.api]\nmax_rows = "lots"\n`,
+        ),
+        { format: "json" },
+      );
+
+      const data = payloadOf(result) ?? {};
+      expect(Reflect.get(data, "remotes")).toContain("b");
+      expect(Reflect.get(data, "skipped_remotes")).toBeUndefined();
+      expect(Reflect.get(data, "errors")).toMatchObject([
+        { code: "remote_project_id", remote: "b", reason: "same project_id as remotes.a]b" },
+        { code: "invalid_value", remote: "b", key: "remotes.b.api.max_rows" },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not warn about an unset env() under a disabled section it also fails", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[api]\nenabled = false\nmax_rows = "env(UNSET_ROWS)"\n'),
+        { format: "json" },
+      );
+
+      expect(payloadOf(result)).toMatchObject({ valid: true, warnings: [] });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not warn about a remote project_id env() its own override replaces", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[remotes.prod]\nproject_id = "env(UNSET_REF)"\n'),
+        { format: "json", env: { SUPABASE_REMOTES_PROD_PROJECT_ID: "nope" } },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toEqual([]);
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { code: "remote_project_id", remote: "prod" },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("stops and says so when the env files cannot be read", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -780,6 +824,25 @@ describe("config validate integration", () => {
           code: "removed_key",
           remote: "prod",
           help: "rename [remotes.prod.inbucket] to [remotes.prod.local_smtp]",
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keeps a dotted remote name whole in a removed-table rename hint", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[remotes."prod.eu"]\nproject_id = "abcdefghijklmnopqrst"\n[remotes."prod.eu".inbucket]\nport = 54324\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        {
+          code: "removed_key",
+          remote: "prod.eu",
+          help: 'rename [remotes."prod.eu".inbucket] to [remotes."prod.eu".local_smtp]',
         },
       ]);
     }).pipe(Effect.provide(BunServices.layer)),

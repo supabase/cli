@@ -83,10 +83,7 @@ function tomlKeySpan(source: string, token: TomlKeyToken): Span {
 function tomlHeaderSpan(source: string, token: TomlHeaderToken): Span {
   const open = skipInlineWhitespace(source, token.start);
   const start = skipInlineWhitespace(source, open + (token.isArrayOfTables ? 2 : 1));
-  const lineEnd = source.indexOf("\n", start);
-  const line = source.slice(start, lineEnd === -1 ? source.length : lineEnd);
-  const close = line.indexOf("]");
-  return { start, end: trimEnd(source, close === -1 ? start + line.length : start + close) };
+  return { start, end: trimEnd(source, token.keysEnd) };
 }
 
 function inlineValueEnd(source: string, start: number, limit: number): number {

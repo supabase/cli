@@ -107,6 +107,14 @@ describe("validateSummaryMessage", () => {
 });
 
 describe("validateJsonPayload", () => {
+  it("shows a label in the text report but emits no file for a file-less problem", () => {
+    const labelled = problem({ code: "env_file", label: "environment variables" });
+    const result = report([labelled]);
+
+    expect(validateReport(result, PLAIN_REPORT_STYLE)).toContain("✗ environment variables  bad");
+    expect(validateJsonPayload(result).errors[0]).not.toHaveProperty("file");
+  });
+
   it("carries keys, codes and positions but no source text", () => {
     const payload = validateJsonPayload(
       report(

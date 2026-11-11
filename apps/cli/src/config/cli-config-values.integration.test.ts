@@ -2586,6 +2586,32 @@ port = 6000
       }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
     );
 
+    it.live("re-reads the config file for a validation load after invalidate", () =>
+      Effect.gen(function* () {
+        const root = yield* project("[db]\nport = 5000\n");
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const layer = configValuesLayer();
+        const target = { workdir: root, projectRef: Option.none(), validation: true as const };
+
+        const port = (values: CliConfigValues["Service"]) =>
+          values.load(target).pipe(Effect.map((loaded) => loaded.materialized.config.db.port));
+        const [before, after] = yield* CliConfigValues.use((values) =>
+          Effect.gen(function* () {
+            const first = yield* port(values);
+            yield* fs.writeFileString(
+              path.join(root, "supabase", "config.toml"),
+              "[db]\nport = 7000\n",
+            );
+            yield* values.invalidate;
+            return [first, yield* port(values)] as const;
+          }),
+        ).pipe(Effect.provide(layer));
+
+        expect([before, after]).toEqual([5000, 7000]);
+      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    );
+
     it.live("prunes past every schema failure only when validating", () =>
       Effect.gen(function* () {
         const root = yield* project("api = 1\nstudio = 2\n");

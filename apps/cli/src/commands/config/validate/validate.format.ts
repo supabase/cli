@@ -93,7 +93,9 @@ function renderProblem(
 ): ReadonlyArray<string> {
   const glyph = problem.severity === "error" ? style.red("✗") : style.yellow("⚠");
   const subject = safe(
-    problem.path === undefined ? (problem.subject ?? report.file) : displayPath(problem.path),
+    problem.path === undefined
+      ? (problem.subject ?? problem.label ?? report.file)
+      : displayPath(problem.path),
   );
   const remote =
     problem.remote === undefined ? "" : `  ${style.dim(`[remote: ${safe(problem.remote)}]`)}`;
