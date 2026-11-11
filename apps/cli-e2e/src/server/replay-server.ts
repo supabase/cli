@@ -71,6 +71,27 @@ interface GlobalErrorRef {
   value: { status: number; body: unknown } | null;
 }
 
+/** Replay state one test owns: the root tenant serves un-prefixed paths, `/t/<id>/` routes to its own. */
+interface Tenant {
+  requestLog: RecordedRequest[];
+  counters: SequenceCounters;
+  errorOverrides: Map<string, ErrorOverride>;
+  rateLimitOverrides: Map<string, RateLimitOverride>;
+  scenario: ScenarioState;
+  globalErrorRef: GlobalErrorRef;
+}
+
+const makeTenant = (): Tenant => ({
+  requestLog: [],
+  counters: new Map(),
+  errorOverrides: new Map(),
+  rateLimitOverrides: new Map(),
+  scenario: { name: null, queue: [], index: 0, log: [] },
+  globalErrorRef: { value: null },
+});
+
+const TENANT_PATH = /^\/t\/([^/]+)(\/.*)?$/;
+
 interface MultipartPart {
   headers: Record<string, string>;
   text?: string;
@@ -227,6 +248,8 @@ interface ReplayServerOptions {
   record: boolean;
   /** Staging Management API base URL; required when recording. */
   stagingUrl: string | undefined;
+  /** Permits handed out by `/_ctrl/slot`, which bounds concurrent CLI runs across test workers. */
+  slots?: number;
 }
 
 /* The Docker leg uses node:http because Bun's fetch sorts response headers, while fixtures record them in arrival order. */
@@ -278,17 +301,15 @@ const makeReplayServer = Effect.fn("ReplayServer.start")(function* (options: Rep
 
   const store: FixtureStore = isRecord ? new Map() : yield* loadFixtures(options.fixturesDir);
 
-  const counters: SequenceCounters = new Map();
-  const requestLog: RecordedRequest[] = [];
-  const errorOverrides = new Map<string, ErrorOverride>();
-  const rateLimitOverrides = new Map<string, RateLimitOverride>();
+  const rootTenant = makeTenant();
+  const tenants = new Map<string, Tenant>();
+  const pgOwner: { tenant: Tenant | null } = { tenant: null };
+  const slots = yield* Semaphore.make(options.slots ?? 1);
   const recordedKeys = new Set<string>();
   let storageProxyUrl: string | undefined;
   let storageProxyAuth: string | undefined;
   let dockerProxySocketPath: string | undefined;
 
-  const scenario: ScenarioState = { name: null, queue: [], index: 0, log: [] };
-  const globalErrorRef: GlobalErrorRef = { value: null };
   /* Fixture and scenario writes run one at a time, as the synchronous writes they replaced did. */
   const recordLock = yield* Semaphore.make(1);
   /* Docker exchanges outlive the handler fiber that forked them; serverScope owns them until the server stops. */
@@ -305,18 +326,30 @@ const makeReplayServer = Effect.fn("ReplayServer.start")(function* (options: Rep
     return `${method.toUpperCase()} ${path}`;
   }
 
+  const resolveTenant = (rawPath: string) => {
+    const match = TENANT_PATH.exec(rawPath);
+    if (!match) return { tenant: rootTenant, pathname: rawPath };
+    const id = match[1]!;
+    let tenant = tenants.get(id);
+    if (!tenant) {
+      tenant = makeTenant();
+      tenants.set(id, tenant);
+    }
+    return { tenant, pathname: match[2] ?? "/" };
+  };
+
   const handleRequest = Effect.fnUntraced(function* (req: Request) {
     const url = new URL(req.url);
+    const { tenant, pathname } = resolveTenant(url.pathname);
+    const { requestLog, counters, errorOverrides, rateLimitOverrides, scenario, globalErrorRef } =
+      tenant;
 
     // Control plane — not forwarded to CLI or staging
-    if (url.pathname.startsWith("/_ctrl/")) {
-      return yield* handleControl(req, url, {
-        requestLog,
-        counters,
-        errorOverrides,
-        rateLimitOverrides,
-        scenario,
-        globalErrorRef,
+    if (pathname.startsWith("/_ctrl/")) {
+      return yield* handleControl(req, pathname, {
+        tenant,
+        pgOwner,
+        slots,
         isRecord,
         fixturesDir: options.fixturesDir,
         pgMock: options.pgMock,
@@ -325,7 +358,6 @@ const makeReplayServer = Effect.fn("ReplayServer.start")(function* (options: Rep
     }
 
     const method = req.method;
-    const pathname = url.pathname;
     const query = Object.fromEntries(url.searchParams.entries());
     const requestHeaders = Object.fromEntries(req.headers.entries());
 
@@ -417,7 +449,14 @@ const makeReplayServer = Effect.fn("ReplayServer.start")(function* (options: Rep
         Bun.serve({
           port: options.port ?? 0,
           ...(options.hostname === undefined ? {} : { hostname: options.hostname }),
-          fetch: (req: Request) => Effect.runPromiseWith(services)(handleRequest(req)),
+          fetch: (req, bunServer) => {
+            /* A slot request waits for a permit, so it has no idle timeout and stops waiting when the caller aborts. */
+            if (req.method === "POST" && new URL(req.url).pathname === "/_ctrl/slot") {
+              bunServer.timeout(req, 0);
+              return Effect.runPromiseWith(services)(handleRequest(req), { signal: req.signal });
+            }
+            return Effect.runPromiseWith(services)(handleRequest(req));
+          },
         }),
       catch: (cause) => new ReplayServerStartError({ message: causeMessage(cause), cause }),
     }),
@@ -430,21 +469,21 @@ const makeReplayServer = Effect.fn("ReplayServer.start")(function* (options: Rep
   const handle: ReplayServerHandle = {
     url: serverUrl,
     port,
-    getRequests: () => [...requestLog],
+    getRequests: () => [...rootTenant.requestLog],
     clearRequests: () => {
-      requestLog.length = 0;
-      resetCounters(counters);
+      rootTenant.requestLog.length = 0;
+      resetCounters(rootTenant.counters);
     },
     setErrorResponse: (method, path, status, body = { message: "Error" }) => {
-      errorOverrides.set(overrideKey(method, path), { status, body });
+      rootTenant.errorOverrides.set(overrideKey(method, path), { status, body });
     },
     setRateLimit: (path, retryAfterSeconds) => {
-      rateLimitOverrides.set(path, { retryAfterSeconds });
+      rootTenant.rateLimitOverrides.set(path, { retryAfterSeconds });
     },
     clearErrorOverrides: () => {
-      errorOverrides.clear();
-      rateLimitOverrides.clear();
-      globalErrorRef.value = null;
+      rootTenant.errorOverrides.clear();
+      rootTenant.rateLimitOverrides.clear();
+      rootTenant.globalErrorRef.value = null;
     },
     setStorageProxyUrl: (url) => {
       storageProxyUrl = url;
@@ -1100,12 +1139,10 @@ function serveFromScenario(
 }
 
 interface ControlContext {
-  requestLog: RecordedRequest[];
-  counters: SequenceCounters;
-  errorOverrides: Map<string, ErrorOverride>;
-  rateLimitOverrides: Map<string, RateLimitOverride>;
-  scenario: ScenarioState;
-  globalErrorRef: GlobalErrorRef;
+  tenant: Tenant;
+  /** The tenant whose fixture the shared pg mock serves; only it resets the mock. */
+  pgOwner: { tenant: Tenant | null };
+  slots: Semaphore.Semaphore;
   isRecord: boolean;
   fixturesDir: string;
   pgMock?: PgMockHandle;
@@ -1118,17 +1155,33 @@ const readJson = (req: Request) =>
     catch: (cause) => new RequestBodyError({ message: causeMessage(cause), cause }),
   });
 
-const handleControl = Effect.fnUntraced(function* (req: Request, url: URL, ctx: ControlContext) {
+const handleControl = Effect.fnUntraced(function* (
+  req: Request,
+  pathname: string,
+  ctx: ControlContext,
+) {
   const path = yield* Path.Path;
-  const subpath = url.pathname.slice("/_ctrl".length);
+  const subpath = pathname.slice("/_ctrl".length);
+  const { tenant } = ctx;
 
   if (subpath === "/requests") {
     if (req.method === "GET") {
-      return Response.json(ctx.requestLog);
+      return Response.json(tenant.requestLog);
     }
     if (req.method === "DELETE") {
-      ctx.requestLog.length = 0;
-      resetCounters(ctx.counters);
+      tenant.requestLog.length = 0;
+      resetCounters(tenant.counters);
+      return new Response(null, { status: 204 });
+    }
+  }
+
+  if (subpath === "/slot") {
+    if (req.method === "POST") {
+      yield* ctx.slots.take(1);
+      return new Response(null, { status: 204 });
+    }
+    if (req.method === "DELETE") {
+      yield* ctx.slots.release(1);
       return new Response(null, { status: 204 });
     }
   }
@@ -1147,14 +1200,14 @@ const handleControl = Effect.fnUntraced(function* (req: Request, url: URL, ctx: 
                 { status: 404, headers: { "Content-Type": "application/json" } },
               );
             }
-            ctx.scenario.queue = interactions;
+            tenant.scenario.queue = interactions;
           } else {
-            ctx.scenario.queue = [];
-            ctx.scenario.log = [];
+            tenant.scenario.queue = [];
+            tenant.scenario.log = [];
           }
 
-          ctx.scenario.name = name;
-          ctx.scenario.index = 0;
+          tenant.scenario.name = name;
+          tenant.scenario.index = 0;
           return new Response(null, { status: 204 });
         }),
       );
@@ -1165,13 +1218,17 @@ const handleControl = Effect.fnUntraced(function* (req: Request, url: URL, ctx: 
         Effect.gen(function* () {
           // Flush interactions.json even when empty, so a test that hits a global
           // error before any API call still gets a scenario file.
-          if (ctx.isRecord && ctx.scenario.name !== null) {
-            yield* writeScenarioInteractions(ctx.fixturesDir, ctx.scenario.name, ctx.scenario.log);
+          if (ctx.isRecord && tenant.scenario.name !== null) {
+            yield* writeScenarioInteractions(
+              ctx.fixturesDir,
+              tenant.scenario.name,
+              tenant.scenario.log,
+            );
           }
-          ctx.scenario.name = null;
-          ctx.scenario.queue = [];
-          ctx.scenario.index = 0;
-          ctx.scenario.log = [];
+          tenant.scenario.name = null;
+          tenant.scenario.queue = [];
+          tenant.scenario.index = 0;
+          tenant.scenario.log = [];
           return new Response(null, { status: 204 });
         }),
       );
@@ -1185,7 +1242,7 @@ const handleControl = Effect.fnUntraced(function* (req: Request, url: URL, ctx: 
       status: number;
       body?: unknown;
     };
-    ctx.errorOverrides.set(`${body.method.toUpperCase()} ${body.path}`, {
+    tenant.errorOverrides.set(`${body.method.toUpperCase()} ${body.path}`, {
       status: body.status,
       body: body.body ?? { message: "Error" },
     });
@@ -1194,7 +1251,7 @@ const handleControl = Effect.fnUntraced(function* (req: Request, url: URL, ctx: 
 
   if (subpath === "/error-all" && req.method === "POST") {
     const body = (yield* readJson(req)) as { status: number; body?: unknown };
-    ctx.globalErrorRef.value = {
+    tenant.globalErrorRef.value = {
       status: body.status,
       body: body.body ?? { message: "Error" },
     };
@@ -1206,15 +1263,18 @@ const handleControl = Effect.fnUntraced(function* (req: Request, url: URL, ctx: 
       path: string;
       retryAfterSeconds: number;
     };
-    ctx.rateLimitOverrides.set(body.path, { retryAfterSeconds: body.retryAfterSeconds });
+    tenant.rateLimitOverrides.set(body.path, { retryAfterSeconds: body.retryAfterSeconds });
     return new Response(null, { status: 204 });
   }
 
   if (subpath === "/overrides" && req.method === "DELETE") {
-    ctx.errorOverrides.clear();
-    ctx.rateLimitOverrides.clear();
-    ctx.globalErrorRef.value = null;
-    ctx.pgMock?.setState({ type: "empty" });
+    tenant.errorOverrides.clear();
+    tenant.rateLimitOverrides.clear();
+    tenant.globalErrorRef.value = null;
+    if (ctx.pgOwner.tenant === tenant) {
+      ctx.pgOwner.tenant = null;
+      ctx.pgMock?.setState({ type: "empty" });
+    }
     return new Response(null, { status: 204 });
   }
 
@@ -1237,6 +1297,7 @@ const handleControl = Effect.fnUntraced(function* (req: Request, url: URL, ctx: 
       );
     }
     ctx.pgMock.setState({ type: "fixture", fixture: fixture.value as PgFixture });
+    ctx.pgOwner.tenant = tenant;
     return new Response(null, { status: 204 });
   }
 
@@ -1249,6 +1310,7 @@ const handleControl = Effect.fnUntraced(function* (req: Request, url: URL, ctx: 
     }
     const error = (yield* readJson(req)) as { code: string; message: string; severity?: string };
     ctx.pgMock.setState({ type: "error", error });
+    ctx.pgOwner.tenant = tenant;
     return new Response(null, { status: 204 });
   }
 

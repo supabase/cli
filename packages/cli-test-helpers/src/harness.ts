@@ -9,6 +9,20 @@ export interface CLIResult {
   stderr: string;
   exitCode: number;
   durationMs: number;
+  /** Set when a `tty` run hit its timeout and was killed. */
+  timedOut?: boolean;
+}
+
+/** Runs the CLI in a pseudo-terminal; stdout then holds the raw terminal output. */
+export interface TtyExecOptions {
+  columns: number;
+  rows: number;
+  timeoutMs?: number;
+}
+
+interface ExecOpts {
+  env?: Record<string, string>;
+  tty?: TtyExecOptions;
 }
 
 export interface HarnessOptions {
@@ -171,7 +185,7 @@ export function createHarness(options: HarnessOptions): CLIHarness {
 const execEffect = Effect.fnUntraced(function* (
   harness: CLIHarness,
   args: string[],
-  opts?: { env?: Record<string, string> },
+  opts?: ExecOpts,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -180,10 +194,15 @@ const execEffect = Effect.fnUntraced(function* (
   const start = performance.now();
   const tsCliShim = path.join(WORKSPACE_ROOT, "apps/cli/dist/supabase.js");
   const tsCliBinary = path.join(WORKSPACE_ROOT, `apps/cli/dist/supabase${BINARY_EXT}`);
-  const built: BuiltCommand = { cmd: ["node", tsCliShim], binaryOverride: tsCliBinary };
+  const baseEnv = createSubprocessBaseEnv();
+  /* CLI_E2E_FROM_SOURCE=1 runs the CLI entry point with Bun, so a change needs no rebuild. */
+  const fromSource = baseEnv["CLI_E2E_FROM_SOURCE"] === "1";
+  const built: BuiltCommand = fromSource
+    ? { cmd: ["bun", path.join(WORKSPACE_ROOT, "apps/cli/src/main.ts")] }
+    : { cmd: ["node", tsCliShim], binaryOverride: tsCliBinary };
 
   const env: Record<string, string> = {
-    ...createSubprocessBaseEnv(),
+    ...baseEnv,
     SUPABASE_ACCESS_TOKEN: harness.options.accessToken,
     SUPABASE_NO_KEYRING: "true",
     SUPABASE_TELEMETRY_DISABLED: "1",
@@ -214,9 +233,53 @@ const execEffect = Effect.fnUntraced(function* (
   // Default to os.tmpdir() so subprocess file writes never land in the repo
   const cwd = harness.options.cwd ?? tmpdir();
 
-  yield* assertTsCliBuilt(fs, tsCliShim, tsCliBinary);
+  if (!fromSource) yield* assertTsCliBuilt(fs, tsCliShim, tsCliBinary);
   yield* fs.writeFileString(profilePath, profile);
   env["SUPABASE_PROFILE"] = profilePath;
+
+  if (opts?.tty) {
+    const tty = opts.tty;
+    for (const key of ["CI", "NO_COLOR", "FORCE_COLOR", "TERM_PROGRAM"]) delete env[key];
+    env["TERM"] = "xterm-256color";
+    env["COLORTERM"] = "truecolor";
+    const decoder = new TextDecoder();
+    let output = "";
+    const ttyProc = yield* Effect.try({
+      try: () =>
+        Bun.spawn(command, {
+          env,
+          cwd,
+          terminal: {
+            cols: tty.columns,
+            rows: tty.rows,
+            data: (_terminal, chunk) => {
+              output += decoder.decode(chunk, { stream: true });
+            },
+          },
+        }),
+      catch: (cause) => new SubprocessError({ cause }),
+    });
+    let timedOut = false;
+    // oxlint-disable-next-line effecttsgo/global-timers-in-effect -- kills the PTY child from outside its fiber
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ttyProc.kill("SIGKILL");
+    }, tty.timeoutMs ?? 15_000);
+    const ttyExit = yield* Effect.tryPromise({
+      try: () => ttyProc.exited,
+      catch: (cause) => new SubprocessError({ cause }),
+    });
+    clearTimeout(timer);
+    ttyProc.terminal?.close();
+    yield* fs.remove(profilePath, { force: true });
+    return {
+      stdout: output,
+      stderr: "",
+      exitCode: ttyExit,
+      durationMs: performance.now() - start,
+      timedOut,
+    };
+  }
 
   const proc = yield* Effect.try({
     try: () =>
@@ -245,10 +308,6 @@ const execEffect = Effect.fnUntraced(function* (
   return { stdout, stderr, exitCode, durationMs };
 });
 
-export function exec(
-  harness: CLIHarness,
-  args: string[],
-  opts?: { env?: Record<string, string> },
-): Promise<CLIResult> {
+export function exec(harness: CLIHarness, args: string[], opts?: ExecOpts): Promise<CLIResult> {
   return runHarness(execEffect(harness, args, opts));
 }

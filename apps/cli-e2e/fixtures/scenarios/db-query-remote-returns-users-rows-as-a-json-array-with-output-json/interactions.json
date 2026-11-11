@@ -1,0 +1,95 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/replayfixtureprojref/database/query",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "content-length": "130",
+        "content-type": "application/json",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": {
+        "query": "SELECT id, email, created_at, email_confirmed, last_sign_in_at FROM users ORDER BY created_at LIMIT 3",
+        "read_only": true
+      }
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "cache-control": "no-cache",
+        "content-type": "application/json",
+        "x-gotrue-id": "__UUID__",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": [
+        {
+          "id": "3f1c2a9e-5b7d-4e8a-9c21-0d4f6b8a1e37",
+          "email": "ada@example.com",
+          "created_at": "2024-01-15T09:30:00.123456+00:00",
+          "email_confirmed": true,
+          "last_sign_in_at": "2024-06-02T18:04:11.5+00:00"
+        },
+        {
+          "id": "8b2e7d14-c3a6-4f09-b5e8-61a7d9c0f2b4",
+          "email": "grace@example.com",
+          "created_at": "2024-02-03T14:12:45+00:00",
+          "email_confirmed": true,
+          "last_sign_in_at": "2024-05-28T07:45:00+00:00"
+        },
+        {
+          "id": "d7a90c35-1e4b-48f2-a6d3-9f5c2b81e0a6",
+          "email": "linus@example.org",
+          "created_at": "2024-03-21T22:01:09.98+00:00",
+          "email_confirmed": false,
+          "last_sign_in_at": null
+        }
+      ]
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/replayfixtureprojref",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "__UUID__",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "112",
+        "x-ratelimit-reset": "36"
+      },
+      "body": {
+        "id": "replayfixtureprojref",
+        "ref": "replayfixtureprojref",
+        "organization_id": "replayfixtureprojref",
+        "organization_slug": "replayfixtureprojref",
+        "name": "cli-e2e-test",
+        "region": "us-east-1",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "db.replayfixtureprojref.supabase.red",
+          "version": "17.6.1.111",
+          "postgres_engine": "17",
+          "release_channel": "ga"
+        },
+        "created_at": "2000-01-01T00:00:00Z"
+      }
+    }
+  }
+]

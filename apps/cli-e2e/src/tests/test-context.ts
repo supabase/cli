@@ -11,6 +11,88 @@ import {
   type TempDir,
 } from "@supabase/cli-test-helpers";
 import { ACCESS_TOKEN } from "./env.ts";
+import { randomUUID } from "node:crypto";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- gallery capture writes from a test fixture hook
+import { mkdirSync, writeFileSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- gallery capture writes from a test fixture hook
+import { basename, join } from "node:path";
+
+/** Width of the pseudo-terminal the gallery captures in; override with GALLERY_COLUMNS. */
+// oxlint-disable-next-line effecttsgo/process-env -- opt-in test tooling switch read at module load
+const GALLERY_COLUMNS = Number(process.env["GALLERY_COLUMNS"]) || 160;
+
+/* Opt-in output gallery capture: see scripts/gallery.ts. */
+// oxlint-disable-next-line effecttsgo/process-env -- opt-in test tooling switch read at module load
+const GALLERY_DIR = process.env["CLI_GALLERY_DIR"];
+
+interface GalleryCapture {
+  readonly harness: CLIHarness;
+  readonly args: string[];
+  readonly execOpts: ExecOptions | undefined;
+  piped: CLIResult | { error: string } | null;
+}
+
+const galleryCaptures = new Map<string, GalleryCapture>();
+
+const recordFirstRun = (
+  taskId: string,
+  harness: CLIHarness,
+  cmd: string[],
+  execOpts: ExecOptions | undefined,
+  effect: Effect.Effect<CLIResult, CliExecError>,
+): Effect.Effect<CLIResult, CliExecError> => {
+  if (!GALLERY_DIR || galleryCaptures.has(taskId)) return effect;
+  const capture: GalleryCapture = { harness, args: [...cmd], execOpts, piped: null };
+  galleryCaptures.set(taskId, capture);
+  return effect.pipe(
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        capture.piped = result;
+      }),
+    ),
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        capture.piped = { error: error.message };
+      }),
+    ),
+  );
+};
+
+const writeGalleryRecord = (
+  task: { id: string; name: string; suite?: { name: string } | null; file?: { filepath: string } },
+  slug: string,
+  serverUrl: string,
+) =>
+  Effect.gen(function* () {
+    const capture = galleryCaptures.get(task.id);
+    galleryCaptures.delete(task.id);
+    if (!GALLERY_DIR || !capture) return;
+    yield* HttpClient.del(`${serverUrl}/_ctrl/requests`);
+    yield* sendControl(`${serverUrl}/_ctrl/scenario`, { name: slug });
+    const tty = yield* execCli(capture.harness, capture.args, {
+      ...capture.execOpts,
+      tty: { columns: GALLERY_COLUMNS, rows: 50, timeoutMs: 15_000 },
+    }).pipe(Effect.catch((error) => Effect.succeed({ error: error.message })));
+    mkdirSync(GALLERY_DIR, { recursive: true });
+    const file = task.file ? basename(task.file.filepath) : "";
+    writeFileSync(
+      join(GALLERY_DIR, `${slug}.json`),
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- writes an opaque record for the gallery script
+      JSON.stringify(
+        {
+          suite: task.suite?.name ?? "",
+          test: task.name,
+          slug,
+          file,
+          args: capture.args,
+          piped: capture.piped,
+          tty,
+        },
+        null,
+        2,
+      ),
+    );
+  }).pipe(Effect.ignore);
 
 function slugify(name: string): string {
   return name
@@ -41,13 +123,39 @@ class JsonOutputError extends Data.Error<{ readonly message: string }> {}
 /** A test body passed without executing its CLI runner. */
 class RunNotExecutedError extends Data.Error<{ readonly message: string }> {}
 
+const httpLayer = Layer.mergeAll(
+  FetchHttpClient.layer,
+  Layer.succeed(HttpClient.TracerPropagationEnabled, false),
+);
+
+const cliExecError = (cause: unknown) =>
+  new CliExecError({ message: cause instanceof Error ? cause.message : String(cause), cause });
+
+/* The replay server's slot permits bound concurrent CLI runs across every test worker. */
+const withCliSlot = <A>(effect: Effect.Effect<A, CliExecError>) => {
+  const slotUrl = `${inject("replayServerUrl")}/_ctrl/slot`;
+  return Effect.acquireUseRelease(
+    HttpClient.post(slotUrl).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.mapError(cliExecError),
+    ),
+    () => effect,
+    () => HttpClient.del(slotUrl).pipe(Effect.ignore),
+  ).pipe(Effect.provide(httpLayer));
+};
+
 /** Runs the compiled CLI against a harness target. */
 export const execCli = (harness: CLIHarness, cmd: string[], execOpts?: ExecOptions) =>
-  Effect.tryPromise({
-    try: () => exec(harness, cmd, execOpts),
-    catch: (cause) =>
-      new CliExecError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
-  });
+  withCliSlot(
+    Effect.tryPromise({
+      try: () => exec(harness, cmd, execOpts),
+      catch: cliExecError,
+    }),
+  );
+
+/** A replay server base URL with its own scenario, request log, and overrides. */
+export const makeTenantUrl = (label: string) =>
+  `${inject("replayServerUrl")}/t/${label}-${randomUUID().slice(0, 8)}`;
 
 const sendControl = (url: string, body: unknown) =>
   HttpClientRequest.post(url).pipe(
@@ -58,11 +166,6 @@ const sendControl = (url: string, body: unknown) =>
 /** POSTs a JSON body to a replay server control endpoint; a non-2xx answer fails. */
 export const postControl = (url: string, body: unknown) =>
   sendControl(url, body).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-
-const httpLayer = Layer.mergeAll(
-  FetchHttpClient.layer,
-  Layer.succeed(HttpClient.TracerPropagationEnabled, false),
-);
 
 const e2eLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer, httpLayer);
 
@@ -94,6 +197,7 @@ interface RunGuard {
 
 interface BehaviourFixtures {
   runGuard: RunGuard;
+  replayUrl: string;
   projectRef: string;
   orgId: string;
   workspace: TempDir;
@@ -112,7 +216,10 @@ interface BehaviourFixtures {
  *  - `workspace` — fresh temp dir, auto-disposed after the test
  *  - `run` — pre-configured `exec()` for the compiled CLI (optional second
  *    argument forwarded as `exec` options, e.g. extra `env` entries)
- *  - `apiUrl` — the replay server base URL (for setting up error overrides)
+ *  - `apiUrl` — this test's replay server base URL (for overrides and the request log)
+ *
+ *  Each test's replay state lives under its own `replayUrl` path prefix, so tests run in
+ *  parallel; override `replayUrl` with the bare server URL for routes the CLI cannot prefix.
  *
  *  Auto-wires a named scenario for the test before running it, so the replay
  *  server knows which ordered interaction sequence to serve. Auto-clears the
@@ -140,12 +247,13 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
     });
   },
 
+  replayUrl: ({ task }, use) => use(makeTenantUrl(task.id)),
+
   projectRef: ({ task: _task }, use) => use(inject("projectRef")),
 
   orgId: ({ task: _task }, use) => use(inject("orgId")),
 
-  workspace: ({ task }, use) => {
-    const serverUrl = inject("replayServerUrl");
+  workspace: ({ task, replayUrl: serverUrl }, use) => {
     const slug = scenarioSlug(task);
     return Effect.runPromise(
       Effect.gen(function* () {
@@ -161,6 +269,7 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
 
         yield* Effect.promise(() => use(dir));
 
+        yield* writeGalleryRecord(task, slug, serverUrl);
         yield* Effect.promise(() => dir[Symbol.asyncDispose]());
         yield* Effect.all(
           [
@@ -174,30 +283,34 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
     );
   },
 
-  run: ({ runGuard, workspace }, use) => {
-    const serverUrl = inject("replayServerUrl");
+  run: ({ runGuard, workspace, task, replayUrl: serverUrl }, use) => {
     const harness = createHarness({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
       cwd: workspace.path,
       projectId: inject("projectRef") as string,
     });
-    return use((cmd, execOpts) => runGuard.track(execCli(harness, cmd, execOpts)));
+    return use((cmd, execOpts) =>
+      runGuard.track(
+        recordFirstRun(task.id, harness, cmd, execOpts, execCli(harness, cmd, execOpts)),
+      ),
+    );
   },
 
-  runNoProjectId: ({ runGuard, workspace }, use) => {
-    const serverUrl = inject("replayServerUrl");
+  runNoProjectId: ({ runGuard, workspace, task, replayUrl: serverUrl }, use) => {
     const harness = createHarness({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
       cwd: workspace.path,
     });
-    return use((cmd) => runGuard.track(execCli(harness, cmd)));
+    return use((cmd) =>
+      runGuard.track(recordFirstRun(task.id, harness, cmd, undefined, execCli(harness, cmd))),
+    );
   },
 
   storageBucket: ({ task: _task }, use) => use(inject("storageBucket")),
 
-  apiUrl: ({ task: _task }, use) => use(inject("replayServerUrl")),
+  apiUrl: ({ replayUrl }, use) => use(replayUrl),
 
   pgMockPort: ({ task: _task }, use) => use(inject("pgMockPort")),
 });

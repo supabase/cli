@@ -87,7 +87,7 @@ Available fixtures:
 - `run(cmd)` — returns an Effect that executes the CLI via the relay server
 - `projectRef` — 20-char project ref (real in record mode, default in replay)
 - `orgId` — org slug (real in record mode, default in replay)
-- `apiUrl` — the relay server base URL, for direct `/_ctrl/` calls
+- `apiUrl` — this test's relay server base URL, for direct `/_ctrl/` calls
 - `workspace` — temp dir, auto-disposed after the test
 
 ### Error injection tests
@@ -183,6 +183,23 @@ See `apps/cli-e2e/.env.example` for replay/record env vars (copy to a gitignored
 `apps/cli/live.env.example`.
 
 After recording, replay must pass with no changes between the two commands.
+
+### Parallel replay
+
+Replay runs test files and the tests inside them concurrently. `E2E_CONCURRENCY`
+(default: the CPU count) sets the worker count, the per-file test concurrency, and
+the replay server's `/_ctrl/slot` permits, which bound concurrent CLI runs across
+workers. `E2E_CONCURRENCY=1` runs serially; recording is always serial.
+
+Each `testBehaviour` test gets its own replay state under a `/t/<id>` path prefix:
+`apiUrl` and the CLI's profile `api_url` both carry it, so `${apiUrl}/_ctrl/...`
+reaches only that test's scenario, request log, and overrides. Traffic the CLI
+cannot prefix (`DOCKER_HOST`, the local stack API port) and the shared pg mock use
+the un-prefixed state, so `inspect` and `stack` run in the serial `serial` project
+in `vitest.config.ts`. Add a file there when its tests share such state.
+
+`CLI_E2E_FROM_SOURCE=1` runs `apps/cli/src/main.ts` with Bun instead of the build in
+`apps/cli/dist`.
 
 ### Sharding (replay only)
 
