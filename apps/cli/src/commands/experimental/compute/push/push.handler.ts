@@ -533,14 +533,14 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   // one. Only reachable under `--no-wait` — the default polls until it settles.
   const imageVersion = settled.buildState === "building" ? undefined : settled.imageVersion;
 
+  const settledSecretsScope =
+    typeof settled.spec.secrets_scope === "string"
+      ? (settled.spec.secrets_scope as string)
+      : settled.spec.secrets_scope?.map(({ secret_name }) => secret_name);
+
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
-    const settledSecretsScope =
-      typeof settled.spec.secrets_scope === "string"
-        ? (settled.spec.secrets_scope as string)
-        : settled.spec.secrets_scope?.map(({ secret_name }) => secret_name);
-
     // Declarative line first, then the details. `renderComputeDetails` drops
     // empty-valued rows, so optional fields need no conditional spreads.
     yield* output.raw(`Deployed Compute ${aqua(name, process.stdout)} to project ${projectRef}\n`);
@@ -579,6 +579,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     runtime,
     size: settled.spec.size,
     exposure: settled.spec.exposure,
+    secrets_scope: settledSecretsScope,
     instances: settled.spec.instances,
     // Omitted rather than present-and-undefined: `-o toml` hands this to
     // smol-toml, which can't represent undefined and would throw after the
