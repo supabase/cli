@@ -173,10 +173,13 @@ export function parseSecretsScopeCustom(secretsNames: string) {
     return [];
   }
 
-  return secretsNames
+  const secretsNamesArray = secretsNames
     .split(",")
     .map((name) => name.trim())
     .filter((name) => !!name);
+
+  // Apply Set to create a distinct array with unique secret names
+  return [...new Set(secretsNamesArray)];
 }
 
 export function formatSecretsScope(secretsScope: string | string[]) {
