@@ -1807,6 +1807,22 @@
               "description": "How the compute is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\ncompute private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
               "examples": ["private"]
             },
+            "secrets_scope": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ],
+              "description": "controls whether secrets are available: `all` gives access to all defined secrets,\n`supabase` exposes only the `SUPABASE_*` defaults, `none` hides all\nsecrets, `string[]` gives only the secrets named in the list.",
+              "default": "all",
+              "examples": ["all", ["STRIPE_KEY", "LLM_APIKEY"]]
+            },
             "instances": {
               "type": "integer",
               "minimum": 0,

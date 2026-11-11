@@ -581,6 +581,7 @@ TestNewInvalidNameError
 TestNewWriteError
 UnknownComputeExposureError
 UnknownComputeRuntimeError
+UnknownComputeSecretsScopeError
 UnknownComputeSizeError
 UnlinkRefReadError
 UnlinkTempRemovalError

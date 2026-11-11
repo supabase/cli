@@ -34,12 +34,18 @@ import {
   COMPUTE_RUNTIMES,
   COMPUTE_SIZES,
   type ComputeExposure,
+  COMPUTE_SECRETS_SCOPE,
+  parseComputeSecretsScope,
+  DEFAULT_COMPUTE_SECRETS_SCOPE,
+  formatSecretsScope,
+  type ComputeSecretsScope,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { computeUrl } from "../../../../shared/compute/compute-url.ts";
 import {
   awaitComputeBuild,
   createComputeUpload,
   deployCompute,
+  parseComputeSecretsScopeToAPIFormat,
   uploadBuildContext,
   type ComputeDeploySpec,
 } from "../../../../shared/compute/compute-api.ts";
@@ -51,6 +57,7 @@ import {
   ComputeBuildFailedError,
   ComputeSourceMissingError,
   MissingComputeExposureError,
+  UnknownComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
 import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
@@ -195,6 +202,59 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
   return recorded;
 });
 
+const resolveSecretsScope = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
+  readonly name: string;
+  readonly recorded: string | readonly string[] | undefined;
+  readonly configured: boolean;
+  readonly override: Option.Option<ComputeSecretsScope>;
+}) {
+  if (Option.isSome(options.override)) {
+    const chosen = options.override.value;
+    const withoutTheFlag =
+      options.recorded === undefined
+        ? DEFAULT_COMPUTE_SECRETS_SCOPE
+        : parseComputeSecretsScope(options.recorded as string | string[]);
+
+    const isCustom = Array.isArray(chosen);
+    const isChosenEquals =
+      isCustom && Array.isArray(withoutTheFlag)
+        ? withoutTheFlag.length === chosen.length && chosen.every((v) => withoutTheFlag.includes(v))
+        : withoutTheFlag === chosen;
+
+    if (!options.configured || !isChosenEquals) {
+      const flagName = `--secrets-scope${isCustom ? ":custom" : ""}`;
+      const output = yield* Output;
+
+      const applyFormat = (v: string | string[] | readonly string[]) =>
+        Array.isArray(v) ? `[${formatSecretsScope(v.map((i) => `"${i}"`))}]` : `"${v}"`;
+
+      const message = options.configured
+        ? `${flagName} ${chosen} applies to this deploy only: ${options.config.path} ${
+            options.recorded === undefined
+              ? `records no secrets_scope for ${options.name}`
+              : `records secrets_scope = ${applyFormat(options.recorded)}`
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "secrets_scope", applyFormat(chosen))} in ${options.config.path}.\n`
+        : `${flagName} ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "secrets_scope")} for future pushes.\n`;
+      yield* output.raw(message, "stderr");
+    }
+    return chosen;
+  }
+
+  if (options.recorded === undefined) {
+    return DEFAULT_COMPUTE_SECRETS_SCOPE;
+  }
+  const recorded = parseComputeSecretsScope(options.recorded as string | string[]);
+  if (recorded === undefined) {
+    return yield* new UnknownComputeSecretsScopeError({
+      detail: `${options.config.path} records an unknown secrets scope "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set ${settingRef(options.config, options.name, "secrets_scope")} to one of: ${COMPUTE_SECRETS_SCOPE.join(", ")}.`,
+    });
+  }
+
+  return recorded;
+});
+
 /**
  * What to do about a compute whose source directory is not there at all.
  *
@@ -240,6 +300,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   readonly refSuffix: string;
   readonly instances: Option.Option<number>;
   readonly exposure: Option.Option<ComputeExposure>;
+  readonly secretsScope: Option.Option<ComputeSecretsScope>;
   /** `--no-wait`: return once the deploy is accepted instead of blocking on the build. */
   readonly noWait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
@@ -331,6 +392,14 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     override: input.exposure,
   });
 
+  const secretsScope = yield* resolveSecretsScope({
+    config,
+    name,
+    recorded: compute.entry?.secrets_scope,
+    configured: compute.entry !== undefined,
+    override: input.secretsScope,
+  });
+
   // Same reason, and the same place: a pattern the CLI cannot read is a config mistake, and
   // finding it out mid-walk would mean reporting it after the packaging step announced itself.
   const exclude = yield* compileComputeExclude({ name, patterns: compute.entry?.exclude });
@@ -340,6 +409,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     "compute.size": size,
     "compute.exposure": exposure,
     "compute.instances": instances,
+    "compute.secrets_scope": secretsScope,
   });
 
   let contextUploadId: string;
@@ -400,6 +470,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     ...(runtime === "dockerfile" ? {} : { runtime }),
     size: apiSizeFor(size),
     exposure,
+    secrets_scope: parseComputeSecretsScopeToAPIFormat(secretsScope),
     instances,
   };
 
@@ -462,6 +533,11 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   // one. Only reachable under `--no-wait` — the default polls until it settles.
   const imageVersion = settled.buildState === "building" ? undefined : settled.imageVersion;
 
+  const settledSecretsScope =
+    typeof settled.spec.secrets_scope === "string"
+      ? (settled.spec.secrets_scope as string)
+      : settled.spec.secrets_scope?.map(({ secret_name }) => secret_name);
+
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
@@ -482,6 +558,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
         // empty-valued row.
         ["Image", imageVersion ?? ""],
         ["Access", settled.spec.exposure],
+        ["Secrets Scope", formatSecretsScope(settledSecretsScope ?? "")],
         ["URL", url ?? ""],
       ]),
     );
@@ -502,6 +579,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     runtime,
     size: settled.spec.size,
     exposure: settled.spec.exposure,
+    secrets_scope: settledSecretsScope,
     instances: settled.spec.instances,
     // Omitted rather than present-and-undefined: `-o toml` hands this to
     // smol-toml, which can't represent undefined and would throw after the
@@ -629,6 +707,7 @@ export const computePush = Effect.fn("compute.push")(function* (
           "stderr",
         );
       }
+
       const compute = yield* deployOneCompute({
         project,
         name,
@@ -636,6 +715,7 @@ export const computePush = Effect.fn("compute.push")(function* (
         refSuffix,
         instances: flags.instances,
         exposure: flags.exposure,
+        secretsScope: flags.secretsScope.pipe(Option.orElse(() => flags.secretsScopeCustom)),
         noWait: flags.noWait,
         machineOutput,
         ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
