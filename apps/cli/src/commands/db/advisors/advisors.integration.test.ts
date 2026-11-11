@@ -39,7 +39,7 @@ import {
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
 import { InvalidAccessTokenError } from "../../../auth/errors.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -63,6 +63,8 @@ import {
 } from "./advisors.errors.ts";
 import { encodeAdvisorLints, scanAdvisorLintRow } from "./advisors.format.ts";
 import { dbAdvisors } from "./advisors.handler.ts";
+import { issues } from "../../issues/issues.handler.ts";
+import type { IssuesFlags } from "../../issues/issues.command.ts";
 import { splitLintsSql } from "./advisors.lints-sql.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
 
@@ -234,6 +236,8 @@ interface SetupOpts {
   loggedIn?: boolean;
   invalidToken?: boolean;
   ipv6Error?: boolean;
+  healthLints?: ReadonlyArray<Record<string, unknown>>;
+  healthStatus?: number;
   securityStatus?: number;
   securityRawBody?: string;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
@@ -263,6 +267,12 @@ function setup(opts: SetupOpts = {}) {
   const api = mockCommandPlatformApi({
     handler: (request) => {
       const url = request.url;
+      if (url.includes("/advisors/run"))
+        return Effect.succeed(
+          jsonResponse(request, opts.healthStatus ?? 200, {
+            data: { type: "project_advisors", attributes: { lints: opts.healthLints ?? [] } },
+          }),
+        );
       if (url.includes("/advisors/security")) {
         const status = opts.securityStatus ?? 200;
         if (status !== 200) {
@@ -325,6 +335,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
     Layer.succeed(YesFlag, false),
     Layer.succeed(DnsResolverFlag, "native"),
+    Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
     BunServices.layer,
   );
@@ -516,6 +527,9 @@ describe("db advisors — local", () => {
         expect.objectContaining({ type: "success", message: "db advisors" }),
       );
       expect(out.stdoutText).toBe("");
+      expect(out.stderrText).toContain(
+        "supabase db advisors is deprecated; use supabase issues instead.",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -895,4 +909,248 @@ describeDbTargetSelection("db advisors", {
       apiRequests: () => ctx.api.requests,
     };
   },
+});
+
+const issueFlags = (over: Partial<IssuesFlags> = {}): IssuesFlags => ({
+  ...flags(),
+  type: Option.none(),
+  severity: Option.none(),
+  failOn: Option.none(),
+  ...over,
+});
+describe("issues", () => {
+  it.effect.each([false, true])(
+    "groups local and direct database findings and reports unavailable health (%s)",
+    (direct) => {
+      const { layer, out, connection } = setup({
+        format: "json",
+        rows: [
+          lintRow(),
+          lintRow({
+            level: "INFO",
+            cache_key: "second",
+            metadata: {
+              name: "search",
+              type: "function",
+              schema: "app",
+              arguments: "text, integer",
+            },
+          }),
+        ],
+      });
+      return Effect.gen(function* () {
+        yield* issues(
+          issueFlags(
+            direct
+              ? { dbUrl: Option.some("postgresql://postgres:postgres@localhost:54322/postgres") }
+              : {},
+          ),
+        );
+        expect(out.messages).toContainEqual({
+          type: "success",
+          message: "issues",
+          data: {
+            issues: [
+              expect.objectContaining({
+                id: "rls_disabled_in_public",
+                severity: "critical",
+                affected: [
+                  expect.objectContaining({ id: "rls_disabled_in_public_public_users" }),
+                  expect.objectContaining({
+                    id: "second",
+                    severity: "info",
+                    resource: { name: "search(text, integer)", type: "function", schema: "app" },
+                  }),
+                ],
+              }),
+            ],
+            checks: [
+              { type: "security", status: "complete" },
+              { type: "performance", status: "complete" },
+              {
+                type: "health",
+                status: "unavailable",
+                reason: "Health checks require a remote project.",
+              },
+            ],
+          },
+        });
+        expect(connection.execs.at(-1)).toBe("rollback");
+        expect(out.stdoutText).toBe("");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+  it.effect("rejects local health before opening a database connection", () => {
+    const { layer, connection } = setup();
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(issues(issueFlags({ type: Option.some("health") })));
+      expect(error._tag).toBe("IssuesHealthUnsupportedError");
+      expect(connection.execs).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+  it.effect(
+    "filters groups after maximum severity and applies fail-on only to displayed issues",
+    () => {
+      const { layer, out, processControl } = setup({
+        format: "json",
+        rows: [lintRow({ level: "WARN" })],
+      });
+      return Effect.gen(function* () {
+        yield* issues(
+          issueFlags({ severity: Option.some("critical"), failOn: Option.some("info") }),
+        );
+        expect(processControl.exitCode).toBeUndefined();
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({ data: expect.objectContaining({ issues: [] }) }),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+  it.effect("runs remote health with all four checks and returns critical issues", () => {
+    const { layer, out, api, processControl, cache } = setup({
+      format: "json",
+      healthLints: [lintRow({ name: "log_auth_error_rate_high", categories: ["HEALTH"] })],
+    });
+    return Effect.gen(function* () {
+      yield* issues(
+        issueFlags({
+          remote: REMOTE_LINKED,
+          type: Option.some("health"),
+          failOn: Option.some("warning"),
+        }),
+      );
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          data: {
+            issues: [
+              expect.objectContaining({
+                id: "log_auth_error_rate_high",
+                category: "health",
+                severity: "critical",
+              }),
+            ],
+            checks: [{ type: "health", status: "complete" }],
+          },
+        }),
+      );
+      expect(processControl.exitCode).toBe(1);
+      expect(api.requests.find((request) => request.url.includes("/advisors/run"))?.body).toEqual({
+        data: {
+          type: "project_advisors",
+          attributes: {
+            lints: [
+              { name: "log_data_api_error_rate_high" },
+              { name: "log_auth_error_rate_high" },
+              { name: "log_storage_error_rate_high" },
+              { name: "log_edge_function_error_rate_high" },
+            ],
+          },
+        },
+      });
+      expect(cache.cachedRef).toBe(VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+  it.effect.each(["advisor_check_unavailable", "project_not_active"])(
+    "never reports %s as clean remote health",
+    (name) => {
+      const { layer, out, processControl } = setup({
+        format: "json",
+        healthLints: [lintRow({ name, categories: ["HEALTH"] })],
+      });
+      return Effect.gen(function* () {
+        yield* issues(issueFlags({ remote: REMOTE_LINKED, type: Option.some("health") }));
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              checks: [
+                {
+                  type: "health",
+                  status: "unavailable",
+                  reason: `${name}: Table public.users has RLS disabled`,
+                },
+              ],
+            }),
+          }),
+        );
+        expect(processControl.exitCode).toBe(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+  it.effect("propagates remote health HTTP failures and still caches the linked target", () => {
+    const { layer, out, cache } = setup({ format: "json", healthStatus: 503 });
+    return Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        issues(issueFlags({ remote: REMOTE_LINKED, type: Option.some("health") })),
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(out.messages.some((message) => message.type === "success")).toBe(false);
+      expect(cache.cachedRef).toBe(VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("issues boundary failures", () => {
+  it.effect("attributes security endpoint findings and unavailable diagnostics to security", () => {
+    const { layer, out, processControl } = setup({
+      format: "json",
+      securityLints: [
+        lintRow({ categories: [] }),
+        lintRow({ name: "advisor_check_unavailable", categories: ["HEALTH"] }),
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* issues(issueFlags({ remote: REMOTE_LINKED, type: Option.some("security") }));
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          data: {
+            issues: [expect.objectContaining({ category: "security" })],
+            checks: [
+              {
+                type: "security",
+                status: "unavailable",
+                reason: "advisor_check_unavailable: Table public.users has RLS disabled",
+              },
+            ],
+          },
+        }),
+      );
+      expect(processControl.exitCode).toBe(1);
+    }).pipe(Effect.provide(layer));
+  });
+  it.effect.each([false, true])(
+    "rejects future severity values without reporting a clean success (remote %s)",
+    (remote) => {
+      const { layer, out } = setup({
+        format: "json",
+        rows: [lintRow({ level: "FUTURE" })],
+        securityLints: [lintRow({ level: "FUTURE" })],
+      });
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          issues(
+            issueFlags({
+              remote: remote ? REMOTE_LINKED : Option.none(),
+              type: Option.some("security"),
+            }),
+          ),
+        );
+        expect(error._tag).toBe("SchemaError");
+        expect(out.messages.some((message) => message.type === "success")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+  it.effect("rejects legacy output formats before any database connection", () => {
+    const { layer, connection } = setup();
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        issues(issueFlags()).pipe(Effect.provideService(OutputFlag, Option.some("yaml"))),
+      );
+      expect(error).toMatchObject({
+        _tag: "IssuesOutputFlagUnsupportedError",
+        message:
+          "the -o/--output flag is not supported by issues; use --output-format json|stream-json instead.",
+      });
+      expect(connection.execs).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
 });
