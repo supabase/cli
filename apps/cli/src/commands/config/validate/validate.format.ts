@@ -1,7 +1,7 @@
 import { escapeControlCharacters } from "../../../shared/output/escape-control-characters.ts";
 import { scanCliConfigDocument, type CliConfigLocation } from "@supabase/config/internal";
 
-import { displayPath, isPublicValuePath, type ConfigProblem } from "./validate.model.ts";
+import { displayPath, type ConfigProblem } from "./validate.model.ts";
 
 /** ANSI styling applied to the text report; the handler passes stream-gated colours. */
 export interface ReportStyle {
@@ -86,15 +86,12 @@ const display = (text: string): string =>
 interface Span {
   readonly column: number;
   readonly endColumn?: number;
-  readonly replacement?: string;
 }
 
-const KEY_VALUE =
-  /^(\s*(?:(?:#|\/\/)\s*)?(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+))*\s*[=:]\s*)(.*)$/;
-const ENV_REFERENCE_VALUE = /^["']env\([A-Za-z_][A-Za-z0-9_]*\)["']\s*,?\s*$/;
-const URL_USERINFO = /[a-z][a-z0-9+.-]*:\/\/([^\s/?#"]*)@/gi;
-const URL_QUERY = /[a-z][a-z0-9+.-]*:\/\/[^\s"?#]*\?([^\s"#]*)/gi;
-const TRAILING_COMMENT = /^[\s,}\]]*(#|\/\/)/;
+const COMMENT_MARKER = /#|\/\/|\/\*/;
+const COMMENT_LINE = /^\s*(?:#|\/\/|\/\*|\*)[ \t]*/;
+const TOML_HEADER = /^\s*\[\[?[^#]*?\]\]?\s*(?=#|$)/;
+const JSON_STRUCTURE = /^\s*(?:"(?:[^"\\]|\\.)*"\s*:\s*)?[{[]?[}\]]*\s*,?\s*$/;
 
 interface MaskedLine {
   readonly text: string;
@@ -106,18 +103,17 @@ function maskLine(text: string, spans: ReadonlyArray<Span>): MaskedLine {
     .map((span) => ({
       start: Math.min(span.column - 1, text.length),
       end: span.endColumn === undefined ? text.length : Math.min(span.endColumn - 1, text.length),
-      replacement: span.replacement ?? MASK,
     }))
     .sort((left, right) => left.start - right.start);
   let out = "";
   let position = 0;
-  const applied: Array<{ start: number; end: number; outStart: number; length: number }> = [];
+  const applied: Array<{ start: number; end: number; outStart: number }> = [];
   for (const range of ranges) {
     if (range.end <= position) continue;
     const start = Math.max(range.start, position);
     out += text.slice(position, start);
-    applied.push({ start, end: range.end, outStart: out.length, length: range.replacement.length });
-    out += range.replacement;
+    applied.push({ start, end: range.end, outStart: out.length });
+    out += MASK;
     position = range.end;
   }
   out += text.slice(position);
@@ -128,139 +124,67 @@ function maskLine(text: string, spans: ReadonlyArray<Span>): MaskedLine {
       for (const range of applied) {
         if (index < range.start) break;
         if (index < range.end) return range.outStart;
-        shift += range.length - (range.end - range.start);
+        shift += MASK.length - (range.end - range.start);
       }
       return index + shift;
     },
   };
 }
 
-/** The credentials and query string of every URL in `text` from `from` to `to` (1-based, `to` exclusive). */
-function urlSpans(text: string, from: number, to: number): ReadonlyArray<Span> {
-  const slice = text.slice(from - 1, to - 1);
-  const spans: Array<Span> = [];
-  for (const match of slice.matchAll(URL_USERINFO)) {
-    const userinfo = match[1] ?? "";
-    const start = from + match.index + match[0].length - 1 - userinfo.length;
-    if (userinfo.length > 0) spans.push({ column: start, endColumn: start + userinfo.length });
-  }
-  for (const match of slice.matchAll(URL_QUERY)) {
-    const query = match[1] ?? "";
-    const start = from + match.index + match[0].length - query.length;
-    if (query.length > 0) spans.push({ column: start, endColumn: start + query.length });
-  }
-  return spans;
+/** The text of every comment in `gap`, which starts at 0-based `offset` of its line. */
+function commentSpans(gap: string, offset: number): ReadonlyArray<Span> {
+  const index = gap.search(COMMENT_MARKER);
+  if (index < 0) return [];
+  const block = gap.startsWith("/*", index);
+  const markerLength = gap.startsWith("#", index) ? 1 : 2;
+  const close = block ? gap.indexOf("*/", index + markerLength) : -1;
+  const end = close < 0 ? gap.length : close;
+  let start = index + markerLength;
+  while (start < end && (gap[start] === " " || gap[start] === "\t")) start += 1;
+  const here: ReadonlyArray<Span> =
+    start < end ? [{ column: offset + start + 1, endColumn: offset + end + 1 }] : [];
+  return close < 0 ? here : [...here, ...commentSpans(gap.slice(close + 2), offset + close + 2)];
 }
 
-/** The scalar as it may print: URL credentials, query and fragment replaced; undefined when it must be masked whole. */
-function redactScalar(raw: string): string | undefined {
-  const quote = raw[0] === '"' || raw[0] === "'" ? raw[0] : "";
-  const inner = quote === "" ? raw : raw.slice(1, -1);
-  if (inner.includes("://")) {
-    try {
-      const url = new URL(inner);
-      const userinfo = url.username !== "" || url.password !== "" ? `${MASK}@` : "";
-      const search = url.search === "" ? "" : `?${MASK}`;
-      const hash = url.hash === "" ? "" : `#${MASK}`;
-      return `${quote}${url.protocol}//${userinfo}${url.host}${url.pathname}${search}${hash}${quote}`;
-    } catch {
-      return undefined;
-    }
+function unvaluedSpans(text: string, format: SourceView["format"]): ReadonlyArray<Span> {
+  if (format === "toml") {
+    const header = TOML_HEADER.exec(text);
+    if (header !== null) return commentSpans(text.slice(header[0].length), header[0].length);
+  } else if (JSON_STRUCTURE.test(text)) {
+    return [];
   }
-  return /[@?#]/.test(inner) ? undefined : raw;
-}
-
-const PLAIN_SCALAR = /^[^\s[\]{}"',#]+$/;
-
-/** A number or boolean, or a string with no escapes and no multi-line delimiter. */
-function isPlainScalar(text: string): boolean {
-  const quote = text[0];
-  if (quote === '"' || quote === "'") {
-    return (
-      text.length >= 2 &&
-      text.endsWith(quote) &&
-      !text.startsWith(quote.repeat(3)) &&
-      !text.includes("\\")
-    );
-  }
-  return PLAIN_SCALAR.test(text);
+  const marker = COMMENT_LINE.exec(text);
+  return [{ column: (marker?.[0].length ?? text.length - text.trimStart().length) + 1 }];
 }
 
 /**
- * A source line with every value masked, whichever lines it spans. A value prints only when
- * `mayShow` and it is the only value touching a line, one plain scalar that starts and ends on it;
- * URL credentials and query strings are redacted either way. Source that cannot be parsed is
- * masked in full.
+ * A source line with every value, and the text of every comment, masked. Keys, headers and
+ * punctuation stay. Source that cannot be parsed is masked in full.
  */
-function maskedAt(
-  { lines, valuesByLine }: SourceView,
-  lineNumber: number,
-  mayShow: (value: CliConfigLocation) => boolean = () => false,
-): MaskedLine {
+function maskedAt({ lines, valuesByLine, format }: SourceView, lineNumber: number): MaskedLine {
   const text = lines[lineNumber - 1] ?? "";
   const indent = text.length - text.trimStart().length;
   if (text.trim() === "") return maskLine(text, []);
   if (valuesByLine === undefined) return maskLine(text, [{ column: indent + 1 }]);
 
   const values = valuesByLine.get(lineNumber) ?? [];
-  const only = values.length === 1 ? values[0] : undefined;
-  const printable =
-    only !== undefined &&
-    only.line === lineNumber &&
-    only.endLine === lineNumber &&
-    mayShow(only) &&
-    isPlainScalar(text.slice(only.column - 1, (only.endColumn ?? 1) - 1));
-  const shownRange = printable ? only : undefined;
-  const redactions = urlSpans(text, 1, text.length + 1).filter(
-    (span) =>
-      shownRange === undefined ||
-      span.column >= (shownRange.endColumn ?? Infinity) ||
-      (span.endColumn ?? Infinity) <= shownRange.column,
-  );
+  if (values.length === 0) return maskLine(text, unvaluedSpans(text, format));
 
-  const spans: Array<Span> = [];
-  if (shownRange !== undefined) {
-    const raw = text.slice(shownRange.column - 1, (shownRange.endColumn ?? 1) - 1);
-    const shown = redactScalar(raw);
-    if (shown !== raw) {
-      spans.push({
-        column: shownRange.column,
-        endColumn: shownRange.endColumn,
-        ...(shown === undefined ? {} : { replacement: shown }),
-      });
-    }
+  const spans: Array<Span> = values
+    .map((value) => {
+      const column = value.line === lineNumber ? value.column : indent + 1;
+      const endColumn = (value.endLine ?? value.line) === lineNumber ? value.endColumn : undefined;
+      return endColumn === undefined ? { column } : { column, endColumn };
+    })
+    .sort((left, right) => left.column - right.column);
+  const comments: Array<Span> = [];
+  let position = 0;
+  for (const span of spans) {
+    comments.push(...commentSpans(text.slice(position, span.column - 1), position));
+    position = span.endColumn === undefined ? text.length : span.endColumn - 1;
   }
-  for (const value of values) {
-    const startsHere = value.line === lineNumber;
-    const endsHere = (value.endLine ?? value.line) === lineNumber;
-    const column = startsHere ? value.column : indent + 1;
-    const endColumn = endsHere ? value.endColumn : undefined;
-    const isEnvReference =
-      startsHere &&
-      endsHere &&
-      ENV_REFERENCE_VALUE.test(text.slice(column - 1, (endColumn ?? text.length + 1) - 1));
-    if (!printable && !isEnvReference) {
-      spans.push(endColumn === undefined ? { column } : { column, endColumn });
-    }
-  }
-  if (values.length === 0) {
-    const pair = /^\s*(?:#|\/\/)/.test(text) ? KEY_VALUE.exec(text) : null;
-    return maskLine(text, [
-      ...redactions,
-      ...(pair?.[1] === undefined ? [] : [{ column: pair[1].length + 1 }]),
-    ]);
-  }
-  const lastEnd =
-    Math.max(
-      ...values.map((value) =>
-        value.endLine === lineNumber ? (value.endColumn ?? 1) : text.length + 1,
-      ),
-    ) - 1;
-  const comment = TRAILING_COMMENT.exec(text.slice(lastEnd));
-  if (comment !== null) {
-    spans.push({ column: lastEnd + comment[0].length - (comment[1] ?? "").length + 1 });
-  }
-  return maskLine(text, [...spans, ...redactions]);
+  comments.push(...commentSpans(text.slice(position), position));
+  return maskLine(text, [...spans, ...comments]);
 }
 
 function windowAround(text: string, caretOffset: number): { text: string; caretOffset: number } {
@@ -274,28 +198,23 @@ function windowAround(text: string, caretOffset: number): { text: string; caretO
 
 interface SourceView {
   readonly lines: ReadonlyArray<string>;
-  /** 1-based lines holding a single non-secret schema leaf, whose value context lines may show. */
-  readonly publicLines: ReadonlySet<number>;
+  readonly format: "toml" | "json";
   /** The value spans touching each 1-based line; undefined when the source cannot be parsed. */
   readonly valuesByLine: ReadonlyMap<number, ReadonlyArray<CliConfigLocation>> | undefined;
 }
 
 function sourceView(report: ValidateReport): SourceView {
   const lines = report.source.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const publicLines = new Set<number>();
-  const document = scanCliConfigDocument(report.source, report.format === "toml" ? "toml" : "json");
-  for (const [line, path] of document.lineKeys()) {
-    if (isPublicValuePath(path)) publicLines.add(line);
-  }
-  const values = document.valueSpans();
-  if (values === undefined) return { lines, publicLines, valuesByLine: undefined };
+  const format = report.format === "toml" ? "toml" : "json";
+  const values = scanCliConfigDocument(report.source, format).valueSpans();
+  if (values === undefined) return { lines, format, valuesByLine: undefined };
   const valuesByLine = new Map<number, Array<CliConfigLocation>>();
   for (const value of values) {
     for (let line = value.line; line <= (value.endLine ?? value.line); line++) {
       valuesByLine.set(line, [...(valuesByLine.get(line) ?? []), value]);
     }
   }
-  return { lines, publicLines, valuesByLine };
+  return { lines, format, valuesByLine };
 }
 
 function frameLines(
@@ -303,7 +222,7 @@ function frameLines(
   view: SourceView,
   style: ReportStyle,
 ): ReadonlyArray<string> {
-  const { lines, publicLines } = view;
+  const { lines } = view;
   const location = problem.location;
   const first = location === undefined ? undefined : lines[location.line - 1];
   if (location === undefined || first === undefined) return [];
@@ -318,7 +237,7 @@ function frameLines(
   const out: Array<string> = [];
 
   if (location.line > 1) {
-    const before = maskedAt(view, location.line - 1, () => publicLines.has(location.line - 1)).text;
+    const before = maskedAt(view, location.line - 1).text;
     const shown = display(before).trimEnd();
     const clipped = shown.length > MAX_FRAME_WIDTH ? `${shown.slice(0, MAX_FRAME_WIDTH)}…` : shown;
     out.push(
@@ -326,13 +245,7 @@ function frameLines(
     );
   }
 
-  const mayShow = (value: CliConfigLocation) =>
-    problem.showValue &&
-    location.exact &&
-    value.line === location.line &&
-    value.column === location.column &&
-    value.endColumn === location.endColumn;
-  const current = maskedAt(view, location.line, mayShow);
+  const current = maskedAt(view, location.line);
   const start = current.map(location.column - 1);
   const singleLine = location.endLine === undefined || location.endLine === location.line;
   const end =

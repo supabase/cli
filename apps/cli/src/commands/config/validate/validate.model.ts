@@ -1,6 +1,4 @@
-import { ENV_CAPTURE_REGEX, isSecretPath, type CliConfigLocation } from "@supabase/config/internal";
-
-import { cliConfigRegistry } from "../../../config/cli-config-keys.ts";
+import { ENV_CAPTURE_REGEX, type CliConfigLocation } from "@supabase/config/internal";
 
 type ProblemCode =
   | "syntax"
@@ -34,8 +32,6 @@ export interface ConfigProblem {
   readonly location?: CliConfigLocation;
   /** The value comes from the environment, so the config file has no location for it. */
   readonly external?: true;
-  /** The source line may print the value at `location`; every other line is masked. */
-  readonly showValue: boolean;
 }
 
 /** Splits a `remotes.<name>.…` path into the remote and the path inside it. */
@@ -47,46 +43,6 @@ export function splitRemotePath(path: ReadonlyArray<string>): {
   return head === "remotes" && name !== undefined
     ? { remote: name, path: path.slice(2) }
     : { path };
-}
-
-const SEGMENT_SEPARATOR = "\0";
-const ROOT_KEY_PATH = ["db", "root_key"].join(SEGMENT_SEPARATOR);
-const SECRET_LOOKING = /secret|pass|token|key|jwt|salt|credential|vault/i;
-
-const publicLeafPaths: ReadonlySet<string> = new Set(
-  cliConfigRegistry.keys
-    .filter((key) => key.document !== false && key.secret !== true)
-    .map((key) => key.path.split(".").join(SEGMENT_SEPARATOR)),
-);
-
-const publicFamilyLeaves = cliConfigRegistry.families.map((family) => ({
-  prefix: family.prefix.split("."),
-  fields: new Set(
-    family.fields.filter((field) => field.secret !== true).map((field) => field.name),
-  ),
-}));
-
-const isPublicFamilyLeaf = (segments: ReadonlyArray<string>): boolean =>
-  publicFamilyLeaves.some(
-    ({ prefix, fields }) =>
-      segments.length === prefix.length + 2 &&
-      prefix.every((segment, index) => segment === segments[index]) &&
-      fields.has(segments.at(-1) ?? ""),
-  );
-
-/**
- * Whether the value at a config key path may be printed: a schema leaf that is neither secret nor
- * secret-looking. Everything else, including keys the schema does not know, is masked.
- */
-export function isPublicValuePath(path: ReadonlyArray<string>): boolean {
-  const segments = splitRemotePath(path).path;
-  const local = segments.join(SEGMENT_SEPARATOR);
-  return (
-    local !== ROOT_KEY_PATH &&
-    !isSecretPath(segments) &&
-    !SECRET_LOOKING.test(segments.at(-1) ?? "") &&
-    (publicLeafPaths.has(local) || isPublicFamilyLeaf(segments))
-  );
 }
 
 /** A key path as shown to people; segments that contain dots are indistinguishable from nesting. */

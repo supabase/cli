@@ -7,8 +7,6 @@ const locateCliConfigKey = (
   path: ReadonlyArray<string>,
   target: "key" | "value",
 ) => scanCliConfigDocument(source, format).locate(path, target);
-const cliConfigLineKeys = (source: string, format: "toml" | "json") =>
-  scanCliConfigDocument(source, format).lineKeys();
 const cliConfigValueSpans = (source: string, format: "toml" | "json") =>
   scanCliConfigDocument(source, format).valueSpans();
 import { isSecretPath } from "./lib/secret-paths.ts";
@@ -194,41 +192,6 @@ describe("locateCliConfigKey (spans and inline tables)", () => {
     const source = 'api = { note = "port = 1", port = 2 }\n';
     const location = locateCliConfigKey(source, "toml", ["api", "port"], "value");
     expect(source.slice((location?.column ?? 0) - 1, (location?.endColumn ?? 0) - 1)).toBe("2");
-  });
-});
-
-describe("cliConfigLineKeys", () => {
-  test("maps each single-line toml key to its full path, skipping inline tables", () => {
-    const keys = cliConfigLineKeys(toml, "toml");
-    expect(keys.get(4)).toEqual(["api", "port"]);
-    expect(keys.get(5)).toEqual(["api", "tls", "enabled"]);
-    expect(keys.get(14)).toEqual(["remotes", "staging", "db", "port"]);
-    expect(keys.has(3)).toBe(false);
-    expect(keys.has(11)).toBe(false);
-  });
-
-  test("leaves out a toml value that spans lines", () => {
-    const keys = cliConfigLineKeys(
-      '[auth]\nsite_url = "x"\nadditional_redirect_urls = [\n  "a",\n]\n',
-      "toml",
-    );
-    expect(keys.get(2)).toEqual(["auth", "site_url"]);
-    expect(keys.has(3)).toBe(false);
-  });
-
-  test("maps json lines holding exactly one flat property", () => {
-    const source = ["{", '  "api": {', '    "port": 1,', '    "a": 1, "b": 2', "  }", "}"].join(
-      "\n",
-    );
-    const keys = cliConfigLineKeys(source, "json");
-    expect(keys.get(3)).toEqual(["api", "port"]);
-    expect(keys.has(2)).toBe(false);
-    expect(keys.has(4)).toBe(false);
-  });
-
-  test("is empty when the text does not parse", () => {
-    expect(cliConfigLineKeys("[api\nport = 1", "toml").size).toBe(0);
-    expect(cliConfigLineKeys('{ "api": { "port": 1 ', "json").size).toBe(0);
   });
 });
 

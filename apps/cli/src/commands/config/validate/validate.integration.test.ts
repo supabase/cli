@@ -168,7 +168,7 @@ describe("config validate integration", () => {
       expect(result.stdout).toMatchInlineSnapshot(`
         "  ✗ api.prot  unknown key
             supabase/config.toml:5:1
-            4 │ enabled = true
+            4 │ enabled = ****
           > 5 │ prot = ****
               │ ^^^^
             help: did you mean \`port\`?
@@ -176,14 +176,14 @@ describe("config validate integration", () => {
           ✗ api.max_rows  expected a non-negative integer
             supabase/config.toml:6:12
             5 │ prot = ****
-          > 6 │ max_rows = "lots"
-              │            ^^^^^^
+          > 6 │ max_rows = ****
+              │            ^^^^
 
           ✗ db.major_version  unsupported Postgres version
             supabase/config.toml:9:17
             8 │ [db]
-          > 9 │ major_version = 16
-              │                 ^^
+          > 9 │ major_version = ****
+              │                 ^^^^
             help: use one of 13, 14, 15, 17
 
           ✗ auth.external.github.client_id  required when auth.external.github.enabled = true
@@ -202,16 +202,16 @@ describe("config validate integration", () => {
 
           ⚠ auth.email.smtp.pass  SMTP_PASS is not set, so this key gets the literal text "env(SMTP_PASS)"
             supabase/config.toml:19:8
-            18 │ user = "mailer"
-          > 19 │ pass = "env(SMTP_PASS)"
-               │        ^^^^^^^^^^^^^^^^
+            18 │ user = ****
+          > 19 │ pass = ****
+               │        ^^^^
             help: set SMTP_PASS in your shell or supabase/.env (SUPABASE_ENV=<name> also reads supabase/.env.<name>)
 
           ✗ api.max_rows  expected a non-negative integer  [remote: staging]
             supabase/config.toml:26:12
             25 │ [remotes.staging.api]
-          > 26 │ max_rows = "many"
-               │            ^^^^^^
+          > 26 │ max_rows = ****
+               │            ^^^^
 
         ✗ 6 errors, 1 warning in supabase/config.toml
           Checked remotes: staging
@@ -343,14 +343,14 @@ describe("config validate integration", () => {
           ✗ api.max_rows  expected a non-negative integer
             supabase/config.jsonc:6:17
             5 │     "prot": ****,
-          > 6 │     "max_rows": "lots",
-              │                 ^^^^^^
+          > 6 │     "max_rows": ****,
+              │                 ^^^^
 
           ✗ db.major_version  unsupported Postgres version
             supabase/config.jsonc:8:28
             7 │   },
-          > 8 │   "db": { "major_version": 16 }
-              │                            ^^
+          > 8 │   "db": { "major_version": **** }
+              │                            ^^^^
             help: use one of 13, 14, 15, 17
 
         ✗ 3 errors in supabase/config.jsonc
@@ -1052,13 +1052,13 @@ describe("config validate integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("redacts credentials and query strings of a public URL value", () =>
+    it.effect("masks the URL on the context and problem lines", () =>
       Effect.gen(function* () {
         const url = "https://user:pass-secret@host.test/x?token=tok-secret";
         const context = yield* validate(
           tomlFile(`project_id = "demo"\n[auth]\nsite_url = "${url}"\nbogus = 1\n`),
         );
-        expect(context.stdout).toContain('site_url = "https://****@host.test/x?****"');
+        expect(context.stdout).toContain("site_url = ****");
         expect(context.stdout).not.toContain("pass-secret");
         expect(context.stdout).not.toContain("tok-secret");
 

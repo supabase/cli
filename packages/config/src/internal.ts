@@ -53,7 +53,6 @@ export { JsoncSyntaxError, parseJsonc } from "./jsonc.ts";
 export { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
 export { CliConfigWriteError } from "./errors.ts";
 export { findUnknownCliConfigKeys, type UnknownCliConfigKey } from "./unknown-keys.ts";
-export { isSecretPath } from "./lib/secret-paths.ts";
 export {
   scanCliConfigDocument,
   type CliConfigDocumentScan,

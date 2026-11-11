@@ -531,7 +531,6 @@ describe("src/internal.ts export surface", () => {
         "decodeMergedCliConfig",
         "dualScopeProjectConfigPaths",
         "findUnknownCliConfigKeys",
-        "isSecretPath",
         "loadCliConfig",
         "mapMigrationCheckRules",
         "mergeParsedCliConfig",

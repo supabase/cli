@@ -322,58 +322,6 @@ function locateJson(
   return undefined;
 }
 
-function tomlLineKeys({ scan, starts }: ScannedToml): ReadonlyMap<number, ReadonlyArray<string>> {
-  const found = new Map<number, ReadonlyArray<string>>();
-  if (isScanError(scan)) return found;
-  for (const token of scan.tokens) {
-    if (token.kind !== "kv" || token.insideInlineTable) continue;
-    const line = lineIndexOf(starts, token.start);
-    if (lineIndexOf(starts, Math.max(token.valueStart, token.valueEnd - 1)) !== line) continue;
-    found.set(line + 1, token.path);
-  }
-  return found;
-}
-
-function jsonLineKeys(source: string): ReadonlyMap<number, ReadonlyArray<string>> {
-  const errors: Array<ParseError> = [];
-  const root = parseTree(source, errors, {
-    allowTrailingComma: true,
-    disallowComments: false,
-  });
-  const found = new Map<number, ReadonlyArray<string>>();
-  if (root === undefined || errors.length > 0) return found;
-  const starts = lineStarts(source);
-  const keysOnLine = new Map<number, number>();
-  const candidates = new Map<number, ReadonlyArray<string>>();
-  const isFlat = (node: Node) =>
-    node.type !== "object" &&
-    (node.type !== "array" ||
-      (node.children ?? []).every((child) => child.type !== "object" && child.type !== "array"));
-  const walk = (node: Node, path: ReadonlyArray<string>): void => {
-    if (node.type === "array") {
-      node.children?.forEach((child, index) => walk(child, [...path, String(index)]));
-      return;
-    }
-    if (node.type !== "object") return;
-    for (const property of node.children ?? []) {
-      const [key, value] = property.children ?? [];
-      if (key === undefined || value === undefined || typeof key.value !== "string") continue;
-      const line = lineIndexOf(starts, property.offset);
-      keysOnLine.set(line, (keysOnLine.get(line) ?? 0) + 1);
-      const childPath = [...path, key.value];
-      const sameLine =
-        lineIndexOf(starts, Math.max(value.offset, value.offset + value.length - 1)) === line;
-      if (isFlat(value) && sameLine) candidates.set(line, childPath);
-      else walk(value, childPath);
-    }
-  };
-  walk(root, []);
-  for (const [line, path] of candidates) {
-    if (keysOnLine.get(line) === 1) found.set(line + 1, path);
-  }
-  return found;
-}
-
 function tomlValueSpans(source: string, span: Span): ReadonlyArray<Span> {
   if (source[span.start] !== "{") return [span];
   const text = source.slice(span.start, span.end);
@@ -434,8 +382,6 @@ export interface CliConfigDocumentScan {
     path: ReadonlyArray<string>,
     target: "key" | "value",
   ) => CliConfigLocation | undefined;
-  /** The key path of every 1-based line that holds one complete key and its value and nothing else. */
-  readonly lineKeys: () => ReadonlyMap<number, ReadonlyArray<string>>;
   /** The span of every scalar or array value, multi-line ones included; undefined when unparseable. */
   readonly valueSpans: () => ReadonlyArray<CliConfigLocation> | undefined;
 }
@@ -446,13 +392,11 @@ export function scanCliConfigDocument(text: string, format: ConfigFormat): CliCo
     const scanned = scanToml(source);
     return {
       locate: (path, target) => locateToml(source, path, target, scanned),
-      lineKeys: () => tomlLineKeys(scanned),
       valueSpans: () => tomlDocumentValueSpans(source, scanned),
     };
   }
   return {
     locate: (path, target) => locateJson(source, path, target),
-    lineKeys: () => jsonLineKeys(source),
     valueSpans: () => jsonDocumentValueSpans(source),
   };
 }

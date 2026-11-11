@@ -39,7 +39,7 @@ artifacts (`./schema.json`, `./project-schema.json`).
   otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
   `projectConfigMappingRows`, `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`,
   `ENV_CAPTURE_REGEX`, and `withoutSafeIntegerBounds` for the CLI's published lock schema), the
-  JSONC parser (`parseJsonc`, `JsoncSyntaxError`) and `cliConfigFormatForPath`, `findUnknownCliConfigKeys` (schema-derived unknown-key paths of a raw document, each with the keys its parent table accepts), `scanCliConfigDocument` (a caller-owned scan of raw TOML/JSON/JSONC text whose `locate` finds the line/column of a key or value, `lineKeys` the key path each single-entry line holds and `valueSpans` the span of every scalar or array value, multi-line ones included; `CliConfigLocation` is a position) and `isSecretPath`. It also carries
+  JSONC parser (`parseJsonc`, `JsoncSyntaxError`) and `cliConfigFormatForPath`, `findUnknownCliConfigKeys` (schema-derived unknown-key paths of a raw document, each with the keys its parent table accepts), `scanCliConfigDocument` (a caller-owned scan of raw TOML/JSON/JSONC text whose `locate` finds the line/column of a key or value and `valueSpans` the span of every value, multi-line ones included; `CliConfigLocation` is a position). It also carries
   `supabase config pull`/`diff`'s own support surface
   (CLI-2064): the format-preserving surgical editor (`applyConfigEdits` and its
   `ConfigEdit`/`ConfigEditOutcome`/`ConfigEditRefusal`/`ConfigEditRefusalReason`/`ConfigEditValue`/

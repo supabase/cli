@@ -22,7 +22,6 @@ const problem = (fields: Partial<ConfigProblem>): ConfigProblem => ({
   code: "invalid_type",
   severity: "error",
   reason: "bad",
-  showValue: false,
   ...fields,
 });
 
@@ -79,11 +78,25 @@ describe("validateReport", () => {
     expect(text).not.toContain("hunter2");
   });
 
-  it("shows the located value only when it is the only value on its line", () => {
+  it("masks a public scalar and keeps its key", () => {
+    const text = render(
+      [
+        problem({
+          path: ["api", "enabled"],
+          location: { line: 2, column: 11, endColumn: 15, exact: true },
+        }),
+      ],
+      { source: "[api]\nenabled = true" },
+    );
+
+    expect(text).toContain("  > 2 │ enabled = ****");
+    expect(text).not.toContain("true");
+  });
+
+  it("masks every value in an inline table, keeping keys and punctuation", () => {
     const text = render([
       problem({
         path: ["api", "cfg", "n"],
-        showValue: true,
         location: { line: 6, column: 32, endColumn: 37, exact: true },
       }),
     ]);
@@ -92,43 +105,22 @@ describe("validateReport", () => {
     expect(text).not.toContain("hunter2");
   });
 
-  it("shows a located scalar that is alone on its line", () => {
-    const text = render(
-      [
-        problem({
-          path: ["api", "max_rows"],
-          showValue: true,
-          location: { line: 2, column: 12, endColumn: 18, exact: true },
-        }),
-      ],
-      { source: '[api]\nmax_rows = "lots"' },
-    );
+  it("masks a url, a nested table and an array alike", () => {
+    const text = render([problem({ path: ["x"], location: { line: 4, column: 1, exact: true } })], {
+      source: [
+        'url = "https://user:pw\'secret@host.test/x?token=tok-secret#top"',
+        'tables = [{ secret = "hunter2" }]',
+        'schemas = ["a", "b"]',
+        "k = 1",
+      ].join("\n"),
+    });
 
-    expect(text).toContain('max_rows = "lots"');
+    expect(text).toContain("  > 4 │ k = ****");
+    expect(text).toContain("3 │ schemas = ****");
+    expect(text).not.toMatch(/hunter2|secret|host\.test/);
   });
 
-  it.each([
-    [`"https://u:pw'x@host.test/p?t=1#f"`, `"https://****@host.test/p?****#****"`],
-    ['"https://host.test/p"', '"https://host.test/p"'],
-    ['"user:pw@host.test"', "****"],
-    ['"host.test/x?token=1"', "****"],
-    ['"https://[bad"', "****"],
-  ])("prints the scalar %s as %s", (raw, shown) => {
-    const text = render(
-      [
-        problem({
-          path: ["api", "max_rows"],
-          showValue: true,
-          location: { line: 2, column: 12, endColumn: 12 + raw.length, exact: true },
-        }),
-      ],
-      { source: `[api]\nmax_rows = ${raw}` },
-    );
-
-    expect(text).toContain(`max_rows = ${shown}`);
-  });
-
-  it("shows a known non-secret key's value on the context line", () => {
+  it("masks the value on the context line", () => {
     const text = render([
       problem({
         path: ["api", "cfg"],
@@ -136,30 +128,75 @@ describe("validateReport", () => {
       }),
     ]);
 
-    expect(text).toContain("5 │ port = 5");
+    expect(text).toContain("5 │ port = ****");
   });
 
-  it("masks a secret on the context line", () => {
-    const text = render([
-      problem({
-        path: ["api", "port"],
-        location: { line: 5, column: 1, endColumn: 5, exact: true },
-      }),
-    ]);
+  it("masks the text of a TOML comment and keeps its marker", () => {
+    const text = render(
+      [problem({ path: ["x"], location: { line: 3, column: 1, endColumn: 2, exact: true } })],
+      { source: '# secret = "hunter2"\n[api] # token hunter2\nk = 1 # note hunter2' },
+    );
 
-    expect(text).toContain("4 │ secret = ****");
+    expect(text).toContain("2 │ [api] # ****");
+    expect(text).toContain("> 3 │ k = **** # ****");
     expect(text).not.toContain("hunter2");
   });
 
-  it("masks an unknown key's value on the context line", () => {
-    const text = render([
-      problem({
-        path: ["api", "secret"],
-        location: { line: 4, column: 1, endColumn: 7, exact: true },
-      }),
-    ]);
+  it("masks commented-out lines before the problem", () => {
+    const text = render([problem({ path: ["x"], location: { line: 2, column: 1, exact: true } })], {
+      source: '# token = "hunter2"\nk = 1',
+    });
 
-    expect(text).toContain("3 │ prot = ****");
+    expect(text).toContain("1 │ # ****");
+    expect(text).not.toContain("hunter2");
+  });
+
+  it("masks JSONC values and comments but keeps keys and structure", () => {
+    const source = [
+      "{",
+      '  "api": {',
+      '    // "token": "hunter2"',
+      '    "enabled": true, /* hunter2 */ "n": 1 // hunter2',
+      "  }",
+      "}",
+    ].join("\n");
+    const text = render(
+      [
+        problem({
+          path: ["api", "n"],
+          location: { line: 4, column: 38, endColumn: 39, exact: true },
+        }),
+      ],
+      { format: "jsonc", source },
+    );
+
+    expect(text).toContain("3 │     // ****");
+    expect(text).toContain('> 4 │     "enabled": ****, /* *****/ "n": **** // ****');
+    expect(text).not.toContain("hunter2");
+  });
+
+  it("masks the interior of a JSONC block comment", () => {
+    const source = '{\n  /*\n  "token": "hunter2"\n  */\n  "k": 1\n}';
+    const text = render([problem({ path: ["k"], location: { line: 4, column: 3, exact: true } })], {
+      format: "jsonc",
+      source,
+    });
+
+    expect(text).not.toContain("hunter2");
+  });
+
+  it("underlines the masked value, not the characters it replaced", () => {
+    const text = render(
+      [
+        problem({
+          path: ["api", "max_rows"],
+          location: { line: 2, column: 12, endColumn: 18, exact: true },
+        }),
+      ],
+      { source: '[api]\nmax_rows = "lots"' },
+    );
+
+    expect(text).toContain("  > 2 │ max_rows = ****\n      │            ^^^^");
   });
 
   describe("multi-line secrets", () => {
@@ -227,107 +264,12 @@ describe("validateReport", () => {
     });
   });
 
-  describe("shown values", () => {
-    it("masks the nested values of an inline table at a shown location", () => {
-      const source = '[api]\nmax_rows = { secret = "hunter2" }';
-      const text = render(
-        [
-          problem({
-            path: ["api", "max_rows"],
-            showValue: true,
-            location: { line: 2, column: 12, endColumn: 39, exact: true },
-          }),
-        ],
-        { source },
-      );
-
-      expect(text).not.toContain("hunter2");
-    });
-
-    it("masks a table nested in a shown array", () => {
-      const source = '[api]\nschemas = ["a", { secret = "hunter2" }]';
-      const text = render(
-        [
-          problem({
-            path: ["api", "schemas"],
-            showValue: true,
-            location: { line: 2, column: 11, endColumn: 44, exact: true },
-          }),
-        ],
-        { source },
-      );
-
-      expect(text).not.toContain("hunter2");
-    });
-
-    it("masks a flat array even at a shown location", () => {
-      const source = '[api]\nschemas = ["a", "b"]';
-      const text = render(
-        [
-          problem({
-            path: ["api", "schemas"],
-            showValue: true,
-            location: { line: 2, column: 11, endColumn: 21, exact: true },
-          }),
-        ],
-        { source },
-      );
-
-      expect(text).toContain("schemas = ****");
-    });
-
-    const URL_SOURCE = [
-      "[studio]",
-      'api_url = "https://user:pw-secret@host.test/x?token=tok-secret#top"',
-      'port = "bad"',
-    ].join("\n");
-
-    it("redacts credentials and the query string of a shown problem value", () => {
-      const text = render(
-        [
-          problem({
-            path: ["studio", "api_url"],
-            showValue: true,
-            location: {
-              line: 2,
-              column: 11,
-              endColumn: (URL_SOURCE.split("\n")[1]?.length ?? 0) + 1,
-              exact: true,
-            },
-          }),
-        ],
-        { source: URL_SOURCE },
-      );
-
-      expect(text).toContain('api_url = "https://****@host.test/x?****#****"');
-      expect(text).not.toContain("pw-secret");
-      expect(text).not.toContain("tok-secret");
-    });
-
-    it("redacts a public URL on the context line", () => {
-      const text = render(
-        [
-          problem({
-            path: ["studio", "port"],
-            location: { line: 3, column: 8, endColumn: 13, exact: true },
-          }),
-        ],
-        { source: URL_SOURCE },
-      );
-
-      expect(text).toContain('api_url = "https://****@host.test/x?****#****"');
-      expect(text).not.toContain("pw-secret");
-      expect(text).not.toContain("tok-secret");
-    });
-  });
-
   it("keeps the caret inside a windowed long value", () => {
     const source = `[api]\nschemas = "${"x".repeat(300)}"`;
     const text = render(
       [
         problem({
           path: ["api", "schemas"],
-          showValue: true,
           location: { line: 2, column: 11, endColumn: 313, exact: true },
         }),
       ],

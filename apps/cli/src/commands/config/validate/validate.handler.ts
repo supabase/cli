@@ -75,7 +75,6 @@ import {
   displayPath,
   envReferences,
   type EnvReference,
-  isPublicValuePath,
   nearestEnabledGate,
   splitRemotePath,
   withoutFollowOns,
@@ -96,11 +95,10 @@ const reportStyle = (stream: ColorStream): ReportStyle => ({
 
 const problem = (
   code: ConfigProblem["code"],
-  fields: Omit<ConfigProblem, "code" | "severity" | "showValue"> & {
+  fields: Omit<ConfigProblem, "code" | "severity"> & {
     readonly severity?: ConfigProblem["severity"];
-    readonly showValue?: boolean;
   },
-): ConfigProblem => ({ severity: "error", showValue: false, code, ...fields });
+): ConfigProblem => ({ severity: "error", code, ...fields });
 
 const withRemote = (
   problems: ReadonlyArray<ConfigProblem>,
@@ -248,7 +246,6 @@ const schemaProblems = (
         ...(path.length === 0 ? {} : { path }),
         reason: detail.reason,
         ...(detail.help === undefined ? {} : { help: detail.help }),
-        showValue: issue.code !== "missing_required" && path.length > 0 && isPublicValuePath(path),
       });
     });
   });
@@ -278,7 +275,7 @@ function invalidValueProblem(error: CliConfigValueError, file: string): ConfigPr
             external: true as const,
             help: `${error.source ?? "the environment"} sets this value, not ${file}; fix or unset it there`,
           }
-        : { showValue: isPublicValuePath(path) }),
+        : {}),
     },
   );
 }
@@ -300,10 +297,9 @@ function semanticProblem(
           external: true as const,
           help: `${describeOrigin(origin)} sets this value, not ${file}; fix or unset it there`,
         }
-      : {
-          ...(issue.help === undefined ? {} : { help: issue.help }),
-          showValue: code !== "missing_required" && issue.path !== "" && isPublicValuePath(path),
-        }),
+      : issue.help === undefined
+        ? {}
+        : { help: issue.help }),
   });
 }
 
@@ -358,7 +354,6 @@ function remoteFailureProblem(
             duplicate?.[1] === undefined
               ? "use the 20-character ref from your project's dashboard URL"
               : "give each remote its own project_id",
-          showValue: true,
         }
       : {
           external: true as const,
@@ -466,7 +461,6 @@ export const configValidate = Effect.fn("config.validate")(function* () {
               problem("schema_version", {
                 reason: error.message,
                 location: locateSchemaDeclaration(source, reportFormat(error.path, error.format)),
-                showValue: true,
               }),
             ],
             { readSource: true, source },
@@ -520,7 +514,6 @@ export const configValidate = Effect.fn("config.validate")(function* () {
             "the schema reference is not a Supabase config schema, so the file is read as schema v1",
           help: "set it to https://supabase.com/schemas/config/v1.json",
           location: locateSchemaDeclaration(parsed.rawText, format),
-          showValue: true,
         }),
       );
     }
@@ -737,7 +730,6 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         path: reference.path,
         reason: `${reference.name} is not set, so this key gets the literal text "env(${reference.name})"`,
         help: `set ${reference.name} in your shell or supabase/.env (SUPABASE_ENV=<name> also reads supabase/.env.<name>)`,
-        showValue: true,
         ...(remote === undefined ? {} : { remote }),
       });
     const isOverridden = (reference: EnvReference, context: string | undefined): boolean => {

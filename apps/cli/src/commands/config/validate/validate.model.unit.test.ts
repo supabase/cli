@@ -4,7 +4,6 @@ import {
   type ConfigProblem,
   dedupeProblems,
   envReferences,
-  isPublicValuePath,
   nearestEnabledGate,
   splitRemotePath,
   withoutFollowOns,
@@ -14,7 +13,6 @@ import {
 const problem = (fields: Partial<ConfigProblem> & Pick<ConfigProblem, "code">): ConfigProblem => ({
   severity: "error",
   reason: "bad",
-  showValue: false,
   ...fields,
 });
 
@@ -30,34 +28,6 @@ describe("splitRemotePath", () => {
 
   it("leaves a base path alone", () => {
     expect(splitRemotePath(["db", "port"])).toEqual({ path: ["db", "port"] });
-  });
-});
-
-describe("isPublicValuePath", () => {
-  it.each([
-    "db.port",
-    "db.major_version",
-    "auth.external.github.client_id",
-    "remotes.staging.db.port",
-  ])("shows the value of %s", (path) => {
-    expect(isPublicValuePath(path.split("."))).toBe(true);
-  });
-
-  it.each([
-    "db.root_key",
-    "db.vault.token",
-    "edge_runtime.secrets.API_KEY",
-    "auth.external.github.secret",
-    "auth.email.smtp.pass",
-    "auth.hook.send_email.secrets",
-    "api.not_a_key",
-  ])("masks the value of %s", (path) => {
-    expect(isPublicValuePath(path.split("."))).toBe(false);
-  });
-
-  it("keeps segment boundaries, so a quoted dotted key is not the nested path", () => {
-    expect(isPublicValuePath(["db.port"])).toBe(false);
-    expect(isPublicValuePath(["db", "port"])).toBe(true);
   });
 });
 
