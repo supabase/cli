@@ -1,3 +1,4 @@
+import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -81,6 +82,7 @@ export const issuesCommand = Command.make("issues", config).pipe(
   Command.withHandler((flags) =>
     issues(flags).pipe(
       withCommandTelemetry({
+        outputFormats: GLOBAL_OUTPUT_FORMATS,
         flags: {
           type: flags.type,
           severity: flags.severity,
