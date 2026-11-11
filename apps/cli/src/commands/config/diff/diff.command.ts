@@ -15,17 +15,14 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configDiff } from "./diff.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  exitCode: Flag.Boolean("exit-code").pipe(
-    Flag.withDescription(
-      "Exit with status 2 when any difference is found (errors keep exiting 1).",
-    ),
-    // Boolean flags are required by the parser without an explicit default, which would break
-    // plain `supabase config diff` with a missing-required-flag error.
-    Flag.withDefault(false),
-  ),
+  exitCode: cliFlag("exit-code", Flag.Boolean, {
+    description: "Exit with status 2 when any difference is found (errors keep exiting 1).",
+    default: false,
+  }),
 } as const;
 
 export type ConfigDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -42,11 +39,11 @@ export const configDiffHandler = (flags: ConfigDiffFlags) =>
     withJsonErrorHandling,
   );
 
-export const configDiffCommand = Command.make("diff", config).pipe(
+export const configDiffCommand = makeCommand("diff", config).pipe(
   Command.withDescription(
-    "Shows configuration differences between the project config file and a remote project or branch. Read-only: never modifies local or remote configuration.",
+    "Compare the project config file with the configuration of a remote project or branch, to see what `config push` would change. Read-only: it never modifies local or remote configuration.",
   ),
-  Command.withShortDescription("Diff local config against a remote project"),
+  Command.withShortDescription("Diff local config against a project"),
   Command.withExamples([
     {
       command: "supabase config diff",

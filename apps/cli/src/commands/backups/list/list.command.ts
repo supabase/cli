@@ -12,6 +12,7 @@ import { backupsList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -19,9 +20,11 @@ const config = {
 
 export type BackupsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const backupsListCommand = Command.make("list", config).pipe(
-  Command.withDescription("Lists available physical backups"),
-  Command.withShortDescription("Lists available physical backups"),
+export const backupsListCommand = makeCommand("list", config).pipe(
+  Command.withDescription(
+    "Show the backup status of a project, including the earliest and latest timestamps you can restore to. Use it to pick a timestamp for `supabase backups restore`.\n\nProjects without PITR list their available backups instead.",
+  ),
+  Command.withShortDescription("List available physical backups"),
   Command.withExamples([
     {
       command: "supabase backups list",

@@ -19,85 +19,81 @@ import { stackTargetResolverLayer, stackApiLayer } from "../../command-internal/
 import { logsTerminalLayer } from "./logs.browser.ts";
 import { logsClipboardLayer } from "./logs.clipboard.ts";
 import { logs, logsSources } from "./logs.handler.ts";
+import { cliFlag, makeCommand, repeated } from "../../shared/cli/cli-params.ts";
 
 const stackFlags = {
-  stack: Flag.String("stack").pipe(
-    Flag.withDescription("Select a local stack by name."),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Select a local stack by ID."),
-    Flag.optional,
-  ),
+  stack: cliFlag("stack", Flag.String, {
+    description: "Select a local stack by name.",
+    optional: true,
+  }),
+  stackId: cliFlag("stack-id", Flag.String, {
+    description: "Select a local stack by ID.",
+    optional: true,
+  }),
 };
 const config = {
   ...targetFlags({ subject: "log source", dbUrl: false }),
   ...stackFlags,
-  service: Flag.String("service").pipe(
-    Flag.withDescription("Service selector; repeat for multiple services. See logs sources."),
-    Flag.atLeast(0),
-  ),
-  resource: Flag.String("resource").pipe(
-    Flag.withDescription("Compute name or function ID remotely, or a local instance ID."),
-    Flag.optional,
-  ),
-  kind: Flag.Literals("kind", ["app", "requests", "builds"]).pipe(
-    Flag.withDescription("Compute stream; requires --service compute."),
-    Flag.optional,
-  ),
-  level: Flag.Literals("level", [
-    "error",
-    "warn",
-    "warning",
-    "info",
-    "debug",
-    "log",
-    "notice",
-  ]).pipe(Flag.withDescription("Severity filter; repeat for several levels."), Flag.atLeast(0)),
-  search: Flag.String("search").pipe(
-    Flag.withDescription("Case-insensitive message substring (hosted only)."),
-    Flag.optional,
-  ),
-  since: Flag.String("since").pipe(
-    Flag.withDescription(
-      "Duration or UTC timestamp; defaults to 1h. Local stacks also accept start.",
+  service: cliFlag("service", repeated(Flag.String, { min: 0 }), {
+    description: "Service selector; repeat for multiple services. See logs sources.",
+  }),
+  resource: cliFlag("resource", Flag.String, {
+    description: "Compute name or function ID remotely, or a local instance ID.",
+    optional: true,
+  }),
+  kind: cliFlag("kind", (name) => Flag.Literals(name, ["app", "requests", "builds"]), {
+    description: "Compute stream; requires --service compute.",
+    optional: true,
+  }),
+  level: cliFlag(
+    "level",
+    repeated(
+      (name) => Flag.Literals(name, ["error", "warn", "warning", "info", "debug", "log", "notice"]),
+      { min: 0 },
     ),
-    Flag.optional,
+    { description: "Severity filter; repeat for several levels." },
   ),
-  from: Flag.String("from").pipe(
-    Flag.withDescription("Start at a UTC timestamp ending in Z."),
-    Flag.optional,
-  ),
-  to: Flag.String("to").pipe(
-    Flag.withDescription("Initial end at a UTC timestamp ending in Z. L advances to now."),
-    Flag.optional,
-  ),
-  limit: Flag.Int("limit").pipe(
-    Flag.withDescription(
+  search: cliFlag("search", Flag.String, {
+    description: "Case-insensitive message substring (hosted only).",
+    optional: true,
+  }),
+  since: cliFlag("since", Flag.String, {
+    description: "Duration or UTC timestamp; defaults to 1h. Local stacks also accept start.",
+    optional: true,
+  }),
+  from: cliFlag("from", Flag.String, {
+    description: "Start at a UTC timestamp ending in Z.",
+    optional: true,
+  }),
+  to: cliFlag("to", Flag.String, {
+    description: "Initial end at a UTC timestamp ending in Z. L advances to now.",
+    optional: true,
+  }),
+  limit: cliFlag("limit", Flag.Int, {
+    description:
       "Initial filtered history count (default 100, maximum 1000). SQL controls its own LIMIT.",
-    ),
-    Flag.filter(
+    parse: Flag.filter(
       (value) => value >= 1 && value <= 1000,
       () => "--limit must be between 1 and 1000.",
     ),
-    Flag.withDefault(100),
-  ),
-  sql: Flag.String("sql").pipe(
-    Flag.withDescription("Custom hosted log SQL; requires --remote. L reruns the query."),
-    Flag.optional,
-  ),
-  file: Flag.String("file").pipe(
-    Flag.withDescription("Read custom hosted log SQL from a file; use - to read stdin."),
-    Flag.optional,
-  ),
+    default: 100,
+  }),
+  sql: cliFlag("sql", Flag.String, {
+    description: "Custom hosted log SQL; requires --remote. L reruns the query.",
+    optional: true,
+  }),
+  file: cliFlag("file", Flag.String, {
+    description: "Read custom hosted log SQL from a file; use - to read stdin.",
+    optional: true,
+  }),
 };
 const sourcesConfig = {
   ...targetFlags({ subject: "log source", dbUrl: false }),
   ...stackFlags,
-  service: Flag.String("service").pipe(
-    Flag.withDescription("Describe one service."),
-    Flag.optional,
-  ),
+  service: cliFlag("service", Flag.String, {
+    description: "Describe one service.",
+    optional: true,
+  }),
 };
 
 export type LogsSourcesFlags = CliCommand.Command.Config.Infer<typeof sourcesConfig>;
@@ -136,7 +132,7 @@ const logsReadFlags = [
 ];
 
 export const logsCommandFor = () =>
-  Command.make("logs", config).pipe(
+  makeCommand("logs", config).pipe(
     Command.annotate(OptionalSubcommand, true),
     Command.withDescription(
       "Browse local or hosted logs. Arrows select, Enter details, C copies, L loads more logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once. Explicit --output-format text disables the viewer. Use --output-format json|stream-json for structured output; -o/--output is unsupported.",
@@ -180,7 +176,7 @@ export const logsCommandFor = () =>
       consentExemptReason: "Reads logs without mutating the selected target.",
     }),
     Command.withSubcommands([
-      Command.make("sources", sourcesConfig).pipe(
+      makeCommand("sources", sourcesConfig).pipe(
         Command.withDescription(
           "List supported sources and filters. Hosted entries describe capabilities and do not imply that rows exist. Local entries list retained stack instances. Use --output-format json|stream-json for structured output; -o/--output is unsupported.",
         ),

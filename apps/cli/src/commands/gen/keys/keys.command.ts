@@ -7,16 +7,16 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  overrideName: Flag.String("override-name").pipe(
-    Flag.withDescription("Override specific variable names."),
-    Flag.atLeast(0),
-  ),
+  overrideName: cliFlag("override-name", repeated(Flag.String, { min: 0 }), {
+    description: "Override specific variable names.",
+  }),
 } as const;
 
-export const genKeysCommand = Command.make("keys", config).pipe(
+export const genKeysCommand = makeCommand("keys", config).pipe(
   Command.withDescription("Removed: use `supabase projects api-keys --remote=<ref>` instead."),
   Command.withShortDescription("Removed: use `projects api-keys` instead"),
   // Removed: fails before any Management API call, so no flag changes what it calls.

@@ -1,8 +1,8 @@
 # db-calls
 
-This command is much like the `supabase inspect db outliers` command, but ordered by the number of times a statement has been called.
+List statements from `pg_stat_statements` ordered by how many times they were called. Use it to find the queries that run most often and are good candidates for optimization.
 
-You can use this information to see which queries are called most often, which can potentially be good candidates for optimisation.
+It works like `supabase inspect db outliers`, but sorts by call count instead of total execution time.
 
 ```
 

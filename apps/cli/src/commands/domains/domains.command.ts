@@ -7,7 +7,7 @@ import { domainsReverifyCommand } from "./reverify/reverify.command.ts";
 
 export const domainsCommand = Command.make("domains").pipe(
   Command.withDescription(
-    "Manage custom domain names for Supabase projects. Use of custom domains and vanity subdomains is mutually exclusive.",
+    "Serve your project on your own domain name instead of the Supabase-provisioned subdomain. Custom domains and vanity subdomains are mutually exclusive.",
   ),
   Command.withShortDescription("Manage custom domain names for Supabase projects"),
   Command.withSubcommands([

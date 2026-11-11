@@ -9,10 +9,12 @@ import { withCommandTelemetry } from "../telemetry/command-telemetry.ts";
 import type { TestDbNoTestsError, TestDbRunError } from "./test-db.errors.ts";
 import { targetFlags, type TargetFlagValuesWithDbUrl } from "./target/target-flags.ts";
 import { testDb } from "./test-db.handler.ts";
+import { cliArgument, repeated } from "../shared/cli/cli-params.ts";
 
 /** Shared verbatim by both `test db` and its `db test` alias. */
-export const TEST_DB_DESCRIPTION = "Tests a database with pgTAP.";
-export const TEST_DB_SHORT = "Tests a database with pgTAP";
+export const TEST_DB_DESCRIPTION =
+  "Run pgTAP tests against a database, by default the files in supabase/tests.";
+export const TEST_DB_SHORT = "Run database tests with pgTAP";
 
 /**
  * `test db`'s entire output is the streamed pg_prove TAP on stdout. A run
@@ -32,10 +34,9 @@ const onRunFailure = (error: TestDbRunError | TestDbNoTestsError) =>
 
 /** Flag config shared by `supabase test db` and its hidden `supabase db test` alias. */
 export const testDbConfig = {
-  paths: Argument.String("path").pipe(
-    Argument.withDescription("Paths to test files or directories."),
-    Argument.variadic(),
-  ),
+  paths: cliArgument("path", repeated(Argument.String), {
+    description: "Paths to test files or directories to run.",
+  }),
   ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 

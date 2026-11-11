@@ -14,36 +14,46 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { genBearerJwt } from "./bearer-jwt.handler.ts";
 import { parseBearerJwtExp, parseBearerJwtValidFor } from "./bearer-jwt.flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   // `--role` stays optional at parse time so a missing value is enforced in
   // the handler instead, after telemetry is wired up — see
   // `GenBearerJwtRoleRequiredError`.
-  role: Flag.String("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
+  role: cliFlag("role", Flag.String, {
+    description: "Postgres role the token acts as.",
+    optional: true,
+    docs: { required: true },
+  }),
   // The displayed default is cosmetically "anonymous" but the real default
   // stays "" — an omitted `--sub` never puts a `sub` claim in the token at
   // all.
-  sub: Flag.String("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
-  exp: Flag.String("exp").pipe(
-    Flag.withDescription("Expiry timestamp for this token."),
-    Flag.mapTryCatch(
+  sub: cliFlag("sub", Flag.String, {
+    description: "User ID to impersonate, set as the `sub` claim.",
+    optional: true,
+    docs: { default: "anonymous" },
+  }),
+  exp: cliFlag("exp", Flag.String, {
+    description: "Expiry timestamp of the token.",
+    parse: Flag.mapTryCatch(
       (value) => parseBearerJwtExp(value),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
-    Flag.optional,
-  ),
-  validFor: Flag.String("valid-for").pipe(
-    Flag.withDescription("Validity duration for this token."),
-    Flag.withDefault("30m"),
-    Flag.mapTryCatch(
+    optional: true,
+  }),
+  validFor: cliFlag("valid-for", Flag.String, {
+    description: "How long the token stays valid, such as `30m`.",
+    parse: Flag.mapTryCatch(
       (value) => parseBearerJwtValidFor(value),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
-  ),
-  payload: Flag.String("payload").pipe(
-    Flag.withDescription("Custom claims in JSON format."),
-    Flag.withDefault("{}"),
-  ),
+    default: parseBearerJwtValidFor("30m"),
+    docs: { default: "30m0s" },
+  }),
+  payload: cliFlag("payload", Flag.String, {
+    description: "Custom claims to add, as a JSON object.",
+    default: "{}",
+  }),
 } as const;
 
 export type GenBearerJwtFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -58,9 +68,21 @@ const genBearerJwtRuntimeLayer = Layer.mergeAll(
   stdinLayer,
 );
 
-export const genBearerJwtCommand = Command.make("bearer-jwt", config).pipe(
-  Command.withDescription("Generate a Bearer Auth JWT for accessing Data API"),
-  Command.withShortDescription("Generate a Bearer Auth JWT for accessing Data API"),
+export const genBearerJwtCommand = makeCommand("bearer-jwt", config).pipe(
+  Command.withDescription(
+    "Create a signed JWT for a Postgres role, for calling the Data API. The token is signed locally with a JWT signing key.\n\nSet the claims with `--sub` and `--payload`, and the lifetime with `--valid-for` or `--exp`.",
+  ),
+  Command.withShortDescription("Generate a Bearer Auth JWT for the Data API"),
+  Command.withExamples([
+    {
+      command: "supabase gen bearer-jwt --role authenticated --sub <user-id>",
+      description: "Generate a token for an authenticated user",
+    },
+    {
+      command: "supabase gen bearer-jwt --role service_role --valid-for 1h",
+      description: "Generate a service role token valid for one hour",
+    },
+  ]),
   withPermissions({
     operations: [],
     noApiEffectFlags: ["role", "sub", "exp", "valid-for", "payload"],

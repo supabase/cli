@@ -10,12 +10,23 @@ import {
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { makeCommand } from "../../../../shared/cli/cli-params.ts";
 
-export const inspectDbIndexUsageCommand = Command.make("index-usage", INSPECT_DB_FLAGS).pipe(
+export const inspectDbIndexUsageCommand = makeCommand("index-usage", INSPECT_DB_FLAGS).pipe(
   Command.withDescription(
     'Show information about the efficiency of indexes. Deprecated: use "index-stats" instead.',
   ),
   Command.withShortDescription("Show index efficiency (deprecated)"),
+  Command.withExamples([
+    {
+      command: "supabase inspect db index-usage",
+      description: "Show index usage on the local database",
+    },
+    {
+      command: "supabase inspect db index-usage --remote",
+      description: "Show index usage on the linked project",
+    },
+  ]),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbIndexUsage)),
   Command.provide(inspectDbRuntimeLayer("index-usage")),

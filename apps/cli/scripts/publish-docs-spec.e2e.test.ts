@@ -23,7 +23,7 @@ function runScript(
 
 function validSpec(version: string): string {
   return stringify({
-    clispec: "001",
+    clispec: "002",
     info: { id: "cli", version, title: "Supabase CLI" },
     commands: Array.from({ length: 144 }, (_, index) => ({ id: `supabase-command-${index}` })),
   });
@@ -53,7 +53,7 @@ describe("publish-docs-spec.ts entrypoint", () => {
 
   it("refuses a truncated spec with too few commands", () => {
     const truncated = stringify({
-      clispec: "001",
+      clispec: "002",
       info: { id: "cli", version: "1.0.0", title: "Supabase CLI" },
       commands: [{ id: "supabase-init" }],
     });
@@ -69,12 +69,12 @@ describe("publish-docs-spec.ts entrypoint", () => {
   }, 30_000);
 
   it("summarizes a valid spec in dry-run mode without publishing", () => {
-    const spec = validSpec("1.0.0");
-    const { exitCode, stdout, stderr } = runScript(["--version", "1.0.0", "--dry-run"], spec);
+    const spec = validSpec("2.0.0");
+    const { exitCode, stdout, stderr } = runScript(["--version", "2.0.0", "--dry-run"], spec);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(
-      `Would publish ${spec.length} bytes to supabase/supabase:apps/docs/spec/cli_v1_commands.yaml on branch cli/ref-doc`,
+      `Would publish ${spec.length} bytes to supabase/supabase:apps/docs/spec/cli_v2_commands.yaml on branch cli/ref-doc`,
     );
   }, 30_000);
 });

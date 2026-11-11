@@ -13,48 +13,49 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  functionNames: Argument.String("Function name").pipe(
-    Argument.withDescription("Names of Functions to deploy. Deploys all if omitted."),
-    Argument.variadic(),
-  ),
+  functionNames: cliArgument("Function name", repeated(Argument.String), {
+    description: "Names of the functions to deploy; deploys all when omitted.",
+  }),
   ...projectTargetFlags(),
-  noVerifyJwt: Flag.Boolean("no-verify-jwt").pipe(
-    Flag.withDescription("Disable JWT verification for the Function."),
-    Flag.withDefault(false),
-  ),
-  useApi: Flag.Boolean("use-api").pipe(
-    Flag.withDescription("Bundle functions server-side without using Docker."),
-    Flag.withDefault(false),
-  ),
-  importMap: Flag.String("import-map").pipe(
-    Flag.withDescription("Path to import map file."),
-    Flag.optional,
-  ),
-  prune: Flag.Boolean("prune").pipe(
-    Flag.withDescription("Delete Functions that exist in Supabase project but not locally."),
-    Flag.withDefault(false),
-  ),
-  jobs: Flag.Int("jobs").pipe(
-    Flag.withAlias("j"),
-    Flag.filter(
+  noVerifyJwt: cliFlag("no-verify-jwt", Flag.Boolean, {
+    description: "Disable JWT verification for the function.",
+    default: false,
+  }),
+  useApi: cliFlag("use-api", Flag.Boolean, {
+    description: "Bundle functions server-side without using Docker.",
+    default: false,
+  }),
+  importMap: cliFlag("import-map", Flag.String, {
+    description: "Path to an import map file.",
+    optional: true,
+  }),
+  prune: cliFlag("prune", Flag.Boolean, {
+    description: "Delete functions that exist in the project but not locally.",
+    default: false,
+  }),
+  jobs: cliFlag("jobs", Flag.Int, {
+    description: "Maximum number of parallel jobs.",
+    alias: "j",
+    parse: Flag.filter(
       (jobs) => jobs >= 0,
       (jobs) => `Expected --jobs to be non-negative, got ${jobs}`,
     ),
-    Flag.withDescription("Maximum number of parallel jobs."),
-    Flag.optional,
-  ),
-  useDocker: Flag.Boolean("use-docker").pipe(
-    Flag.withDescription("Use Docker to bundle functions locally."),
-    Flag.withDefault(true),
-    Flag.withHidden,
-  ),
-  legacyBundle: Flag.Boolean("legacy-bundle").pipe(
-    Flag.withDescription("Use legacy bundling."),
-    Flag.withDefault(false),
-    Flag.withHidden,
-  ),
+    optional: true,
+    docs: { default: "1" },
+  }),
+  useDocker: cliFlag("use-docker", Flag.Boolean, {
+    description: "Bundle functions locally using Docker.",
+    default: true,
+    hidden: true,
+  }),
+  legacyBundle: cliFlag("legacy-bundle", Flag.Boolean, {
+    description: "Use legacy bundling.",
+    default: false,
+    hidden: true,
+  }),
 } as const;
 
 export type FunctionsDeployFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -64,9 +65,11 @@ const dockerPath = [
   { flag: "use-docker", is: true },
 ] as const;
 
-export const functionsDeployCommand = Command.make("deploy", config).pipe(
-  Command.withDescription("Deploy a Function to the linked Supabase project."),
-  Command.withShortDescription("Deploy a Function to Supabase"),
+export const functionsDeployCommand = makeCommand("deploy", config).pipe(
+  Command.withDescription(
+    "Deploy local Edge Functions to the linked project. Deploys every function in `supabase/functions` unless you name specific ones.\n\nWith `--prune`, functions that exist in the project but not locally are deleted. Asks for confirmation before changing anything; pass `--yes` in scripts and CI.",
+  ),
+  Command.withShortDescription("Deploy Edge Functions to a project"),
   Command.withExamples([
     {
       command: "supabase functions deploy hello-world",

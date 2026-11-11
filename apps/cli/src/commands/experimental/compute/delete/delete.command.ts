@@ -14,18 +14,19 @@ import { computeDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
+import { cliArgument, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 // No local `--yes`: it is a root persistent flag every other confirming command
 // reads through `resolveYes`, so redeclaring it here would shadow the
 // global, list `--yes` twice in `--help`, and quietly ignore `SUPABASE_YES`.
 const config = {
-  name: Argument.String("name").pipe(Argument.withDescription("Compute to delete.")),
+  name: cliArgument("name", Argument.String, { description: "Compute to delete.", required: true }),
   ...projectTargetFlags(),
 } as const;
 
 export type ComputeDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const computeDeleteCommand = Command.make("delete", config).pipe(
+export const computeDeleteCommand = makeCommand("delete", config).pipe(
   Command.withDescription(
     "Delete a compute from the linked Supabase project. Irreversible; its local directory and config file entry are kept.",
   ),

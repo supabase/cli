@@ -1,8 +1,8 @@
 # db-locks
 
-This command displays queries that have taken out an exclusive lock on a relation. Exclusive locks typically prevent other operations on that relation from taking place, and can be a cause of "hung" queries that are waiting for a lock to be granted.
+List queries that hold an exclusive lock on a relation. Exclusive locks block other operations on that relation and can cause "hung" queries that wait for a lock.
 
-If you see a query that is hanging for a very long time or causing blocking issues you may consider killing the query by connecting to the database and running `SELECT pg_cancel_backend(PID);` to cancel the query. If the query still does not stop you can force a hard stop by running `SELECT pg_terminate_backend(PID);`
+To stop a query that hangs or blocks others, connect to the database and run `SELECT pg_cancel_backend(PID);`. If it keeps running, force it to stop with `SELECT pg_terminate_backend(PID);`.
 
 ```
      PID   │ RELNAME │ TRANSACTION ID │ GRANTED │                  QUERY                  │   AGE

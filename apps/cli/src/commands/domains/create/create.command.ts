@@ -14,19 +14,21 @@ import { domainsCreate } from "./create.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  customHostname: Flag.String("custom-hostname").pipe(
-    Flag.withDescription("The custom hostname to use for your Supabase project."),
-  ),
+  customHostname: cliFlag("custom-hostname", Flag.String, {
+    description: "The custom hostname to use for the project.",
+    required: true,
+  }),
   // Kept parsed (and hidden) only so using it produces the removal error instead of an
   // unknown-flag parse error.
-  includeRawOutput: Flag.Boolean("include-raw-output").pipe(
-    Flag.withDescription("Removed: use -o json instead."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
+  includeRawOutput: cliFlag("include-raw-output", Flag.Boolean, {
+    description: "Removed: use -o json instead.",
+    optional: true,
+    hidden: true,
+  }),
 } as const;
 
 const COMMAND_PATH = ["domains", "create"];
@@ -34,9 +36,9 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 
 export type DomainsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const domainsCreateCommand = Command.make("create", config).pipe(
+export const domainsCreateCommand = makeCommand("create", config).pipe(
   Command.withDescription(
-    "Create a custom hostname for your Supabase project. Expects your custom hostname to have a CNAME record to your Supabase project's subdomain.",
+    "Starts custom domain setup for your project. Before you run it, add a CNAME record from your hostname to your project's Supabase subdomain. Then run `supabase domains reverify` until verification completes, and `supabase domains activate` to switch over.",
   ),
   Command.withShortDescription("Create a custom hostname"),
   Command.withExamples([

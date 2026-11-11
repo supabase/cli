@@ -14,20 +14,29 @@ import { branchesUnpause } from "./unpause.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  name: Argument.String("name").pipe(
-    Argument.withDescription("Branch name or ID to unpause."),
-    Argument.optional,
-  ),
+  name: cliArgument("name", Argument.String, {
+    description: "Name or ID of the branch to unpause.",
+    optional: true,
+  }),
   ...projectTargetFlags({ parent: true }),
 } as const;
 
 export type BranchesUnpauseFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const branchesUnpauseCommand = Command.make("unpause", config).pipe(
-  Command.withDescription("Unpause a preview branch."),
+export const branchesUnpauseCommand = makeCommand("unpause", config).pipe(
+  Command.withDescription(
+    "Resume a paused preview branch so you can use it again.\n\nAsks for confirmation before changing anything; pass `--yes` in scripts and CI.",
+  ),
   Command.withShortDescription("Unpause a preview branch"),
+  Command.withExamples([
+    {
+      command: "supabase branches unpause my-branch",
+      description: "Resume a paused preview branch",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [{ operationId: "v1-restore-a-project", kind: "required" }] },

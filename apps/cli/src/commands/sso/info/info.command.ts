@@ -12,15 +12,16 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { ssoInfo } from "./info.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
 };
 export type SsoInfoFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const ssoInfoCommand = Command.make("info", config).pipe(
+export const ssoInfoCommand = makeCommand("info", config).pipe(
   Command.withDescription(
-    "Returns all of the important SSO information necessary for your project to be registered with a SAML 2.0 compatible identity provider.",
+    "Shows the values your identity provider needs to register your project, such as the ACS URL and the SP Entity ID.",
   ),
   Command.withShortDescription("Returns the SAML SSO settings required for the identity provider"),
   Command.withExamples([

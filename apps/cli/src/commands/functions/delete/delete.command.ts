@@ -11,11 +11,13 @@ import { functionsDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  functionName: Argument.String("Function name").pipe(
-    Argument.withDescription("Name of the Function to delete."),
-  ),
+  functionName: cliArgument("Function name", Argument.String, {
+    description: "Name of the function to delete.",
+    required: true,
+  }),
   ...projectTargetFlags(),
 } as const;
 
@@ -29,11 +31,11 @@ const functionsDeleteHandler = (flags: FunctionsDeleteFlags) =>
     withJsonErrorHandling,
   );
 
-export const functionsDeleteCommand = Command.make("delete", config).pipe(
+export const functionsDeleteCommand = makeCommand("delete", config).pipe(
   Command.withDescription(
-    "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
+    "Delete a deployed Edge Function from the linked project. Your local copy in `supabase/functions` is not removed.\n\nAsks for confirmation before changing anything; pass `--yes` in scripts and CI.",
   ),
-  Command.withShortDescription("Delete a Function from Supabase"),
+  Command.withShortDescription("Delete an Edge Function from a project"),
   Command.withExamples([
     {
       command: "supabase functions delete hello-world",

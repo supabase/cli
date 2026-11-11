@@ -21,27 +21,27 @@ import { status } from "./status.handler.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../shared/cli/cli-params.ts";
 
 // String-slice flags: each occurrence is CSV-split and accumulated across repeats,
 // so `--override-name a=1,b=2` is two overrides, not one. Malformed CSV fails at parse time.
 export const statusOverrideNameFlag = stringSliceFlag(
   "override-name",
-  "Override specific variable names.",
+  "Rename an exported variable, as key=NAME pairs or a comma-separated list.",
 );
 
-export const statusExcludeFlag = stringSliceFlag(
-  "exclude",
-  "Names of containers to omit from output.",
-).pipe(Flag.withHidden);
+export const statusExcludeFlag = stringSliceFlag("exclude", "Containers to omit from the output.", {
+  hidden: true,
+});
 
 const config = {
   overrideName: statusOverrideNameFlag,
   exclude: statusExcludeFlag,
-  ignoreHealthCheck: Flag.Boolean("ignore-health-check").pipe(
-    Flag.withDescription("Ignore unhealthy services and exit 0"),
-    Flag.withHidden,
-    Flag.withDefault(false),
-  ),
+  ignoreHealthCheck: cliFlag("ignore-health-check", Flag.Boolean, {
+    description: "Ignore unhealthy services and exit 0.",
+    default: false,
+    hidden: true,
+  }),
 } as const;
 
 export type StatusFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -74,9 +74,9 @@ const statusRuntimeLayer = Layer.mergeAll(
   commandRuntimeLayer(["status"]),
 );
 
-export const statusCommand = Command.make("status", config).pipe(
-  Command.withDescription("Show status of local Supabase containers."),
-  Command.withShortDescription("Show status of local Supabase containers"),
+export const statusCommand = makeCommand("status", config).pipe(
+  Command.withDescription("Show the status and connection details of the local Supabase stack."),
+  Command.withShortDescription("Show the local Supabase stack status"),
   Command.withExamples([
     {
       command: "supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL",

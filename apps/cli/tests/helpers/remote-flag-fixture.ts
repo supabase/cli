@@ -5,11 +5,11 @@ import { projectTargetFlags, targetFlags } from "../../src/command-internal/targ
 import { withTargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import type { TargetPolicyDeclaration } from "../../src/command-internal/target/target-policy.ts";
 
-export const remoteFlag = targetFlags({ subject: "database", dbUrl: true }).remote.pipe(
+const remoteFlag = targetFlags({ subject: "database", dbUrl: true }).remote.pipe(
   Flag.withDescription("Target a remote project."),
 );
 
-export const hostedRemoteFlag = projectTargetFlags().remote.pipe(
+const hostedRemoteFlag = projectTargetFlags().remote.pipe(
   Flag.withDescription("Target a remote project."),
 );
 

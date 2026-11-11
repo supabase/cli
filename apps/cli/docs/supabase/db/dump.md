@@ -1,18 +1,18 @@
 ## supabase-db-dump
 
-Dumps contents from a database.
+Export the schema of a database as a SQL script, or its data or custom roles with `--data-only` and `--role-only`. Use it to back up a database or to copy it to another project.
 
-Dumps the local database by default. Pass `--remote` to dump the linked project, which requires your local project to be linked by running `supabase link`. Pass `--remote=<ref|branch|url>` to dump another project, a branch of the linked project, or a database URL such as a self-hosted database. The command prints a `Target:` line on stderr naming the database it resolved, and never asks for confirmation.
+It dumps the local database by default. Pass `--remote` to dump the linked project, which requires your local project to be linked by running `supabase link`. Pass `--remote=<ref|branch|url>` to dump another project, a branch of the linked project, or a database URL such as a self-hosted database.
+
+The command prints a `Target:` line on stderr naming the database it resolved, and never asks for confirmation.
 
 `--linked`, `--project-ref`, `--db-url` and `--local` still work in v3 but are deprecated and removed in v4; use `--remote`.
 
-Runs `pg_dump` in a container with additional flags to exclude Supabase managed schemas. The ignored schemas include auth, storage, and those created by extensions.
+The command runs `pg_dump` in a container and excludes Supabase-managed schemas, including `auth`, `storage`, and those created by extensions. The default dump contains neither data nor custom roles.
 
-The default dump does not contain any data or custom roles. To dump those contents explicitly, specify either the `--data-only` and `--role-only` flag.
+### Note on privilege migration
 
-### Note on Privilege Migration
-
-When restoring to a new project, tables inherit ALL privileges from default privileges in the target database. To preserve specific privileges from your dump, revoke defaults before restoring:
+When you restore to a new project, tables inherit ALL privileges from the default privileges in the target database. To keep specific privileges from your dump, revoke the defaults before restoring:
 
 ```sql
 -- Run BEFORE restoring your schema

@@ -1,15 +1,13 @@
 ## supabase-migration-squash
 
-Squashes local schema migrations to a single migration file.
+Combine your local migrations into a single file. Use it to remove repeated changes to the same schema from your migration history.
 
-The squashed migration is equivalent to a schema only dump of the local database after applying existing migration files. This is especially useful when you want to remove repeated modifications of the same schema from your migration history.
+The squashed migration is equivalent to a schema-only dump of the local database after applying your existing migration files. By default, the latest `<timestamp>_<name>.sql` file is updated to contain it. Choose another target with `--version <timestamp>`.
 
-However, one limitation is that data manipulation statements, such as insert, update, or delete, are omitted from the squashed migration. You will have to add them back manually in a new migration file. This includes cron jobs, storage buckets, and any encrypted secrets in vault.
+Data statements such as insert, update, or delete are omitted from the squashed migration, so you must add them back in a new migration file. This includes cron jobs, storage buckets, and any encrypted secrets in vault. If your `supabase/migrations` directory is empty, the command does nothing.
 
-By default, the latest `<timestamp>_<name>.sql` file will be updated to contain the squashed migration. You can override the target version using the `--version <timestamp>` flag.
+Squashing rewrites your local migration files. When the target is a hosted database (`--remote` or `--remote=<ref|branch|url>`), it also resets the remote migration history table to the squashed migration, and asks for confirmation before changing any file (the default answer is No). Pass `--yes` to confirm in scripts and other non-interactive runs.
 
-If your `supabase/migrations` directory is empty, running `supabase squash` will do nothing.
-
-Squashing rewrites your local migration files. When the target is a hosted database (`--remote` or `--remote=<ref|branch|url>`), it also resets the remote migration history table to the squashed migration. That asks for confirmation before any file is changed (the default answer is No); pass `--yes` to confirm in scripts and other non-interactive runs. With the default local target it only squashes the files and suggests running `supabase migration repair --status applied --remote` for the remote history.
+With the default local target, the command only squashes the files and suggests running `supabase migration repair --status applied --remote` for the remote history.
 
 `--linked`, `--project-ref`, `--db-url` and `--local` still work in v3 but are deprecated and removed in v4; use `--remote`.

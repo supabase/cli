@@ -14,12 +14,13 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 /**
  * `test db` — the visible entry point. Its hidden alias `db test` reuses the same
  * `testDbConfig`/`runTestDbCommand` implementation across two `Command` registrations.
  */
-export const testDbCommand = Command.make("db", testDbConfig).pipe(
+export const testDbCommand = makeCommand("db", testDbConfig).pipe(
   Command.withDescription(TEST_DB_DESCRIPTION),
   Command.withShortDescription(TEST_DB_SHORT),
   withPermissions(compose(dbConfig, branchResolution)),

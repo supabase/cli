@@ -9,19 +9,29 @@ import { dbStart } from "./start.handler.ts";
 import { dbStartRuntimeLayer } from "./start.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  fromBackup: Flag.String("from-backup").pipe(
-    Flag.withDescription("Path to a logical backup file."),
-    Flag.optional,
-  ),
+  fromBackup: cliFlag("from-backup", Flag.String, {
+    description: "Path to a logical backup file to restore from.",
+    optional: true,
+  }),
 } as const;
 
 export type DbStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const dbStartCommand = Command.make("start", config).pipe(
-  Command.withDescription("Starts local Postgres database."),
-  Command.withShortDescription("Starts local Postgres database"),
+export const dbStartCommand = makeCommand("start", config).pipe(
+  Command.withDescription(
+    "Start only the local Postgres container, without the rest of the Supabase stack. Use it when you just need a local database, for example to run migrations.",
+  ),
+  Command.withShortDescription("Start the local Postgres database"),
+  Command.withExamples([
+    { command: "supabase db start", description: "Start the local Postgres database" },
+    {
+      command: "supabase db start --from-backup ./backup.sql",
+      description: "Start the database and restore it from a logical backup",
+    },
+  ]),
   withPermissions({ operations: [], noApiEffectFlags: ["from-backup"] }),
   Command.withHandler((flags) =>
     dbStart(flags).pipe(

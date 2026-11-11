@@ -13,14 +13,17 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { ssoList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
 };
 export type SsoListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const ssoListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List all SSO identity providers for a project."),
+export const ssoListCommand = makeCommand("list", config).pipe(
+  Command.withDescription(
+    "Shows the identity providers connected to your project, with their IDs and email domains.",
+  ),
   Command.withShortDescription("List all SSO identity providers"),
   Command.withExamples([
     {

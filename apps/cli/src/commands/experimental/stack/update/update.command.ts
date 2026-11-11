@@ -8,19 +8,17 @@ import { stackUpdate } from "./update.handler.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliArgument, makeCommand, repeated } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  services: Argument.String("service").pipe(
-    Argument.withDescription(
-      `Services to update; every service when omitted. One of: ${artifactServiceKinds().join(", ")}.`,
-    ),
-    Argument.variadic(),
-  ),
+  services: cliArgument("service", repeated(Argument.String), {
+    description: `Services to update; every service when omitted. One of: ${artifactServiceKinds().join(", ")}.`,
+  }),
 } as const;
 
 export type StackUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const stackUpdateCommand = Command.make("update", config).pipe(
+export const stackUpdateCommand = makeCommand("update", config).pipe(
   Command.withDescription(
     "Re-resolve the named local service versions (all when none are named) in supabase/supabase.lock, even when their entries are up to date: " +
       "a release specifier moves to its newest published revision, a bundled entry to this CLI's pin, and an exact revision stays. " +
