@@ -1,4 +1,5 @@
 import { StackError, type ServiceCreation, type Stack } from "@supabase/stack/effect";
+import { functionsHostApiUrl } from "@supabase/stack/internal/composition";
 import {
   DateTime,
   Effect,
@@ -314,6 +315,14 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ? `http://${databaseAddress.hostname}:${port}`
       : (yield* apiSource.credentials({ from: "runtime" })).apiUrl;
   if (apiUrl === undefined) return yield* invalidConfig("The stack has no runtime API URL.");
+  /* Without an API member, saved api TLS still makes the banner's host API origin
+     `https://127.0.0.1:<port>`. */
+  const hostApiUrl =
+    apiSource === undefined
+      ? (yield* stack.apiTls.get) === undefined
+        ? undefined
+        : `https://127.0.0.1:${port}`
+      : functionsHostApiUrl((yield* apiSource.credentials({ from: "host" })).apiUrl);
   const { jwtSecret: _jwtSecret, ...sourceConfig } = source.config;
   const creation: FunctionsCreation = {
     ...source,
@@ -321,6 +330,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ...sourceConfig,
       jwks,
       apiUrl,
+      ...(hostApiUrl === undefined ? {} : { hostApiUrl }),
       databaseUrl,
       ...(yield* serveEnv(workdir, envFile, config.source, source.config)),
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),

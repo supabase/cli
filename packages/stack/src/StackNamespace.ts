@@ -11,6 +11,7 @@ export { holdExclusiveLock, holdLock, holdSharedLock, isLockBusy } from "./names
 export { resolveStackDataRoot, stackDataRootLabel, stackLogsRoot } from "./namespace/Paths.ts";
 export { publish } from "./namespace/Publication.ts";
 export {
+  ApiTls,
   SavedStack,
   StackCredentials,
   StackKeysInput,

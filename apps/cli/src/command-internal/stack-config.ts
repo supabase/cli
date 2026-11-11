@@ -6,7 +6,10 @@ import {
   DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
   DEFAULT_SIGNING_KEY,
 } from "@supabase/stack/defaults";
-import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
+import {
+  apiTlsContext,
+  type ServiceCreationInput as ServiceCreationType,
+} from "@supabase/stack/effect";
 import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import { SecureRandom } from "effect/crypto";
@@ -44,7 +47,18 @@ import {
   resolveAuthExternalProviders,
 } from "./local-config-values.ts";
 import { generateAsymmetricLocalJwt } from "./local-jwt.ts";
-import { resolveEmailTemplatePaths } from "./config-validate.ts";
+import {
+  apiTlsCertReadErrorMessage,
+  apiTlsKeyReadErrorMessage,
+  apiTlsPairErrorMessage,
+  resolveApiTlsPath,
+  resolveEmailTemplatePaths,
+  validateApiTlsPresence,
+} from "./config-validate.ts";
+import {
+  KONG_LOCAL_TLS_CERT,
+  KONG_LOCAL_TLS_KEY,
+} from "../commands/start/templates/kong-local-tls.ts";
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import {
   resolveRemoteJwks,
@@ -74,6 +88,11 @@ interface StackStartConfig {
     stackId: string,
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
   readonly source: CliConfig;
+  /** Reads the PEM pair the API listener serves HTTPS with, when `[api.tls]` is enabled. */
+  readonly apiTls: Effect.Effect<
+    { readonly cert: string; readonly key: string } | undefined,
+    StackConfigError
+  >;
   readonly projectEnvValues: Readonly<Record<string, string>>;
   readonly originAt: CliConfigMaterialized["originAt"];
   readonly remoteJwks: Effect.Effect<string | undefined, StackConfigError>;
@@ -169,7 +188,6 @@ export const stackEndpointKey = (service: string, endpoint: string): StackEndpoi
 export const stackMajorVersionKey: StackEndpointKey = CliConfigKeys.db.majorVersion;
 
 const unsupportedConfigPaths = [
-  { path: "api.tls", active: (config: CliConfig) => config.api.enabled },
   { path: "analytics.gcp_project_id", active: (config: CliConfig) => config.analytics.enabled },
   {
     path: "analytics.gcp_project_number",
@@ -313,6 +331,52 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       );
       const path = yield* Path.Path;
       const { supabaseHome } = yield* CommandSettings;
+      /* Like legacy: both configured paths, joined to `supabase/`, else the embedded local pair. */
+      const tls = validatedConfig.api.tls;
+      const certPath = tls.cert_path ?? "";
+      const keyPath = tls.key_path ?? "";
+      const fs = yield* FileSystem.FileSystem;
+      const readTls = (file: string, message: (cause: unknown) => string) =>
+        fs
+          .readFileString(resolveApiTlsPath(path, projectRoot, file))
+          .pipe(
+            Effect.mapError(
+              (cause) => new StackConfigError({ message: message(cause.reason.cause ?? cause) }),
+            ),
+          );
+      /* Read only by the start that applies TLS; other commands use the pair saved at start. */
+      const apiTls = Effect.gen(function* () {
+        if (!tls.enabled) return undefined;
+        /* Like legacy, a disabled `[api]` still serves https, on the embedded pair. */
+        if (!validatedConfig.api.enabled)
+          return { cert: KONG_LOCAL_TLS_CERT, key: KONG_LOCAL_TLS_KEY };
+        yield* Effect.try({
+          try: () => validateApiTlsPresence(tls.cert_path, tls.key_path),
+          catch: (cause) =>
+            new StackConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
+        if (certPath === "") return { cert: KONG_LOCAL_TLS_CERT, key: KONG_LOCAL_TLS_KEY };
+        const pair = {
+          cert: yield* readTls(certPath, apiTlsCertReadErrorMessage),
+          key: yield* readTls(keyPath, apiTlsKeyReadErrorMessage),
+        };
+        /* Proven usable here, so start never fails on it after binding. */
+        yield* apiTlsContext(pair).pipe(
+          Effect.mapError(
+            (error) =>
+              new StackConfigError({
+                message: apiTlsPairErrorMessage(
+                  resolveApiTlsPath(path, projectRoot, certPath),
+                  resolveApiTlsPath(path, projectRoot, keyPath),
+                  error.cause,
+                ),
+              }),
+          ),
+        );
+        return pair;
+      });
       const auth = validatedConfig.auth;
       const issuer = yield* Effect.try({
         try: () => {
@@ -566,7 +630,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ),
       ).pipe(
         Effect.map((templates) => templates.flat()),
-        Effect.provideService(FileSystem.FileSystem, yield* FileSystem.FileSystem),
+        Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.mapError(toStackConfigError),
       );
@@ -769,6 +833,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         selection,
         creations: createCreations,
         source: validatedConfig,
+        apiTls,
         projectEnvValues,
         originAt,
         remoteJwks,

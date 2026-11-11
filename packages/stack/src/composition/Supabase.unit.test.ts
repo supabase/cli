@@ -117,6 +117,7 @@ it.live(
         const operations: SupabaseCompositionOperations = {
           currentComposition: Effect.succeed({ members: [], dependencies: [] }),
           randomToken: Effect.succeed("token"),
+          validated: Effect.void,
           get: () => Effect.die("get is unused"),
           status: () => Effect.die("status is unused"),
           create: (creation) => Effect.succeed({ id: idFor(creation.service), creation }),
@@ -210,6 +211,73 @@ it.live(
         yield* Fiber.join(pgmetaStopped);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("gives Auth, Studio and Functions the API's HTTPS host URL, keeping Studio's own", () =>
+  Effect.gen(function* () {
+    const host = "https://127.0.0.1:54321";
+    const runtime = "http://host.supabase.internal:54321";
+    const derived = (studio: Record<string, string>) =>
+      Effect.gen(function* () {
+        const inputs: ReadonlyArray<ServiceCreation> = [
+          {
+            service: "auth",
+            pin: selection.auth,
+            config: { jwtSecret: "https-host-jwt-secret-with-32-chars", jwtExpiry: 3600 },
+            endpoints: { http: { port: "auto" } },
+          },
+          {
+            service: "functions",
+            pin: selection.functions,
+            config: { functionsRoot: "/project/supabase/functions" },
+            endpoints: { http: { port: "auto" } },
+          },
+          withValues(
+            {
+              service: "studio",
+              pin: selection.studio,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+            studio,
+          ),
+        ];
+        const byId = new Map<string, ServiceCreation>(
+          inputs.map((creation) => [creation.service, creation]),
+        );
+        const configured = yield* makeSupabaseComposition(
+          {
+            currentComposition: Effect.succeed({ members: [], dependencies: [] }),
+            randomToken: Effect.succeed("token"),
+            validated: Effect.void,
+            get: () => Effect.die("get is unused"),
+            status: () => Effect.die("status is unused"),
+            create: (creation) => Effect.succeed({ id: creation.service, creation }),
+            destroy: () => Effect.die("destroy is unused"),
+            bind: () => Effect.void,
+            address: (_id, _endpoint, from) => Effect.succeed(from === "host" ? host : runtime),
+            output: (id, name) => Effect.succeed(`${name}::${id}`),
+            updateCreation: (id, values) => {
+              const base = byId.get(id);
+              return base === undefined
+                ? Effect.die(`Unknown instance ${id}`)
+                : Effect.succeed({ id, creation: withValues(base, values) });
+            },
+            replaceCreation: () => Effect.die("replaceCreation is unused"),
+            configure: () => Effect.void,
+          },
+          inputs,
+        );
+        return new Map(configured.map(({ creation }) => [creation.service, creation.config]));
+      });
+    const configs = yield* derived({});
+    expect(configs.get("auth")).toMatchObject({ externalApiUrl: `${host}/auth/v1` });
+    expect(configs.get("studio")).toMatchObject({ apiUrl: runtime, publicApiUrl: host });
+    expect(configs.get("functions")).toMatchObject({ apiUrl: runtime, hostApiUrl: host });
+    expect(
+      (yield* derived({ publicApiUrl: "https://studio.example.com" })).get("studio"),
+    ).toMatchObject({ publicApiUrl: "https://studio.example.com" });
+  }),
 );
 
 it("does not let an excluded sibling's stale fixed port mask a shared endpoint's own change", () => {

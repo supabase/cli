@@ -76,6 +76,7 @@ const bootstrapConfig = Effect.runSync(
     const read = <A>(config: Config.Config<A>) => config.pipe(Config.option);
     return {
       hostPort: yield* read(Config.String("SUPABASE_INTERNAL_HOST_PORT")),
+      hostUrl: yield* read(Config.String("SUPABASE_INTERNAL_HOST_URL")),
       functionsRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
       filesRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
       jwtSecret: yield* read(Config.String("SUPABASE_INTERNAL_JWT_SECRET")),
@@ -97,6 +98,8 @@ const bootstrapConfig = Effect.runSync(
 const valueOr = (value: Option.Option<string>, fallback = "") =>
   Option.getOrElse(value, () => fallback);
 const HOST_PORT = valueOr(bootstrapConfig.hostPort, "8081");
+/* The host's HTTPS API origin when the stack serves TLS, otherwise plain loopback on its port. */
+const HOST_URL = valueOr(bootstrapConfig.hostUrl, `http://127.0.0.1:${HOST_PORT}`);
 const FUNCTIONS_ROOT = valueOr(bootstrapConfig.functionsRoot);
 const JWT_SECRET = valueOr(bootstrapConfig.jwtSecret);
 const SUPABASE_URL = valueOr(bootstrapConfig.supabaseUrl, "http://127.0.0.1:54321");
@@ -516,12 +519,10 @@ Deno.serve({
     }),
   onListen: () => {
     const names = Object.keys(configured);
-    const examples = names
-      .slice(0, 5)
-      .map((name) => ` - http://127.0.0.1:${HOST_PORT}/functions/v1/${name}`);
+    const examples = names.slice(0, 5).map((name) => ` - ${HOST_URL}/functions/v1/${name}`);
     Effect.runSync(
       Console.log(
-        `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
+        `Serving functions on ${HOST_URL}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
       ),
     );
   },

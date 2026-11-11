@@ -95,6 +95,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
       get: () => Effect.succeed(databaseInstance),
       list: Effect.succeed([databaseInstance]),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: Effect.succeed(credentials) },
     composition: {
       plan: () => Effect.die("unused"),
