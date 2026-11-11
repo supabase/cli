@@ -108,7 +108,7 @@ const query = (url: string, statement: string) =>
     }),
   );
 
-it.effect("credential lookup leaves a fresh stack untouched for custom database credentials", () =>
+it.live("credential lookup leaves a fresh stack untouched for custom database credentials", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -402,7 +402,7 @@ it.live("forwards and rotates saved identity across composed services in one own
   ),
 );
 
-it.effect("publishes service removal and composition pruning together", () =>
+it.live("publishes service removal and composition pruning together", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -568,7 +568,7 @@ it.live(
   { timeout: 180_000 },
 );
 
-it.effect("isolates owner graphs built in one scope", () =>
+it.live("isolates owner graphs built in one scope", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -697,7 +697,7 @@ it.live(
   { timeout: 180_000 },
 );
 
-it.effect("validates Supabase composition recipes before creating instances", () =>
+it.live("validates Supabase composition recipes before creating instances", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -793,7 +793,7 @@ it.effect("validates Supabase composition recipes before creating instances", ()
   ),
 );
 
-it.effect("lets a retry choose other credentials after the first database creation failed", () =>
+it.live("lets a retry choose other credentials after the first database creation failed", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -829,60 +829,58 @@ it.effect("lets a retry choose other credentials after the first database creati
   ),
 );
 
-it.effect(
-  "rejects a duplicate instance without releasing the existing instance's reservations",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-duplicate-" });
-        const state = yield* stateFor(`${root}/state`);
-        const stack = initial(`owner-duplicate-${randomUUID().slice(0, 8)}`);
-        yield* state.save(stack);
-        const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
-        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
-        const definitions = yield* owner.rpc.supabaseComposition({
-          services: [
-            {
-              service: "mail",
-              pin: selection.mail,
-              config: {},
-              endpoints: { http: { port: "auto" } },
-            },
-          ],
-        });
-        const mail = definitions.find((entry) => entry.creation.service === "mail");
-        if (mail === undefined) return yield* Effect.die("mail missing from the composition");
-        const realStateRoot = yield* fs.realPath(`${root}/state`);
-        const portReservations = yield* PortReservations.Service;
-        const endpoint = `${mail.id}:http`;
-        const assigned = yield* portReservations.find(realStateRoot, stack.id, endpoint);
-        expect(assigned).toBeDefined();
-        const saved = yield* state.read(stack.id);
-        if (saved === undefined) return yield* Effect.die("saved state disappeared");
-        const instance = saved.instances.find((entry) => entry.id === mail.id);
-        if (instance === undefined) return yield* Effect.die("mail instance was not saved");
+it.live("rejects a duplicate instance without releasing the existing instance's reservations", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-duplicate-" });
+      const state = yield* stateFor(`${root}/state`);
+      const stack = initial(`owner-duplicate-${randomUUID().slice(0, 8)}`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const definitions = yield* owner.rpc.supabaseComposition({
+        services: [
+          {
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
+        ],
+      });
+      const mail = definitions.find((entry) => entry.creation.service === "mail");
+      if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+      const realStateRoot = yield* fs.realPath(`${root}/state`);
+      const portReservations = yield* PortReservations.Service;
+      const endpoint = `${mail.id}:http`;
+      const assigned = yield* portReservations.find(realStateRoot, stack.id, endpoint);
+      expect(assigned).toBeDefined();
+      const saved = yield* state.read(stack.id);
+      if (saved === undefined) return yield* Effect.die("saved state disappeared");
+      const instance = saved.instances.find((entry) => entry.id === mail.id);
+      if (instance === undefined) return yield* Effect.die("mail instance was not saved");
 
-        const failure = yield* ownerFor({
-          saved: { ...saved, instances: [instance, instance] },
-          state,
-          root: `${root}/data`,
-          cacheRoot,
-        }).pipe(Effect.flip);
+      const failure = yield* ownerFor({
+        saved: { ...saved, instances: [instance, instance] },
+        state,
+        root: `${root}/data`,
+        cacheRoot,
+      }).pipe(Effect.flip);
 
-        expect(failure.message).toBe(`Duplicate instance ${mail.id}`);
-        expect(yield* portReservations.find(realStateRoot, stack.id, endpoint)).toBe(assigned);
-      }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          NodeServices.layer,
-          NodeCrypto.layer,
-          NodeHttpClient.layerNodeHttp,
-          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
-        ),
+      expect(failure.message).toBe(`Duplicate instance ${mail.id}`);
+      expect(yield* portReservations.find(realStateRoot, stack.id, endpoint)).toBe(assigned);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
       ),
     ),
+  ),
 );
 
 it.live("destroying one service deletes its port reservation", () =>
@@ -1037,7 +1035,7 @@ it.live("refuses to destroy a stack whose data directory is a symlink and keeps 
   ),
 );
 
-it.effect("refuses to generate credentials for a stack whose saved instances consume them", () =>
+it.live("refuses to generate credentials for a stack whose saved instances consume them", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
