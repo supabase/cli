@@ -1,15 +1,23 @@
 import { Cause, Option } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { CliError } from "effect/cli";
 import { unwrapNativeFailure } from "../telemetry/error-actionability.ts";
 import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
+import { stripControlSequences } from "./strip-control-sequences.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
+
+/** The plan-gate signal machine-mode errors carry, mirroring the Management API's `entitlement_required` body. */
+export type PlanGateEntitlement = {
+  readonly feature: string;
+  readonly upgrade_url: string;
+};
 
 type NormalizedCliError = {
   readonly code: string;
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
+  readonly entitlement?: PlanGateEntitlement;
 };
 
 type ErrorRecord = Record<string, unknown>;
@@ -30,6 +38,25 @@ const readRawString = (value: ErrorRecord, key: string): string | undefined => {
   const field = value[key];
   return typeof field === "string" ? field : undefined;
 };
+
+const readEntitlement = (error: ErrorRecord): PlanGateEntitlement | undefined => {
+  const entitlement = error["entitlement"];
+  if (!isErrorRecord(entitlement)) return undefined;
+  const feature = readString(entitlement, "feature");
+  const upgradeUrl = readString(entitlement, "upgrade_url");
+  return feature && upgradeUrl ? { feature, upgrade_url: upgradeUrl } : undefined;
+};
+
+/** A config parse failure's reason and position, without the source text it quotes, which can hold secrets. */
+export function configParseCauseMessage(cause: unknown): string {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  const reason = (stripControlSequences(text).split("\n\n")[0] ?? "").trimEnd();
+  /* Only smol-toml's error carries a `codeblock`; Bun sets `line`/`column` on every `Error`. */
+  if (isErrorRecord(cause) && typeof cause["codeblock"] === "string") {
+    return `${reason} (line ${String(cause["line"])}, column ${String(cause["column"])})`;
+  }
+  return cause instanceof SyntaxError ? reason.replace(/"[\s\S]*"/u, '"<redacted>"') : reason;
+}
 
 const mappedError = (
   error: ErrorRecord,
@@ -71,6 +98,15 @@ const mappedError = (
         if (message !== undefined) return { code: tag, message };
       }
       return undefined;
+    }
+    case "CliConfigParseError": {
+      const path = readString(error, "path");
+      return path === undefined
+        ? undefined
+        : {
+            code: tag,
+            message: `failed to parse ${path}: ${configParseCauseMessage(error["cause"])}`,
+          };
     }
     case "UnknownSubcommand":
       return {
@@ -137,14 +173,16 @@ export function normalizeCliError(
     const message = readString(error, "message") ?? readString(error, "detail") ?? code;
     const detail = readString(error, "detail");
     // Raw read: some producers' suggestion text carries meaningful leading
-    // whitespace (e.g. `suggestLegacyBundle`'s leading `\n` for a blank
+    // whitespace (e.g. `suggestUseApiRetry`'s leading `\n` for a blank
     // separator line); `readString` would trim exactly that away.
     const suggestion = readRawString(error, "suggestion");
+    const entitlement = readEntitlement(error);
     return {
       code,
       message,
       ...(detail && detail !== message ? { detail } : {}),
       ...(suggestion !== undefined && suggestion.length > 0 ? { suggestion } : {}),
+      ...(entitlement === undefined ? {} : { entitlement }),
     };
   }
 

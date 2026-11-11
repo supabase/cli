@@ -1,9 +1,31 @@
 import { describe, expect, it } from "@effect/vitest";
+import { Writable } from "node:stream";
 import { beforeEach, vi } from "vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  PlatformError,
+  Scheduler,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
-import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
-import { mockTty } from "../../../tests/helpers/mocks.ts";
+import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
+import { epipe, mockTty, overrideStreamErrored } from "../../../tests/helpers/mocks.ts";
+import {
+  announceTarget,
+  CommandTarget,
+  type RenderedTarget,
+  withAnnouncedTarget,
+} from "./command-target.service.ts";
+import { commandTargetLayer } from "./command-target.layer.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
@@ -97,6 +119,47 @@ function mockStdio() {
   return { layer, stdout, stderr };
 }
 
+function brokenStdio(failing: "stdout" | "stderr", code: string) {
+  const attempts = { stdout: 0, stderr: 0 };
+  const sink = (stream: "stdout" | "stderr") =>
+    Sink.forEach((_item: string | Uint8Array) =>
+      Effect.suspend(() => {
+        attempts[stream]++;
+        return stream === failing
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "Stdio",
+                method: stream,
+                cause: Object.assign(new Error(code), { code }),
+              }),
+            )
+          : Effect.void;
+      }),
+    );
+  const layer = Layer.succeed(
+    Stdio.Stdio,
+    Stdio.make({
+      args: Effect.succeed([]),
+      stdin: Stream.empty,
+      stdout: () => sink("stdout"),
+      stderr: () => sink("stderr"),
+    }),
+  );
+  return { layer, attempts };
+}
+
+const outputLayersOver = (stdio: Layer.Layer<Stdio.Stdio>) => [
+  {
+    name: "text",
+    layer: textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), stdio)),
+    ),
+  },
+  { name: "json", layer: jsonOutputLayer.pipe(Layer.provide(stdio)) },
+  { name: "stream-json", layer: streamJsonOutputLayer.pipe(Layer.provide(stdio)) },
+];
+
 function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
   if (!Exit.isFailure(exit)) throw new Error("Expected failure");
   const fail = exit.cause.reasons.find(Cause.isFailReason);
@@ -168,7 +231,7 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    it.effect("fail writes Go-byte-identical red message + suggestion to stderr", () => {
+    it.effect("fail writes a red message + suggestion to stderr", () => {
       const writes: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       process.stderr.write = ((chunk: string | Uint8Array) => {
@@ -355,9 +418,10 @@ describe("Output", () => {
         yield* out.warn("no files matched pattern: missing.sql");
 
         expect(mockClack.spinnerFactory).toHaveBeenNthCalledWith(2, { withGuide: false });
-        expect(mockClack.log.warn).toHaveBeenCalledWith("no files matched pattern: missing.sql", {
-          spacing: 0,
-        });
+        expect(mockClack.log.warn).toHaveBeenCalledWith(
+          "no files matched pattern: missing.sql",
+          expect.objectContaining({ spacing: 0 }),
+        );
         const [clear] = mockClack.spinnerHandle.clear.mock.invocationCallOrder;
         const [warn] = mockClack.log.warn.mock.invocationCallOrder;
         const [, resume] = mockClack.spinnerHandle.start.mock.invocationCallOrder;
@@ -759,6 +823,150 @@ describe("Output", () => {
         expect(mockClack.log.success).toHaveBeenCalledWith("Loaded organizations.");
       }).pipe(Effect.provide(layer)),
     );
+  });
+
+  describe.each(["text", "json", "stream-json"])("%s layer on a broken pipe", (format) => {
+    const provideLayer = (stdio: Layer.Layer<Stdio.Stdio>) =>
+      Effect.provide(outputLayersOver(stdio).find(({ name }) => name === format)!.layer);
+
+    it.effect.each(["EPIPE", "EOF"])(
+      "ends the command once the stdout reader has closed (%s), then skips stdout",
+      (code) => {
+        const stdio = brokenStdio("stdout", code);
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const exit = yield* Effect.exit(out.raw("first\n"));
+          yield* out.raw("second\n");
+          yield* out.raw("diagnostic\n", "stderr");
+
+          expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+            StdoutClosedError,
+          );
+          expect(stdio.attempts).toEqual({ stdout: 1, stderr: 1 });
+        }).pipe(provideLayer(stdio.layer));
+      },
+    );
+
+    it.effect("drops diagnostics once a direct write broke stderr", () => {
+      const stdio = mockStdio();
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stderr, epipe);
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        yield* out.raw("payload\n");
+
+        expect(stdio.stderr).toEqual([]);
+        expect(stdio.stdout).toEqual(["payload\n"]);
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("ends the command once a direct write broke stdout", () => {
+      const stdio = mockStdio();
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stdout, epipe);
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        const exit = yield* Effect.exit(out.raw("payload\n"));
+
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(StdoutClosedError);
+        expect(stdio.stderr).toEqual(["diagnostic\n"]);
+        expect(stdio.stdout).toEqual([]);
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("never yields between the stream check and the write", () => {
+      let inWindow = false;
+      let windows = 0;
+      let yieldChecks = 0;
+      let suspensions = 0;
+      const stdio = Layer.succeed(
+        Stdio.Stdio,
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.empty,
+          stdout: () =>
+            Sink.forEach((_item: string | Uint8Array) =>
+              Effect.sync(() => {
+                inWindow = false;
+              }),
+            ),
+          stderr: () => Sink.drain,
+        }),
+      );
+      return Effect.gen(function* () {
+        yield* overrideStreamErrored(process.stdout, () => {
+          inWindow = true;
+          windows++;
+          /* Bun delivers the pending error in a microtask; it runs inside the window only if the
+             write suspends there. */
+          queueMicrotask(() => {
+            if (inWindow) suspensions++;
+          });
+          return null;
+        });
+        const scheduler = yield* Scheduler.Scheduler;
+        const out = yield* Output;
+        yield* out.raw("payload\n").pipe(
+          Effect.provideService(Scheduler.Scheduler, {
+            executionMode: scheduler.executionMode,
+            shouldYield: (fiber) => {
+              if (inWindow) yieldChecks++;
+              return scheduler.shouldYield(fiber);
+            },
+            makeDispatcher: () => scheduler.makeDispatcher(),
+          }),
+        );
+
+        expect({ windows, inWindow, yieldChecks, suspensions }).toEqual({
+          windows: 1,
+          inWindow: false,
+          yieldChecks: 0,
+          suspensions: 0,
+        });
+      }).pipe(provideLayer(stdio));
+    });
+
+    it.effect("keeps writing stdout once the stderr reader has closed", () => {
+      const stdio = brokenStdio("stderr", "EPIPE");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        yield* out.raw("again\n", "stderr");
+        yield* out.raw("payload\n");
+
+        expect(stdio.attempts).toEqual({ stdout: 1, stderr: 1 });
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("dies on any other stdout write failure", () => {
+      const stdio = brokenStdio("stdout", "EIO");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* Effect.exit(out.raw("first\n"));
+
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+          PlatformError.PlatformError,
+        );
+      }).pipe(provideLayer(stdio.layer));
+    });
+  });
+
+  it.effect("ends a text command when a log line meets a closed stdout", () => {
+    mockClack.log.info.mockImplementation((message: string, opts: { output: Writable }) =>
+      opts.output.write(`${message}\n`),
+    );
+    const stdio = brokenStdio("stdout", "EPIPE");
+    const layer = textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), stdio.layer)),
+    );
+    return Effect.gen(function* () {
+      const out = yield* Output;
+      const exit = yield* Effect.exit(out.info("first"));
+      yield* out.info("second");
+
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(StdoutClosedError);
+      expect(stdio.attempts).toEqual({ stdout: 1, stderr: 0 });
+    }).pipe(Effect.provide(layer));
   });
 
   describe("json layer", () => {
@@ -1325,6 +1533,238 @@ describe("Output", () => {
         }).pipe(Effect.provide(layer));
       },
     );
+  });
+
+  describe("command target", () => {
+    const localTarget: RenderedTarget = {
+      text: "local stack (127.0.0.1:54322)",
+      json: { kind: "local", host: "127.0.0.1", port: 54322 },
+    };
+    const linkedTarget: RenderedTarget = {
+      text: "project abcdefghijklmnopqrst",
+      json: {
+        kind: "linked",
+        project_ref: "abcdefghijklmnopqrst",
+        environment: "unverified",
+      },
+    };
+
+    const layerWith = (
+      outputLayer: ReturnType<typeof outputLayerFor>,
+      mock: ReturnType<typeof mockStdio>,
+    ) =>
+      Layer.mergeAll(
+        commandTargetLayer.pipe(
+          Layer.provideMerge(
+            outputLayer.pipe(
+              Layer.provide(Layer.mergeAll(mock.layer, mockTty({ stdoutIsTty: false }))),
+            ),
+          ),
+        ),
+        machineErrorContextLayer,
+      );
+
+    it.effect("a json object result gains the announced target", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(localTarget);
+        yield* out.result({ rows: 2 });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({ rows: 2, target: localTarget.json });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a json success payload gains the announced target next to its message", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(linkedTarget);
+        yield* out.success("Done.", { applied: 1 });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({ applied: 1, message: "Done.", target: linkedTarget.json });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a json array result is written unchanged", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(localTarget);
+        yield* out.result([{ id: 1 }]);
+        expect(mock.stdout).toEqual(['[{"id":1}]\n']);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a handler-owned target in the payload is preserved", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(localTarget);
+        yield* out.result({ target: "remote", rows: 1 });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({ target: "remote", rows: 1 });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a json result is unchanged when no target was announced", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.result({ rows: 2 });
+        expect(mock.stdout).toEqual(['{"rows":2}\n']);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a json result is unchanged when the cell is not provided", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.result({ rows: 2 });
+        expect(mock.stdout).toEqual(['{"rows":2}\n']);
+      }).pipe(Effect.provide(jsonOutputLayer.pipe(Layer.provide(mock.layer))));
+    });
+
+    it.effect("the json error envelope carries the announced target", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(linkedTarget);
+        yield* out.fail({ code: "E_TEST", message: "failed" });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({
+          _tag: "Error",
+          error: { code: "E_TEST", message: "failed" },
+          target: linkedTarget.json,
+        });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("the stream-json result event gains the announced target", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(localTarget);
+        yield* out.result({ rows: 2 });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed.type).toBe("result");
+        expect(parsed.data).toEqual({ rows: 2, target: localTarget.json });
+      }).pipe(Effect.provide(layerWith(streamJsonOutputLayer, mock)));
+    });
+
+    it.effect("the stream-json error event carries the announced target", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(linkedTarget);
+        yield* out.fail({ code: "E_FAIL", message: "boom" });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed.type).toBe("error");
+        expect(parsed.target).toEqual(linkedTarget.json);
+      }).pipe(Effect.provide(layerWith(streamJsonOutputLayer, mock)));
+    });
+
+    it.effect("announcing writes the banner to stderr in every output format", () =>
+      Effect.gen(function* () {
+        for (const outputLayer of [jsonOutputLayer, streamJsonOutputLayer, textOutputLayer]) {
+          const mock = mockStdio();
+          yield* announceTarget(localTarget).pipe(Effect.provide(layerWith(outputLayer, mock)));
+          expect(mock.stderr).toEqual(["Target: local stack (127.0.0.1:54322)\n"]);
+          expect(mock.stdout).toEqual([]);
+        }
+      }),
+    );
+
+    it.effect("announcing the same target twice prints one banner", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        yield* announceTarget(localTarget);
+        yield* announceTarget(localTarget);
+        expect(mock.stderr).toEqual(["Target: local stack (127.0.0.1:54322)\n"]);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("two distinct targets print both banners and the json keeps the first", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* announceTarget(linkedTarget);
+        yield* announceTarget(localTarget);
+        yield* out.result({ diff: "" });
+        expect(mock.stderr).toEqual([
+          "Target: project abcdefghijklmnopqrst\n",
+          "Target: local stack (127.0.0.1:54322)\n",
+        ]);
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed.target).toEqual(linkedTarget.json);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("the cell reports the first announced text, or none before an announcement", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const cell = yield* CommandTarget;
+        expect(yield* cell.text).toEqual(Option.none());
+        yield* announceTarget(linkedTarget);
+        yield* announceTarget(localTarget);
+        expect(yield* cell.text).toEqual(Option.some(linkedTarget.text));
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a local banner carries the hint set before it was announced", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const cell = yield* CommandTarget;
+        yield* cell.hintLocal("default; pass --linked for alpha (abcdefghijklmnopqrst)");
+        yield* announceTarget(localTarget);
+        expect(mock.stderr).toEqual([
+          "Target: local stack (127.0.0.1:54322) · default; pass --linked for alpha (abcdefghijklmnopqrst)\n",
+        ]);
+        expect(yield* cell.json).toEqual(Option.some(localTarget.json));
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("the hint only applies to a local banner", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const cell = yield* CommandTarget;
+        yield* cell.hintLocal("default; pass --linked for abcdefghijklmnopqrst");
+        yield* announceTarget(linkedTarget);
+        expect(mock.stderr).toEqual(["Target: project abcdefghijklmnopqrst\n"]);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("withAnnouncedTarget puts the announced target in front of the payload's own", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const announced = yield* withAnnouncedTarget({ rows: 1 });
+        expect(announced).toEqual({ rows: 1 });
+        yield* announceTarget(linkedTarget);
+        expect(yield* withAnnouncedTarget({ rows: 1 })).toEqual({
+          rows: 1,
+          target: linkedTarget.json,
+        });
+        expect(
+          yield* withAnnouncedTarget({ rows: 1, target: { environment: "branch", extra: true } }),
+        ).toEqual({
+          rows: 1,
+          target: { ...linkedTarget.json, environment: "branch", extra: true },
+        });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("an error context target set before the announcement is kept", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const context = yield* MachineErrorContext;
+        yield* context.set({ target: { project_ref: "own" } });
+        yield* announceTarget(localTarget);
+        yield* out.fail({ code: "E_TEST", message: "failed" });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed.target).toEqual({ project_ref: "own" });
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
   });
 
   describe("layerFor", () => {

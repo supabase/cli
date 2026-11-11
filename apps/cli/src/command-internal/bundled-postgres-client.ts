@@ -1,7 +1,6 @@
 import {
   Context,
   Config,
-  Crypto,
   Effect,
   FileSystem,
   Layer,
@@ -10,13 +9,14 @@ import {
   PlatformError,
   Stream,
 } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Digest, SecureRandom } from "effect/crypto";
+import { FetchHttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   ArtifactError,
-  postgresVersion,
-  prepareNativeArtifact,
+  type ArtifactPin,
   resolveArtifact,
+  useNativeArtifact,
 } from "@supabase/stack/internal/artifacts";
 
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
@@ -48,7 +48,7 @@ interface PostgresClientResult {
 }
 
 export interface RunPostgresClientOptions<E> {
-  readonly version?: string;
+  readonly pin: ArtifactPin;
   readonly runtime?: StackRuntimePreference;
   readonly argv: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string>>;
@@ -135,7 +135,7 @@ const nativeRun = Effect.fn("BundledPostgresClient.nativeRun")(function* <E>(
   const tool = ["pg_dump", "pg_dumpall", "pg_prove", "psql"].includes(command)
     ? path.join(artifactRoot, "bin", command)
     : command;
-  const inheritedPath = yield* Config.option(Config.string("PATH")).pipe(
+  const inheritedPath = yield* Config.option(Config.String("PATH")).pipe(
     Effect.mapError(mapSpawnError),
   );
   const env = {
@@ -216,7 +216,8 @@ export const bundledPostgresClientLayer: Layer.Layer<
   never,
   | FileSystem.FileSystem
   | Path.Path
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | ChildProcessSpawner.ChildProcessSpawner
   | DockerRun
   | RuntimeInfo
@@ -228,7 +229,8 @@ export const bundledPostgresClientLayer: Layer.Layer<
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const docker = yield* DockerRun;
     const runtimeInfo = yield* RuntimeInfo;
@@ -242,22 +244,24 @@ export const bundledPostgresClientLayer: Layer.Layer<
         Effect.gen(function* () {
           yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
           const runtime = options.runtime ?? { kind: "native" };
-          const version = postgresVersion(options.version ?? "17");
           if (runtime.kind === "container") {
-            const resolved = yield* resolveArtifact({ service: "database", version }).pipe(
+            const resolved = yield* resolveArtifact({ service: "database", pin: options.pin }).pipe(
               Effect.mapError(mapArtifactError),
             );
             return yield* dockerRun(options, resolved.image, docker);
           }
-          const prepared = yield* prepareNativeArtifact(
-            { service: "database", version },
+          // Pins the generation for the life of this scope, before the spawn inside `nativeRun`:
+          // the client child always exits before this scope closes, so the pin covers it fully.
+          const prepared = yield* useNativeArtifact(
+            { service: "database", pin: options.pin },
             path.join(settings.supabaseHome, "cache", "stack"),
             { os: runtimeInfo.platform, arch: runtimeInfo.arch },
           ).pipe(
             Effect.provide(FetchHttpClient.layer),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.provideService(Digest.Digest, digest),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.mapError(mapArtifactError),
           );

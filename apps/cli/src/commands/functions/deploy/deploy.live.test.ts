@@ -21,7 +21,7 @@ class FunctionsDeployLiveError extends Data.TaggedError("FunctionsDeployLiveErro
 
 function cleanupFunction(cliEffect: LiveCliEffect, slug: string, ref: string) {
   return Effect.gen(function* () {
-    const deleted = yield* cliEffect(["functions", "delete", slug, "--project-ref", ref]);
+    const deleted = yield* cliEffect(["functions", "delete", slug, "--yes", `--remote=${ref}`]);
     if (
       deleted.exitCode !== 0 &&
       !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
@@ -53,7 +53,12 @@ describe("functions deploy (live)", () => {
         yield* fs.writeFileString(path.join(directory, "deno.json"), '{\n  "imports": {}\n}\n');
 
         const target = Effect.gen(function* () {
-          const result = yield* cliEffect(["functions", "deploy", "--project-ref", project.ref]);
+          const result = yield* cliEffect([
+            "functions",
+            "deploy",
+            "--yes",
+            `--remote=${project.ref}`,
+          ]);
           expect(result.exitCode, result.stderr).toBe(0);
           expect(result.stdout).toMatch(/Deployed Function/i);
 

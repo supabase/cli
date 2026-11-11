@@ -1,23 +1,32 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option } from "effect";
+import { Effect, FileSystem, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   VALID_REF,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { ssoInfo } from "./info.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-info-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -35,7 +44,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -46,10 +55,10 @@ const expectedEntityId = `https://${VALID_REF}.supabase.co/auth/v1/sso/saml/meta
 const expectedRelayState = `https://${VALID_REF}.supabase.co`;
 
 describe("sso info integration", () => {
-  it.live("renders a 3-row markdown table in text mode", () => {
+  it.effect("renders a 3-row markdown table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("Single sign-on URL (ACS URL)");
       expect(out.stdoutText).toContain("Audience URI (SP Entity ID)");
       expect(out.stdoutText).toContain("Default Relay State");
@@ -59,19 +68,19 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits exactly one space between the ACS URL label and the column separator", () => {
+  it.effect("emits exactly one space between the ACS URL label and the column separator", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain(`Single sign-on URL (ACS URL) | ${expectedAcsUrl}`);
       expect(out.stdoutText).not.toContain("Single sign-on URL (ACS URL)  |");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("TS --output-format=json emits a structured payload", () => {
+  it.effect("TS --output-format=json emits a structured payload", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toEqual({
@@ -82,20 +91,20 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+  it.effect("--output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("ACS_URL=");
       expect(out.stdoutText).toContain("ENTITY_ID=");
       expect(out.stdoutText).toContain("RELAY_STATE=");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json sorts keys alphabetically and includes all three", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("--output=json sorts keys alphabetically and includes all three", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain('"acs_url"');
       expect(out.stdoutText).toContain('"entity_id"');
       expect(out.stdoutText).toContain('"relay_state"');
@@ -105,49 +114,99 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml emits the three keys", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("--output=yaml emits the three keys", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("acs_url:");
       expect(out.stdoutText).toContain("entity_id:");
       expect(out.stdoutText).toContain("relay_state:");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml emits the three keys", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("--output=toml emits the three keys", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("acs_url");
       expect(out.stdoutText).toContain("entity_id");
       expect(out.stdoutText).toContain("relay_state");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("URLs derive from --project-ref flag value when set", () => {
+  it.effect("URLs derive from the --remote=<ref> value when set", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.some(flagRef) });
+      yield* ssoInfo({
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
+      });
       expect(out.stdoutText).toContain(`https://${flagRef}.supabase.co`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry + linked-project cache on success", () => {
+  it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT make any API call", () => {
+  it.effect("makes no Management API call of its own", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("lists the picker's projects and fills the real cache, with no call of its own", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 404, {}));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(expectedAcsUrl);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso info", requests: api.requests });
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describeHostedTargetSelection("sso info", {
+  requestsNameProject: false,
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, {})),
+  run: (flags) => ssoInfo(flags),
 });

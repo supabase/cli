@@ -5,7 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Fiber, Layer, Option, Path, Schema, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
@@ -110,7 +110,7 @@ function mockSpawner() {
   const encoder = new TextEncoder();
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       // `ensureNetwork` probes with `network inspect` first; report it as missing so
       // `createShadowDatabase` actually reaches `network create` instead of short-circuiting.

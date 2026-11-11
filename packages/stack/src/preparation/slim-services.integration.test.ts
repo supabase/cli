@@ -1,8 +1,8 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
-  Crypto,
+  ConfigProvider,
   Deferred,
   Duration,
   Effect,
@@ -13,11 +13,13 @@ import {
   Option,
   Schedule,
 } from "effect";
+import { Digest } from "effect/crypto";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the redirect test owns a local native listener.
 import { createServer, type Server } from "node:http";
 import { zstdCompress } from "node:zlib";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { catalogPins, prepareNativeArtifact, resolveArtifact } from "../Artifacts.ts";
+import { selection } from "../../tests/pins.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
 import {
@@ -78,8 +80,8 @@ const bucketMirror = {
 };
 
 const sha256Of = Effect.fn(function* (bytes: Uint8Array) {
-  const crypto = yield* Crypto.Crypto;
-  return digestHex(yield* crypto.digest("SHA-256", bytes));
+  const crypto = yield* Digest.Digest;
+  return digestHex(yield* crypto.digest(Digest.sha256, bytes));
 });
 
 /** Pins `base` to the digests of the given archive and manifest bytes. */
@@ -273,7 +275,11 @@ describe("slim-services artifact source", () => {
           redirected.sha256,
         );
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
   );
 
@@ -300,7 +306,7 @@ describe("slim-services artifact source", () => {
         const cached = yield* withFetch(fetcher, store.prepare(request));
         expect(cached.outcome).toBe("cached");
         expect(requested).toHaveLength(2);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -339,7 +345,7 @@ describe("slim-services artifact source", () => {
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
         expect(attempts.get(demo.mirrors[0].manifestUrl)).toBe(2);
         expect(attempts.get(demo.mirrors[0].downloadUrl)).toBe(2);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -382,7 +388,7 @@ describe("slim-services artifact source", () => {
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
         expect(missing).toBe(1);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -410,7 +416,7 @@ describe("slim-services artifact source", () => {
           bucketMirror.manifestUrl,
           bucketMirror.downloadUrl,
         ]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -444,7 +450,7 @@ describe("slim-services artifact source", () => {
           bucketMirror.manifestUrl,
           bucketMirror.downloadUrl,
         ]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -478,7 +484,7 @@ describe("slim-services artifact source", () => {
           bucketMirror.manifestUrl,
           bucketMirror.downloadUrl,
         ]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -512,7 +518,7 @@ describe("slim-services artifact source", () => {
             `expected ${mirrored.manifestSha256}, got ${yield* sha256Of(tamperedManifest)})`,
         );
         expect(yield* fs.exists(`${destination}/bin/demo`)).toBe(false);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -539,7 +545,7 @@ describe("slim-services artifact source", () => {
           "Slim-services manifest does not match the catalog artifact",
         );
         expect(requested).toEqual([demo.mirrors[0].manifestUrl]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -558,7 +564,7 @@ describe("slim-services artifact source", () => {
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -589,7 +595,7 @@ describe("slim-services artifact source", () => {
             .pipe(Effect.exit),
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -615,7 +621,7 @@ describe("slim-services artifact source", () => {
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -647,7 +653,7 @@ describe("slim-services artifact source", () => {
         yield* Fiber.interrupt(fiber);
         expect(signal?.aborted).toBe(true);
         expect(yield* fs.readDirectory(destination)).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -668,11 +674,14 @@ describe("slim-services artifact source", () => {
         const fetcher = serving({ "example.test": { archive, manifest: demoManifest } });
         const failed = yield* withFetch(fetcher, store.prepare(request).pipe(Effect.exit));
         expect(Exit.isFailure(failed)).toBe(true);
-        expect(yield* fs.exists(`${root}/demo/v1`)).toBe(false);
+        const entries = yield* fs
+          .readDirectory(`${root}/demo/v1`)
+          .pipe(Effect.orElseSucceed(() => []));
+        expect(entries.filter((name) => /^[0-9a-f]{64}$/u.test(name))).toEqual([]);
         current = demo;
         const prepared = yield* withFetch(fetcher, store.prepare(request));
         expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -721,7 +730,7 @@ describe("slim-services artifact source", () => {
         expect(signal?.aborted).toBe(true);
         expect(canceled).toBe(true);
         expect(yield* fs.readDirectory(destination)).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -758,7 +767,7 @@ describe("slim-services artifact source", () => {
         yield* Fiber.interrupt(fiber);
         expect(destroyed).toBe(true);
         expect(yield* fs.readDirectory(destination)).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -775,7 +784,7 @@ describe("slim-services artifact source", () => {
           makeSlimServicesSource(() => demo).materialize(request, destination, demo.sha256),
         );
         expect(yield* fs.exists(`${destination}/${longName}`)).toBe(true);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 });
@@ -789,7 +798,10 @@ describe("native artifact catalog", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const { version, releaseVersion } = yield* resolveArtifact({ service: "rest" });
+          const { version, releaseVersion } = yield* resolveArtifact({
+            service: "rest",
+            pin: selection.rest,
+          });
           expect(releaseVersion).toMatch(/-r(0|[1-9][0-9]*)$/u);
           expect(releaseVersion.startsWith(`${version}-r`)).toBe(true);
           const asset = `postgrest-${releaseVersion}-linux-amd64`;
@@ -804,7 +816,9 @@ describe("native artifact catalog", () => {
           const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-catalog-" });
           const failed = yield* withFetch(
             fetcher,
-            prepareNativeArtifact({ service: "rest" }, cacheRoot, linux).pipe(Effect.exit),
+            prepareNativeArtifact({ service: "rest", pin: selection.rest }, cacheRoot, linux).pipe(
+              Effect.exit,
+            ),
           );
           const github = `https://github.com/supabase/slim-services/releases/download/postgrest-${releaseVersion}`;
           const bucket = `https://${s3}/postgrest/${releaseVersion}`;
@@ -819,47 +833,76 @@ describe("native artifact catalog", () => {
           expect(message).toContain(
             `${bucket}/${asset}.tar.zst (Slim-services manifest does not match its pin`,
           );
-        }).pipe(Effect.provide(NodeServices.layer)),
+        }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
       ),
   );
 
-  it.live("keys the native cache by release version and ignores a legacy upstream entry", () =>
+  it.live("downloads from the base named by SUPABASE_INTERNAL_SLIM_RELEASES_URL", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const resolved = yield* resolveArtifact({ service: "rest" });
-        const fs = yield* FileSystem.FileSystem;
-        const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-cache-" });
+        const { releaseVersion } = yield* resolveArtifact({ service: "rest", pin: selection.rest });
+        const asset = `postgrest-${releaseVersion}-linux-amd64`;
         const requested: string[] = [];
-        const seed = (version: string, content: string) =>
-          makeArtifactStore({ cacheRoot, source: fixtureSource(content) }).pipe(
-            Effect.flatMap((store) =>
-              withFetch(
-                serving({}, requested),
+        const fs = yield* FileSystem.FileSystem;
+        const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-override-" });
+
+        yield* withFetch(
+          serving({}, requested),
+          prepareNativeArtifact({ service: "rest", pin: selection.rest }, cacheRoot, linux).pipe(
+            Effect.exit,
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    SUPABASE_INTERNAL_SLIM_RELEASES_URL: "https://releases.fixture.test/base/",
+                  },
+                }),
+              ),
+            ),
+          ),
+        );
+
+        expect(requested[0]).toBe(
+          `https://releases.fixture.test/base/postgrest-${releaseVersion}/${asset}.manifest.json`,
+        );
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+    ),
+  );
+
+  it.live(
+    "keys the native cache by content: a fixture seeded under the real pinned digest is used, and an unpinned digest is never requested",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const resolved = yield* resolveArtifact({ service: "rest", pin: selection.rest });
+          const fs = yield* FileSystem.FileSystem;
+          const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-cache-" });
+          const requested: string[] = [];
+          const digest = resolved.natives["linux-amd64"].archive;
+          const seeded = yield* withFetch(
+            serving({}, requested),
+            makeArtifactStore({
+              cacheRoot,
+              source: { ...fixtureSource("pinned"), checksum: () => Effect.succeed(digest) },
+            }).pipe(
+              Effect.flatMap((store) =>
                 store.prepare({
-                  key: `slim-services/postgrest/${version}/linux-amd64`,
+                  key: `slim-services/postgrest/${resolved.releaseVersion}/linux-amd64`,
                   requiredRuntimePaths: resolved.requiredRuntimePaths,
                   executablePath: resolved.executablePath,
                 }),
               ),
             ),
           );
-        const prepare = withFetch(
-          serving({}, requested),
-          prepareNativeArtifact({ service: "rest" }, cacheRoot, linux),
-        );
-
-        yield* seed(resolved.version, "legacy");
-        expect(Exit.isFailure(yield* prepare.pipe(Effect.exit))).toBe(true);
-        expect(requested).not.toEqual([]);
-
-        const seeded = yield* seed(resolved.releaseVersion, "pinned");
-        requested.length = 0;
-        const prepared = yield* prepare;
-        expect(prepared.root).toBe(seeded.path);
-        expect(yield* fs.readFileString(prepared.executable)).toBe("pinned");
-        expect(requested).toEqual([]);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
+          const prepared = yield* withFetch(
+            serving({}, requested),
+            prepareNativeArtifact({ service: "rest", pin: selection.rest }, cacheRoot, linux),
+          );
+          expect(prepared.root).toBe(seeded.path);
+          expect(yield* fs.readFileString(prepared.executable)).toBe("pinned");
+          expect(requested).toEqual([]);
+        }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+      ),
   );
 
   it("catalog has no placeholder pins", () => {

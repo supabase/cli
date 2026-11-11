@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
-  findLanguage,
+  go,
   InvalidOptionError,
+  swift,
   ToolFailedError,
   ToolNotInstalledError,
+  typescript,
 } from "@supabase/typegen";
 import { declaredOptions, mapRegistryError } from "./types.generator.layer.ts";
 import {
@@ -60,7 +62,6 @@ describe("registry error mapping", () => {
 
 describe("declaredOptions", () => {
   it("forwards only the options the language declares", () => {
-    const swift = findLanguage("swift")!;
     expect(
       declaredOptions(swift, {
         "swift-access-control": "public",
@@ -69,11 +70,11 @@ describe("declaredOptions", () => {
       }),
     ).toEqual({ "swift-access-control": "public" });
     expect(
-      declaredOptions(findLanguage("typescript")!, {
+      declaredOptions(typescript, {
         "swift-access-control": "public",
         "detect-one-to-one-relationships": false,
       }),
     ).toEqual({ "detect-one-to-one-relationships": false });
-    expect(declaredOptions(findLanguage("go")!, { "swift-access-control": "public" })).toEqual({});
+    expect(declaredOptions(go, { "swift-access-control": "public" })).toEqual({});
   });
 });

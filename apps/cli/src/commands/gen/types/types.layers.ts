@@ -26,7 +26,7 @@ import { GenTypesGenerator } from "./types.generator.service.ts";
 /**
  * Avoids `managementApiRuntimeLayer`, which eagerly builds the platform API client and
  * requires an access token before the handler can choose the local/db-url branch — `gen types
- * --local`/`--db-url` don't use the Management API.
+ * --local`/`--remote=<url>` don't use the Management API.
  */
 export const genTypesRuntimeLayer = (() => {
   const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));

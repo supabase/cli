@@ -1,7 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Option, Path, Redacted, Sink, Stdio } from "effect";
-import { BunServices } from "@effect/platform-bun";
-import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
+import {
+  ConfigProvider,
+  Effect,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Sink,
+  Stdio,
+} from "effect";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { epipe, mockRuntimeInfo, overrideStreamErrored } from "../../../tests/helpers/mocks.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import { resolveTraceSettings, withDebugConsole, withTraceExport } from "./trace-export.layer.ts";
 
@@ -25,6 +35,7 @@ const resolveWithEnv = (env: Readonly<Record<string, string | undefined>>) => {
       Layer.mergeAll(
         ConfigProvider.layer(ConfigProvider.fromUnknown(env)),
         BunServices.layer,
+        BunCrypto.layer,
         stderr.layer,
       ),
     ),
@@ -57,7 +68,7 @@ describe("resolveTraceSettings", () => {
         _tag: "File",
         path: path.join(process.cwd(), "traces", "run.jsonl"),
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("appends the OTLP traces path to a collector base URL", () =>
@@ -72,7 +83,7 @@ describe("resolveTraceSettings", () => {
         url: "http://localhost:4318/v1/traces",
       });
       const sink = Option.getOrThrow(settings.sink);
-      expect(sink._tag === "Otlp" && Redacted.value(sink.headers)).toEqual({
+      expect(Predicate.isTagged(sink, "Otlp") && Redacted.value(sink.headers)).toEqual({
         "x-api-key": "abc=",
         "x-tenant": "team",
       });
@@ -167,7 +178,13 @@ const runWithDebugConsole = Effect.fnUntraced(function* (
       : consoled.pipe(withTraceExport({ sink: Option.none() }, {}))
   ).pipe(
     Effect.provide(
-      Layer.mergeAll(BunServices.layer, stderr.layer, mockRuntimeInfo(), debugSettings(debug)),
+      Layer.mergeAll(
+        BunServices.layer,
+        BunCrypto.layer,
+        stderr.layer,
+        mockRuntimeInfo(),
+        debugSettings(debug),
+      ),
     ),
   );
   return stderr.text();
@@ -233,6 +250,18 @@ describe("withDebugConsole", () => {
       );
 
       expect(output).toContain("Probe.span");
+    }),
+  );
+
+  it.effect("skips span lines once a direct write broke stderr", () =>
+    Effect.gen(function* () {
+      yield* overrideStreamErrored(process.stderr, epipe);
+      const output = yield* runWithDebugConsole(
+        { debug: "1" },
+        Effect.void.pipe(Effect.withSpan("Probe.span")),
+      );
+
+      expect(output).toBe("");
     }),
   );
 

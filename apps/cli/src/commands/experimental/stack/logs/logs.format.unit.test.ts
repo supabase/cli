@@ -1,7 +1,8 @@
 import { DateTime } from "effect";
 import { describe, expect, it } from "vitest";
 import type { StackLogRecord } from "@supabase/stack/effect";
-import { makeHistoryCollector, parseSince } from "./logs.format.ts";
+import { makeHistoryCollector } from "../../../../command-internal/logs/local-history.ts";
+import { parseSince } from "../../../../command-internal/logs/since.ts";
 
 const now = Date.parse("2026-09-29T12:00:00.000Z");
 
@@ -48,7 +49,7 @@ describe("makeHistoryCollector", () => {
     records.filter(({ kind }) => kind !== "launch").map(({ text }) => text);
 
   it("keeps the newest lines across instances, counts every line, and tracks positions", () => {
-    const collector = makeHistoryCollector(2, undefined);
+    const collector = makeHistoryCollector(2, false);
     for (let offset = 0; offset < 1_000; offset += 2) {
       collector.push(at("a", offset, "stdout", `a ${offset}`));
       collector.push(at("b", offset + 1, "stdout", `b ${offset + 1}`));
@@ -62,7 +63,7 @@ describe("makeHistoryCollector", () => {
   });
 
   it("keeps the newest line by time when an older partial line is flushed after it", () => {
-    const collector = makeHistoryCollector(1, undefined);
+    const collector = makeHistoryCollector(1, false);
     collector.push({
       ...at("a", 10, "stdout", "newer"),
       position: { generation: 1, byteOffset: 0 },
@@ -80,7 +81,7 @@ describe("makeHistoryCollector", () => {
   });
 
   it("starts each instance at its highest launch and keeps instances without one", () => {
-    const collector = makeHistoryCollector(10, new Map());
+    const collector = makeHistoryCollector(10, true);
     collector.push(at("a", 0, "launch", "", 1));
     collector.push(at("a", 1, "stdout", "a old", 1));
     collector.push(at("a", 5, "launch", "", 2));
@@ -95,7 +96,7 @@ describe("makeHistoryCollector", () => {
   });
 
   it("keeps the highest launch when an older launch's first output arrives after it", () => {
-    const collector = makeHistoryCollector(10, new Map());
+    const collector = makeHistoryCollector(10, true);
     collector.push(at("a", 10, "launch", "", 2));
     collector.push(at("a", 11, "stdout", "second launch", 2));
     collector.push(at("a", 20, "launch", "", 1));
@@ -109,7 +110,7 @@ describe("makeHistoryCollector", () => {
   });
 
   it("starts at the launch of the latest owner run, whose ids continue the earlier run's", () => {
-    const collector = makeHistoryCollector(10, new Map());
+    const collector = makeHistoryCollector(10, true);
     collector.push({ ...at("a", 0, "launch", "", 3), position: { generation: 1, byteOffset: 0 } });
     collector.push({
       ...at("a", 1, "stdout", "earlier run", 3),

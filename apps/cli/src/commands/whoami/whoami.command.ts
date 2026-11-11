@@ -1,11 +1,13 @@
-import type * as CliCommand from "effect/unstable/cli/Command";
-import { Command } from "effect/unstable/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { Command } from "effect/cli";
 
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { whoami } from "./whoami.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {};
 export type WhoamiFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -32,6 +34,8 @@ export const whoamiCommand = Command.make("whoami", config).pipe(
       description: "Show the current user as JSON",
     },
   ]),
+  withPermissions({ operations: [{ operationId: "v1-get-profile", kind: "required" }] }),
   Command.withHandler(whoamiHandler),
   Command.provide(managementApiRuntimeLayer(["whoami"])),
+  withTargetPolicy({ group: "account", consent: "none" }),
 );

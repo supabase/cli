@@ -1,9 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { tmpdir } from "node:os";
-
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
+import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const AUX_TIMEOUT_MS = 3 * 60_000;
@@ -27,9 +26,8 @@ describe("supabase db start (e2e, role alignment)", () => {
           const migrations = path.join(root, "supabase", "migrations");
           yield* fs.makeDirectory(migrations, { recursive: true });
           yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
-          const artifacts = path.join(tmpdir(), "supabase-stack-artifacts");
-          yield* fs.makeDirectory(artifacts, { recursive: true });
-          yield* fs.symlink(artifacts, path.join(home, "cache", "stack"));
+          yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
+          yield* fs.symlink(stackArtifactCacheRoot, path.join(home, "cache", "stack"));
           yield* fs.writeFileString(
             configPath,
             `project_id = "db-start-roles-e2e"
@@ -88,7 +86,7 @@ enabled = false
           });
           expect(started.exitCode, `${started.stdout}\n${started.stderr}`).toBe(0);
 
-          const types = yield* runSupabaseEffect(["gen", "types", "--local"], {
+          const types = yield* runSupabaseEffect(["gen", "types"], {
             cwd: root,
             home,
             exitTimeoutMs: AUX_TIMEOUT_MS,
@@ -96,7 +94,7 @@ enabled = false
           expect(types.exitCode, types.stderr).toBe(0);
           expect(types.stdout).toContain("role_story");
 
-          const migra = yield* runSupabaseEffect(["db", "diff", "--local", "--use-migra"], {
+          const migra = yield* runSupabaseEffect(["db", "diff", "--use-migra"], {
             cwd: root,
             home,
             exitTimeoutMs: AUX_TIMEOUT_MS,
@@ -109,7 +107,6 @@ enabled = false
               "db",
               "query",
               "select tableowner from pg_tables where schemaname = 'supabase_migrations' and tablename = 'schema_migrations'",
-              "--local",
               "--output",
               "json",
             ],
@@ -119,18 +116,18 @@ enabled = false
           expect(yield* decodeJson(historyOwner.stdout)).toEqual([{ tableowner: "postgres" }]);
 
           const alter = yield* runSupabaseEffect(
-            ["db", "query", "alter table public.role_story add column note text", "--local"],
+            ["db", "query", "alter table public.role_story add column note text"],
             { cwd: root, home, exitTimeoutMs: AUX_TIMEOUT_MS },
           );
           expect(alter.exitCode, alter.stderr).toBe(0);
 
           const insert = yield* runSupabaseEffect(
-            ["db", "query", "insert into public.role_story values (1, 'kept')", "--local"],
+            ["db", "query", "insert into public.role_story values (1, 'kept')"],
             { cwd: root, home, exitTimeoutMs: AUX_TIMEOUT_MS },
           );
           expect(insert.exitCode, insert.stderr).toBe(0);
 
-          const diff = yield* runSupabaseEffect(["db", "diff", "--local", "--use-pg-delta"], {
+          const diff = yield* runSupabaseEffect(["db", "diff", "--use-pg-delta"], {
             cwd: root,
             home,
             exitTimeoutMs: AUX_TIMEOUT_MS,
@@ -140,30 +137,14 @@ enabled = false
           expect(diff.stdout).not.toMatch(/CREATE TABLE[\s\S]*role_story/i);
 
           const localRow = yield* runSupabaseEffect(
-            [
-              "db",
-              "query",
-              "select id, note from public.role_story",
-              "--local",
-              "--output",
-              "json",
-            ],
+            ["db", "query", "select id, note from public.role_story", "--output", "json"],
             { cwd: root, home, exitTimeoutMs: AUX_TIMEOUT_MS },
           );
           expect(localRow.exitCode, localRow.stderr).toBe(0);
           expect(yield* decodeJson(localRow.stdout)).toEqual([{ id: 1, note: "kept" }]);
 
           const generate = yield* runSupabaseEffect(
-            [
-              "db",
-              "schema",
-              "declarative",
-              "generate",
-              "--local",
-              "--schema",
-              "public",
-              "--overwrite",
-            ],
+            ["db", "schema", "declarative", "generate", "--schema", "public", "--overwrite"],
             { cwd: root, home, exitTimeoutMs: AUX_TIMEOUT_MS },
           );
           expect(generate.exitCode, generate.stderr).toBe(0);

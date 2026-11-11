@@ -1,15 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
-import { afterAll, describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
-import { loadProfile, padGoErrorBlock, type ProfileLoadError } from "./profile-load.ts";
-
-const tempRoot = mkdtempSync(join(tmpdir(), "supabase-profile-load-"));
-afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
+import { loadProfile, type ProfileLoadError } from "./profile-load.ts";
 
 const load = (token: string) =>
   Effect.gen(function* () {
@@ -23,14 +16,24 @@ const loadError = (token: string) =>
     Effect.map((error: ProfileLoadError) => error.message),
   );
 
-const writeProfile = (name: string, content: string): string => {
-  const filePath = join(tempRoot, name);
-  writeFileSync(filePath, content);
-  return filePath;
-};
+/** A path named `name` in a fresh temp directory, removed when the test ends. */
+const tempPath = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return path.join(yield* fs.makeTempDirectoryScoped({ prefix: "supabase-profile-load-" }), name);
+  });
+
+const writeProfile = (name: string, content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const filePath = yield* tempPath(name);
+    yield* fs.writeFileString(filePath, content);
+    return filePath;
+  }).pipe(Effect.provide(BunServices.layer));
 
 describe("loadProfile", () => {
-  it.effect("resolves built-in profile names case-insensitively (Go strings.EqualFold)", () =>
+  it.effect("resolves built-in profile names case-insensitively", () =>
     Effect.gen(function* () {
       expect(yield* load("SUPABASE-LOCAL")).toBe("http://localhost:8080");
       expect(yield* load("supabase")).toBe("https://api.supabase.com");
@@ -39,11 +42,9 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("fails on an empty token with viper's search-mode error (Go `--profile=`)", () =>
+  it.effect("fails an empty --profile= token with the search-mode error", () =>
     Effect.gen(function* () {
-      expect(yield* loadError("")).toBe(
-        `failed to read profile: Config File "config" Not Found in "[]"`,
-      );
+      expect(yield* loadError("")).toBe(`failed to read profile: no profile config file specified`);
     }),
   );
 
@@ -51,23 +52,24 @@ describe("loadProfile", () => {
     Effect.gen(function* () {
       // --profile --metadata-url …
       expect(yield* loadError("--metadata-url")).toBe(
-        `failed to read profile: Unsupported Config Type ""`,
+        `failed to read profile: unsupported config file type ""`,
       );
       expect(yield* loadError("profile.txt")).toBe(
-        `failed to read profile: Unsupported Config Type "txt"`,
+        `failed to read profile: unsupported config file type "txt"`,
       );
     }),
   );
 
-  it.effect("uses Go filepath.Ext semantics for dot-files (`.yml` IS extension `yml`)", () =>
+  it.effect("treats dot-files as having an extension (`.yml` IS extension `yml`)", () =>
     Effect.gen(function* () {
-      expect(yield* loadError(join(tempRoot, ".yml"))).toBe(
-        `failed to read profile: open ${join(tempRoot, ".yml")}: no such file or directory`,
+      const missing = yield* tempPath(".yml");
+      expect(yield* loadError(missing)).toBe(
+        `failed to read profile: open ${missing}: no such file or directory`,
       );
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("fails on a missing file with Go's os.Open error", () =>
+  it.effect("fails on a missing file with the open error", () =>
     Effect.gen(function* () {
       expect(yield* loadError("missing.yml")).toBe(
         `failed to read profile: open missing.yml: no such file or directory`,
@@ -75,17 +77,18 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("fails on a directory with Go's read error", () =>
+  it.effect("fails on a directory with the read error", () =>
     Effect.gen(function* () {
-      const dir = join(tempRoot, "dir.yml");
-      mkdirSync(dir, { recursive: true });
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* tempPath("dir.yml");
+      yield* fs.makeDirectory(dir);
       expect(yield* loadError(dir)).toBe(`failed to read profile: read ${dir}: is a directory`);
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("resolves a valid YAML profile to its api_url", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "valid.yml",
         [
           "name: harness",
@@ -98,10 +101,10 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("accepts mixed-case keys like viper's insensitive decode (probed on go1.26)", () =>
+  it.effect("accepts mixed-case keys case-insensitively", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "mixed-case.yml",
         [
           "Name: harness",
@@ -125,7 +128,7 @@ describe("loadProfile", () => {
       expect(builtin.dashboardUrl).toBe("https://supabase.green/dashboard");
       // pooler_host is omitted below; it's optional and stays empty (disables the MITM
       // assertion).
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "endpoints.yml",
         [
           "name: harness",
@@ -141,9 +144,9 @@ describe("loadProfile", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("reports unknown keys LOWERCASED, like viper's pre-decode normalization", () =>
+  it.effect("reports unknown keys LOWERCASED", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "bogus-upper.yml",
         [
           "name: harness",
@@ -153,32 +156,30 @@ describe("loadProfile", () => {
           "BOGUS_KEY: x",
         ].join("\n"),
       );
-      expect(yield* loadError(file)).toContain("'utils.Profile' has invalid keys: bogus_key");
+      expect(yield* loadError(file)).toContain("unknown keys: bogus_key");
     }),
   );
 
-  it.effect(
-    "returns Go's CurrentProfile.Name — the canonical built-in or the file's name field",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        expect((yield* loadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
-        const file = writeProfile(
-          "named.yml",
-          [
-            "name: harness",
-            "api_url: http://127.0.0.1:44444",
-            "dashboard_url: http://127.0.0.1:44444/dashboard",
-            "project_host: supabase.co",
-          ].join("\n"),
-        );
-        expect((yield* loadProfile(file, fs)).name).toBe("harness");
-      }).pipe(Effect.provide(BunServices.layer)),
+  it.effect("returns the profile name — the canonical built-in or the file's name field", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect((yield* loadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
+      const file = yield* writeProfile(
+        "named.yml",
+        [
+          "name: harness",
+          "api_url: http://127.0.0.1:44444",
+          "dashboard_url: http://127.0.0.1:44444/dashboard",
+          "project_host: supabase.co",
+        ].join("\n"),
+      );
+      expect((yield* loadProfile(file, fs)).name).toBe("harness");
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("rejects unknown keys with mapstructure's padded UnmarshalExact block", () =>
+  it.effect("rejects unknown keys with a sorted unknown-keys line", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "extra-keys.yml",
         [
           "name: extra",
@@ -189,32 +190,29 @@ describe("loadProfile", () => {
           "db_url: postgres://localhost:5432/db",
         ].join("\n"),
       );
-      const line1 = "failed to parse profile: decoding failed due to the following error(s):";
-      const line3 = "'utils.Profile' has invalid keys: db_url, gotrue_url";
       expect(yield* loadError(file)).toBe(
-        [line1, "".padEnd(line1.length), line3.padEnd(line1.length)].join("\n"),
+        "failed to parse profile:\nunknown keys: db_url, gotrue_url",
       );
     }),
   );
 
-  it.effect(
-    "reports missing required fields with the validator's padded lines, in struct order",
-    () =>
-      Effect.gen(function* () {
-        const file = writeProfile("incomplete.yml", "name: incomplete\n");
-        const lines = [
-          "invalid profile: Key: 'Profile.APIURL' Error:Field validation for 'APIURL' failed on the 'required' tag",
-          "Key: 'Profile.DashboardURL' Error:Field validation for 'DashboardURL' failed on the 'required' tag",
-          "Key: 'Profile.ProjectHost' Error:Field validation for 'ProjectHost' failed on the 'required' tag",
-        ];
-        const width = Math.max(...lines.map((line) => line.length));
-        expect(yield* loadError(file)).toBe(lines.map((line) => line.padEnd(width)).join("\n"));
-      }),
+  it.effect("reports missing required fields one per line, in field order", () =>
+    Effect.gen(function* () {
+      const file = yield* writeProfile("incomplete.yml", "name: incomplete\n");
+      expect(yield* loadError(file)).toBe(
+        [
+          "invalid profile:",
+          "api_url is required",
+          "dashboard_url is required",
+          "project_host is required",
+        ].join("\n"),
+      );
+    }),
   );
 
   it.effect("reports a missing name (only) — required covers empty strings", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "noname.yml",
         [
           "api_url: http://127.0.0.1:44444",
@@ -222,34 +220,28 @@ describe("loadProfile", () => {
           "project_host: supabase.co",
         ].join("\n"),
       );
-      expect(yield* loadError(file)).toBe(
-        "invalid profile: Key: 'Profile.Name' Error:Field validation for 'Name' failed on the 'required' tag",
-      );
+      expect(yield* loadError(file)).toBe("invalid profile:\nname is required");
     }),
   );
 
-  it.effect(
-    "weakly stringifies scalars like viper, so `api_url: 123` fails http_url, not decoding",
-    () =>
-      Effect.gen(function* () {
-        const file = writeProfile(
-          "typebad.yml",
-          [
-            "name: t",
-            "api_url: 123",
-            "dashboard_url: http://127.0.0.1:44444/dashboard",
-            "project_host: supabase.co",
-          ].join("\n"),
-        );
-        expect(yield* loadError(file)).toBe(
-          "invalid profile: Key: 'Profile.APIURL' Error:Field validation for 'APIURL' failed on the 'http_url' tag",
-        );
-      }),
+  it.effect("weakly stringifies scalars, so `api_url: 123` fails http_url, not decoding", () =>
+    Effect.gen(function* () {
+      const file = yield* writeProfile(
+        "typebad.yml",
+        [
+          "name: t",
+          "api_url: 123",
+          "dashboard_url: http://127.0.0.1:44444/dashboard",
+          "project_host: supabase.co",
+        ].join("\n"),
+      );
+      expect(yield* loadError(file)).toBe("invalid profile:\napi_url must be an http(s) URL");
+    }),
   );
 
   it.effect("validates the hostname_rfc1123 and http_url format tags", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "badhost.yml",
         [
           "name: t",
@@ -258,26 +250,27 @@ describe("loadProfile", () => {
           "project_host: 'bad host!'",
         ].join("\n"),
       );
-      const lines = [
-        "invalid profile: Key: 'Profile.APIURL' Error:Field validation for 'APIURL' failed on the 'http_url' tag",
-        "Key: 'Profile.ProjectHost' Error:Field validation for 'ProjectHost' failed on the 'hostname_rfc1123' tag",
-      ];
-      const width = Math.max(...lines.map((line) => line.length));
-      expect(yield* loadError(file)).toBe(lines.map((line) => line.padEnd(width)).join("\n"));
+      expect(yield* loadError(file)).toBe(
+        [
+          "invalid profile:",
+          "api_url must be an http(s) URL",
+          "project_host must be a valid hostname",
+        ].join("\n"),
+      );
     }),
   );
 
-  it.effect("fails a malformed YAML file closed with viper's parse prefix", () =>
+  it.effect("fails a malformed YAML file closed with the parse-error prefix", () =>
     Effect.gen(function* () {
-      const file = writeProfile("malformed.yml", "name: [broken\n  api_url");
+      const file = yield* writeProfile("malformed.yml", "name: [broken\n  api_url");
       const message = yield* loadError(file);
-      expect(message).toMatch(/^failed to read profile: While parsing config: /);
+      expect(message).toMatch(/^failed to read profile: invalid config file: /);
     }),
   );
 
-  it.effect("fails closed on unconvertible values (array on a string field)", () =>
+  it.effect("fails closed on non-scalar values (array on a string field)", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "arrayval.yml",
         [
           "name: t",
@@ -287,22 +280,9 @@ describe("loadProfile", () => {
         ].join("\n"),
       );
       const message = yield* loadError(file);
-      expect(message).toContain(
-        "failed to parse profile: decoding failed due to the following error(s):",
-      );
-      expect(message).toContain(
-        "'APIURL' expected type 'string', got unconvertible type '[]interface {}'",
+      expect(message).toBe(
+        'failed to parse profile:\napi_url: expected a string, got array: ["http://a","http://b"]',
       );
     }),
   );
-});
-
-describe("padGoErrorBlock", () => {
-  it("pads every line — including blank ones — to the longest line's width", () => {
-    expect(padGoErrorBlock("abc\n\nlonger line")).toBe("abc        \n           \nlonger line");
-  });
-
-  it("leaves single-line messages untouched", () => {
-    expect(padGoErrorBlock("only line")).toBe("only line");
-  });
 });

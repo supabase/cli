@@ -1,9 +1,9 @@
 import { Effect, FileSystem, Path, Ref, Schedule, Schema, Stream } from "effect";
 import { NodeStream } from "@effect/platform-node";
-import { HttpClient, HttpClientError } from "effect/unstable/http";
+import { HttpClient, HttpClientError } from "effect/http";
 import { createZstdDecompress } from "node:zlib";
 import { createHash } from "node:crypto";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { errorChainMessage } from "../internal/error-message.ts";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import { PreparationError } from "./Errors.ts";

@@ -4,10 +4,11 @@ import { BunCrypto } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option, Schema, Stdio } from "effect";
 
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
-import { InvalidOutputFormatError } from "../../command-internal/go-output-flag.ts";
+import { InvalidOutputFormatError } from "../../command-internal/output-formats.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import {
   buildTestRuntime,
   mockCommandPlatformApi,
@@ -35,7 +36,7 @@ const tempRoot = useTempWorkdir("supabase-whoami-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
+  readonly outputFlag?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
   readonly response?: unknown;
   readonly status?: number;
   readonly network?: "fail";
@@ -53,7 +54,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     ...(telemetry === undefined ? {} : { telemetry: telemetry.layer }),
   });
   return { layer, out, api, telemetry };
@@ -66,7 +67,7 @@ function findError(exit: Exit.Exit<unknown, unknown>): unknown {
 }
 
 describe("whoami integration", () => {
-  it.live("fetches the profile and renders all identity fields in text mode", () => {
+  it.effect("fetches the profile and renders all identity fields in text mode", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* whoami({});
@@ -83,10 +84,11 @@ describe("whoami integration", () => {
         body: undefined,
         urlParams: "",
       });
+      assertPermissionDrift({ command: "whoami", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the bare CLI identity contract for --output-format json", () => {
+  it.effect("emits the bare CLI identity contract for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* whoami({});
@@ -104,7 +106,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the bare CLI identity contract for --output-format stream-json", () => {
+  it.effect("emits the bare CLI identity contract for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* whoami({});
@@ -126,8 +128,8 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("points an unauthorized profile request at re-authenticating", () => {
-    const { layer } = setup({ status: 401, response: { message: "Unauthorized" } });
+  it.effect("points an unauthorized profile request at re-authenticating", () => {
+    const { layer, api } = setup({ status: 401, response: { message: "Unauthorized" } });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
       expect(error).toBeInstanceOf(WhoamiUnexpectedStatusError);
@@ -138,10 +140,11 @@ describe("whoami integration", () => {
           "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.",
         );
       }
+      assertPermissionDrift({ command: "whoami", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves the generic message for other HTTP errors", () => {
+  it.effect("preserves the generic message for other HTTP errors", () => {
     const { layer } = setup({ status: 503, response: { message: "Unavailable" } });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
@@ -154,7 +157,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps a transport failure to WhoamiNetworkError", () => {
+  it.effect("maps a transport failure to WhoamiNetworkError", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
@@ -166,7 +169,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps a malformed successful response to a decoded API response error", () => {
+  it.effect("maps a malformed successful response to a decoded API response error", () => {
     const { layer } = setup({ response: { ...SAMPLE_PROFILE, username: undefined } });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
@@ -178,7 +181,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps transport failures without task output in machine modes", () => {
+  it.effect("maps transport failures without task output in machine modes", () => {
     const run = (format: "json" | "stream-json") => {
       const { layer, out } = setup({ format, network: "fail" });
       return Effect.gen(function* () {
@@ -194,9 +197,9 @@ describe("whoami integration", () => {
     });
   });
 
-  it.live("rejects every -o/--output value before calling the API", () => {
-    const run = (goOutput: (typeof GLOBAL_OUTPUT_FORMATS)[number]) => {
-      const { layer, api } = setup({ goOutput });
+  it.effect("rejects every -o/--output value before calling the API", () => {
+    const run = (outputFlag: (typeof GLOBAL_OUTPUT_FORMATS)[number]) => {
+      const { layer, api } = setup({ outputFlag });
       return Effect.gen(function* () {
         const error = findError(yield* whoami({}).pipe(Effect.exit));
         expect(error).toBeInstanceOf(WhoamiOutputFlagUnsupportedError);
@@ -216,9 +219,9 @@ describe("whoami integration", () => {
     });
   });
 
-  it.live("routes -o table/csv through the command's unsupported-output error", () => {
-    const run = (goOutput: "table" | "csv") => {
-      const { layer, api } = setup({ goOutput });
+  it.effect("routes -o table/csv through the command's unsupported-output error", () => {
+    const run = (outputFlag: "table" | "csv") => {
+      const { layer, api } = setup({ outputFlag });
       return Effect.gen(function* () {
         const error = findError(yield* whoamiHandler({}).pipe(Effect.exit));
         expect(error).toBeInstanceOf(WhoamiOutputFlagUnsupportedError);
@@ -229,7 +232,7 @@ describe("whoami integration", () => {
           Layer.mergeAll(
             layer,
             commandRuntimeLayer(["whoami"]).pipe(Layer.provide(BunCrypto.layer)),
-            Stdio.layerTest({ args: Effect.succeed(["whoami", "-o", goOutput]) }),
+            Stdio.layerTest({ args: Effect.succeed(["whoami", "-o", outputFlag]) }),
           ),
         ),
       );
@@ -241,7 +244,7 @@ describe("whoami integration", () => {
     });
   });
 
-  it.live("flushes telemetry state on success", () => {
+  it.effect("flushes telemetry state on success", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true });
     return Effect.gen(function* () {
       yield* whoami({});
@@ -249,7 +252,7 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state on failure", () => {
+  it.effect("flushes telemetry state on failure", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true, status: 503 });
     return Effect.gen(function* () {
       yield* whoami({}).pipe(Effect.exit);

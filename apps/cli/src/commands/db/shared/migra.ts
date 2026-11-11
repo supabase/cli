@@ -1,5 +1,5 @@
 import { Config, Effect, Option } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { isBitbucketPipeline } from "../../../command-internal/bitbucket-pipeline.ts";
 import {
@@ -16,7 +16,7 @@ import {
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../../command-internal/edge-runtime-script.service.ts";
-import { PG_DELTA_CA_BUNDLE } from "../../../command-internal/pgdelta-ssl.ts";
+import { rootCaBundle } from "../../../command-internal/supabase-tls.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
 import {
   rewriteDumpHostForToolContainer,
@@ -101,7 +101,7 @@ where pd.deptype is null
   and pn.nspowner::regrole::text != 'supabase_admin'
 order by pn.nspname`;
 
-const isSslDebugEnabled = Config.string("SUPABASE_SSL_DEBUG").pipe(
+const isSslDebugEnabled = Config.String("SUPABASE_SSL_DEBUG").pipe(
   Config.withDefault(""),
   Effect.map((value) => value.toLowerCase() === "true"),
   Effect.orElseSucceed(() => false),
@@ -148,7 +148,7 @@ const buildMigraEnv = Effect.fn("Migra.buildEnv")(function* (params: {
   if (yield* isSslDebugEnabled) env["SUPABASE_SSL_DEBUG"] = "true";
   // Probe the target for TLS; if it speaks TLS, inject the embedded CA bundle as SSL_CA.
   const requireSsl = yield* probe.requireSsl(params.target);
-  if (requireSsl) env["SSL_CA"] = PG_DELTA_CA_BUNDLE;
+  if (requireSsl) env["SSL_CA"] = rootCaBundle();
   if (params.schema.length > 0) {
     env["INCLUDED_SCHEMAS"] = params.schema.join(",");
   } else {
@@ -166,7 +166,7 @@ const loadTargetUserSchemas = Effect.fn("Migra.loadTargetUserSchemas")(function*
   connectOptions: DbConnectOptions,
 ) {
   const connection = yield* DbConnection;
-  const input = parseConnectionString(target);
+  const input = yield* parseConnectionString(target);
   if (input === undefined) {
     return yield* new MigraSchemaLoadError({
       message: "failed to list schemas: invalid target connection string",

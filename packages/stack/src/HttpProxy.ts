@@ -1,4 +1,5 @@
-import { Data, Effect, FiberSet, Ref, Scope } from "effect";
+import { Clock, Data, Deferred, Effect, Fiber, FiberSet, Ref, Scope } from "effect";
+import { redactCredentials } from "./internal/redact-credentials.ts";
 import { PortError } from "./Ports.ts";
 import type { BackendAddress, ProxyError } from "./Proxy.ts";
 import {
@@ -27,7 +28,24 @@ export interface HttpRoute {
   readonly target: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>;
   readonly upstreamPrefix?: string;
   readonly upstreamHost?: string;
+  /** Headers sent only when the client sent none, like Kong's request-transformer `add`. */
+  readonly addHeaders?: Readonly<Record<string, string>>;
+  /** X-Forwarded-Prefix of a stripped route; defaults to `prefix/`, legacy Kong's path form. */
+  readonly forwardedPrefix?: string;
+  /** A shared API listener route, which sends legacy Kong's X-Forwarded-Proto/Host/Port/Path/Prefix. */
+  readonly gateway?: boolean;
   readonly keyRewrite?: HttpRouteKeyRewrite;
+  /** Sends each write over a fresh upstream connection; reads still share the pool and its retry. */
+  readonly freshWrites?: boolean;
+  /** Leaves CORS, preflights included, to the upstream, like Edge Functions on the platform. */
+  readonly upstreamCors?: boolean;
+}
+
+/** Answers plain GET from this process, with no CORS headers or backend; `undefined` is a 404. */
+export interface HttpFileRoute {
+  readonly id: string;
+  readonly prefix: string;
+  readonly file: (url: string) => Effect.Effect<Uint8Array | undefined>;
 }
 
 /** Configures Supabase API-key rewriting for one HTTP route. */
@@ -41,10 +59,37 @@ interface HttpRouteKeyRewrite {
   };
 }
 
+/** One request or WebSocket upgrade the proxy completed. */
+export interface HttpAccess {
+  /** Epoch milliseconds when the request arrived. */
+  readonly time: number;
+  readonly client: string;
+  readonly method: string;
+  /** The request path and query, with credential query and fragment values redacted. */
+  readonly target: string;
+  readonly protocol: string;
+  /**
+   * The recorded outcome: the status sent, or 499 when the client left before a response. An
+   * upgrade records the upstream handshake status; without one, 404 for no route and 502 for a
+   * failure, while the client sees its socket reset.
+   */
+  readonly status: number;
+  /** Body bytes of a response that finished; absent when it was cut short, and for upgrades. */
+  readonly bytes?: number;
+  /** The Referer header, with credential query and fragment values redacted. */
+  readonly referer?: string;
+  readonly userAgent?: string;
+  /** Until the response finished; for an upgrade, until the upstream handshake answered. */
+  readonly durationMillis: number;
+}
+
+/** Receives each completed request after its response; it must not block. */
+export type HttpAccessSink = (access: HttpAccess) => Effect.Effect<void>;
+
 export interface HttpProxy {
   readonly host: string;
   readonly port: number;
-  readonly setRoutes: (routes: ReadonlyArray<HttpRoute>) => Effect.Effect<void>;
+  readonly setRoutes: (routes: ReadonlyArray<HttpRoute | HttpFileRoute>) => Effect.Effect<void>;
 }
 
 const hopByHop = new Set([
@@ -99,11 +144,44 @@ const bearerValueFor = (headers: IncomingMessage["headers"], keys: HttpRouteKeyR
   return apiKey;
 };
 
-const upstreamHeadersFor = (headers: IncomingMessage["headers"], route: HttpRoute) => {
+/* Like Kong: append the client to any incoming X-Forwarded-For chain; X-Real-IP is the client. */
+const upstreamHeadersFor = (request: IncomingMessage, route: HttpRoute) => {
+  const headers = request.headers;
+  const client = request.socket.remoteAddress;
+  const forwardedFor = headerValue(headers["x-forwarded-for"]);
   const result: Record<string, string | string[]> = {
     ...headersFor(headers),
     ...(route.upstreamHost === undefined ? {} : { host: route.upstreamHost }),
   };
+  /* Without a peer address, a client-sent X-Real-IP is still dropped rather than passed through. */
+  if (client === undefined) delete result["x-real-ip"];
+  else {
+    result["x-forwarded-for"] = forwardedFor === undefined ? client : `${forwardedFor}, ${client}`;
+    result["x-real-ip"] = client;
+  }
+  /* Like Kong without trusted IPs: client-sent X-Forwarded-* values are replaced, the host is
+     nginx's `$host` (lowercase, no port or trailing dot: ngx_http_validate_host, release-1.19.10
+     src/http/ngx_http_request.c#L2026-L2028), and only a stripped route sends its prefix. */
+  if (route.gateway === true) {
+    const host = headerValue(headers.host)
+      ?.toLowerCase()
+      .replace(/\.?(?::\d*)?$/u, "");
+    const port = request.socket.localPort;
+    const prefix =
+      route.upstreamPrefix === undefined || route.prefix === "/"
+        ? undefined
+        : (route.forwardedPrefix ?? `${route.prefix}/`);
+    result["x-forwarded-proto"] = "http";
+    if (host === undefined) delete result["x-forwarded-host"];
+    else result["x-forwarded-host"] = host;
+    if (port === undefined) delete result["x-forwarded-port"];
+    else result["x-forwarded-port"] = String(port);
+    result["x-forwarded-path"] = pathnameFor(request.url ?? "/");
+    if (prefix === undefined) delete result["x-forwarded-prefix"];
+    else result["x-forwarded-prefix"] = prefix;
+  }
+  for (const [name, value] of Object.entries(route.addHeaders ?? {}))
+    result[name.toLowerCase()] ??= value;
   const keyRewrite = route.keyRewrite;
   if (keyRewrite?.policy === "bearer") {
     const value = bearerValueFor(headers, keyRewrite.keys);
@@ -116,6 +194,76 @@ const upstreamHeadersFor = (headers: IncomingMessage["headers"], route: HttpRout
   }
   return result;
 };
+
+/** Captures a request's access fields while its socket is open; completes them once it settles. */
+const accessFor = (request: IncomingMessage, time: number) => {
+  const referer = headerValue(request.headers.referer);
+  const userAgent = headerValue(request.headers["user-agent"]);
+  const fields = {
+    time,
+    client: request.socket.remoteAddress ?? "-",
+    method: request.method ?? "GET",
+    target: redactCredentials(request.url ?? "/"),
+    protocol: `HTTP/${request.httpVersion}`,
+    ...(referer === undefined ? {} : { referer: redactCredentials(referer) }),
+    ...(userAgent === undefined ? {} : { userAgent }),
+  };
+  return (ended: number, status: number, bytes?: number): HttpAccess => ({
+    ...fields,
+    status,
+    ...(bytes === undefined ? {} : { bytes }),
+    durationMillis: Math.max(0, ended - time),
+  });
+};
+
+/** What one request's client was sent. */
+interface Sent {
+  /** Body bytes handed to the response. */
+  bytes: number;
+  /** The client went away before the response completed. */
+  clientLeft: boolean;
+}
+
+const respond = (
+  response: ServerResponse,
+  sent: Sent,
+  status: number,
+  body?: string | Uint8Array,
+) => {
+  response.statusCode = status;
+  // Node sends no body for a HEAD request.
+  sent.bytes = body === undefined || response.req.method === "HEAD" ? 0 : Buffer.byteLength(body);
+  response.end(body);
+};
+
+const serveFile = Effect.fnUntraced(function* (
+  request: IncomingMessage,
+  response: ServerResponse,
+  sent: Sent,
+  route: HttpFileRoute,
+) {
+  response.setHeader("content-type", "text/plain; charset=utf-8");
+  response.setHeader("x-content-type-options", "nosniff");
+  if (request.method !== "GET") {
+    response.setHeader("allow", "GET");
+    return respond(response, sent, 405, "Method Not Allowed");
+  }
+  const body = yield* route.file(request.url ?? "/");
+  if (body === undefined) return respond(response, sent, 404, "Not Found");
+  respond(response, sent, 200, body);
+});
+
+const responseSettled = (response: ServerResponse) =>
+  Effect.callback<void>((resume) => {
+    const onDone = () => resume(Effect.void);
+    response.once("finish", onDone);
+    response.once("close", onDone);
+    if (response.writableFinished || response.destroyed) onDone();
+    return Effect.sync(() => {
+      response.off("finish", onDone);
+      response.off("close", onDone);
+    });
+  });
 
 const decodeQuery = (value: string) => {
   try {
@@ -170,7 +318,7 @@ const rewriteQuery = (query: string, route: HttpRoute) => {
 
 const pathnameFor = (url: string) => url.split("?", 1)[0] || "/";
 
-const routeFor = (url: string, routes: ReadonlyArray<HttpRoute>) => {
+const routeFor = (url: string, routes: ReadonlyArray<HttpRoute | HttpFileRoute>) => {
   const pathname = pathnameFor(url);
   return routes.find(
     (route) =>
@@ -178,12 +326,30 @@ const routeFor = (url: string, routes: ReadonlyArray<HttpRoute>) => {
   );
 };
 
-const setCors = (response: ServerResponse, request: IncomingMessage) => {
+const corsMethods = "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS,TRACE,CONNECT";
+
+/** Headers the platform gateway puts on responses it answers itself. */
+const setCors = (response: ServerResponse) => {
   response.setHeader("access-control-allow-origin", "*");
-  response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  response.setHeader("access-control-allow-methods", corsMethods);
+};
+
+const varyOnOrigin = (response: ServerResponse) => {
+  const vary = response.getHeader("vary");
+  const values = (Array.isArray(vary) ? vary.join(",") : String(vary ?? ""))
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value !== "");
+  if (values.some((value) => value === "*" || value.toLowerCase() === "origin")) return;
+  response.setHeader("vary", [...values, "Origin"].join(", "));
+};
+
+const setPreflightCors = (response: ServerResponse, request: IncomingMessage) => {
+  setCors(response);
   response.setHeader(
     "access-control-allow-headers",
-    request.headers["access-control-request-headers"] ?? "authorization,apikey,content-type",
+    request.headers["access-control-request-headers"] ??
+      "accept-profile,apikey,authorization,x-client-info",
   );
 };
 
@@ -230,6 +396,8 @@ const connectInterruptibly = Effect.fn("HttpProxy.connect")((address: BackendAdd
   }),
 );
 
+const earlyResponseDrain = "2 seconds";
+
 // Mirrors nginx `proxy_next_upstream error`: a backend that drops a connection before answering
 // gets one more attempt, but only when nothing sent to the client or upstream would need replaying.
 const isRetryable =
@@ -240,106 +408,183 @@ const isRetryable =
     !response.destroyed &&
     isReplayable(request);
 
-const forward = Effect.fn("HttpProxy.forward")(
+const forward = Effect.fn("HttpProxy.forward")(function* (
+  request: IncomingMessage,
+  response: ServerResponse,
+  route: HttpRoute,
+  backend: BackendAddress,
+  agent: Agent | false,
+  sent: Sent,
+) {
+  const draining = yield* Deferred.make<void>();
+  yield* Deferred.await(draining).pipe(
+    Effect.andThen(Effect.sleep(earlyResponseDrain)),
+    Effect.andThen(Effect.sync(() => response.end())),
+    Effect.forkChild,
+  );
+  return yield* Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
+    let outgoing: ReturnType<typeof upstreamRequest> | undefined;
+    let incoming: IncomingMessage | undefined;
+    let settled = false;
+    // Error listeners remain until collection because destroy may emit errors asynchronously.
+    const cleanup = () => {
+      request.off("aborted", onClientGone);
+      request.off("end", endResponse);
+      response.off("close", onResponseClose);
+      response.off("finish", onFinish);
+
+      incoming?.off("aborted", onError);
+    };
+    const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resume(result);
+    };
+    // Settling first keeps the outcome: destroying a partial upstream response emits
+    // `aborted` synchronously, which would otherwise resettle as a proxy failure.
+    const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
+      if (settled) return;
+      finish(result);
+      outgoing?.destroy();
+      incoming?.destroy();
+    };
+    const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause, incoming !== undefined)));
+    const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
+    const onFinish = () => finish(Effect.void);
+    const endResponse = () => {
+      if (!settled) response.end();
+    };
+    // Bun resets a `Connection: close` client when the response completes before its request body
+    // is fully read, so the response waits, like nginx's lingering close, for a bounded drain.
+    const onUpstreamEnd = () => {
+      if (outgoing !== undefined) request.unpipe(outgoing);
+      if (request.readableEnded) endResponse();
+      else {
+        request.once("end", endResponse);
+        Deferred.doneUnsafe(draining, Effect.void);
+        request.resume();
+      }
+    };
+    // A close after `end()` but before `finish` means the client reset with writes still queued.
+    const onResponseClose = () => {
+      if (!response.writableFinished) onClientGone();
+    };
+    outgoing = upstreamRequest(
+      {
+        host: "path" in backend ? undefined : backend.host,
+        port: "path" in backend ? undefined : backend.port,
+        socketPath: "path" in backend ? backend.path : undefined,
+        agent,
+        method: request.method,
+        path: pathFor(request, route),
+        // Bun ends a streamed upstream response early when the request says Connection: close,
+        // and sends a GET or DELETE body unframed unless the request says it is chunked.
+        headers: {
+          ...upstreamHeadersFor(request, route),
+          ...(request.headers["transfer-encoding"] === undefined
+            ? {}
+            : { "transfer-encoding": "chunked" }),
+          connection: "keep-alive",
+        },
+      },
+      (value) => {
+        incoming = value;
+        value.once("aborted", onError);
+        value.on("error", onError);
+        value.on("data", (chunk: Buffer) => {
+          sent.bytes += chunk.length;
+        });
+        response.once("finish", onFinish);
+        response.statusCode = value.statusCode ?? 502;
+        for (const [name, header] of Object.entries(value.headers)) {
+          if (header !== undefined && !hopByHop.has(name.toLowerCase()))
+            response.setHeader(name, header);
+        }
+        if (route.upstreamCors !== true) {
+          const origin = request.headers.origin;
+          response.setHeader("access-control-allow-origin", origin ?? "*");
+          varyOnOrigin(response);
+        }
+        response.flushHeaders();
+        value.pipe(response, { end: false });
+        value.once("end", onUpstreamEnd);
+      },
+    );
+    outgoing.on("error", onError);
+    request.once("aborted", onClientGone);
+    response.once("close", onResponseClose);
+    // A retried bodyless request was already drained by the first attempt and emits no
+    // further `end`, so pipe would never finish the upstream request.
+    if (request.readableEnded) outgoing.end();
+    else request.pipe(outgoing);
+    return Effect.sync(() => {
+      settled = true;
+      cleanup();
+      outgoing?.destroy();
+      incoming?.destroy();
+    });
+  });
+});
+
+const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   (
     request: IncomingMessage,
     response: ServerResponse,
     route: HttpRoute,
-    backend: BackendAddress,
-    agent: Agent | false,
+    agent: Agent,
+    sent: Sent,
   ) =>
-    Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
-      let outgoing: ReturnType<typeof upstreamRequest> | undefined;
-      let incoming: IncomingMessage | undefined;
-      let settled = false;
-      // Error listeners remain until collection because destroy may emit errors asynchronously.
-      const cleanup = () => {
-        request.off("aborted", onClientGone);
-        response.off("close", onResponseClose);
-        response.off("finish", onFinish);
-
-        incoming?.off("aborted", onError);
-      };
-      const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resume(result);
-      };
-      // Settling first keeps the outcome: destroying a partial upstream response emits
-      // `aborted` synchronously, which would otherwise resettle as a proxy failure.
-      const abandon = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
-        if (settled) return;
-        finish(result);
-        outgoing?.destroy();
-        incoming?.destroy();
-      };
-      const onError = (cause: Error) =>
-        abandon(Effect.fail(errorFor(cause, incoming !== undefined)));
-      const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
-      const onFinish = () => finish(Effect.void);
-      const onResponseClose = () => {
-        if (!response.writableEnded) onClientGone();
-      };
-      outgoing = upstreamRequest(
-        {
-          host: "path" in backend ? undefined : backend.host,
-          port: "path" in backend ? undefined : backend.port,
-          socketPath: "path" in backend ? backend.path : undefined,
-          agent,
-          method: request.method,
-          path: pathFor(request, route),
-          // Bun ends a streamed upstream response early when the request says Connection: close.
-          headers: { ...upstreamHeadersFor(request.headers, route), connection: "keep-alive" },
-        },
-        (value) => {
-          incoming = value;
-          value.once("aborted", onError);
-          value.on("error", onError);
-          response.once("finish", onFinish);
-          setCors(response, request);
-          response.statusCode = value.statusCode ?? 502;
-          for (const [name, header] of Object.entries(value.headers)) {
-            if (header !== undefined && !hopByHop.has(name.toLowerCase()))
-              response.setHeader(name, header);
-          }
-          value.pipe(response);
-        },
-      );
-      outgoing.on("error", onError);
-      request.once("aborted", onClientGone);
-      response.once("close", onResponseClose);
-      // A retried bodyless request was already drained by the first attempt and emits no
-      // further `end`, so pipe would never finish the upstream request.
-      if (request.readableEnded) outgoing.end();
-      else request.pipe(outgoing);
-      return Effect.sync(() => {
-        settled = true;
-        cleanup();
-        outgoing?.destroy();
-        incoming?.destroy();
-      });
-    }),
-);
-
-const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
-  (request: IncomingMessage, response: ServerResponse, route: HttpRoute, agent: Agent) =>
     Effect.gen(function* () {
-      const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
-      yield* forward(request, response, route, backend, isReplayable(request) ? agent : false).pipe(
+      yield* Effect.annotateCurrentSpan({ route_id: route.id });
+      // Re-resolved on retry: a backend invalidated between attempts may have its address reused.
+      const resolveBackend = () => Effect.raceFirst(route.target, disconnected(request, response));
+      const backend = yield* resolveBackend();
+      yield* forward(
+        request,
+        response,
+        route,
+        backend,
+        route.freshWrites === true && !isReplayable(request) ? false : agent,
+        sent,
+      ).pipe(
         Effect.catchIf(isRetryable(request, response), (error) =>
           Effect.logWarning(
             `Route ${route.id} ${request.method ?? "GET"} upstream failed before responding, retrying`,
             error,
-          ).pipe(Effect.andThen(forward(request, response, route, backend, false))),
+          ).pipe(
+            Effect.andThen(resolveBackend()),
+            Effect.andThen((retryBackend) =>
+              forward(request, response, route, retryBackend, false, sent),
+            ),
+          ),
         ),
       );
-    }),
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          response.headersSent
+            ? Effect.annotateCurrentSpan({ "http.response.status_code": response.statusCode })
+            : Effect.void,
+        ),
+      ),
+    ),
 );
 
+const statusLine = /^HTTP\/\d(?:\.\d)? (\d{3})\b/u;
+/** Upstream bytes read for the handshake status before giving up on finding one. */
+const answerLimit = 8 * 1024;
+
 const upgrade = Effect.fn("HttpProxy.upgrade")(
-  (request: IncomingMessage, client: Duplex, head: Buffer, route: HttpRoute) =>
+  (
+    request: IncomingMessage,
+    client: Duplex,
+    head: Buffer,
+    route: HttpRoute,
+    handshake: Deferred.Deferred<number>,
+  ) =>
     Effect.gen(function* () {
+      yield* Effect.annotateCurrentSpan({ route_id: route.id });
       const backend = yield* Effect.raceFirst(
         route.target,
         Effect.callback<never, HttpProxyDisconnected>((resume) => {
@@ -352,12 +597,14 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
       const upstream = yield* connectInterruptibly(backend);
       yield* Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
         let settled = false;
+        let answer = "";
         const cleanup = () => {
-          client.off("close", onClose);
+          client.off("close", onClientClose);
 
           upstream.off("close", onClose);
           client.off("end", onClientEnd);
           upstream.off("end", onUpstreamEnd);
+          upstream.off("data", onAnswer);
         };
         const finish = (result: Effect.Effect<void, HttpProxyError | HttpProxyDisconnected>) => {
           if (settled) return;
@@ -373,16 +620,44 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
         const onError = (cause: Error) => abandon(Effect.fail(errorFor(cause)));
         const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
         const onClose = () => abandon(Effect.void);
+        // A client leaving before the upstream answered never received a response.
+        const onClientClose = () => (Deferred.isDoneUnsafe(handshake) ? onClose() : onClientGone());
         const onClientEnd = () => upstream.end();
         const onUpstreamEnd = () => client.end();
+        // Reads the final handshake status off the bytes relayed to the client once its status
+        // line is complete, skipping interim 1xx responses such as 100 Continue (RFC 9110
+        // section 15.2).
+        const onAnswer = (chunk: Buffer) => {
+          answer += chunk.toString("latin1");
+          let status: number | undefined;
+          while (status === undefined && answer.includes("\r\n")) {
+            const parsed = Number(statusLine.exec(answer)?.[1] ?? Number.NaN);
+            if (parsed >= 100 && parsed < 200 && parsed !== 101) {
+              const interimEnd = answer.indexOf("\r\n\r\n");
+              if (interimEnd < 0) break;
+              answer = answer.slice(interimEnd + 4);
+              continue;
+            }
+            status = parsed;
+          }
+          if (status === undefined && answer.length < answerLimit) return;
+          upstream.off("data", onAnswer);
+          // An answer without an HTTP status line is logged as 502, like an invalid upstream
+          // header in nginx, instead of waiting for the connection to close.
+          Deferred.doneUnsafe(
+            handshake,
+            Effect.succeed(status === undefined || Number.isNaN(status) ? 502 : status),
+          );
+        };
+        upstream.on("data", onAnswer);
         client.on("error", onClientGone);
-        client.once("close", onClose);
+        client.once("close", onClientClose);
         upstream.on("error", onError);
         upstream.once("close", onClose);
         client.once("end", onClientEnd);
         upstream.once("end", onUpstreamEnd);
         const lines = [`${request.method ?? "GET"} ${pathFor(request, route)} HTTP/1.1`];
-        for (const [name, value] of Object.entries(upstreamHeadersFor(request.headers, route))) {
+        for (const [name, value] of Object.entries(upstreamHeadersFor(request, route))) {
           if (value !== undefined)
             lines.push(`${name}: ${Array.isArray(value) ? value.join(", ") : value}`);
         }
@@ -398,85 +673,159 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
           upstream.destroy();
         });
       });
-    }),
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          Deferred.isDoneUnsafe(handshake)
+            ? Deferred.await(handshake).pipe(
+                Effect.flatMap((status) =>
+                  Effect.annotateCurrentSpan({ "http.response.status_code": status }),
+                ),
+              )
+            : Effect.void,
+        ),
+      ),
+    ),
 );
 
 export const makeHttpProxy = (options: {
   readonly host: string;
   readonly port: number;
+  readonly onAccess?: HttpAccessSink | undefined;
 }): Effect.Effect<HttpProxy, PortError, Scope.Scope> =>
   Effect.gen(function* () {
-    const routes = yield* Ref.make<ReadonlyArray<HttpRoute>>([]);
+    const routes = yield* Ref.make<ReadonlyArray<HttpRoute | HttpFileRoute>>([]);
     // Sockets per upstream stay unbounded so long-lived streamed responses never queue requests.
-    // Idle sockets close before Node upstreams' default 5 s keep-alive timeout can race a reuse.
+    // Idle sockets close before an upstream's 5 s keep-alive timeout, the shortest in the stack,
+    // can race a reuse.
     const agent = yield* Effect.acquireRelease(
       Effect.sync(() => new Agent({ keepAlive: true, timeout: 4_000 })),
       (value) => Effect.sync(() => value.destroy()),
     );
     const runRequest = yield* FiberSet.makeRuntime();
     const sockets = new Set<Socket>();
-    const server = createServer((request, response) => {
+    const onAccess = options.onAccess;
+    /* Advertising 5 s lets clients close idle sockets first; holding them 75 s, like Kong, keeps
+       a client that stalls past its own timer from reusing a closed one. */
+    const server = createServer({ keepAliveTimeoutBuffer: 70_000 }, (request, response) => {
       runRequest(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const route = yield* Ref.get(routes).pipe(
-              Effect.map((current) => routeFor(request.url ?? "/", current)),
-            );
-            setCors(response, request);
-            if (request.method === "OPTIONS") {
-              response.statusCode = 204;
-              response.end();
-            } else if (route === undefined) {
-              response.statusCode = 404;
-              response.end("Not Found");
-            } else {
-              yield* proxyRequest(request, response, route, agent).pipe(
-                Effect.tapError((cause) =>
-                  cause._tag === "HttpProxyDisconnected"
-                    ? Effect.void
-                    : Effect.logError(`Route ${route.id} request failed`, cause),
-                ),
-                Effect.catch(() =>
-                  Effect.sync(() => {
-                    if (response.destroyed) return;
-                    if (response.headersSent) response.destroy();
-                    else {
-                      setCors(response, request);
-                      response.statusCode = 502;
-                      response.end("Bad Gateway");
-                    }
-                  }),
-                ),
+        Effect.gen(function* () {
+          const sent: Sent = { bytes: 0, clientLeft: false };
+          const access =
+            onAccess === undefined
+              ? undefined
+              : {
+                  complete: accessFor(request, yield* Clock.currentTimeMillis),
+                  // Timed when the response settles, before the target's release runs.
+                  settled: yield* responseSettled(response).pipe(
+                    Effect.andThen(Clock.currentTimeMillis),
+                    Effect.forkChild({ startImmediately: true }),
+                  ),
+                  record: onAccess,
+                };
+          // The access record waits outside this scope, so it never holds the target's activity.
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const route = yield* Ref.get(routes).pipe(
+                Effect.map((current) => routeFor(request.url ?? "/", current)),
               );
-            }
-          }),
-        ),
+              if (route !== undefined && "file" in route) {
+                yield* serveFile(request, response, sent, route);
+                return;
+              }
+              if (request.method === "OPTIONS" && route?.upstreamCors !== true) {
+                setPreflightCors(response, request);
+                respond(response, sent, 200);
+              } else if (route === undefined) {
+                setCors(response);
+                respond(response, sent, 404, "Not Found");
+              } else {
+                yield* proxyRequest(request, response, route, agent, sent).pipe(
+                  Effect.tapError((cause) =>
+                    cause._tag === "HttpProxyDisconnected"
+                      ? Effect.void
+                      : Effect.logError(`Route ${route.id} request failed`, cause),
+                  ),
+                  Effect.catch((cause) =>
+                    Effect.sync(() => {
+                      if (cause._tag === "HttpProxyDisconnected") sent.clientLeft = true;
+                      if (response.destroyed) return;
+                      if (response.headersSent || sent.clientLeft) response.destroy();
+                      else {
+                        setCors(response);
+                        respond(response, sent, 502, "Bad Gateway");
+                      }
+                    }),
+                  ),
+                );
+              }
+            }),
+          );
+          if (access === undefined) return;
+          const ended = yield* Fiber.join(access.settled);
+          const delivered = response.writableFinished && !sent.clientLeft;
+          yield* access.record(
+            access.complete(
+              ended,
+              response.headersSent ? response.statusCode : 499,
+              delivered ? sent.bytes : undefined,
+            ),
+          );
+        }),
       );
     });
     server.on("connection", (socket) => {
       sockets.add(socket);
-      socket.once("close", () => sockets.delete(socket));
+      socket.once("close", () => {
+        sockets.delete(socket);
+      });
     });
     server.on("upgrade", (request, socket, head) => {
       socket.on("error", () => socket.destroy());
       runRequest(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const route = yield* Ref.get(routes).pipe(
-              Effect.map((current) => routeFor(request.url ?? "/", current)),
-            );
-            if (route === undefined) socket.destroy();
-            else
-              yield* upgrade(request, socket, head, route).pipe(
-                Effect.tapError((cause) =>
-                  cause._tag === "HttpProxyDisconnected"
-                    ? Effect.void
-                    : Effect.logError(`Route ${route.id} upgrade failed`, cause),
-                ),
-                Effect.catch(() => Effect.sync(() => socket.destroy())),
-              );
-          }),
-        ),
+        Effect.gen(function* () {
+          // Completed by the upstream's handshake status, otherwise by the upgrade's outcome.
+          const handshake = yield* Deferred.make<number>();
+          const recorded =
+            onAccess === undefined
+              ? undefined
+              : yield* Effect.gen(function* () {
+                  const complete = accessFor(request, yield* Clock.currentTimeMillis);
+                  return yield* Deferred.await(handshake).pipe(
+                    Effect.flatMap((status) =>
+                      Clock.currentTimeMillis.pipe(
+                        Effect.flatMap((ended) => onAccess(complete(ended, status))),
+                      ),
+                    ),
+                    Effect.forkChild({ startImmediately: true }),
+                  );
+                });
+          const route = yield* Ref.get(routes).pipe(
+            Effect.map((current) => routeFor(request.url ?? "/", current)),
+          );
+          const outcome =
+            route === undefined || "file" in route
+              ? yield* Effect.sync(() => {
+                  socket.destroy();
+                  return 404;
+                })
+              : yield* Effect.scoped(upgrade(request, socket, head, route, handshake)).pipe(
+                  Effect.as(502),
+                  Effect.tapError((cause) =>
+                    cause._tag === "HttpProxyDisconnected"
+                      ? Effect.void
+                      : Effect.logError(`Route ${route.id} upgrade failed`, cause),
+                  ),
+                  Effect.catch((cause) =>
+                    Effect.sync(() => {
+                      socket.destroy();
+                      return cause._tag === "HttpProxyDisconnected" ? 499 : 502;
+                    }),
+                  ),
+                );
+          yield* Deferred.succeed(handshake, outcome);
+          if (recorded !== undefined) yield* Fiber.join(recorded);
+        }),
       );
     });
     yield* Effect.acquireRelease(
@@ -500,7 +849,7 @@ export const makeHttpProxy = (options: {
     return {
       host: address.address,
       port: address.port,
-      setRoutes: (next: ReadonlyArray<HttpRoute>) =>
+      setRoutes: (next: ReadonlyArray<HttpRoute | HttpFileRoute>) =>
         Ref.set(
           routes,
           [...next].sort((a, b) => b.prefix.length - a.prefix.length),

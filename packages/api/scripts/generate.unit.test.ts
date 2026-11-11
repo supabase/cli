@@ -5,9 +5,11 @@ import { describe, expect, test } from "vitest";
 
 import type { OpenApiDocument, OpenApiOperation } from "./generate.ts";
 import {
+  expandSchemaShorthands,
   extractOperations,
   normalizeNullableJsonSchema,
   normalizeQueryParameterSchema,
+  openStringEnums,
   operationMethodName,
   operationVersionFromPath,
   renderContracts,
@@ -132,15 +134,145 @@ describe("generate", () => {
     });
   });
 
+  test("rewrites const to a one-value enum without touching a property named const", () => {
+    expect(
+      sanitizeOpenApiSchema({
+        type: "object",
+        properties: { const: { type: "string", const: "fixed" } },
+      }),
+    ).toEqual({
+      type: "object",
+      properties: { const: { type: "string", enum: ["fixed"] } },
+    });
+  });
+
+  test("reduces binary strings to their format, keeping nullability, without touching a property named contentEncoding", () => {
+    expect(
+      renderOpenApiSchema({
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          eszip: { type: "string", format: "binary", contentEncoding: "binary" },
+          described: { type: "string", format: "binary", description: "Raw ESZIP", nullable: true },
+          contentEncoding: { type: "string", contentMediaType: "text/plain" },
+        },
+      }),
+    ).toBe(
+      'Schema.Struct({ "eszip": Schema.optionalKey(Schema.String.annotate({ "format": "binary" })), "described": Schema.optionalKey(Schema.Union([Schema.String.annotate({ "format": "binary" }), Schema.Null])), "contentEncoding": Schema.optionalKey(Schema.String) })',
+    );
+  });
+
+  test("widens multi-value string enums and keeps single-value discriminators closed", () => {
+    expect(
+      openStringEnums({
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["A", "B"] },
+          kind: { type: "string", enum: ["only"] },
+          level: { type: "integer", enum: [1, 2] },
+        },
+      }),
+    ).toEqual({
+      type: "object",
+      properties: {
+        status: {
+          anyOf: [
+            { type: "string", enum: ["A", "B"] },
+            { type: "string", format: "x-open-string" },
+          ],
+        },
+        kind: { type: "string", enum: ["only"] },
+        level: { type: "integer", enum: [1, 2] },
+      },
+    });
+  });
+
+  describe("open response enums", () => {
+    const statusEnum = { type: "string", enum: ["A", "B"] };
+
+    function enumFixture(options: { readonly sharedComponent: boolean }): OpenApiDocument {
+      const responseSchema = {
+        type: "object",
+        properties: {
+          status: statusEnum,
+          shared: { $ref: "#/components/schemas/Shared" },
+        },
+        required: ["status", "shared"],
+      };
+      return {
+        openapi: "3.0.0",
+        info: { title: "Test API", version: "1.0.0" },
+        components: {
+          schemas: {
+            Shared: {
+              type: "object",
+              properties: { mode: statusEnum },
+              required: ["mode"],
+            },
+          },
+        },
+        paths: {
+          "/v1/things": {
+            get: jsonResponseOperation("v1-get-thing", "id", responseSchema),
+            post: {
+              operationId: "v1-create-thing",
+              requestBody: {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {
+                        status: statusEnum,
+                        ...(options.sharedComponent
+                          ? { shared: { $ref: "#/components/schemas/Shared" } }
+                          : {}),
+                      },
+                      required: ["status"],
+                    },
+                  },
+                },
+              },
+              responses: { "201": { description: "created" } },
+            },
+          },
+        },
+      } as unknown as OpenApiDocument;
+    }
+
+    test("responses accept unknown enum values while requests stay closed", () => {
+      const document = enumFixture({ sharedComponent: false });
+      const source = renderContracts(document, extractOperations(document));
+
+      expect(source).toContain(
+        "export const OpenString = Schema.declare((value: unknown): value is string & {} =>",
+      );
+      const outputs = source.slice(source.indexOf("V1GetThingOutput"));
+      expect(outputs).toContain('Schema.Union([Schema.Literals(["A", "B"]), OpenString])');
+      expect(source).toContain('"mode": Schema.Union([Schema.Literals(["A", "B"]), OpenString])');
+      const inputs = source.slice(
+        source.indexOf("V1CreateThingInput"),
+        source.indexOf("V1GetThingInput"),
+      );
+      expect(inputs).toContain('Schema.Literals(["A", "B"])');
+      expect(inputs).not.toContain("OpenString");
+    });
+
+    test("fails when an enum-bearing component is reachable from both a request and a response", () => {
+      const document = enumFixture({ sharedComponent: true });
+
+      expect(() => renderContracts(document, extractOperations(document))).toThrow(
+        'Schema "Shared" has string enums and is reachable from both request and response schemas',
+      );
+    });
+  });
+
   test("preserves null in nullable anyOf JSON values without an explicit type", () => {
     expect(
       renderOpenApiSchema({
         anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
         nullable: true,
       }),
-    ).toBe(
-      'Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number" })), Schema.Boolean, Schema.Null])',
-    );
+    ).toBe("Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null])");
   });
 
   test("accepts booleans for string-encoded boolean query parameters", () => {
@@ -280,7 +412,7 @@ describe("generate", () => {
     );
   });
 
-  test("renderEffectClient emits both version namespaces with the shared method name and a versioned executor case", () => {
+  test("renderEffectClient emits both version namespaces with the shared method name", () => {
     const document = twoVersionFixture();
     const operations = extractOperations(document);
     const source = renderEffectClient(operations);
@@ -293,7 +425,7 @@ describe("generate", () => {
     expect(v1Block).toContain("listOrganizationMembers: (");
     expect(v2Block).toContain("listOrganizationMembers: (");
 
-    expect(source).toContain("api.v2.listOrganizationMembers(decoded)");
+    expect(v2Block).toContain('"v2ListOrganizationMembers"');
   });
 
   test("renderContracts includes both versioned operation names and the raw kebab operationIds", () => {
@@ -305,5 +437,23 @@ describe("generate", () => {
     expect(source).toContain('"v2ListOrganizationMembers": {');
     expect(source).toContain('  "v1-list-organization-members": "v1ListOrganizationMembers",');
     expect(source).toContain('  "v2-list-organization-members": "v2ListOrganizationMembers",');
+  });
+});
+
+describe("expandSchemaShorthands", () => {
+  test("expands shorthands in code but leaves string literals and comments intact", () => {
+    const code = [
+      "const a = Schema.Int;",
+      "const b = Schema.Literal(\"Schema.Int\", 'Schema.Finite', `Schema.Int`);",
+      "// Schema.Finite stays",
+      "const c = Schema.Finite;",
+    ].join("\n");
+
+    const out = expandSchemaShorthands(code);
+
+    expect(out).toContain("Schema.Literal(\"Schema.Int\", 'Schema.Finite', `Schema.Int`)");
+    expect(out).toContain("// Schema.Finite stays");
+    expect(out).toContain("const a = Schema.Number.check(Schema.isInt()");
+    expect(out).toContain("const c = Schema.Number.check(Schema.isFinite()");
   });
 });

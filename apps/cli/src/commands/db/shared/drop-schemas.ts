@@ -10,20 +10,18 @@ import { dropObjectsSql } from "../../../command-internal/drop-objects.ts";
  * explicit transaction, mapping failures through the caller's error
  * constructor (no migration-history row).
  */
-export const dropUserSchemas = <E>(
+export const dropUserSchemas = Effect.fn("DropSchemas.dropUserSchemas")(function* <E>(
   session: DbSession,
   mapError: (message: string) => E,
-): Effect.Effect<void, E> =>
-  Effect.gen(function* () {
-    // No `RESET ALL` before the drop: resetting would clear caller-supplied DB
-    // URL runtime params (e.g. `options=-c statement_timeout=…`) on the remote
-    // `db reset --db-url` path before the destructive statement runs.
-    yield* session.exec("BEGIN");
-    yield* session
-      .exec(dropObjectsSql)
-      .pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
-    yield* session.exec("COMMIT");
-  }).pipe(
-    Effect.mapError((error: DbExecError) => mapError(error.message)),
-    Effect.withSpan("DropSchemas.dropUserSchemas"),
+): Effect.fn.Return<void, E> {
+  const exec = (sql: string) =>
+    session.exec(sql).pipe(Effect.mapError((error: DbExecError) => mapError(error.message)));
+  // No `RESET ALL` before the drop: resetting would clear caller-supplied DB
+  // URL runtime params (e.g. `options=-c statement_timeout=…`) on the remote
+  // `db reset --db-url` path before the destructive statement runs.
+  yield* exec("BEGIN");
+  yield* exec(dropObjectsSql).pipe(
+    Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
   );
+  yield* exec("COMMIT");
+});

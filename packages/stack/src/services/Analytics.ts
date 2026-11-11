@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { DEFAULT_ERL_MAX_PORTS } from "../Defaults.ts";
 import { ServiceError } from "../Service.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, requiredInput } from "./ServiceConfig.ts";
@@ -73,6 +74,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       const backend = yield* backendConnection(databaseUrl);
       return {
         DATABASE_URL: databaseUrl,
+        PHX_HTTP_IP: container ? "0.0.0.0" : "127.0.0.1",
         ...(http === undefined
           ? {}
           : { PORT: String(http.port), PHX_HTTP_PORT: String(http.port) }),
@@ -84,12 +86,16 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         DB_PASSWORD: backend.password,
         LOGFLARE_SUPABASE_MODE: "true",
         LOGFLARE_SINGLE_TENANT: "true",
-        ...(container ? {} : { LOGFLARE_GRPC_PORT: "0" }),
+        ...(container ? {} : { LOGFLARE_GRPC_PORT: "0", LOGFLARE_GRPC_IP: "127.0.0.1" }),
         ...(creation.config.apiKey === undefined
           ? {}
           : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
         POSTGRES_BACKEND_URL: backend.url,
         POSTGRES_BACKEND_SCHEMA: schema,
+        // Logflare waits this period after SIGTERM before stopping (a load-balancer drain delay),
+        // longer than the stack's stop grace.
+        ERL_AFLAGS: "-eval application:set_env(logflare,sigterm_shutdown_grace_period_ms,0).",
+        ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
       };
     }),
   args: () => Effect.succeed(["start"]),

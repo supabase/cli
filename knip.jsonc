@@ -2,13 +2,17 @@
   "$schema": "./node_modules/knip/schema.json",
   // Required in the event that git submodules are present. Do not remove this, despite knip warnings.
   "ignore": [".repos/**"],
-  // `go` comes from mise.
-  "ignoreBinaries": ["go"],
+  // `jactionlint` comes from mise.
+  "ignoreBinaries": ["jactionlint"],
   // Spawned through a node_modules/.bin path in tools/release/local-registry.ts and
   // bunx in apps/cli/tests/helpers/npm-registry.ts, which knip cannot trace.
   "ignoreDependencies": ["verdaccio"],
-  "ignoreWorkspaces": ["apps/cli-go"],
   "workspaces": {
+    ".": {
+      // flaky-check.yml runs it from a second checkout of the workflow revision, through a
+      // path knip cannot trace.
+      "entry": [".github/scripts/flaky-check/cli.ts"],
+    },
     "apps/cli": {
       "entry": [
         // Bundled by `bun build` in the build:shim script; knip's bun resolver derives no

@@ -1,9 +1,12 @@
 import type { ApiClient } from "@supabase/api/effect";
 import { V2GetNotebookInput, V2UpdateNotebookInput } from "@supabase/api/effect";
-import { Effect, Exit, FileSystem, Path, Predicate, Schema } from "effect";
+import { Effect, Exit, FileSystem, Option, Path, Schema, Stream } from "effect";
+import { block } from "../../command-internal/command-permissions/model.ts";
+import { canPrompt } from "../../command-internal/hosted-consent/hosted-consent.prompt.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { notebooksMachineOutputRequested } from "./notebooks.output.ts";
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
+import { fsErrorCause } from "../../command-internal/config-validate.ts";
 import {
   canonicalPathForContainment,
   isPathContainedInRoot,
@@ -31,6 +34,21 @@ import {
  * refused rather than guessed at (`NotebookNameConflictError`).
  */
 
+/** `listRemoteNotebooks`: every page of the project's notebooks. */
+export const notebooksList = block("notebooks-list", [
+  { operationId: "v2-list-notebooks", kind: "required" },
+]);
+
+/** `downloadNotebook` / `downloadNotebookById`: one notebook's content. */
+export const notebookRead = block("notebook-read", [
+  { operationId: "v2-get-notebook", kind: "required" },
+]);
+
+/** `uploadNotebook` for a name no project notebook carries. */
+export const notebookCreate = block("notebook-create", [
+  { operationId: "v2-create-notebook", kind: "required" },
+]);
+
 /** `supabase/notebooks/`, alongside `supabase/functions/` and `supabase/workers/`. */
 export const notebooksDir = Effect.fnUntraced(function* (workdir: string) {
   const path = yield* Path.Path;
@@ -38,13 +56,6 @@ export const notebooksDir = Effect.fnUntraced(function* (workdir: string) {
 });
 
 const notebookFileExtension = ".json";
-
-/**
- * `--project-ref` is a project identifier, not user content, so its value is
- * logged verbatim — the same call `functions download` / `functions deploy` make
- * for the same flag.
- */
-export const notebooksProjectRefSafeFlags = ["project-ref"] as const;
 
 /** Page size for the list walk — the API's maximum, so the walk is one call in practice. */
 const NOTEBOOK_PAGE_SIZE = 100;
@@ -114,18 +125,20 @@ const notebookFilePath = Effect.fnUntraced(function* (workdir: string, name: str
  * (`resolveEmailTemplateContentPath`).
  */
 const ensureNotebookPathContained = Effect.fnUntraced(function* (workdir: string, path: string) {
-  const contained = yield* Effect.try({
-    try: () =>
-      isPathContainedInRoot(
-        canonicalPathForContainment(workdir),
-        canonicalPathForContainment(path),
-      ),
-    catch: (cause) =>
-      new NotebookFileError({
+  const pathService = yield* Path.Path;
+  const contained = yield* Effect.all([
+    canonicalPathForContainment(workdir),
+    canonicalPathForContainment(path),
+  ]).pipe(
+    Effect.map(([root, candidate]) => isPathContainedInRoot(pathService, root, candidate)),
+    Effect.mapError((error) => {
+      const cause = fsErrorCause(error);
+      return new NotebookFileError({
         detail: `Cannot resolve ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
         suggestion: "Check the notebooks path is a readable directory.",
-      }),
-  });
+      });
+    }),
+  );
   if (!contained) {
     // Echoes the declared path rather than what it resolves to, so a hostile checkout cannot
     // use the error to probe where its symlink lands.
@@ -168,15 +181,17 @@ const readNotebookDirectory = Effect.fnUntraced(function* (workdir: string) {
   const fs = yield* FileSystem.FileSystem;
   const dir = yield* ensureNotebookPathContained(workdir, yield* notebooksDir(workdir));
   const entries = yield* fs.readDirectory(dir).pipe(
-    Effect.catchTag("PlatformError", (cause) =>
-      Predicate.isTagged(cause.reason, "NotFound")
-        ? Effect.succeed<ReadonlyArray<string>>([])
-        : Effect.fail(
-            new NotebookFileError({
-              detail: `Cannot read ${dir}: ${cause.message}`,
-              suggestion: "Check the notebooks path is a readable directory.",
-            }),
-          ),
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed<ReadonlyArray<string>>([]),
+      (_reason, cause) =>
+        Effect.fail(
+          new NotebookFileError({
+            detail: `Cannot read ${dir}: ${cause.message}`,
+            suggestion: "Check the notebooks path is a readable directory.",
+          }),
+        ),
     ),
   );
 
@@ -231,7 +246,7 @@ export const readNotebookFile = Effect.fnUntraced(function* (workdir: string, na
   const path = yield* ensureNotebookPathContained(workdir, yield* notebookFilePath(workdir, name));
 
   const contents = yield* fs.readFileString(path).pipe(
-    Effect.catch(
+    Effect.mapError(
       (cause) =>
         new NotebookFileError({
           detail: `Cannot read ${path}: ${cause.message}`,
@@ -251,7 +266,7 @@ export const readNotebookFile = Effect.fnUntraced(function* (workdir: string, na
   });
 
   return yield* Schema.decodeUnknownEffect(NotebookFileSchema)(parsed).pipe(
-    Effect.catch(
+    Effect.mapError(
       (cause) =>
         new NotebookFileError({
           detail: `${path} is not a notebook: ${cause.message}`,
@@ -345,52 +360,66 @@ const withNotebookTask =
       );
     });
 
+type NotebookListPage = readonly [ReadonlyArray<RemoteNotebook>, Option.Option<string>];
+
+const listRemoteNotebookPage = Effect.fnUntraced(function* (
+  api: ApiClient,
+  ref: string,
+  after: string | undefined,
+  visited: Set<string>,
+) {
+  const page = yield* api.v2
+    .listNotebooks({
+      ref,
+      page: { size: NOTEBOOK_PAGE_SIZE, ...(after === undefined ? {} : { after }) },
+      sort: "name",
+    })
+    .pipe(
+      Effect.catch(mapNotebookHttpError("list notebooks")),
+      withNotebookTask("Listing notebooks"),
+    );
+
+  const notebooks = page.data.map((resource): RemoteNotebook => ({
+    id: resource.id,
+    name: resource.attributes.name,
+  }));
+
+  const next = page.links.next;
+  if (next === null) {
+    return [notebooks, Option.none()] satisfies NotebookListPage;
+  }
+  // The cursor is opaque, so it is read back out of the link the server built
+  // rather than derived from the rows. `links.next` is a path, so its query is
+  // taken from the string directly rather than through a URL and a made-up base.
+  const cursor = new URLSearchParams(next.split("?")[1] ?? "").get("page[after]");
+  // A link with no cursor, or one repeating the cursor already walked, would
+  // loop forever. Neither is a page this command can make progress on.
+  if (cursor === null || cursor.length === 0 || visited.has(cursor)) {
+    return yield* new NotebooksPaginationError({
+      message:
+        "The notebook list returned a missing or repeated pagination cursor. No reconciliation was performed.",
+    });
+  }
+  visited.add(cursor);
+  return [notebooks, Option.some(cursor)] satisfies NotebookListPage;
+});
+
 /**
  * Every notebook in the project. The list route is cursor-paginated and its
  * `links.next` carries the cursor for the following page, so the walk follows
  * that rather than counting rows: `next` is null exactly when the page was the
  * last one, which a length comparison cannot tell on an exact multiple.
  */
-export const listRemoteNotebooks = Effect.fnUntraced(function* (api: ApiClient, ref: string) {
-  const notebooks: Array<RemoteNotebook> = [];
-  let after: string | undefined;
+export const listRemoteNotebooks = Effect.fn("Notebooks.listRemote")(function* (
+  api: ApiClient,
+  ref: string,
+) {
   const visited = new Set<string>();
-
-  for (;;) {
-    const page = yield* api.v2
-      .listNotebooks({
-        ref,
-        page: { size: NOTEBOOK_PAGE_SIZE, ...(after === undefined ? {} : { after }) },
-        sort: "name",
-      })
-      .pipe(
-        Effect.catch(mapNotebookHttpError("list notebooks")),
-        withNotebookTask("Listing notebooks"),
-      );
-
-    for (const resource of page.data) {
-      notebooks.push({ id: resource.id, name: resource.attributes.name });
-    }
-
-    const next = page.links.next;
-    if (next === null) {
-      return notebooks;
-    }
-    // The cursor is opaque, so it is read back out of the link the server built
-    // rather than derived from the rows. `links.next` is a path, so its query is
-    // taken from the string directly rather than through a URL and a made-up base.
-    const cursor = new URLSearchParams(next.split("?")[1] ?? "").get("page[after]");
-    // A link with no cursor, or one repeating the cursor already walked, would
-    // loop forever. Neither is a page this command can make progress on.
-    if (cursor === null || cursor.length === 0 || visited.has(cursor)) {
-      return yield* new NotebooksPaginationError({
-        message:
-          "The notebook list returned a missing or repeated pagination cursor. No reconciliation was performed.",
-      });
-    }
-    visited.add(cursor);
-    after = cursor;
-  }
+  const notebooks = yield* Stream.paginate(undefined, (after: string | undefined) =>
+    listRemoteNotebookPage(api, ref, after, visited),
+  ).pipe(Stream.runCollect);
+  yield* Effect.annotateCurrentSpan({ "notebook.count": notebooks.length });
+  return notebooks;
 });
 
 export const ensureRemoteNotebookNamesUnique = Effect.fnUntraced(function* (
@@ -425,13 +454,23 @@ const readRemoteNotebook = Effect.fnUntraced(function* (
     );
 
   const { description, favorite, content, name } = response.data.attributes;
+  // Response enums are open; the file must hold values a push can send back.
+  const file = yield* Schema.decodeUnknownEffect(NotebookFileSchema)({
+    ...(description === null ? {} : { description }),
+    favorite,
+    content: { cells: content.cells },
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new NotebookFileError({
+          detail: `Notebook ${subject} has content this CLI cannot write to a file: ${cause.message}`,
+          suggestion: "Update the CLI, or edit the notebook in the dashboard.",
+        }),
+    ),
+  );
   return {
     notebook: { id: response.data.id, name } satisfies RemoteNotebook,
-    file: {
-      ...(description === null ? {} : { description }),
-      favorite,
-      content: { cells: content.cells },
-    } satisfies NotebookFile,
+    file,
   };
 });
 
@@ -526,7 +565,7 @@ export type NotebooksReconcileChoice = "keep" | "delete" | "copy";
  * says which, so the command asks instead of picking.
  *
  * `keep` is the answer whenever there is nobody to ask — a non-TTY, a machine
- * output format, or a cancelled prompt. The other answers mutate local or remote
+ * output format, an agent run, or a cancelled prompt. The other answers mutate local or remote
  * state, so the unattended run reports the divergence and leaves both sides alone rather
  * than resolving it in a direction nobody chose.
  */
@@ -535,15 +574,13 @@ export const promptNotebooksReconcile = Effect.fnUntraced(function* (options: {
   readonly names: ReadonlyArray<string>;
   readonly deleteLabel: string;
   readonly copyLabel: string;
-  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
-  readonly machineOutput: boolean;
 }) {
   const output = yield* Output;
 
   const listing = `${options.summary}\n${options.names.map((name) => ` • ${sanitizeInlineName(name)}`).join("\n")}\n`;
   yield* output.raw(listing, "stderr");
 
-  if (output.format !== "text" || !output.interactive || options.machineOutput) {
+  if (!(yield* canPrompt)) {
     yield* output.raw("Left alone — rerun interactively to resolve.\n", "stderr");
     return "keep";
   }

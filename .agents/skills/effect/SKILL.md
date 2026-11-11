@@ -12,6 +12,11 @@ Use current Effect v4 APIs and the production defaults in this skill. Establishe
 
 ## Source Rule
 
+Reviewed against Effect **4.0.0**, upstream commit
+[`6389d9ac6`](https://github.com/Effect-TS/effect/tree/6389d9ac64c0f62ccc8b575fb9afc65fc104e814).
+Read `references/V4_APIS.md` when upgrading from v3 or a v4 prerelease.
+The installed version takes precedence: prerelease APIs and import paths can differ.
+
 Check these before guessing:
 
 - the nearest `AGENTS.md` and any project-local Effect practices doc
@@ -47,7 +52,7 @@ If a task spans several branches, read all matching files before editing.
 - Use `Stream` for effectful sources that emit many values over time and need pull, backpressure, interruption, or transformation.
 - Prefer Effect HTTP client modules for outgoing HTTP in Effect applications when their typed errors, layers, and client transforms are useful.
 - Prefer Effect-aware tests, explicit layers, and deterministic synchronization over sleeps.
-- Prefer decoders and `schema.makeEffect(...)` at untrusted boundaries; reserve throwing `schema.make(...)` for trusted construction, and never use casts to skip validation.
+- Decode unknown wire input with `Schema.decodeUnknownEffect(...)`; use `schema.makeEffect(...)` for typed constructor input with validation. Reserve throwing `schema.make(...)` for trusted construction, and never use casts to skip validation.
 
 ## Quick Selection Guide
 

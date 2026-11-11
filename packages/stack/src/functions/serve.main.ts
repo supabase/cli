@@ -75,17 +75,17 @@ const bootstrapConfig = Effect.runSync(
   Effect.gen(function* () {
     const read = <A>(config: Config.Config<A>) => config.pipe(Config.option);
     return {
-      hostPort: yield* read(Config.string("SUPABASE_INTERNAL_HOST_PORT")),
-      functionsRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
-      filesRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
-      jwtSecret: yield* read(Config.string("SUPABASE_INTERNAL_JWT_SECRET")),
-      supabaseUrl: yield* read(Config.string("SUPABASE_URL")),
-      wallclock: yield* read(Config.string("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC")),
-      publishableKey: yield* read(Config.string("SUPABASE_INTERNAL_PUBLISHABLE_KEY")),
-      secretKey: yield* read(Config.string("SUPABASE_INTERNAL_SECRET_KEY")),
-      functionsConfig: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_CONFIG")),
-      debug: yield* read(Config.string("SUPABASE_INTERNAL_DEBUG")),
-      jwks: yield* read(Config.string("SUPABASE_JWKS")),
+      hostPort: yield* read(Config.String("SUPABASE_INTERNAL_HOST_PORT")),
+      functionsRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
+      filesRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
+      jwtSecret: yield* read(Config.String("SUPABASE_INTERNAL_JWT_SECRET")),
+      supabaseUrl: yield* read(Config.String("SUPABASE_URL")),
+      wallclock: yield* read(Config.String("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC")),
+      publishableKey: yield* read(Config.String("SUPABASE_INTERNAL_PUBLISHABLE_KEY")),
+      secretKey: yield* read(Config.String("SUPABASE_INTERNAL_SECRET_KEY")),
+      functionsConfig: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_CONFIG")),
+      debug: yield* read(Config.String("SUPABASE_INTERNAL_DEBUG")),
+      jwks: yield* read(Config.String("SUPABASE_JWKS")),
     };
   }).pipe(
     Effect.provideService(
@@ -208,10 +208,17 @@ const getResponse = (
   return new Response(body, { status, headers });
 };
 
+/** Lets browsers read router errors on requests that skip the preflight; preflights still fail. */
+const ERROR_CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey",
+  "Access-Control-Expose-Headers": "sb-error-code",
+};
+
 const getAuthErrorResponse = ({ code, message = "Invalid JWT" }: AuthFailure) =>
   getResponse({ code, message, msg: message }, STATUS_CODE.Unauthorized, {
+    ...ERROR_CORS_HEADERS,
     "sb-error-code": code,
-    "Access-Control-Expose-Headers": "sb-error-code",
   });
 
 const getWorkerErrorResponse = (error: unknown) => {
@@ -223,6 +230,7 @@ const getWorkerErrorResponse = (error: unknown) => {
           message: SB_SPECIFIC_ERROR_REASON[sbCode],
         },
         sbCode,
+        ERROR_CORS_HEADERS,
       );
     }
   }
@@ -232,6 +240,7 @@ const getWorkerErrorResponse = (error: unknown) => {
       message: "Request failed due to an internal server error",
     },
     STATUS_CODE.InternalServerError,
+    ERROR_CORS_HEADERS,
   );
 };
 
@@ -423,9 +432,11 @@ Deno.serve({
         if (pathname === "/_internal/metric")
           return Response.json(yield* foreign(() => EdgeRuntime.getRuntimeMetrics()));
         const functionName = pathname.split("/")[1];
-        if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (!functionName)
+          return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
         const config = yield* functionConfig(functionName);
-        if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (!config)
+          return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
         yield* warnPlainDenoConfig(functionName, config);
         if (request.method !== "OPTIONS" && config.verifyJWT) {
           const token = getAuthToken(request);
@@ -460,7 +471,9 @@ Deno.serve({
               workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
                 ? WALLCLOCK_LIMIT_SEC * 1000
                 : 400_000,
-              noModuleCache: true,
+              // Edge Runtime's reload mode re-extracts npm packages in place in the shared Deno cache,
+              // where concurrent worker boots race on the same files.
+              noModuleCache: false,
               noNpm,
               envVars,
               forceCreate: true,
@@ -519,5 +532,6 @@ Deno.serve({
         message: "Request failed due to an internal server error",
       },
       500,
+      ERROR_CORS_HEADERS,
     ),
 });

@@ -1,5 +1,4 @@
 import {
-  Crypto,
   Duration,
   Effect,
   FileSystem,
@@ -10,6 +9,7 @@ import {
   Schedule,
   Schema,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import {
   type ConsentState,
@@ -35,7 +35,7 @@ const decodeCurrentTelemetryConfigFile = Schema.decodeUnknownEffect(TelemetryCon
 const decodeLegacyTelemetryConfigFile = Schema.decodeUnknownEffect(
   Schema.fromJsonString(LegacyTelemetryConfigSchema),
 );
-const encodeTelemetryConfig = Schema.encodeUnknownSync(TelemetryConfigSchema);
+const encodeTelemetryConfig = Schema.encodeEffect(TelemetryConfigSchema);
 
 function encodePrettyJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -89,7 +89,7 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   configDir: string,
   platform: NodeJS.Platform = process.platform,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(configDir, { recursive: true, mode: 0o700 });
@@ -97,7 +97,7 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   // Random suffix, not a timestamp: concurrent writers (parallel test files,
   // two CLI processes) in the same millisecond would otherwise share a tmp
   // path and race the rename into ENOENT.
-  const tmpPath = `${configPath}.tmp.${yield* crypto.randomUUIDv4}`;
+  const tmpPath = `${configPath}.tmp.${yield* crypto.uuidV4()}`;
   const retrySchedule = Schedule.exponential("10 millis", 2).pipe(
     Schedule.modifyDelay(({ duration }) =>
       Effect.succeed(Duration.min(duration, Duration.millis(100))),
@@ -114,9 +114,8 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
     Effect.succeed(tmpPath),
     (temporary) =>
       Effect.gen(function* () {
-        yield* fs.writeFileString(temporary, encodePrettyJson(encodeTelemetryConfig(config)), {
-          mode: 0o600,
-        });
+        const encoded = yield* encodeTelemetryConfig(config);
+        yield* fs.writeFileString(temporary, encodePrettyJson(encoded), { mode: 0o600 });
         yield* fs.rename(temporary, configPath).pipe(
           Effect.retry({
             schedule: retrySchedule,

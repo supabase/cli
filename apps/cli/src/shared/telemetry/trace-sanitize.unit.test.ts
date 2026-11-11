@@ -1,8 +1,8 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "vitest";
 import { Effect, Exit } from "effect";
-import type { TraceData } from "effect/unstable/observability/OtlpTracer";
-import { SqlError, UniqueViolation } from "effect/unstable/sql/SqlError";
+import type { TraceData } from "effect/observability/OtlpTracer";
+import { SqlError, UniqueViolation } from "effect/sql/SqlError";
 import { DbExecError } from "../../command-internal/db-connection.errors.ts";
 import { errorTypeOf, makeTraceSanitizer, scrubString, sqlStateOf } from "./trace-sanitize.ts";
 
@@ -10,7 +10,7 @@ const JWT =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2lnbmF0dXJlLXZhbHVl";
 
 const newSanitizer = () =>
-  Effect.runSync(makeTraceSanitizer.pipe(Effect.provide(BunServices.layer)));
+  Effect.runSync(makeTraceSanitizer.pipe(Effect.provide([BunServices.layer, BunCrypto.layer])));
 const sanitizer = newSanitizer();
 const sanitizeAttributeEntries = sanitizer.attributeEntries;
 const sanitizeTraceData = sanitizer.traceData;

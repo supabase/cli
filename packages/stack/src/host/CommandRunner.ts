@@ -1,31 +1,19 @@
-import {
-  Context,
-  Crypto,
-  Data,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Path,
-  Sink,
-  Stream,
-  Ref,
-} from "effect";
+import { Context, Data, Effect, Exit, FileSystem, Layer, Path, Sink, Stream, Ref } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
-import {
-  slimImageMirrors,
-  prepareNativeArtifact,
-  postgresVersion,
-  resolveArtifact,
-} from "../Artifacts.ts";
-import { makeContainerRuntime, type HostGateway } from "../runtime/Container.ts";
+import { ChildProcessSpawner } from "effect/process";
+import { HttpClient } from "effect/http";
+import { slimImageMirrors, resolveArtifact, useNativeArtifact } from "../Artifacts.ts";
+import { isSafeId } from "../identity/SafeId.ts";
+import { holdSchemaWriter } from "../internal/schema-writers.ts";
+import * as Environment from "../namespace/Environment.ts";
+import { borrow } from "../namespace/Paths.ts";
+import { makeContainerRuntime, type EngineTarget, type HostGateway } from "../runtime/Container.ts";
 import { spawnNativeProcess } from "../runtime/NativeProcess.ts";
 import { awaitCommandOutput, type CommandOutputResult } from "../runtime/CommandOutput.ts";
 import type { CommandInvocation as CommandInvocationType } from "../Commands.ts";
-import type { StackCredentials } from "../State.ts";
+import type { StackCredentials } from "../StackNamespace.ts";
 import { resolveInitializationCommand } from "../services/Initialization.ts";
 
 export class CommandError extends Data.TaggedError("CommandError")<{
@@ -77,23 +65,28 @@ const makeCommandRunner = (options: {
   readonly runtime: "native" | "docker" | "podman";
   /** Shares one host-gateway probe with the host's other container runtimes. */
   readonly hostGateway?: HostGateway;
+  /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
+  readonly engineTarget?: EngineTarget;
 }) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const http = yield* HttpClient.HttpClient;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    if (!/^[a-zA-Z0-9_-]+$/u.test(options.stackId)) return yield* failure("Invalid stack identity");
+    if (!isSafeId(options.stackId)) return yield* failure("Invalid stack identity");
     const container =
-      options.runtime === "native"
+      options.engineTarget === undefined
         ? undefined
         : yield* makeContainerRuntime({
-            engine: options.runtime,
+            target: options.engineTarget,
             root: options.root,
             imageMirrors: slimImageMirrors,
             ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
           });
+    const borrowCallerPath = (candidate: string) =>
+      borrow(fs, path, candidate, options.root, (_operation, cause) => failure(cause));
     const jobsRoot = path.join(options.root, "jobs");
     yield* fs
       .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })
@@ -143,21 +136,35 @@ const makeCommandRunner = (options: {
       yield* fs
         .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })
         .pipe(Effect.mapError(failure));
-      const jobId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(failure));
+      const jobId = yield* crypto.uuidV4();
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const command = input.command;
           const directory = yield* fs
             .makeTempDirectoryScoped({ directory: jobsRoot, prefix: `${jobId}-` })
             .pipe(Effect.mapError(failure));
-          const initialization =
+          const invocation =
             "credentials" in input
-              ? yield* resolveInitializationCommand(input.command, {
-                  runtime: options.runtime,
-                  credentials: input.credentials,
-                }).pipe(Effect.mapError(failure))
-              : undefined;
-          const postgresCommand = "stdin" in input ? input.command : undefined;
+              ? {
+                  initialization: yield* resolveInitializationCommand(input.command, {
+                    runtime: options.runtime,
+                    credentials: input.credentials,
+                  }).pipe(Effect.mapError(failure)),
+                  postgresCommand: undefined,
+                }
+              : { initialization: undefined, postgresCommand: input.command };
+          const { initialization, postgresCommand } = invocation;
+          if (initialization !== undefined && "credentials" in input) {
+            const databaseId = input.command.databaseId;
+            if (!isSafeId(databaseId)) return yield* failure("Invalid database instance id");
+            // Held for the whole job, so the migration finishes before another writer of the service starts.
+            yield* holdSchemaWriter(fs, path, {
+              stackId: options.stackId,
+              instanceRoot: path.join(options.root, databaseId),
+              service: initialization.service,
+              version: initialization.pin.upstreamVersion,
+            }).pipe(Effect.mapError(failure));
+          }
           const inputStream = "stdin" in input ? (input.stdin ?? Stream.empty) : Stream.empty;
           if (
             postgresCommand !== undefined &&
@@ -165,19 +172,35 @@ const makeCommandRunner = (options: {
             postgresCommand.pgProve !== undefined
           )
             return yield* failure("pgProve options require the pg_prove command");
-          const version =
-            initialization?.version ?? postgresVersion(String(postgresCommand?.command.major));
+          for (const mount of [
+            ...(initialization?.mounts ?? []),
+            ...(postgresCommand?.pgProve?.mounts ?? []),
+          ])
+            yield* borrowCallerPath(mount.source);
+          const pin =
+            invocation.initialization === undefined
+              ? invocation.postgresCommand.command.pin
+              : invocation.initialization.pin;
           const process = yield* Effect.gen(function* () {
             if (container === undefined) {
-              const artifact = yield* prepareNativeArtifact(
-                { service: initialization?.service ?? "database", version },
+              // Pins the generation for the life of this job's scope, before the spawn below: the
+              // pin is registered ahead of the process, so it releases only after the process's
+              // own cleanup finalizer (added later) has run.
+              const artifact = yield* useNativeArtifact(
+                { service: initialization?.service ?? "database", pin },
                 options.cacheRoot,
               ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Path.Path, path),
-                Effect.provideService(Crypto.Crypto, crypto),
+                Effect.provideService(SecureRandom.SecureRandom, crypto),
+                Effect.provideService(Digest.Digest, digest),
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                 Effect.provideService(HttpClient.HttpClient, http),
+              );
+              // The job's own scoped temp directory, removed with it, so the confined environment
+              // needs no cleanup of its own.
+              const environment = yield* Environment.confine(fs, path, directory).pipe(
+                Effect.mapError(failure),
               );
               const child = yield* spawnNativeProcess(
                 {
@@ -188,6 +211,8 @@ const makeCommandRunner = (options: {
                   ),
                   args: postgresCommand?.args ?? initialization?.args ?? [],
                   env: postgresCommand?.env ?? initialization?.env ?? {},
+                  environment,
+                  artifactLockPath: artifact.lockPath,
                   cwd:
                     postgresCommand?.pgProve?.cwd ??
                     initialization?.cwd ??
@@ -214,8 +239,7 @@ const makeCommandRunner = (options: {
               };
             }
             const image =
-              initialization?.image ??
-              (yield* resolveArtifact({ service: "database", version })).image;
+              initialization?.image ?? (yield* resolveArtifact({ service: "database", pin })).image;
             yield* container.prepare(image);
             const child = yield* container
               .launchCommand({
@@ -311,4 +335,6 @@ export const layer = (options: {
   readonly runtime: "native" | "docker" | "podman";
   /** Shares one host-gateway probe with the host's other container runtimes. */
   readonly hostGateway?: HostGateway;
+  /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
+  readonly engineTarget?: EngineTarget;
 }) => Layer.effect(Service, makeCommandRunner(options).pipe(Effect.map(Service.of)));

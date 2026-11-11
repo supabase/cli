@@ -1,0 +1,106 @@
+import { operationPermissions } from "@supabase/api/permissions";
+
+import {
+  fgaConditionalExtras,
+  fgaOperationNotes,
+  fgaResourceCases,
+  fgaSetForRequest,
+} from "./fga-request-sets.ts";
+import type { OperationEntry } from "./model.ts";
+
+type PermissionKind = OperationEntry["kind"];
+
+/** The alternatives for one operation: a token needs every permission in at least one of them. */
+export type Alternatives = ReadonlyArray<ReadonlyArray<string>>;
+
+/** What a token needs when the resource a request addresses decides which permissions apply. */
+interface PermissionCase {
+  readonly for: string;
+  readonly allOf: ReadonlyArray<string>;
+}
+
+/** What a token needs for an operation: any one of several sets, or a set chosen by resource. */
+export type Requirement =
+  | { readonly anyOf: Alternatives }
+  | { readonly cases: ReadonlyArray<PermissionCase> };
+
+/** One part of an operation's requirement; `hedged` when it applies only to some requests. */
+interface RequirementPart {
+  readonly requirement: Requirement;
+  readonly hedged: boolean;
+}
+
+/** One way of expressing what a token needs: FGA permissions, OAuth scopes, and so on. */
+export interface PermissionScheme {
+  readonly id: string;
+  readonly title: string;
+  /** The parts of an operation's requirement, or `undefined` when the scheme lists none. */
+  readonly requirement: (
+    operationId: string,
+    request: OperationEntry["request"],
+  ) => ReadonlyArray<RequirementPart> | undefined;
+  /** What to say about an operation for which {@link requirement} is `undefined`. */
+  readonly missing: (kind: PermissionKind, operationId: string) => string;
+}
+
+const NO_LISTING = "no token permission listed in the API spec";
+
+const always = (requirement: Requirement): RequirementPart => ({ requirement, hedged: false });
+
+const isSubset = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+  a.every((permission) => b.includes(permission));
+
+/** Drops any set that another set already covers, since a token holding the smaller set suffices. */
+function withoutSupersets(sets: Alternatives): Alternatives {
+  return sets.filter(
+    (set, index) =>
+      !sets.some(
+        (other, otherIndex) =>
+          otherIndex !== index &&
+          isSubset(other, set) &&
+          (!isSubset(set, other) || otherIndex < index),
+      ),
+  );
+}
+
+export const fgaScheme: PermissionScheme = {
+  id: "fga",
+  title: "Scoped access token",
+  requirement: (operationId, request) => {
+    const forRequest = fgaSetForRequest(operationId, request);
+    if (forRequest !== undefined) return [always({ anyOf: [forRequest] })];
+    const extra = fgaConditionalExtras.find((entry) => entry.operationId === operationId);
+    if (extra !== undefined) {
+      return [
+        always({ anyOf: [extra.required] }),
+        { requirement: { anyOf: [extra.extra] }, hedged: true },
+      ];
+    }
+    const resource = fgaResourceCases.find((entry) => entry.operationId === operationId);
+    if (resource !== undefined) {
+      return [always({ cases: resource.cases })];
+    }
+    const sets = operationPermissions[operationId]?.fga ?? [];
+    return sets.length === 0 ? undefined : [always({ anyOf: withoutSupersets(sets) })];
+  },
+  missing: (_kind, operationId) => fgaOperationNotes.get(operationId) ?? NO_LISTING,
+};
+
+/** Resolves OAuth scopes; register it in {@link permissionSchemes} to show them in help. */
+export const oauthScheme: PermissionScheme = {
+  id: "oauth",
+  title: "OAuth token (scopes)",
+  requirement: (operationId) => {
+    const scope = operationPermissions[operationId]?.oauthScope;
+    return scope === undefined ? undefined : [always({ anyOf: [[scope]] })];
+  },
+  missing: (kind, operationId) => {
+    if ((operationPermissions[operationId]?.fga.length ?? 0) === 0) return NO_LISTING;
+    return kind === "required"
+      ? "not available with OAuth tokens yet"
+      : "skipped with OAuth tokens (not available yet)";
+  },
+};
+
+/** Add a scheme here to show it in every command's help. */
+export const permissionSchemes: ReadonlyArray<PermissionScheme> = [fgaScheme];

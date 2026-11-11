@@ -28,6 +28,14 @@ const LEGACY_KEY_PREFIX_PATTERN = /"prefix": "[A-Za-z0-9]{4,10}"/g;
 // Only targets 4+ digit integers to avoid touching small status codes or counts.
 const INTEGER_ID_PATTERN = /"id": \d{4,}/g;
 
+// Project refs and org slugs are 20 lowercase letters. Recording rewrites them to one valid
+// ref so fixtures decode against the Management API schema without any replay-time rewriting.
+const PROJECT_REF_PATTERN = /\b[a-z]{20}\b/g;
+const PROJECT_REF_PATH_SEGMENT = /\/[a-z]{20}(\/|$)/g;
+
+/** The fixed ref that stands in for every project ref and org slug in recorded fixtures. */
+export const REPLAY_PROJECT_REF = "replayfixtureprojref";
+
 // A fixed valid ISO 8601 timestamp used in place of real timestamps so that
 // date-parsing code on response fields doesn't fail.
 const FIXED_TIMESTAMP = "2000-01-01T00:00:00Z";
@@ -45,10 +53,8 @@ export function applyPlaceholders(input: string): { output: string } {
   // Docker IDs — normalize before the 20-char project-ref pattern fires on sub-matches.
   output = output.replace(DOCKER_SHA256_PATTERN, "sha256:__IMAGE_ID__");
   output = output.replace(DOCKER_FULL_ID_PATTERN, "__CONTAINER_ID__");
-  // 20-char lowercase alpha strings — project refs
-  output = output.replace(/\b[a-z]{20}\b/g, (match) =>
-    match.length !== 20 ? match : "__PROJECT_REF__",
-  );
+  // 20-char lowercase alpha strings — project refs and org slugs
+  output = output.replace(PROJECT_REF_PATTERN, REPLAY_PROJECT_REF);
   output = output.replace(ISO_TIMESTAMP_PATTERN, FIXED_TIMESTAMP);
   // Rate limit headers vary per recording session — normalise to fixed valid integers.
   output = output.replace(RATE_LIMIT_RESET_PATTERN, '"x-ratelimit-reset": "60"');
@@ -61,29 +67,6 @@ export function applyPlaceholders(input: string): { output: string } {
   return { output };
 }
 
-// `__PROJECT_REF__` is 15 characters, but the Management API schema requires
-// `^[a-z]{20}$`, and response decoding rejects a value that doesn't match. When
-// serving a recorded response, substitute any field whose value is *exactly*
-// the placeholder back to a valid 20-char ref; leave substring occurrences such
-// as `db.__PROJECT_REF__.supabase.red` untouched so placeholder-host assertions still match.
-const PROJECT_REF_VALUE = /"__PROJECT_REF__"/g;
-const PLACEHOLDER_PROJECT_REF = "abcdefghijklmnopqrst";
-
-/** Extract the 20-char project ref from a `/v1/projects/<ref>` request path,
- *  falling back to a stable placeholder ref for refless endpoints (e.g. the
- *  project list). */
-export function projectRefFromPath(urlPath: string): string {
-  const match = urlPath.match(/\/projects\/([a-z]{20})(?:\/|$)/);
-  return match?.[1] ?? PLACEHOLDER_PROJECT_REF;
-}
-
-/** Replace exact-match `__PROJECT_REF__` string values in a serialized JSON
- *  body with a schema-valid 20-char ref. Operates on the JSON string so only
- *  full quoted values are rewritten, never substrings. */
-export function restoreProjectRef(json: string, ref: string): string {
-  return json.replace(PROJECT_REF_VALUE, `"${ref}"`);
-}
-
 /** Normalize dynamic segments in a URL path to stable unnumbered placeholders.
  *  Apply this to both the stored fixture path and the incoming request path so
  *  both sides of a scenario comparison transform identically. */
@@ -91,7 +74,7 @@ export function normalizeUrlPath(urlPath: string): string {
   return (
     urlPath
       .replace(UUID_PATTERN, "__UUID__")
-      .replace(/\/[a-z]{20}(\/|$)/g, "/__PROJECT_REF__$1")
+      .replace(PROJECT_REF_PATH_SEGMENT, `/${REPLAY_PROJECT_REF}$1`)
       // Docker API version (/v1.47/ → /__DOCKER_VERSION__/) so fixture keys are
       // stable across minor Docker Engine upgrades that bump the negotiated API version.
       .replace(/\/v1\.\d+(\/|$)/g, "/__DOCKER_VERSION__$1")

@@ -1,6 +1,5 @@
 import { DateTime, Effect, type FileSystem, type Path, Schema } from "effect";
 
-import { pgDeltaTempPath } from "../../../command-internal/pgdelta.paths.ts";
 import type {
   PgDeltaNextDiagnostic,
   PgDeltaNextOperation,
@@ -14,8 +13,8 @@ export interface PgDeltaNextDebugArtifacts {
 }
 
 /** Explicit cache/artifact generation for the bundled pg-delta implementation. */
-export function pgDeltaNextTempPath(path: Path.Path, workdir: string): string {
-  return path.join(pgDeltaTempPath(path, workdir), "v2");
+export function pgDeltaNextTempPath(path: Path.Path, pgdeltaDir: string): string {
+  return path.join(pgdeltaDir, "v2");
 }
 
 const PrettyJsonString = Schema.fromJsonString(Schema.Unknown, { space: 2 });
@@ -42,12 +41,12 @@ interface PgDeltaNextArtifactMetadata {
 export const savePgDeltaNextDebugArtifacts = Effect.fn("PgDeltaNextArtifacts.save")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  workdir: string,
+  pgdeltaDir: string,
   id: string,
   operation: PgDeltaNextOperation,
   artifacts: PgDeltaNextDebugArtifacts,
 ) {
-  const debugDir = path.join(pgDeltaNextTempPath(path, workdir), "debug", id);
+  const debugDir = path.join(pgDeltaNextTempPath(path, pgdeltaDir), "debug", id);
   yield* fs.makeDirectory(debugDir, { recursive: true });
 
   const files: Array<string> = [];

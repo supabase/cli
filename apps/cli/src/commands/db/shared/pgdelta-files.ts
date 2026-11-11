@@ -1,4 +1,4 @@
-import { Data, Effect, type FileSystem, type Path } from "effect";
+import { Data, Effect, type FileSystem, type Path, Predicate } from "effect";
 
 import {
   actionability,
@@ -19,10 +19,6 @@ class PgDeltaFilesError extends Data.TaggedError("PgDeltaFilesError")<{
 }
 
 const filesError = (message: string) => new PgDeltaFilesError({ message });
-
-function readManifestValue(doc: object, key: string): unknown {
-  return Reflect.get(doc, key);
-}
 
 function parseManifestJson(raw: string): unknown {
   return JSON.parse(raw);
@@ -56,13 +52,13 @@ export const ReadPgDeltaExportManifest = Effect.fn("PgDeltaFiles.readExportManif
         `malformed export manifest ${manifestPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
       ),
   });
-  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+  if (!Predicate.isObject(decoded)) {
     return yield* filesError(`malformed export manifest ${manifestPath}`);
   }
 
-  const formatVersion = readManifestValue(decoded, "formatVersion");
-  const redactSecrets = readManifestValue(decoded, "redactSecrets");
-  const scope = readManifestValue(decoded, "scope");
+  const formatVersion = decoded["formatVersion"];
+  const redactSecrets = decoded["redactSecrets"];
+  const scope = decoded["scope"];
   if (
     (formatVersion !== undefined && formatVersion !== 1) ||
     typeof redactSecrets !== "boolean" ||
@@ -71,11 +67,11 @@ export const ReadPgDeltaExportManifest = Effect.fn("PgDeltaFiles.readExportManif
     return yield* filesError(`export manifest ${manifestPath} is missing required policy metadata`);
   }
 
-  const profile = readManifestValue(decoded, "profile");
-  const baselineDigest = readManifestValue(decoded, "baselineDigest");
-  const defaultOwner = readManifestValue(decoded, "defaultOwner");
-  const files = readManifestValue(decoded, "files");
-  const loadOrder = readManifestValue(decoded, "loadOrder");
+  const profile = decoded["profile"];
+  const baselineDigest = decoded["baselineDigest"];
+  const defaultOwner = decoded["defaultOwner"];
+  const files = decoded["files"];
+  const loadOrder = decoded["loadOrder"];
   return {
     redactSecrets,
     scope,

@@ -1,5 +1,7 @@
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Predicate, Schema } from "effect";
+import { parseJsonc } from "@supabase/config/internal";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { sanitizeProjectId } from "../config/project-id.ts";
 import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import {
@@ -11,100 +13,7 @@ import {
 } from "./project-init.templates.ts";
 import { InitParseSettingsError } from "./project-init.errors.ts";
 
-const invalidProjectId = /[^a-zA-Z0-9_.-]+/g;
-const maxProjectIdLength = 40;
-
-function truncateText(text: string, maxLength: number): string {
-  return text.length > maxLength ? text.slice(0, maxLength) : text;
-}
-
-function sanitizeProjectId(src: string): string {
-  const sanitized = src.replaceAll(invalidProjectId, "_").replace(/^[_.-]+/, "");
-  return truncateText(sanitized, maxProjectIdLength);
-}
-
-// Strips line and block comments and trailing commas while preserving
-// string contents, so an existing JSONC settings file parses correctly.
-function stripJsonComments(contents: string): string {
-  const src = contents.replace(/^\uFEFF/, "");
-  const out: Array<string> = [];
-  let pendingCommaIndex = -1;
-  let i = 0;
-  while (i < src.length) {
-    const char = src.charAt(i);
-
-    if (char === '"') {
-      pendingCommaIndex = -1;
-      out.push(char);
-      i++;
-      while (i < src.length) {
-        const stringChar = src.charAt(i);
-        out.push(stringChar);
-        i++;
-        if (stringChar === "\\") {
-          if (i < src.length) {
-            out.push(src.charAt(i));
-            i++;
-          }
-        } else if (stringChar === '"') {
-          break;
-        }
-      }
-      continue;
-    }
-
-    if (char === "/" && src.charAt(i + 1) === "/") {
-      i += 2;
-      while (i < src.length && src.charAt(i) !== "\n") {
-        i++;
-      }
-      continue;
-    }
-
-    if (char === "/" && src.charAt(i + 1) === "*") {
-      i += 2;
-      while (i < src.length && !(src.charAt(i) === "*" && src.charAt(i + 1) === "/")) {
-        i++;
-      }
-      i += 2;
-      continue;
-    }
-
-    // A comma is "trailing" if the next significant token is a closing brace or
-    // bracket; drop it in that case to match jsonc's trailing-comma handling.
-    if (char === ",") {
-      pendingCommaIndex = out.length;
-      out.push(char);
-      i++;
-      continue;
-    }
-
-    if (char === "}" || char === "]") {
-      if (pendingCommaIndex >= 0) {
-        out[pendingCommaIndex] = "";
-        pendingCommaIndex = -1;
-      }
-      out.push(char);
-      i++;
-      continue;
-    }
-
-    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
-      out.push(char);
-      i++;
-      continue;
-    }
-
-    pendingCommaIndex = -1;
-    out.push(char);
-    i++;
-  }
-  return out.join("");
-}
-
-const decodeJsonObject = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-);
+const decodeJsonObject = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown));
 
 const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
@@ -112,13 +21,17 @@ const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknow
 // as a typed `InitParseSettingsError` (never a fiber defect) and a
 // non-object document is rejected.
 function parseJsonObject(pathname: string, contents: string) {
-  return decodeJsonObject(stripJsonComments(contents)).pipe(
-    Effect.mapError(
-      (error) =>
-        new InitParseSettingsError({
-          detail: `Could not parse JSON in ${pathname}: ${error.message}`,
-          suggestion: `Fix or remove ${pathname}, then rerun \`supabase init\`.`,
-        }),
+  const parseFailure = (reason: string) =>
+    new InitParseSettingsError({
+      detail: `Could not parse JSON in ${pathname}: ${reason}`,
+      suggestion: `Fix or remove ${pathname}, then rerun \`supabase init\`.`,
+    });
+  return Effect.try({
+    try: () => parseJsonc(contents),
+    catch: (error) => parseFailure(error instanceof Error ? error.message : String(error)),
+  }).pipe(
+    Effect.flatMap((value) =>
+      decodeJsonObject(value).pipe(Effect.mapError((error) => parseFailure(error.message))),
     ),
   );
 }
@@ -155,6 +68,21 @@ function writeJsonFile(pathname: string, contents: Record<string, unknown>) {
   });
 }
 
+function mergeJsonObjects(
+  existing: Readonly<Record<string, unknown>>,
+  template: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [key, value] of Object.entries(template)) {
+    const current = merged[key];
+    merged[key] =
+      Predicate.isObject(current) && Predicate.isObject(value)
+        ? mergeJsonObjects(current, value)
+        : value;
+  }
+  return merged;
+}
+
 function updateJsonFile(pathname: string, template: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -170,10 +98,10 @@ function updateJsonFile(pathname: string, template: string) {
       return;
     }
 
-    const merged = {
-      ...(yield* parseJsonObject(pathname, existing)),
-      ...(yield* parseJsonObject(pathname, template)),
-    };
+    const merged = mergeJsonObjects(
+      yield* parseJsonObject(pathname, existing),
+      yield* parseJsonObject(pathname, template),
+    );
     yield* writeJsonFile(pathname, merged);
   });
 }
@@ -282,10 +210,12 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
 /**
  * Scaffolds the local project files (config.toml, .gitignore, optional IDE
  * settings). This owns the mechanical filesystem work only — it does not
- * decide how an already-initialized project is reported. When
- * `config.toml` already exists and `force` is not set it short-circuits
- * with `created: false` and writes nothing, leaving the caller free to
- * treat that as a hard error or a graceful no-op.
+ * decide how an already-initialized project is reported. When a
+ * `config.json`, `config.jsonc` or `config.toml` already exists and `force` is
+ * not set it short-circuits with `created: false` and the existing file's path,
+ * leaving the caller free to treat that as a hard error or a graceful no-op.
+ * With `force`, the JSON files are removed once the fresh `config.toml` is
+ * written, so it is the one the loader reads.
  */
 export const initProject = Effect.fnUntraced(function* (options: ProjectInitOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -295,10 +225,16 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
 
   const supabaseDir = path.join(options.cwd, "supabase");
   const configTomlPath = path.join(supabaseDir, "config.toml");
-  const existingToml = yield* fs.exists(configTomlPath);
+  const jsonConfigPaths = ["config.json", "config.jsonc"].map((name) =>
+    path.join(supabaseDir, name),
+  );
 
-  if (existingToml && !options.force) {
-    return { created: false, configPath: configTomlPath };
+  if (!options.force) {
+    for (const candidate of [...jsonConfigPaths, configTomlPath]) {
+      if (yield* fs.exists(candidate)) {
+        return { created: false, configPath: candidate };
+      }
+    }
   }
 
   const projectId = sanitizeProjectId(path.basename(options.cwd)) || "supabase";
@@ -309,6 +245,9 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
     renderCliConfigTemplate(projectId, options.useOrioledb, options.experimentalStack === true),
     { mode: INIT_FILE_MODE },
   );
+  for (const jsonConfigPath of jsonConfigPaths) {
+    yield* fs.remove(jsonConfigPath, { force: true });
+  }
   yield* ensureSupabaseGitignore(options.cwd);
 
   // Requires text mode (json/stream-json stay payload-only and never scaffold

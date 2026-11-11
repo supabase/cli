@@ -95,7 +95,7 @@ const SAMPLE_STATE = {
 } as const;
 
 describe("projectLinkStateLayer", () => {
-  it.live("surfaces a clear permission failure", () =>
+  it.effect("surfaces a clear permission failure", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -132,7 +132,7 @@ describe("projectLinkStateLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("saves and loads repo-local project link state", () =>
+  it.effect("saves and loads repo-local project link state", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -166,7 +166,7 @@ describe("projectLinkStateLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("clears repo-local link state", () =>
+  it.effect("clears repo-local link state", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -194,7 +194,7 @@ describe("projectLinkStateLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails with a tagged error when repo-local link state is malformed", () =>
+  it.effect("fails with a tagged error when repo-local link state is malformed", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -230,7 +230,7 @@ describe("projectLinkStateLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("getActiveBranch returns none when not linked", () =>
+  it.effect("getActiveBranch returns none when not linked", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -248,7 +248,7 @@ describe("projectLinkStateLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("getActiveBranch returns the persisted active_branch", () =>
+  it.effect("getActiveBranch returns the persisted active_branch", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -275,7 +275,7 @@ describe("projectLinkStateLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "setActiveBranch updates only active_branch, leaving project and versions unchanged",
     () =>
       Effect.gen(function* () {
@@ -306,7 +306,7 @@ describe("projectLinkStateLayer", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("setActiveBranch fails with ProjectNotLinkedError when project is not linked", () =>
+  it.effect("setActiveBranch fails with ProjectNotLinkedError when project is not linked", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

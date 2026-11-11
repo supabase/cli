@@ -1,10 +1,16 @@
+import { type ConfigFileRef, DEFAULT_CONFIG_FILE } from "./config-advice.ts";
 import type { DbExecError } from "./db-connection.errors.ts";
 
 /** Canonical remediation when local migrations need pg_net but webhooks are disabled. */
-export const ENABLE_LOCAL_WEBHOOKS_SUGGESTION =
-  "Add the following to supabase/config.toml and retry:\n\n" +
-  "[experimental.webhooks]\n" +
-  "enabled = true";
+export const enableLocalWebhooksSuggestion = (
+  configFile: ConfigFileRef = DEFAULT_CONFIG_FILE,
+): string =>
+  `Add the following to ${configFile.path} and retry:\n\n` +
+  (configFile.format === "json"
+    ? '{\n  "experimental": {\n    "webhooks": {\n      "enabled": true\n    }\n  }\n}'
+    : "[experimental.webhooks]\nenabled = true");
+
+export const ENABLE_LOCAL_WEBHOOKS_SUGGESTION = enableLocalWebhooksSuggestion();
 
 const MISSING_NET_SCHEMA_PATTERN = /schema "net" does not exist/iu;
 const MISSING_PG_NET_FUNCTION_PATTERN = /function net\.http_[a-z0-9_]*\([^)]*\) does not exist/iu;

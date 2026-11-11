@@ -1,15 +1,15 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Data, Effect, FileSystem, Layer, Option, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 import * as PromiseStack from "./index.ts";
 import { HostEndpoint } from "./HostProcess.ts";
 import { StackError } from "./Rpc.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { open as openEffect } from "./effect.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 class FixtureError extends Data.TaggedError("ShutdownFixtureError")<{ readonly message: string }> {}
 const fixturePath = fileURLToPath(new URL("../tests/host-process-fixture.ts", import.meta.url));
 
@@ -51,8 +51,8 @@ const withHeldOwner = <A, E, R>(
     const stateRoot = `${root}/state`;
     const cacheRoot = `${root}/cache`;
     const id = "shutdown-held";
-    const context = yield* Layer.build(State.layer({ root: stateRoot }));
-    const state = Context.get(context, State.Service);
+    const context = yield* Layer.build(StackNamespace.layer({ root: stateRoot }));
+    const state = Context.get(context, StackNamespace.Service);
     yield* state.save({
       id,
       runtime: "native",
@@ -60,7 +60,6 @@ const withHeldOwner = <A, E, R>(
       instances: [],
       lifetime: "detached",
       composition: { members: [], dependencies: [] },
-      ports: [],
     });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* Effect.acquireUseRelease(
@@ -124,6 +123,7 @@ it.live("Effect stop reports shutdown-exit when the acknowledged owner remains a
       expect(Schema.is(StackError)(error)).toBe(true);
       if (!Schema.is(StackError)(error)) return yield* Effect.die("unexpected shutdown error");
       expect(error.operation).toBe("shutdown-exit");
+      expect(error.kind).toBe("owner-exit");
       expect(error.message).toContain("shutdown acknowledgement");
     }),
   ).pipe(Effect.provide(layer)),

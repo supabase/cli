@@ -1,15 +1,16 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, FileSystem, Layer, Redacted, Ref, Scope } from "effect";
 import { connect, createServer, type Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
-import { tmpdir } from "node:os";
-import { makeService } from "../Service.ts";
-import { makeDatabase, type DatabaseConfig } from "../services/Database.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
+import { makeDatabase, type PinnedDatabaseConfig } from "../services/Database.ts";
 import * as LogflareStorage from "./LogflareStorage.ts";
 
-const config: DatabaseConfig = {
-  version: "17",
+const config: PinnedDatabaseConfig = {
+  pin: selection.database,
   databasePassword: Redacted.make("logflare-storage-password"),
   jwtSecret: Redacted.make("logflare-storage-jwt-secret-with-32-chars"),
   jwtExpiry: 3600,
@@ -31,12 +32,12 @@ const analyticsDatabase = Effect.gen(function* () {
     stackId: "logflare-storage",
     instanceId: "database",
     root,
-    cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+    cacheRoot: testArtifactCacheRoot,
     runtime: "native",
   });
   // The service runs its operations in its own scope, which must stay open while it is destroyed.
   const serviceScope = yield* Scope.make();
-  const service = yield* makeService(recipe.definition, { id: "database", config }).pipe(
+  const service = yield* makeStandaloneService(recipe.definition, { id: "database", config }).pipe(
     Scope.provide(serviceScope),
   );
   yield* Effect.addFinalizer(() =>
@@ -50,14 +51,16 @@ const analyticsDatabase = Effect.gen(function* () {
   yield* Effect.scoped(
     Effect.gen(function* () {
       const services = yield* Layer.build(PgClient.layer({ url: Redacted.make(database.url) }));
-      yield* Context.get(services, PgClient.PgClient).unsafe(`
-        CREATE SCHEMA IF NOT EXISTS _analytics;
-        CREATE TABLE _analytics.sources (name text NOT NULL, token uuid NOT NULL);
-        INSERT INTO _analytics.sources VALUES
-          ('postgres.logs', '${sourceToken}'), ('auth.logs', '${uncreatedToken}');
-        CREATE TABLE _analytics."log_events_${sourceToken.replaceAll("-", "_")}" (id uuid PRIMARY KEY);
-        INSERT INTO _analytics."log_events_${sourceToken.replaceAll("-", "_")}" VALUES ('${storedId}');
-      `);
+      const client = Context.get(services, PgClient.PgClient);
+      const eventsTable = `_analytics."log_events_${sourceToken.replaceAll("-", "_")}"`;
+      for (const statement of [
+        "CREATE SCHEMA IF NOT EXISTS _analytics",
+        "CREATE TABLE _analytics.sources (name text NOT NULL, token uuid NOT NULL)",
+        `INSERT INTO _analytics.sources VALUES ('postgres.logs', '${sourceToken}'), ('auth.logs', '${uncreatedToken}')`,
+        `CREATE TABLE ${eventsTable} (id uuid PRIMARY KEY)`,
+        `INSERT INTO ${eventsTable} VALUES ('${storedId}')`,
+      ])
+        yield* client.unsafe(statement);
     }),
   );
   return { database, socket: `${endpoint.path}/.s.PGSQL.${endpoint.port}` };
@@ -103,7 +106,7 @@ const socketRelay = (path: string) =>
     (relay) => Effect.sync(relay.close),
   );
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 describe("LogflareStorage", { timeout: 180_000 }, () => {
   it.live(
@@ -116,7 +119,6 @@ describe("LogflareStorage", { timeout: 180_000 }, () => {
         const stored = yield* storage.storedIds("postgres.logs", [storedId, missingId]);
         const uncreated = yield* storage.storedIds("auth.logs", [storedId]);
         const unknown = yield* storage.storedIds("storage.logs", [storedId]).pipe(Effect.flip);
-
         expect([...stored]).toEqual([storedId]);
         expect([...uncreated]).toEqual([]);
         expect(unknown.message).toBe("Analytics has no storage.logs sources");

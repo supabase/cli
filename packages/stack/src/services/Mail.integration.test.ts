@@ -1,9 +1,13 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Path } from "effect";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { makeService } from "../Service.ts";
+import { Data, Effect, Exit, FileSystem, Layer, Path, Ref, Stream } from "effect";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { selection } from "../../tests/pins.ts";
+import { failOnStall } from "../../tests/stall-guard.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-mail",
@@ -11,11 +15,13 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
+  claimNativePort: () => Effect.succeed(true),
 });
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
 interface MailpitMessages {
@@ -54,32 +60,67 @@ const sendTestEmail = (
     yield* HttpClientResponse.filterStatusOk(response);
   });
 
+class MailStallError extends Data.TaggedError("MailStallError")<{ readonly message: string }> {}
+
+const mailStall = (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: Ref.Ref<string>) =>
+  failOnStall(
+    duration,
+    Effect.all([Ref.get(phase), Ref.get(logs)]).pipe(
+      Effect.flatMap(([stalled, output]) =>
+        Effect.fail(
+          new MailStallError({
+            message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${output || "(none)"}`,
+          }),
+        ),
+      ),
+    ),
+  );
+
 describe("service catalog", () => {
   it.live("launches the real Mailpit recipe and serves its HTTP endpoint", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const client = yield* HttpClient.HttpClient;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-" });
-        const recipe = yield* makeServiceRecipe(
-          { service: "mail", config: {} },
-          dockerOptions(root),
-          Effect.succeed([]),
-        );
-        const instance = yield* makeService(recipe.definition, {
-          id: "mail",
-          config: recipe.creation,
-        });
-        yield* instance.start;
-        yield* instance.ready;
-        const endpoint = yield* recipe.endpoint("http");
-        const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}/readyz`),
-        );
-        expect(response.status).toBe(200);
-        yield* instance.stop;
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    Effect.gen(function* () {
+      const phase = yield* Ref.make("setup");
+      const logs = yield* Ref.make("");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-" });
+          const recipe = yield* makeServiceRecipe(
+            { service: "mail", pin: selection.mail, config: {} },
+            dockerOptions(root),
+          );
+          const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
+          yield* Stream.fromSubscription(yield* recipe.logs).pipe(
+            Stream.runForEach(({ stream, bytes }) =>
+              Ref.update(logs, (text) => text + decoders[stream].decode(bytes, { stream: true })),
+            ),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          const instance = yield* makeStandaloneService(recipe.definition, {
+            id: "mail",
+            config: recipe.creation,
+          });
+          yield* Ref.set(phase, "start");
+          yield* instance.start;
+          yield* Ref.set(phase, "readiness");
+          yield* instance.ready;
+          yield* Ref.set(phase, "/readyz request");
+          const endpoint = yield* recipe.endpoint("http");
+          const response = yield* client.execute(
+            HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/readyz`),
+          );
+          expect(response.status).toBe(200);
+          yield* Ref.set(phase, "stop");
+          yield* instance.stop;
+          yield* Ref.set(phase, "scope teardown");
+        }),
+      ).pipe(mailStall("25 seconds", phase, logs));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live(
@@ -92,17 +133,16 @@ describe("service catalog", () => {
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-isolation-" });
           const recipeFor = (instanceId: string) =>
             makeServiceRecipe(
-              { service: "mail", config: {} },
+              { service: "mail", pin: selection.mail, config: {} },
               { ...options(root), instanceId },
-              Effect.succeed([]),
             );
           const first = yield* recipeFor("mail-a");
           const second = yield* recipeFor("mail-b");
-          const firstInstance = yield* makeService(first.definition, {
+          const firstInstance = yield* makeStandaloneService(first.definition, {
             id: "mail-a",
             config: first.creation,
           });
-          const secondInstance = yield* makeService(second.definition, {
+          const secondInstance = yield* makeStandaloneService(second.definition, {
             id: "mail-b",
             config: second.creation,
           });
@@ -118,7 +158,11 @@ describe("service catalog", () => {
             concurrency: "unbounded",
           });
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
   );
 
   it.live("keeps a captured email after a native mail stop and start", () =>
@@ -127,11 +171,10 @@ describe("service catalog", () => {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-persistence-" });
         const recipe = yield* makeServiceRecipe(
-          { service: "mail", config: {} },
+          { service: "mail", pin: selection.mail, config: {} },
           options(root),
-          Effect.succeed([]),
         );
-        const instance = yield* makeService(recipe.definition, {
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
@@ -151,7 +194,11 @@ describe("service catalog", () => {
         );
         yield* instance.stop;
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("keeps a captured email after a Docker mail stop and start", () =>
@@ -162,11 +209,10 @@ describe("service catalog", () => {
           prefix: "catalog-mail-persistence-docker-",
         });
         const recipe = yield* makeServiceRecipe(
-          { service: "mail", config: {} },
+          { service: "mail", pin: selection.mail, config: {} },
           dockerOptions(root),
-          Effect.succeed([]),
         );
-        const instance = yield* makeService(recipe.definition, {
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
@@ -186,7 +232,11 @@ describe("service catalog", () => {
         );
         yield* instance.stop;
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("removes the native mail instance directory when destroyed", () =>
@@ -196,11 +246,10 @@ describe("service catalog", () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-destroy-" });
         const recipe = yield* makeServiceRecipe(
-          { service: "mail", config: {} },
+          { service: "mail", pin: selection.mail, config: {} },
           options(root),
-          Effect.succeed([]),
         );
-        const instance = yield* makeService(recipe.definition, {
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
@@ -211,7 +260,11 @@ describe("service catalog", () => {
         yield* instance.destroy;
         expect(yield* fs.exists(instanceRoot)).toBe(false);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 
   it.live("rejects a traversal instance id and creates nothing outside the root", () =>
@@ -221,11 +274,10 @@ describe("service catalog", () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-traversal-" });
         const recipe = yield* makeServiceRecipe(
-          { service: "mail", config: {} },
+          { service: "mail", pin: selection.mail, config: {} },
           { ...options(root), instanceId: "../escaped" },
-          Effect.succeed([]),
         );
-        const instance = yield* makeService(recipe.definition, {
+        const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
@@ -233,6 +285,10 @@ describe("service catalog", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* fs.exists(path.join(root, "..", "escaped"))).toBe(false);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   );
 });

@@ -1,10 +1,10 @@
 import { Data, Effect, FileSystem, Path } from "effect";
 import type { DatabaseInstance } from "@supabase/stack/effect";
 import { Output } from "../shared/output/output.service.ts";
-import { applyDatabaseWebhooks } from "./db-bootstrap/db-setup.ts";
+import { applyDatabaseWebhooks, ensureStackWebhookSchema } from "./db-bootstrap/db-setup.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { DbConnection, type DbSession } from "./db-connection.service.ts";
-import type { DbTomlValues } from "./db-config.toml-read.ts";
+import type { DbConfigValues } from "./db-config.read.ts";
 import { migrateAndSeed } from "./migrate-and-seed.ts";
 import { StackCatalogSetup, type StackCatalogSetupInput } from "./stack-catalog-setup.ts";
 
@@ -34,7 +34,7 @@ const databaseConn = Effect.fn("StackBootstrap.databaseConnection")(function* (
   database: DatabaseInstance,
 ) {
   const credentials = yield* database.credentials({ from: "host" });
-  const conn = parseConnectionString(credentials.databaseUrl ?? "");
+  const conn = yield* parseConnectionString(credentials.databaseUrl ?? "");
   if (conn === undefined)
     return yield* new StackBootstrapError({
       reason: "unavailable",
@@ -64,7 +64,10 @@ const withDatabaseSession = <A, E, R>(
     }),
   );
 
-/** Applies only the webhook configuration to an already initialized database. */
+/**
+ * Applies only the webhook setup to an already initialized database, creating the
+ * `supabase_functions` schema first when it is missing.
+ */
 export const applyStackWebhooksOnly = (
   database: DatabaseInstance,
   webhooksEnabled: boolean,
@@ -74,6 +77,7 @@ export const applyStackWebhooksOnly = (
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-webhooks-" });
+      yield* ensureStackWebhookSchema(session, fs, path, tmpDir);
       yield* applyDatabaseWebhooks(session, fs, path, tmpDir, webhooksEnabled);
     }),
   );
@@ -82,8 +86,8 @@ export const applyStackWebhooksOnly = (
 interface StackMigrations {
   readonly workdir: string;
   readonly toml: Pick<
-    DbTomlValues,
-    "migrationsEnabled" | "seed" | "pgDelta" | "schemaPaths" | "webhooksEnabled"
+    DbConfigValues,
+    "migrationsEnabled" | "seed" | "pgDelta" | "schemaPaths" | "webhooksEnabled" | "configFile"
   >;
   readonly experimental: boolean;
   /** Applies migrations up to this version; omitted applies all of them. */
@@ -112,6 +116,7 @@ const applyStackMigrateAndSeed = (
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
           localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+          configFile: toml.configFile,
         });
       }),
     "postgres",
@@ -119,7 +124,7 @@ const applyStackMigrateAndSeed = (
 
 /** The catalog overlay declared by a project's `config.toml`. */
 export const projectCatalogOverlay = (
-  toml: Pick<DbTomlValues, "webhooksEnabled" | "baseline" | "vault">,
+  toml: Pick<DbConfigValues, "webhooksEnabled" | "baseline" | "vault">,
   workdir: string,
 ): StackCatalogSetupInput["overlay"] => ({
   webhooks: "config",

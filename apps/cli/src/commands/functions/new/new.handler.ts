@@ -1,4 +1,9 @@
-import { loadCliConfig } from "@supabase/config/internal";
+import {
+  applyConfigEdits,
+  parseCliConfigDocumentFile,
+  type ParsedCliConfigDocument,
+  writeCliConfigDocumentText,
+} from "@supabase/config/internal";
 import { defaultPublishableKey } from "../../../shared/stack-constants.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 
@@ -12,8 +17,9 @@ import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
+import { configDisplayPath } from "../../../command-internal/config-advice.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsNewFlags } from "./new.command.ts";
@@ -31,8 +37,6 @@ import {
   renderFunctionsNewConfig,
   renderFunctionsNewEntrypoint,
 } from "./new.templates.ts";
-
-const DEFAULT_LOCAL_API_PORT = 54321;
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -57,6 +61,22 @@ function hasFunctionConfigDeclaration(contents: string, slug: string): boolean {
   return pattern.test(contents);
 }
 
+const locateJsonConfig = Effect.fnUntraced(function* (workdir: string) {
+  const parsed = yield* parseCliConfigDocumentFile(workdir, { search: false }).pipe(Effect.option);
+  return Option.isSome(parsed) && parsed.value !== null && parsed.value.format === "json"
+    ? parsed.value
+    : undefined;
+});
+
+function jsonDeclaredFunctionSlugs(document: ParsedCliConfigDocument): ReadonlySet<string> {
+  const functions = document.rawDocument?.["functions"];
+  return new Set(
+    typeof functions === "object" && functions !== null && !Array.isArray(functions)
+      ? Object.keys(functions)
+      : [],
+  );
+}
+
 const listExistingFunctionSlugs = Effect.fn("functions.new.listExistingSlugs")(function* (
   workdir: string,
 ) {
@@ -79,11 +99,18 @@ const listExistingFunctionSlugs = Effect.fn("functions.new.listExistingSlugs")(f
     }
   }
 
-  const configPath = path.join(workdir, "supabase", "config.toml");
-  const configContents = yield* fs.readFileString(configPath).pipe(Effect.option);
-  if (Option.isSome(configContents)) {
-    for (const slug of readDeclaredFunctionSlugs(configContents.value)) {
+  const jsonConfig = yield* locateJsonConfig(workdir);
+  if (jsonConfig !== undefined) {
+    for (const slug of jsonDeclaredFunctionSlugs(jsonConfig)) {
       slugs.add(slug);
+    }
+  } else {
+    const configPath = path.join(workdir, "supabase", "config.toml");
+    const configContents = yield* fs.readFileString(configPath).pipe(Effect.option);
+    if (Option.isSome(configContents)) {
+      for (const slug of readDeclaredFunctionSlugs(configContents.value)) {
+        slugs.add(slug);
+      }
     }
   }
 
@@ -92,16 +119,18 @@ const listExistingFunctionSlugs = Effect.fn("functions.new.listExistingSlugs")(f
 });
 
 const resolveTemplateInputs = Effect.fn("functions.new.resolveTemplateInputs")(function* (
-  cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
+  cliSettings: { readonly workdir: string },
   slug: string,
 ) {
-  const loaded = yield* loadCliConfig(cliSettings.workdir, {
-    goViperCompat: true,
-    search: shouldSearchAncestors(cliSettings),
-  }).pipe(Effect.orElseSucceed(() => null));
-  yield* Effect.annotateCurrentSpan("config.found", loaded !== null);
-  const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;
-  const publishableKey = loaded?.config.auth.publishable_key ?? defaultPublishableKey;
+  const configValues = yield* CliConfigValues;
+  const resolvedConfig = yield* configValues.load({
+    workdir: cliSettings.workdir,
+    projectRef: Option.none(),
+  });
+  yield* Effect.annotateCurrentSpan("config.found", resolvedConfig.hasConfigFile);
+  const { config } = resolvedConfig.materialized;
+  const port = config.api.port;
+  const publishableKey = config.auth.publishable_key ?? defaultPublishableKey;
   return {
     url: `http://127.0.0.1:${port}/functions/v1/${slug}`,
     publishableKey,
@@ -132,6 +161,50 @@ const promptForIdeSettings = Effect.fn("functions.new.promptIdeSettings")(functi
   }
 });
 
+const writeJsonFunctionConfig = Effect.fn("functions.new.writeJsonConfig")(function* (
+  workdir: string,
+  document: ParsedCliConfigDocument,
+  slug: string,
+  verifyJwt: boolean,
+) {
+  const path = yield* Path.Path;
+  const output = yield* Output;
+  const relPath = configDisplayPath(path, workdir, document.path);
+
+  if (jsonDeclaredFunctionSlugs(document).has(slug)) {
+    yield* output.raw(`functions.${slug} is already declared in ${bold(relPath)}\n`, "stderr");
+    return;
+  }
+
+  const outcome = applyConfigEdits(document.rawText, "json", [
+    {
+      path: ["functions", slug],
+      value: {
+        enabled: true,
+        verify_jwt: verifyJwt,
+        import_map: `./functions/${slug}/deno.json`,
+        entrypoint: `./functions/${slug}/index.ts`,
+      },
+    },
+  ]);
+  if (outcome.kind === "refused") {
+    return yield* new FunctionsNewWriteError({
+      path: relPath,
+      message: `failed to update config: ${outcome.refusal.detail}`,
+    });
+  }
+
+  yield* writeCliConfigDocumentText(document.path, outcome.text).pipe(
+    Effect.mapError(
+      (cause) =>
+        new FunctionsNewWriteError({
+          path: relPath,
+          message: `failed to update config: ${cause.message}`,
+        }),
+    ),
+  );
+});
+
 const appendFunctionConfig = Effect.fnUntraced(function* (
   workdir: string,
   slug: string,
@@ -140,6 +213,12 @@ const appendFunctionConfig = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const output = yield* Output;
+
+  const jsonConfig = yield* locateJsonConfig(workdir);
+  if (jsonConfig !== undefined) {
+    return yield* writeJsonFunctionConfig(workdir, jsonConfig, slug, verifyJwt);
+  }
+
   const relPath = path.join("supabase", "config.toml");
   const configPath = path.join(workdir, relPath);
   const existing = yield* fs.readFileString(configPath).pipe(Effect.option);
@@ -195,6 +274,8 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
     const functionDir = path.join(cliSettings.workdir, relFunctionDir);
     const entrypointPath = path.join(cliSettings.workdir, relEntrypoint);
 
+    const templateInputs = yield* resolveTemplateInputs(cliSettings, flags.functionName);
+
     yield* fs.makeDirectory(functionDir, { recursive: true }).pipe(
       Effect.mapError(
         (cause) =>
@@ -216,7 +297,6 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
       });
     }
 
-    const templateInputs = yield* resolveTemplateInputs(cliSettings, flags.functionName);
     yield* fs
       .writeFileString(entrypointPath, renderFunctionsNewEntrypoint(authMode, templateInputs))
       .pipe(

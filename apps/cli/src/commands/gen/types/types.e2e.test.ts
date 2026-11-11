@@ -167,6 +167,9 @@ const waitForLocalPostgres = Effect.fnUntraced(function* (containerName: string)
         "PGPASSWORD=postgres",
         containerName,
         "psql",
+        // The entrypoint's init server listens only on the Unix socket, so TCP reaches the final server.
+        "-h",
+        "127.0.0.1",
         "-U",
         "postgres",
         "-d",
@@ -283,7 +286,7 @@ function expectNoRemoteAuthPath(result: { stdout: string; stderr: string }) {
   const output = combinedOutput(result);
   expect(output).not.toContain("Access token not provided");
   expect(output).not.toContain("api.supabase.com");
-  expect(output).not.toContain("127.0.0.1:1");
+  expect(output).not.toMatch(/127\.0\.0\.1:1(?!\d)/);
 }
 
 function expectLanguageShape(lang: TypegenLang, stdout: string) {
@@ -334,7 +337,7 @@ describe("gen types e2e", () => {
 
             for (const lang of TYPEGEN_LANGS) {
               const result = yield* runSupabaseEffect(
-                ["gen", "types", "--local", "--lang", lang, "--schema", "public"],
+                ["gen", "types", "--lang", lang, "--schema", "public"],
                 {
                   cwd: project.dir,
                   home: home.dir,
@@ -342,7 +345,7 @@ describe("gen types e2e", () => {
                   exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
                 },
               );
-              expectSucceeded(`supabase gen types --local --lang ${lang}`, result);
+              expectSucceeded(`supabase gen types --lang ${lang}`, result);
               expectNoRemoteAuthPath(result);
               expectLanguageShape(lang, result.stdout);
               expectLocalSmokeTable(lang, result.stdout);
@@ -361,9 +364,9 @@ describe("gen types e2e", () => {
   // An unset or empty variable reads as `Option.none()`.
   const remote = Effect.runSync(
     Effect.all({
-      projectRef: Config.option(Config.string(REMOTE_PROJECT_REF_ENV)),
-      accessToken: Config.option(Config.string("SUPABASE_ACCESS_TOKEN")),
-      enabled: Config.option(Config.string(REMOTE_E2E_FLAG)),
+      projectRef: Config.option(Config.String(REMOTE_PROJECT_REF_ENV)),
+      accessToken: Config.option(Config.String("SUPABASE_ACCESS_TOKEN")),
+      enabled: Config.option(Config.String(REMOTE_E2E_FLAG)),
     }),
   );
   const remoteEnabled = Option.getOrElse(remote.enabled, () => "") === "1";
@@ -387,12 +390,11 @@ describe("gen types e2e", () => {
               [
                 "gen",
                 "types",
-                "--project-id",
-                remoteProjectRef,
                 "--lang",
                 lang,
                 "--schema",
                 "public",
+                `--remote=${remoteProjectRef}`,
               ],
               {
                 cwd: project.dir,
@@ -401,7 +403,7 @@ describe("gen types e2e", () => {
                 exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
               },
             );
-            expectSucceeded(`supabase gen types --project-id <ref> --lang ${lang}`, result);
+            expectSucceeded(`supabase gen types --remote=<ref> --lang ${lang}`, result);
             expectLanguageShape(lang, result.stdout);
           }
         }),

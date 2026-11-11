@@ -6,8 +6,10 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import type { StackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
-import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
+import { readLockedSelection } from "../../../../command-internal/stack-lock.ts";
+import { withProjectFunctionsConfig } from "../../../../command-internal/stack-functions-env.ts";
 import { bold, gray, green, red, yellow } from "../../../../command-internal/colors.ts";
 import {
   connectionEnv,
@@ -20,11 +22,11 @@ import {
 } from "../stack-summary.ts";
 import {
   StackApi,
-  StackTargetError,
   StackTargetResolver,
+  mapTargetError,
   rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
+} from "../../../../command-internal/stack-target.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 import { encodeStackEnv, stackEnvOverrides, stackEnvValues } from "./status.env.ts";
@@ -57,7 +59,7 @@ type StackReport = {
     readonly project_root: string;
     readonly branch_context: string;
   };
-  readonly runtime: "native" | "docker" | "podman";
+  readonly runtime: StackRuntime;
   readonly owner: "reachable" | "unavailable";
   readonly lifecycle: Observation["lifecycle"] | null;
   readonly readiness: "unavailable" | "starting" | "sleeping" | "stopped" | "ready" | "unhealthy";
@@ -82,31 +84,23 @@ type StackReport = {
   readonly env: Readonly<Record<string, string>>;
 };
 
-const mapTargetError = (error: StackTargetError) =>
-  new StackCommandStatusError({
-    reason: error.reason,
-    message: error.message,
-    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
-    cause: error,
-  });
+const isStateOperation = (operation: string) =>
+  operation === "open" || operation === "discover" || operation === "definition";
 
 const mapStackError = (error: StackError) =>
-  new StackCommandStatusError({
-    reason:
-      error.operation === "open" ||
-      error.operation === "discover" ||
-      error.operation === "definition"
-        ? "invalid-config"
-        : "runtime",
-    message: error.message,
-    suggestion:
-      error.operation === "open" ||
-      error.operation === "discover" ||
-      error.operation === "definition"
-        ? "Inspect the saved stack state under $SUPABASE_HOME/stacks."
-        : "Retry the command and use --debug if the stack remains unavailable.",
-    cause: error,
-  });
+  isStateOperation(error.operation)
+    ? new StackCommandStatusError({
+        reason: "invalid-config",
+        message: error.message,
+        suggestion: "Inspect the saved stack state under $SUPABASE_HOME/stacks.",
+        cause: error,
+      })
+    : new StackCommandStatusError({
+        reason: "stack",
+        message: error.message,
+        suggestion: "Retry the command and use --debug if the stack remains unavailable.",
+        cause: error,
+      });
 
 const serviceReport = ({ instance, observation, error }: ObservedService): ServiceReport => ({
   id: instance.id,
@@ -156,7 +150,7 @@ const reportFor = (
       readonly branchContext: string;
       readonly stackName: string;
     };
-    readonly runtime: "native" | "docker" | "podman";
+    readonly runtime: StackRuntime;
   },
   owner: StackReport["owner"],
   observed: ReadonlyArray<ObservedService>,
@@ -263,7 +257,7 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
       ...(id === undefined ? {} : { id }),
       runtime: "auto",
     })
-    .pipe(Effect.mapError(mapTargetError));
+    .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
   if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
@@ -320,27 +314,27 @@ const unavailableDrift = (message: string): StackReport["config_drift"] => ({
   message,
 });
 
+const projectConfigUnavailable = (error: { readonly message: string }) =>
+  Effect.succeed(unavailableDrift(`Project configuration could not be compared: ${error.message}`));
+
 const configDrift = Effect.fn("experimental.stack.status.configDrift")(
-  function* (stack: Stack, projectRoot: string, functionsIsMember: boolean) {
-    const loaded = yield* loadStackConfig(projectRoot);
+  function* (stack: Stack, projectRoot: string, functionsIsMember: boolean, debug: boolean) {
+    const loaded = yield* loadStackConfig(projectRoot, { selection: readLockedSelection });
     const creations = yield* loaded.creations(stack.id);
     // Drift ignores non-members, so a Functions dotenv only matters when Functions is a member.
     const requested = functionsIsMember
-      ? yield* Effect.forEach(creations, withProjectFunctionsEnv)
+      ? yield* Effect.forEach(creations, (creation) =>
+          withProjectFunctionsConfig(creation, { warn: false, debug }),
+        )
       : creations;
     return driftFrom(yield* stack.composition.plan(requested));
   },
   (effect) =>
     effect.pipe(
       Effect.catchTags({
-        StackConfigError: (error) =>
-          Effect.succeed(
-            unavailableDrift(`Project configuration could not be compared: ${error.message}`),
-          ),
-        StackFunctionsEnvError: (error) =>
-          Effect.succeed(
-            unavailableDrift(`Project configuration could not be compared: ${error.message}`),
-          ),
+        StackConfigError: projectConfigUnavailable,
+        LockResolutionError: projectConfigUnavailable,
+        FunctionsEnvError: projectConfigUnavailable,
         StackError: (error) =>
           Effect.succeed(
             unavailableDrift(`Saved configuration could not be compared: ${error.message}`),
@@ -373,7 +367,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
     if (!flags.env && flags.overrideName.length > 0)
       return yield* new StackCommandStatusError({
         reason: "flags",
@@ -432,12 +426,18 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       else yield* output.result(values);
       return;
     }
+    const functionsMember = observed.observed.find(
+      ({ instance }) => memberIds.has(instance.id) && instance.service === "functions",
+    );
+    /* Debug is a start flag, not project config, so the saved mode is requested back. */
+    const savedFunctions = target.definition.instances.find(
+      ({ id }) => id === functionsMember?.instance.id,
+    )?.creation;
     const config = yield* configDrift(
       stack,
       target.definition.identity.projectRoot,
-      observed.observed.some(
-        ({ instance }) => memberIds.has(instance.id) && instance.service === "functions",
-      ),
+      functionsMember !== undefined,
+      savedFunctions?.service === "functions" && savedFunctions.config.debug === true,
     );
     const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
     const connections = stackConnections(members);

@@ -16,6 +16,13 @@ const Smtp = Schema.Struct({
   senderName: Schema.optionalKey(Schema.String),
 });
 
+const Template = Schema.Struct({
+  id: Schema.String,
+  path: Schema.String,
+  /* `path` is served only while it resolves inside this directory, like `content_path`. */
+  root: Schema.String,
+});
+
 export const Config = Schema.Struct({
   databaseUrl: Schema.optionalKey(Schema.String),
   siteUrl: Schema.optionalKey(Schema.String),
@@ -31,6 +38,9 @@ export const Config = Schema.Struct({
   smtpSenderName: Schema.optionalKey(Schema.String),
   settings: Schema.optionalKey(Settings),
   smtp: Schema.optionalKey(Smtp),
+  templates: Schema.optionalKey(Schema.Array(Template)),
+  templateBaseUrl: Schema.optionalKey(Schema.String),
+  templateToken: Schema.optionalKey(Schema.String),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -84,11 +94,21 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
               creation.config.siteUrl ??
               "http://localhost:3000");
       const jwtIssuer = creation.config.settings?.jwtIssuer || authExternalUrl;
+      const templates = creation.config.templates ?? [];
+      const { templateBaseUrl, templateToken } = creation.config;
+      if (templates.length > 0) {
+        yield* requiredInput("auth", "templateBaseUrl", templateBaseUrl);
+        yield* requiredInput("auth", "templateToken", templateToken);
+      }
       const base = {
         GOTRUE_API_HOST: container ? "0.0.0.0" : "127.0.0.1",
         GOTRUE_DB_DATABASE_URL: databaseUrl,
         DATABASE_URL: databaseUrl,
         GOTRUE_DB_DRIVER: "postgres",
+        // Idle connections spare Auth a reconnect per request; a connection Postgres closes while Auth runs
+        // fails one Auth request before it is replaced.
+        GOTRUE_DB_MAX_POOL_SIZE: "2",
+        GOTRUE_DB_MAX_IDLE_POOL_SIZE: "2",
         GOTRUE_SITE_URL: creation.config.siteUrl ?? "http://localhost:3000",
         GOTRUE_JWT_SECRET: creation.config.jwtSecret ?? localJwtSecret,
         GOTRUE_JWT_KEYS: creation.config.gotrueJwtKeys ?? defaultJwtKeys,
@@ -111,6 +131,13 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           ? {}
           : { GOTRUE_JWT_EXP: String(creation.config.jwtExpiry) }),
         ...settingsEnvironment(creation.config.settings, jwtIssuer),
+        ...(templates.length === 0 ? {} : { GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED: "true" }),
+        ...Object.fromEntries(
+          templates.map(({ id }) => [
+            `GOTRUE_MAILER_TEMPLATES_${id.toUpperCase()}`,
+            `${templateBaseUrl}/email/${id}?token=${templateToken}`,
+          ]),
+        ),
       };
       const smtp = creation.config.smtp;
       if (smtp !== undefined) {

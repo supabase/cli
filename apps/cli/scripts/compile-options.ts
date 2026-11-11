@@ -1,6 +1,6 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { stackSourceDigest } from "@supabase/stack/internal/release";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 
 /**
  * Shared compile options keep release, local, and E2E builds exercising the shipped binary
@@ -20,8 +20,9 @@ export const compileOptions = {
  * Embeds the stack release of the sources being compiled, so the binary drives exactly the owners
  * started from the same stack sources, whether compiled or run from source.
  */
-export const stackReleaseDefine = async () => ({
-  SUPABASE_STACK_BUILD_ID: JSON.stringify(
-    await Effect.runPromise(stackSourceDigest.pipe(Effect.provide(BunServices.layer))),
-  ),
-});
+export const stackReleaseDefine = () =>
+  Effect.runPromise(
+    stackSourceDigest.pipe(Effect.provide(Layer.merge(BunServices.layer, BunCrypto.layerDigest))),
+  ).then((digest) => ({
+    SUPABASE_STACK_BUILD_ID: JSON.stringify(digest),
+  }));

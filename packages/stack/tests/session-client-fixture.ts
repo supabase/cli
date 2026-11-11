@@ -1,6 +1,7 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Schema } from "effect";
 import { create } from "../src/effect.ts";
+import { selection } from "./pins.ts";
 
 const [root, cacheRoot] = process.argv.slice(2);
 if (root === undefined || cacheRoot === undefined) throw new Error("Session fixture roots missing");
@@ -17,6 +18,7 @@ const program = Effect.scoped(
     });
     const mail = yield* stack.services.create({
       service: "mail",
+      pin: selection.mail,
       config: {},
       endpoints: { http: { port: "auto" } },
     });
@@ -31,5 +33,9 @@ const program = Effect.scoped(
 );
 
 await Effect.runPromise(
-  program.pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  program.pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );

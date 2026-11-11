@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { feedbackAddCommand } from "./add/add.command.ts";
 import { feedbackDeleteCommand } from "./delete/delete.command.ts";
 

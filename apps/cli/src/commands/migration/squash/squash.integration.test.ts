@@ -1,49 +1,62 @@
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Config,
-  ConfigProvider,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-} from "effect";
+import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
   FAKE_SHADOW_CONTAINER_ID,
   VALID_REF,
+  VALID_TOKEN,
+  jsonResponse,
+  mockCommandPlatformApi,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
+  withEmptyConfigEnv,
   withEnvVar,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
-  mockOutput,
-  mockRuntimeInfo,
-  mockStdin,
-  mockTty,
-} from "../../../../tests/helpers/mocks.ts";
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
   ExperimentalFlag,
   NetworkIdFlag,
+  OutputFlag,
   YesFlag,
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
@@ -52,18 +65,36 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { INTERNAL_SCHEMAS } from "../../../command-internal/pg-dump.env.ts";
 import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
-import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
   type DbSession,
   type PgConnInput,
 } from "../../../command-internal/db-connection.service.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
+import { DbSetupError } from "../../../command-internal/db-bootstrap/db-setup.ts";
+import { HealthCheckTimeoutError } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { ShadowDbError } from "../../../command-internal/db-bootstrap/shadow-database.ts";
+import { MigrationApplyError } from "../../../command-internal/migration-apply.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { TargetPasswordConflictError } from "../../../command-internal/target/target.errors.ts";
+import { MigrationFileNotFoundError, MigrationInvalidVersionError } from "../migration.errors.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
+import {
+  MigrationSquashBaselineError,
+  MigrationSquashDumpError,
+  MigrationSquashMissingVersionError,
+  MigrationSquashWriteError,
+} from "./squash.errors.ts";
 import { migrationSquash } from "./squash.handler.ts";
+import { branchRow } from "../../../../tests/helpers/remote-selection.ts";
 
 // Distinguishes squash's three pg_dump containers from the shadow's setup jobs by env:
 // only a pg_dump invocation carries PGDATABASE. Among dump calls, the first two sharing
@@ -173,10 +204,8 @@ function faultyFsLayer(workdir: string, opts: FsFaultOpts): Layer.Layer<FileSyst
           }
           return real.open(path, openOpts).pipe(
             Effect.map((file) => {
-              if (
-                opts.failWriteAllFromCall === undefined ||
-                path !== migrationFile(opts.failWriteAllFromCall.file)
-              ) {
+              const failWriteAll = opts.failWriteAllFromCall;
+              if (failWriteAll === undefined || path !== migrationFile(failWriteAll.file)) {
                 return file;
               }
               let writeAllCalls = 0;
@@ -184,7 +213,7 @@ function faultyFsLayer(workdir: string, opts: FsFaultOpts): Layer.Layer<FileSyst
                 ...file,
                 writeAll: (buffer: Uint8Array) => {
                   writeAllCalls += 1;
-                  return writeAllCalls >= opts.failWriteAllFromCall!.fromCall
+                  return writeAllCalls >= failWriteAll.fromCall
                     ? Effect.fail(simulatedFsError(path, "writeAll"))
                     : file.writeAll(buffer);
                 },
@@ -194,7 +223,7 @@ function faultyFsLayer(workdir: string, opts: FsFaultOpts): Layer.Layer<FileSyst
         },
       });
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -205,20 +234,20 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
 );
 
 interface SetupOpts {
+  /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
+  readonly realLayers?: boolean;
   readonly format?: OutputFormat;
-  readonly isTTY?: boolean;
-  readonly pipedInput?: string;
+  readonly interactive?: boolean;
   readonly yes?: boolean;
   readonly confirm?: boolean;
-  readonly args?: ReadonlyArray<string>;
+  /** Whether the resolved connection counts as local; a `--db-url` can point either way. */
   readonly isLocal?: boolean;
-  readonly linkedRef?: string;
-  /** Omits `ref` entirely from the resolved config, matching the real resolver's own `--local`/`--db-url` shape (`ref` is an optional field, not always `None` — see `db-config.types.ts`). */
-  readonly omitRef?: boolean;
   readonly failResolve?: boolean;
   readonly failSql?: string;
   readonly networkId?: string;
-  readonly neverHealthyShadow?: boolean;
+  readonly neverConnectableShadow?: boolean;
+  /** Docker reports every container's health check as unable to exec, as on a nested or sandboxed host. */
+  readonly execFailedHealth?: boolean;
   readonly failCreateShadow?: boolean;
   readonly failRemoveShadow?: boolean;
   readonly failSetupJob?: boolean;
@@ -227,15 +256,12 @@ interface SetupOpts {
   readonly fullDumpSql?: string;
   readonly failDumpKind?: "before" | "after" | "full";
   readonly fsFaults?: FsFaultOpts;
+  readonly args?: ReadonlyArray<string>;
 }
 
-function setup(workdir: string, opts: SetupOpts = {}) {
-  const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockTelemetryStateTracked();
-  const cache = mockLinkedProjectCacheTracked();
-
+function fakeServices(workdir: string, opts: SetupOpts = {}) {
   const spawner = mockShadowContainerCliSpawner({
-    neverHealthy: opts.neverHealthyShadow ?? false,
+    execFailedHealth: opts.execFailedHealth ?? false,
     failCreate: opts.failCreateShadow ?? false,
     failRemove: opts.failRemoveShadow ?? false,
   });
@@ -256,8 +282,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const connectedDatabases: Array<string> = [];
   const connection = Layer.succeed(DbConnection, {
     connect: (cfg: PgConnInput) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
+        if (opts.neverConnectableShadow === true) {
+          return yield* new DbConnectError({ message: "connection refused" });
+        }
         const session: DbSession = {
           exec: (sql: string) =>
             Effect.suspend(() => {
@@ -286,17 +315,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  const resolverCalls: Array<DbConfigFlags> = [];
+  const resolverCalls: Array<DbConnectionInput> = [];
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) => {
-      resolverCalls.push(flags);
-      if (opts.failResolve === true) {
-        return Effect.fail(
-          new ProjectRefNotLinkedError({
-            message: "Cannot find project ref. Have you run link?",
-          }),
-        );
-      }
+    resolveConnection: (input: DbConnectionInput) => {
+      resolverCalls.push(input);
       return Effect.succeed({
         conn: {
           host: "127.0.0.1",
@@ -305,30 +327,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           password: "x",
           database: "postgres",
         },
-        isLocal: opts.isLocal ?? true,
-        // A real --local/--db-url resolution can omit ref altogether (not just None);
-        // omitRef reproduces that so the cfg.ref ?? Option.none() fallback stays exercised.
-        ...(opts.omitRef === true
-          ? {}
-          : { ref: opts.linkedRef !== undefined ? Option.some(opts.linkedRef) : Option.none() }),
-      } satisfies ResolvedDbConfig);
+        isLocal: opts.isLocal ?? input.target.kind === "local",
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
-  });
-
-  // Gives an explicit --project-ref flag precedence over the opts.linkedRef/VALID_REF
-  // fallback, so a test can prove the flag drives the linked ref.
-  const projectRef = Layer.succeed(ProjectRefResolver, {
-    resolve: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
-    resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
-      Effect.succeed(
-        Option.isSome(flagValue) && flagValue.value.length > 0
-          ? flagValue.value
-          : (opts.linkedRef ?? VALID_REF),
-      ),
-    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
   });
 
   const debugLogs: Array<string> = [];
@@ -340,17 +344,22 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     http: () => Effect.void,
   });
 
-  const baseLayer = Layer.mergeAll(
+  const http = recordingProjectHttpClient(VALID_REF);
+  const baseServices = Layer.mergeAll(
     unusedStackServices,
     // Listed first so every fake service layer below overrides it; Layer.mergeAll is
     // last-wins on a shared service.
     BunServices.layer,
-    out.layer,
-    telemetry.layer,
-    cache.layer,
-    resolver,
+    BunCrypto.layer,
+    cliConfigValuesTestLayer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: connection,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     connection,
-    projectRef,
     spawner.layer,
     docker.layer,
     Layer.succeed(BundledPostgresClient, {
@@ -362,30 +371,22 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(DebugFlag, false),
     Layer.succeed(ExperimentalFlag, false),
-    Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(
       NetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
-    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
-    mockTty({ stdinIsTty: opts.isTTY ?? true }),
-    mockStdin(
-      opts.isTTY ?? true,
-      opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
-    ),
     mockRuntimeInfo(),
+    shadowCacheDisabledLayer,
   );
 
-  const layer =
+  const services =
     opts.fsFaults === undefined
-      ? baseLayer
-      : Layer.merge(baseLayer, faultyFsLayer(workdir, opts.fsFaults));
+      ? baseServices
+      : Layer.merge(baseServices, faultyFsLayer(workdir, opts.fsFaults));
 
   return {
-    layer,
-    out,
-    telemetry,
-    cache,
+    services,
+    http,
     execs,
     queries,
     statements,
@@ -398,11 +399,80 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   };
 }
 
+function setup(workdir: string, opts: SetupOpts = {}) {
+  const interactive = opts.interactive ?? false;
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    interactive,
+    promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
+  });
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const { services, http, ...fake } = fakeServices(workdir, opts);
+
+  // An explicit --project-ref takes precedence over the VALID_REF fallback, so a test
+  // can prove the flag drives the linked ref.
+  const projectRef = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(VALID_REF),
+    resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveRef: (flagValue: Option.Option<string>) =>
+      opts.failResolve === true
+        ? Effect.fail(
+            new ProjectRefNotLinkedError({
+              message: "Cannot find project ref. Have you run link?",
+            }),
+          )
+        : Effect.succeed({
+            ref: Option.getOrElse(flagValue, () => VALID_REF),
+            source: Option.isSome(flagValue) ? ("flag" as const) : ("file" as const),
+            matchesLinkedRef: Option.isNone(flagValue),
+          }),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
+    promptProjectRef: () => Effect.succeed(VALID_REF),
+  });
+
+  const branchApi = mockCommandPlatformApi({
+    handler: (request) => Effect.succeed(jsonResponse(request, 200, [branchRow("feature-x")])),
+  });
+  const layer = Layer.mergeAll(
+    services,
+    branchApi.layer,
+    out.layer,
+    telemetry.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: http.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
+    projectRef,
+    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(OutputFlag, Option.none()),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    commandRuntimeLayer(["migration", "squash"]).pipe(
+      Layer.provide([BunServices.layer, BunCrypto.layer]),
+    ),
+    mockTty({ stdinIsTty: interactive, stdoutIsTty: interactive }),
+  );
+
+  return {
+    layer,
+    http,
+    out,
+    telemetry,
+    cache,
+    branchRequests: branchApi.requests,
+    ...fake,
+  };
+}
+
 const flags = (over: Partial<MigrationSquashFlags> = {}): MigrationSquashFlags => ({
   version: over.version ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
-  local: over.local ?? true,
+  local: over.local ?? false,
   password: over.password ?? Option.none(),
   projectRef: over.projectRef ?? Option.none(),
 });
@@ -456,110 +526,35 @@ const migrationExists = Effect.fnUntraced(function* (workdir: string, file: stri
 const stdout = (out: ReturnType<typeof mockOutput>) => stripAnsi(out.stdoutText);
 const stderr = (out: ReturnType<typeof mockOutput>) => stripAnsi(out.stderrText);
 
-const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
-  if (!Exit.isFailure(exit)) return undefined;
-  const failure = Cause.findErrorOption(exit.cause);
-  return Option.isSome(failure) ? (failure.value as { readonly _tag?: string })._tag : undefined;
-};
-
 const tmp = useTempWorkdir();
-useShadowCacheDisabled();
 
 describe("migration squash", () => {
   describe("flag surface & ordering", () => {
-    it.effect("rejects --linked combined with --local", () => {
-      const s = setup(tmp.current, { args: ["--linked", "--local"] });
+    it.effect("rejects --password combined with --remote=<url> through the real resolver", () => {
+      const s = setup(tmp.current, { realLayers: true });
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(flags({ linked: true, local: true })).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-          );
-        }
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("rejects --db-url combined with --password", () => {
-      const s = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--password", "y"] });
-      return Effect.gen(function* () {
-        const exit = yield* migrationSquash(
-          flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("y") }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationPasswordFlagsError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-          );
-        }
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("rejects --project-ref on the default local target", () => {
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        const exit = yield* migrationSquash(flags({ projectRef: Option.some(VALID_REF) })).pipe(
-          Effect.exit,
-        );
-        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-          );
-        }
-        // The guard fires before any resolver call, shadow/dump work, or cache write.
-        expect(s.resolverCalls).toEqual([]);
-        expect(s.shadowSpawned).toEqual([]);
-        expect(s.dumpCalls).toEqual([]);
-        expect(s.setupJobCalls).toEqual([]);
-        expect(s.cache.cached).toBe(false);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("rejects --project-ref combined with an explicit --db-url target", () => {
-      const s = setup(tmp.current, {
-        args: ["--db-url", "postgresql://x", "--project-ref", VALID_REF],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* migrationSquash(
+        yield* seedMigration(tmp.current, "0_init.sql");
+        const error = yield* migrationSquash(
           flags({
-            dbUrl: Option.some("postgresql://x"),
-            projectRef: Option.some(VALID_REF),
+            remote: Option.some({ _tag: "DbUrl", url: "postgresql://x" }),
+            password: Option.some("y"),
           }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-          );
-        }
-        expect(s.resolverCalls).toEqual([]);
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(TargetPasswordConflictError);
         expect(s.shadowSpawned).toEqual([]);
-        expect(s.dumpCalls).toEqual([]);
-        expect(s.setupJobCalls).toEqual([]);
-        expect(s.cache.cached).toBe(false);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(Effect.scoped, Effect.provide(s.layer));
     });
 
     it.effect(
-      "rejects a non-numeric --version with the bare Go message (no 'failed to parse' prefix)",
+      "rejects a non-numeric --version with the bare message (no 'failed to parse' prefix)",
       () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {
-          const exit = yield* migrationSquash(flags({ version: Option.some("0_init") })).pipe(
-            Effect.exit,
+          const error = yield* migrationSquash(flags({ version: Option.some("0_init") })).pipe(
+            Effect.flip,
           );
-          expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-              "invalid version number",
-            );
-          }
+          expect(error).toBeInstanceOf(MigrationInvalidVersionError);
+          expect(error.message).toBe("invalid version number");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -567,16 +562,11 @@ describe("migration squash", () => {
     it.effect("rejects an out-of-int64-range --version with the same bare message", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(
+        const error = yield* migrationSquash(
           flags({ version: Option.some("99999999999999999999") }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "invalid version number",
-          );
-        }
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationInvalidVersionError);
+        expect(error.message).toBe("invalid version number");
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -584,36 +574,21 @@ describe("migration squash", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
-        const exit = yield* migrationSquash(flags({ version: Option.some("9") })).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationFileNotFoundError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "glob supabase/migrations/9_*.sql: file does not exist",
-          );
-        }
+        const error = yield* migrationSquash(flags({ version: Option.some("9") })).pipe(
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(MigrationFileNotFoundError);
+        expect(error.message).toBe("glob supabase/migrations/9_*.sql: file does not exist");
       }).pipe(Effect.provide(s.layer));
     });
 
-    it.effect("surfaces a db-config resolution failure before validating --version", () => {
-      // DB target resolution happens before the version check, matching migration
-      // repair's identical ordering test.
+    it.effect("surfaces a target resolution failure before validating --version", () => {
       const s = setup(tmp.current, { failResolve: true });
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(flags({ version: Option.some("not-a-number") })).pipe(
-          Effect.exit,
-        );
-        expect(failureTag(exit)).toBe("ProjectRefNotLinkedError");
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("defaults to the local database when no target flag is given", () => {
-      // omitRef matches the real resolver's --local shape: no ref at all, not merely None.
-      const s = setup(tmp.current, { args: [], omitRef: true });
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags());
-        expect(s.resolverCalls[0]?.connType).toBe("local");
+        const error = yield* migrationSquash(
+          flags({ remote: Option.some({ _tag: "Linked" }), version: Option.some("not-a-number") }),
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
       }).pipe(Effect.provide(s.layer));
     });
   });
@@ -622,14 +597,9 @@ describe("migration squash", () => {
     it.effect("fails with 'version not found' when the migrations directory is empty", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationSquashMissingVersionError");
-        if (Exit.isFailure(exit)) {
-          const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-            "version not found",
-          );
-        }
+        const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationSquashMissingVersionError);
+        expect(error.message).toBe("version not found");
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -639,8 +609,8 @@ describe("migration squash", () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "20211208000000_init.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashMissingVersionError");
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashMissingVersionError);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -652,7 +622,7 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* writeProjectFile(tmp.current, "migrations", "not a directory");
           const error = yield* migrationSquash(flags()).pipe(Effect.flip);
-          expect((error as { message: string }).message).toContain("failed to read directory");
+          expect(error.message).toContain("failed to read directory");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -672,7 +642,7 @@ describe("migration squash", () => {
           // The Finished/repair-suggestion output still runs on the no-op path.
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
           expect(stderr(s.out)).toContain(
-            "Run supabase migration repair --status applied to update your remote migration history table.",
+            "Run supabase migration repair --status applied --remote to update your remote migration history table.",
           );
         }).pipe(Effect.provide(s.layer));
       },
@@ -721,6 +691,21 @@ describe("migration squash", () => {
           expect(yield* readMigration(tmp.current, "1_target.sql")).toBe(FULL_SQL + expectedTail);
 
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
+
+    it.effect(
+      "squashes when Docker cannot exec the shadow's health check but the shadow accepts connections",
+      () => {
+        const s = setupHappyPath({ execFailedHealth: true });
+        return Effect.gen(function* () {
+          yield* seedHappyPathMigrations(tmp.current);
+          yield* migrationSquash(flags());
+
+          expect(yield* migrationExists(tmp.current, "0_init.sql")).toBe(false);
+          expect(yield* migrationExists(tmp.current, "1_target.sql")).toBe(true);
+          expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -836,7 +821,7 @@ describe("migration squash", () => {
           // Reverted once the command's scope closes; never leaks into a later command in
           // the same process.
           const ambient = yield* Config.option(
-            Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
+            Config.String("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
           ).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,
@@ -864,7 +849,7 @@ describe("migration squash", () => {
           for (const call of s.dumpCalls) {
             expect(call.network).toEqual({ _tag: "named", name: "dotenv-net" });
           }
-        }).pipe(Effect.provide(s.layer), (body) =>
+        }).pipe(Effect.provide(s.layer), withEmptyConfigEnv, (body) =>
           withEnvVar("SUPABASE_NETWORK_ID", undefined, body),
         );
       },
@@ -896,8 +881,8 @@ describe("migration squash", () => {
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
         yield* seedMigration(tmp.current, "1_target.sql");
-        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("ShadowDbError");
+        const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(ShadowDbError);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         // Nothing to release; the container was never created (see createShadowDatabase's doc).
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toEqual([]);
@@ -906,17 +891,17 @@ describe("migration squash", () => {
     });
 
     it.effect(
-      "fails with a health-check timeout when the shadow never becomes healthy, and removes it",
+      "fails with a health-check timeout when the shadow never becomes connectable, and removes it",
       () => {
         // A zero-second health timeout means zero retries after the first failed
         // probe — an immediate, deterministic timeout with no real/virtual delay.
-        const s = setup(tmp.current, { neverHealthyShadow: true });
+        const s = setup(tmp.current, { neverConnectableShadow: true });
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
           yield* writeProjectFile(tmp.current, "config.toml", '[db]\nhealth_timeout = "0s"\n');
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("HealthCheckTimeoutError");
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(HealthCheckTimeoutError);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           expect(s.dumpCalls).toEqual([]);
@@ -931,8 +916,8 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("DbSetupError");
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(DbSetupError);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           expect(s.dumpCalls).toEqual([]);
@@ -945,8 +930,8 @@ describe("migration squash", () => {
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql", "create table boom;\n");
         yield* seedMigration(tmp.current, "1_target.sql");
-        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationApplyError");
+        const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationApplyError);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
       }).pipe(Effect.provide(s.layer));
@@ -959,14 +944,9 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashDumpError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-              "error running container: exit 1",
-            );
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashDumpError);
+          expect(error.message).toBe("error running container: exit 1");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
@@ -984,8 +964,8 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashDumpError");
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashDumpError);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           // Truncated by the earlier O_TRUNC, then only the partial stream the dying
           // container wrote before failing; no separator/diff was ever appended.
@@ -1010,16 +990,11 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            const message =
-              Option.isSome(failure) && (failure.value as { message: string }).message;
-            expect(message).toContain("failed to open migration file:");
-            // Relativized: the absolute tmp workdir never leaks.
-            expect(message).not.toContain(tmp.current);
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashWriteError);
+          expect(error.message).toContain("failed to open migration file:");
+          // Relativized: the absolute tmp workdir never leaks.
+          expect(error.message).not.toContain(tmp.current);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
@@ -1040,14 +1015,9 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(
-              Option.isSome(failure) && (failure.value as { message: string }).message,
-            ).toContain("failed to copy docker logs:");
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashWriteError);
+          expect(error.message).toContain("failed to copy docker logs:");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
       },
@@ -1067,16 +1037,11 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            const message =
-              Option.isSome(failure) && (failure.value as { message: string }).message;
-            expect(message).toContain("failed to write line:");
-            // Relativized: the absolute tmp workdir never leaks.
-            expect(message).not.toContain(tmp.current);
-          }
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashWriteError);
+          expect(error.message).toContain("failed to write line:");
+          // Relativized: the absolute tmp workdir never leaks.
+          expect(error.message).not.toContain(tmp.current);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           expect(yield* readMigration(tmp.current, "1_target.sql")).toBe("full;\n");
         }).pipe(Effect.provide(s.layer));
@@ -1115,19 +1080,17 @@ describe("migration squash", () => {
           yield* seedMigration(tmp.current, "1_target.sql");
           yield* migrationSquash(flags());
           const success = s.out.messages.find((m) => m.type === "success");
-          const data = success?.data as {
-            readonly removed: ReadonlyArray<string>;
-            readonly removeFailures: ReadonlyArray<{
-              readonly path: string;
-              readonly message: string;
-            }>;
-          };
-          expect(data.removed).toEqual([]);
-          expect(data.removeFailures).toHaveLength(1);
-          expect(data.removeFailures[0]?.path).toBe("supabase/migrations/0_init.sql");
-          expect(data.removeFailures[0]?.message).toContain(
-            "FileSystem.remove (supabase/migrations/0_init.sql)",
-          );
+          expect(success?.data).toMatchObject({
+            removed: [],
+            removeFailures: [
+              {
+                path: "supabase/migrations/0_init.sql",
+                message: expect.stringContaining(
+                  "FileSystem.remove (supabase/migrations/0_init.sql)",
+                ),
+              },
+            ],
+          });
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1153,57 +1116,101 @@ describe("migration squash", () => {
     it.effect(
       "prints Finished on stdout and the repair suggestion on stderr, and never prompts",
       () => {
-        const s = setup(tmp.current, { isLocal: true });
+        const s = setup(tmp.current, { interactive: true });
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* migrationSquash(flags());
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
           expect(stderr(s.out)).toContain(
-            "Run supabase migration repair --status applied to update your remote migration history table.",
+            "Run supabase migration repair --status applied --remote to update your remote migration history table.",
           );
-          expect(stderr(s.out)).not.toContain("Update remote migration history table?");
+          expect(s.out.promptConfirmCalls).toEqual([]);
         }).pipe(Effect.provide(s.layer));
       },
     );
 
-    it.effect("a --db-url pointing at the local stack also takes the local-suggestion path", () => {
-      const s = setup(tmp.current, { isLocal: true, args: ["--db-url", "postgresql://local"] });
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags({ dbUrl: Option.some("postgresql://local") }));
-        expect(stdout(s.out)).toContain("Finished supabase migration squash.");
-      }).pipe(Effect.provide(s.layer));
-    });
+    it.effect(
+      "a --remote=<url> pointing at the local stack also takes the local-suggestion path",
+      () => {
+        const s = setup(tmp.current, { interactive: true, isLocal: true });
+        return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql");
+          yield* migrationSquash(
+            flags({ remote: Option.some({ _tag: "DbUrl", url: "postgresql://local" }) }),
+          );
+          expect(stdout(s.out)).toContain("Finished supabase migration squash.");
+          expect(s.out.promptConfirmCalls).toEqual([]);
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
   });
 
-  describe("remote target", () => {
+  describe("hosted target", () => {
     function setupRemote(opts: SetupOpts = {}) {
-      return setup(tmp.current, { isLocal: false, linkedRef: VALID_REF, ...opts });
+      return setup(tmp.current, { yes: true, ...opts });
     }
+    const hosted = (over: Partial<MigrationSquashFlags> = {}) =>
+      flags({ remote: Option.some({ _tag: "Linked" }), ...over });
 
-    it.effect("prompts to update the remote history table and baselines on 'y'", () => {
-      const s = setupRemote({ confirm: true, args: ["--linked"] });
+    it.effect("baselines the remote history table once the consent is given", () => {
+      const s = setupRemote();
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags({ linked: true }));
-        expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] ");
+        yield* migrationSquash(hosted());
+        expect(stderr(s.out)).toContain(
+          "Confirmed by --yes: Squash local migrations and update the remote migration history table",
+        );
         expect(s.queries.some((q) => q.sql.includes("DELETE FROM supabase_migrations"))).toBe(true);
         expect(s.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(true);
       }).pipe(Effect.provide(s.layer));
     });
 
     it.effect(
-      "prints 'Baselining migration history to <v>' BEFORE 'Connecting to remote database...'",
+      "asks once, lists the squash plan, defaults to No, and writes after the accept",
       () => {
-        const s = setupRemote({ confirm: true });
+        const s = setup(tmp.current, { interactive: true, confirm: true });
         return Effect.gen(function* () {
-          yield* seedMigration(tmp.current, "0_init.sql");
-          yield* migrationSquash(flags());
+          yield* seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
+          yield* seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
+          yield* migrationSquash(hosted());
+          expect(s.out.promptConfirmCalls).toHaveLength(1);
+          expect(s.out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
           const text = stderr(s.out);
-          const baseliningAt = text.indexOf("Baselining migration history to 0");
-          const connectingAt = text.indexOf("Connecting to remote database...");
-          expect(baseliningAt).toBeGreaterThanOrEqual(0);
-          expect(connectingAt).toBeGreaterThan(baseliningAt);
+          expect(text).toContain(
+            "Squash 2 local migrations into supabase/migrations/1_target.sql and remove the 1 merged file",
+          );
+          expect(text).toContain(
+            "Reset the remote migration history table to the squashed migration",
+          );
+          expect(yield* migrationExists(tmp.current, "0_init.sql")).toBe(false);
+          expect(s.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(
+            true,
+          );
+          expect(s.cache.cachedRef).toBe(VALID_REF);
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
+
+    it.effect(
+      "declining aborts before the checkout is rewritten or the remote history is touched",
+      () => {
+        const s = setup(tmp.current, { interactive: true, confirm: false });
+        return Effect.gen(function* () {
+          yield* seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
+          yield* seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
+          const error = yield* migrationSquash(hosted()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(HostedMutationDeclinedError);
+          expect(s.shadowSpawned).toEqual([]);
+          expect(s.dumpCalls).toEqual([]);
+          expect(s.execs).toEqual([]);
+          expect(s.queries).toEqual([]);
+          expect(yield* readMigration(tmp.current, "0_init.sql")).toBe(
+            "create table a (id int);\n",
+          );
+          expect(yield* readMigration(tmp.current, "1_target.sql")).toBe(
+            "create table b (id int);\n",
+          );
+          expect(s.cache.cachedRef).toBe(VALID_REF);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1211,13 +1218,12 @@ describe("migration squash", () => {
     it.effect(
       "baselines via one transaction: BEGIN, DELETE ... WHERE version <= $1, INSERT ..., COMMIT",
       () => {
-        const s = setupRemote({ confirm: true });
+        const s = setupRemote();
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
-          yield* migrationSquash(flags());
-          // A single ordered log, since execs/queries alone are order-blind and would
-          // still pass an INSERT-before-DELETE regression; the baseline transaction is
-          // the last 4 statements, after createMigrationTable's setup transaction.
+          yield* migrationSquash(hosted());
+          // The ordered log is the only way to catch an INSERT-before-DELETE regression;
+          // the baseline transaction is the last 4 statements, after createMigrationTable's own.
           const baseline = s.statements.slice(-4);
           expect(baseline.map((entry) => entry.sql)).toEqual([
             "BEGIN",
@@ -1234,20 +1240,14 @@ describe("migration squash", () => {
     it.effect(
       "rolls back and reports a baseline failure when the history-table batch fails",
       () => {
-        const s = setupRemote({ confirm: true, failSql: "INSERT INTO supabase_migrations" });
+        const s = setupRemote({ failSql: "INSERT INTO supabase_migrations" });
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationSquashBaselineError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(
-              Option.isSome(failure) && (failure.value as { message: string }).message,
-            ).toContain("failed to update migration history:");
-          }
+          const error = yield* migrationSquash(hosted()).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MigrationSquashBaselineError);
+          expect(error.message).toContain("failed to update migration history:");
           expect(s.execs).toContain("ROLLBACK");
-          // Exactly one COMMIT: createMigrationTable's own setup transaction, which runs
-          // before the baseline's BEGIN/DELETE/INSERT batch and never itself reaches COMMIT.
+          // createMigrationTable's own setup transaction is the only COMMIT.
           expect(s.execs.filter((e) => e === "COMMIT")).toHaveLength(1);
           expect(s.execs.filter((e) => e === "BEGIN")).toHaveLength(2);
         }).pipe(Effect.provide(s.layer));
@@ -1255,62 +1255,13 @@ describe("migration squash", () => {
     );
 
     it.effect(
-      "declining the prompt exits 0, runs no baseline query, and still prints Finished",
-      () => {
-        const s = setupRemote({ confirm: false });
-        return Effect.gen(function* () {
-          yield* seedMigration(tmp.current, "0_init.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(s.execs).not.toContain("BEGIN");
-          expect(s.queries).toEqual([]);
-          expect(stdout(s.out)).toContain("Finished supabase migration squash.");
-        }).pipe(Effect.provide(s.layer));
-      },
-    );
-
-    it.effect("--yes auto-confirms by echoing the prompt with 'y' and reads no stdin", () => {
-      const s = setupRemote({ yes: true, pipedInput: undefined });
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags());
-        expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] y");
-        expect(s.execs).toContain("BEGIN");
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("a non-TTY run with no piped answer takes the default (yes) and baselines", () => {
-      const s = setupRemote({ isTTY: false, pipedInput: undefined });
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags());
-        expect(s.execs).toContain("BEGIN");
-        expect(s.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(true);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("an unrecognised piped answer leaves the remote migration history alone", () => {
-      const s = setupRemote({ isTTY: false, pipedInput: "nope\n" });
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags());
-        expect(s.execs).not.toContain("BEGIN");
-        expect(s.queries).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect(
       "--version 0 baselines exactly version 0 even though a newer migration survives",
       () => {
-        const s = setup(tmp.current, {
-          isLocal: false,
-          linkedRef: VALID_REF,
-          confirm: true,
-        });
+        const s = setupRemote();
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_newer.sql");
-          yield* migrationSquash(flags({ version: Option.some("0") }));
+          yield* migrationSquash(hosted({ version: Option.some("0") }));
           const insert = s.queries.find((q) => q.sql.includes("INSERT INTO supabase_migrations"));
           expect(insert?.params?.[0]).toBe("0");
         }).pipe(Effect.provide(s.layer));
@@ -1321,10 +1272,7 @@ describe("migration squash", () => {
       // Local versions are re-listed after the file removals, so a failed removal leaves
       // the older merged file's version as what an empty --version baselines to, not the
       // squash target.
-      const s = setup(tmp.current, {
-        isLocal: false,
-        linkedRef: VALID_REF,
-        confirm: true,
+      const s = setupRemote({
         beforeDumpSql: "before;\n",
         afterDumpSql: "after;\n",
         fullDumpSql: "full;\n",
@@ -1333,7 +1281,7 @@ describe("migration squash", () => {
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
         yield* seedMigration(tmp.current, "1_target.sql");
-        yield* migrationSquash(flags());
+        yield* migrationSquash(hosted());
         const insert = s.queries.find((q) => q.sql.includes("INSERT INTO supabase_migrations"));
         expect(insert?.params?.[0]).toBe("0");
       }).pipe(Effect.provide(s.layer));
@@ -1342,88 +1290,47 @@ describe("migration squash", () => {
     it.effect(
       "debug-logs and baselines with an empty version when the post-squash version reload fails",
       () => {
-        const s = setup(tmp.current, {
-          isLocal: false,
-          linkedRef: VALID_REF,
-          confirm: true,
+        const s = setupRemote({
           beforeDumpSql: "before;\n",
           afterDumpSql: "after;\n",
           fullDumpSql: "full;\n",
-          // Call 1 is squashToVersion's own listing (must succeed); call 2 is
-          // baselineMigrations's post-removal re-list, which this fails; call 3 (inside
-          // resolveMigrationFile) must succeed again to isolate the reload failure.
+          // Read 1 is the up-front listing (must succeed); read 2 is the baseline's
+          // post-removal re-list, which this fails; read 3 (inside resolveMigrationFile)
+          // must succeed again to isolate the reload failure.
           fsFaults: { failMigrationsReadDirectoryAtCall: 2 },
         });
         return Effect.gen(function* () {
           yield* seedMigration(tmp.current, "0_init.sql");
           yield* seedMigration(tmp.current, "1_target.sql");
-          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          const error = yield* migrationSquash(hosted()).pipe(Effect.flip);
           expect(s.debugLogs).toHaveLength(1);
           expect(s.debugLogs[0]).toContain("failed to read directory");
           expect(s.debugLogs[0]).toContain("simulated failure");
           expect(stderr(s.out)).toContain("Baselining migration history to \n");
           // The empty-version glob fails, surfacing as the baseline's missing-file error
-          // and proving resolvedVersion genuinely stayed "" rather than falling back to
-          // the squash target.
-          expect(failureTag(exit)).toBe("MigrationFileNotFoundError");
-          if (Exit.isFailure(exit)) {
-            const failure = Cause.findErrorOption(exit.cause);
-            expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
-              "glob supabase/migrations/_*.sql: file does not exist",
-            );
-          }
+          // and proving resolvedVersion stayed "" rather than falling back to the squash target.
+          expect(error).toBeInstanceOf(MigrationFileNotFoundError);
+          expect(error.message).toBe("glob supabase/migrations/_*.sql: file does not exist");
         }).pipe(Effect.provide(s.layer));
       },
     );
 
-    it.effect("--linked caches the linked project ref even when the squash fails", () => {
-      const s = setup(tmp.current, {
-        isLocal: false,
-        linkedRef: VALID_REF,
-        args: ["--linked"],
-      });
+    it.effect("--remote caches the linked project ref even when the squash fails", () => {
+      const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* migrationSquash(
-          flags({ linked: true, version: Option.some("bad") }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
+        const error = yield* migrationSquash(hosted({ version: Option.some("bad") })).pipe(
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(MigrationInvalidVersionError);
         expect(s.cache.cached).toBe(true);
         expect(s.cache.cachedRef).toBe(VALID_REF);
       }).pipe(Effect.provide(s.layer));
     });
 
     it.effect(
-      "--linked --project-ref overrides the workdir's own linked ref for resolution and caching",
+      "--remote reads [remotes.<ref>] and prints the config-override line before the consent",
       () => {
-        // opts.linkedRef (VALID_REF) is what the workdir would resolve to without the
-        // flag; --project-ref must win over it for both the resolver call and the cache.
-        const FLAG_REF = "flagflagflagflagflag";
-        const s = setup(tmp.current, {
-          isLocal: false,
-          linkedRef: VALID_REF,
-          args: ["--linked", "--project-ref", FLAG_REF],
-        });
-        return Effect.gen(function* () {
-          const exit = yield* migrationSquash(
-            flags({ linked: true, projectRef: Option.some(FLAG_REF), version: Option.some("bad") }),
-          ).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
-          expect(s.cache.cached).toBe(true);
-          expect(s.cache.cachedRef).toBe(FLAG_REF);
-          expect(s.cache.cachedRef).not.toBe(VALID_REF);
-        }).pipe(Effect.provide(s.layer));
-      },
-    );
-
-    it.effect(
-      "--linked reads [remotes.<ref>] and prints the config-override line before resolving",
-      () => {
-        const s = setup(tmp.current, {
-          isLocal: false,
-          linkedRef: VALID_REF,
-          confirm: true,
-          args: ["--linked"],
-        });
+        const s = setupRemote();
         return Effect.gen(function* () {
           yield* writeProjectFile(
             tmp.current,
@@ -1431,20 +1338,113 @@ describe("migration squash", () => {
             ["[remotes.dev]", `project_id = "${VALID_REF}"`, ""].join("\n"),
           );
           yield* seedMigration(tmp.current, "0_init.sql");
-          yield* migrationSquash(flags({ linked: true }));
+          yield* migrationSquash(hosted());
           const text = stderr(s.out);
-          expect(text).toContain("Loading config override: [remotes.dev]");
           const overrideAt = text.indexOf("Loading config override: [remotes.dev]");
-          const promptAt = text.indexOf("Update remote migration history table?");
-          expect(promptAt).toBeGreaterThan(overrideAt);
+          const consentAt = text.indexOf("Confirmed by --yes: ");
+          expect(overrideAt).toBeGreaterThanOrEqual(0);
+          expect(consentAt).toBeGreaterThan(overrideAt);
         }).pipe(Effect.provide(s.layer));
       },
     );
+
+    it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
+      const s = setupRemote({ realLayers: true });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* migrationSquash(flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF }) }));
+        expect(s.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(true);
+        expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `POST /v1/projects/${VALID_REF}/cli/login-role`,
+        ]);
+        expect(s.http.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "migration squash",
+          activeFlags: { remote: VALID_REF },
+          requests: [...asRecordedRequests(requests), ...s.http.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(s.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
+
+    it.effect("fetches the pooler config but mints no login role when --password is given", () => {
+      const s = setupRemote({ realLayers: true });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* migrationSquash(
+          flags({
+            password: Option.some("pw"),
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+          }),
+        );
+        expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        ]);
+        assertPermissionDrift({
+          command: "migration squash",
+          activeFlags: { password: true, remote: VALID_REF },
+          requests: [...asRecordedRequests(requests), ...s.http.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(s.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
+  });
+
+  describe("real resolver on the local target", () => {
+    it.effect("defaults to the local target and makes no Management API request", () => {
+      const s = setup(tmp.current, { realLayers: true });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, () => undefined);
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* migrationSquash(flags());
+        expect(stdout(s.out)).toContain("Finished supabase migration squash.");
+        expect(requests).toEqual([]);
+        expect(s.http.calls).toEqual([]);
+        assertPermissionDrift({
+          command: "migration squash",
+          requests: [],
+          exact: true,
+        });
+        expect(() =>
+          assertPermissionDrift({
+            command: "migration squash",
+            requests: [
+              {
+                method: "POST",
+                url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+              },
+            ],
+          }),
+        ).toThrow(/condition doesn't hold/);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(s.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
   });
 
   describe("output formats", () => {
     it.effect("json emits the squash payload on stdout and keeps progress on stderr", () => {
-      const s = setup(tmp.current, { format: "json", isLocal: true });
+      const s = setup(tmp.current, { format: "json" });
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
@@ -1466,7 +1466,7 @@ describe("migration squash", () => {
     });
 
     it.effect("json suppresses the Finished line and the repair suggestion", () => {
-      const s = setup(tmp.current, { format: "json", isLocal: true });
+      const s = setup(tmp.current, { format: "json" });
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
@@ -1476,7 +1476,7 @@ describe("migration squash", () => {
     });
 
     it.effect("stream-json emits the result event on stdout with progress lines on stderr", () => {
-      const s = setup(tmp.current, { format: "stream-json", isLocal: true });
+      const s = setup(tmp.current, { format: "stream-json" });
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql");
         yield* migrationSquash(flags());
@@ -1485,45 +1485,10 @@ describe("migration squash", () => {
       }).pipe(Effect.provide(s.layer));
     });
 
-    it.effect("json still writes the prompt label to stderr and reads the piped answer", () => {
+    it.effect("json on the hosted 2-migration path reports the full real payload", () => {
       const s = setup(tmp.current, {
         format: "json",
-        isLocal: false,
-        linkedRef: VALID_REF,
-        confirm: true,
-      });
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags());
-        expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] ");
-        expect(s.execs).toContain("BEGIN");
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect(
-      "json on the declined-prompt path reports success with baselinedVersion: null",
-      () => {
-        const s = setup(tmp.current, {
-          format: "json",
-          isLocal: false,
-          linkedRef: VALID_REF,
-          confirm: false,
-        });
-        return Effect.gen(function* () {
-          yield* seedMigration(tmp.current, "0_init.sql");
-          yield* migrationSquash(flags());
-          const success = s.out.messages.find((m) => m.type === "success");
-          expect(success?.data).toMatchObject({ isLocal: false, baselinedVersion: null });
-        }).pipe(Effect.provide(s.layer));
-      },
-    );
-
-    it.effect("json on the remote-confirmed 2-migration path reports the full real payload", () => {
-      const s = setup(tmp.current, {
-        format: "json",
-        isLocal: false,
-        linkedRef: VALID_REF,
-        confirm: true,
+        yes: true,
         beforeDumpSql: "before;\n",
         afterDumpSql: "after;\n",
         fullDumpSql: "full;\n",
@@ -1531,7 +1496,7 @@ describe("migration squash", () => {
       return Effect.gen(function* () {
         yield* seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
         yield* seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
-        yield* migrationSquash(flags());
+        yield* migrationSquash(flags({ remote: Option.some({ _tag: "Linked" }) }));
         const success = s.out.messages.find((m) => m.type === "success");
         // "1_target.sql" is the sole surviving file once "0_init.sql" is removed, so the
         // empty-version baseline reload (run after the removal) resolves to its own
@@ -1547,4 +1512,46 @@ describe("migration squash", () => {
       }).pipe(Effect.provide(s.layer));
     });
   });
+});
+
+describeDbTargetSelection("migration squash", {
+  dbUrl: true,
+  workdir: () => tmp.current,
+  attempt: ({ workdir, args, target }) => {
+    const s = setup(workdir, { yes: true, args });
+    return {
+      layer: s.layer,
+      out: s.out,
+      run: seedMigration(workdir, "0_init.sql").pipe(
+        Effect.andThen(migrationSquash(flags(target))),
+      ),
+      target: () => s.resolverCalls[0]?.target,
+      cachedRef: () => s.cache.cachedRef,
+      branchLookups: () => s.branchRequests,
+      apiRequests: () => s.branchRequests,
+    };
+  },
+});
+
+describeHostedConsent("migration squash", {
+  setup: (workdir) =>
+    Effect.gen(function* () {
+      yield* seedMigration(workdir, "0_init.sql", "create table a (id int);\n");
+      yield* seedMigration(workdir, "1_target.sql", "create table b (id int);\n");
+    }).pipe(Effect.provide(Path.layer)),
+  invoke: ({ workdir }) => {
+    const fake = fakeServices(workdir);
+    const historyWrites = () =>
+      fake.statements.filter(
+        (entry) =>
+          entry.sql.includes("INSERT INTO supabase_migrations") ||
+          entry.sql.includes("DELETE FROM supabase_migrations"),
+      ).length;
+    return {
+      run: migrationSquash(flags({ remote: Option.some({ _tag: "Linked" }) })).pipe(
+        Effect.provide(fake.services),
+      ),
+      mutations: () => fake.shadowSpawned.length + historyWrites(),
+    };
+  },
 });

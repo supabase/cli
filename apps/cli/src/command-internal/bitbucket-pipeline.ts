@@ -14,7 +14,7 @@ export const bitbucketCloneDir = Effect.fnUntraced(function* (
     const projectValue = Option.fromNullishOr(projectEnvValues[BITBUCKET_CLONE_DIR_ENV_KEY]);
     if (Option.isSome(projectValue)) return projectValue;
   }
-  return yield* Config.option(Config.string(BITBUCKET_CLONE_DIR_ENV_KEY));
+  return yield* Config.option(Config.String(BITBUCKET_CLONE_DIR_ENV_KEY));
 });
 
 /** Returns whether a non-empty Bitbucket marker disables restricted Docker options. */

@@ -1,9 +1,9 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { expect, it } from "@effect/vitest";
 import {
   Context,
-  Crypto,
+  Data,
   DateTime,
   Effect,
   Fiber,
@@ -16,16 +16,21 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { SecureRandom } from "effect/crypto";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { tmpdir } from "node:os";
 import { logflareEvent, logflareSources } from "./host/LogflareEvents.ts";
-import * as State from "./State.ts";
-import type { SavedStack } from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import type { SavedStack } from "./StackNamespace.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
+import { selection } from "../tests/pins.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+
+class NotStoredError extends Data.TaggedError("NotStoredError")<{ readonly message: string }> {}
 
 const query = <A extends object>(url: string, statement: string) =>
   Effect.scoped(
@@ -65,8 +70,8 @@ const eventsTable = (internalDatabaseUrl: string, source: string) =>
 
 const database: ServiceCreationInput = {
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make("owner-logs-password"),
     jwtSecret: Redacted.make("owner-logs-jwt-secret-with-at-least-32-chars"),
     jwtExpiry: 3600,
@@ -75,6 +80,7 @@ const database: ServiceCreationInput = {
 };
 const analytics: ServiceCreationInput = {
   service: "analytics",
+  pin: selection.analytics,
   config: { backend: "postgres", apiKey: "owner-logs-key" },
   endpoints: { http: { port: "auto" } },
 };
@@ -90,25 +96,25 @@ const startStack = (
 ) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const client = yield* HttpClient.HttpClient;
-    const stackId = `${name}-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+    const stackId = `${name}-${(yield* crypto.uuidV4()).slice(0, 8)}`;
     const root = yield* makeDockerDatabaseRoot(`stack-${name}-`, stackId);
     const saved: SavedStack = {
       id: stackId,
       identity: { projectRoot: "/tmp/project", branchContext: name, stackName: stackId },
-      runtime: "docker",
+      runtime: testEngine,
       instances: [],
       lifetime: "detached",
       composition: { members: [], dependencies: [] },
-      ports: [],
     };
+    const stateRoot = path.dirname(path.dirname(root));
     const state = Context.get(
-      yield* Layer.build(State.layer({ root: path.dirname(path.dirname(root)) })),
-      State.Service,
+      yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+      StackNamespace.Service,
     );
     yield* state.save(saved);
-    const owner = yield* ownerFor({ saved, state, root, cacheRoot });
+    const owner = yield* ownerFor({ saved, state, root, cacheRoot, engineTarget });
     yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
 
     const composed = yield* owner.rpc.supabaseComposition({ services });
@@ -143,7 +149,7 @@ const startStack = (
         .pipe(Stream.filter(predicate), Stream.take(1), Stream.runDrain);
     return {
       owner,
-      state,
+      logsRoot: StackNamespace.stackLogsRoot(path, stateRoot, stackId),
       stackId,
       idOf,
       analyticsUrl,
@@ -172,12 +178,17 @@ it.live(
         const path = yield* Path.Path;
         const client = yield* HttpClient.HttpClient;
         // A short idle timer lets the test observe Analytics sleeping while services keep logging.
-        const { owner, state, stackId, idOf, awaitAnalytics, wakeAnalytics, keepAwake } =
+        const { owner, logsRoot, stackId, idOf, awaitAnalytics, wakeAnalytics, keepAwake } =
           yield* startStack(
             "owner-logs",
             [
               database,
-              { service: "rest", config: {}, endpoints: { http: { port: "auto" } } },
+              {
+                service: "rest",
+                pin: selection.rest,
+                config: {},
+                endpoints: { http: { port: "auto" } },
+              },
               analytics,
             ],
             3_000,
@@ -241,7 +252,7 @@ it.live(
             (generation === awakeRecord.position.generation &&
               byteOffset >= awakeRecord.position.byteOffset));
         const confirmed = yield* fs
-          .readFileString(path.join(state.logsRoot(stackId), "database", databaseId, "cursor.json"))
+          .readFileString(path.join(logsRoot, "database", databaseId, "cursor.json"))
           .pipe(
             Effect.flatMap(decodeConfirmed),
             Effect.filterOrFail(passedAwake),
@@ -260,6 +271,16 @@ it.live(
             host: "default",
             timestamp: expect.any(String),
           },
+        ]);
+        expect(
+          yield* awaitStored(
+            "cloudflare.logs.prod",
+            `body->'metadata'->'request'->>'path' LIKE '%${restPath}' AND body->'metadata'->'response'->>'status_code' = '404'`,
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining(`${restPath} HTTP/1.1" 404 `),
+          }),
         ]);
 
         yield* Fiber.interrupt(keeper);
@@ -293,7 +314,11 @@ it.live(
         expect(shippedAt).toBeGreaterThanOrEqual(raisedAt);
         expect(shippedAt).toBeLessThanOrEqual(wakeRequestedAt);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 600_000 },
 );
 
@@ -302,7 +327,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const { owner, idOf, analyticsUrl, wakeAnalytics, keepAwake } = yield* startStack(
           "owner-logflare",
@@ -317,7 +342,7 @@ it.live(
         // No composed service ships to this source, so only this test's posts reach its batches.
         const source = logflareSources.realtime;
         const event = Effect.fnUntraced(function* (message: string) {
-          const id = yield* crypto.randomUUIDv4;
+          const id = yield* crypto.uuidV4();
           const timestamp = DateTime.formatIso(yield* DateTime.now);
           return { id, ...logflareEvent("realtime", timestamp, message) };
         });
@@ -334,7 +359,7 @@ it.live(
         const storedIds = (ids: ReadonlyArray<string>) =>
           Effect.gen(function* () {
             const table = yield* eventsTable(internalDatabaseUrl, source);
-            if (table === undefined) return [];
+            if (table === undefined) return undefined;
             const rows = yield* query<{ readonly id: string }>(
               internalDatabaseUrl,
               `SELECT id::text AS id FROM ${table} WHERE id IN (${ids.map((id) => `'${id}'`).join(", ")})`,
@@ -342,9 +367,15 @@ it.live(
             return rows.map(({ id }) => id);
           });
         // Logflare ingests asynchronously and exposes no completion signal; polling is the guard.
-        const awaitStored = (id: string, attempts: number) =>
+        const awaitStored = (label: string, id: string, attempts: number) =>
           storedIds([id]).pipe(
-            Effect.filterOrFail((rows) => rows.length > 0),
+            Effect.filterOrFail(
+              (rows) => rows !== undefined && rows.length > 0,
+              (rows) =>
+                new NotStoredError({
+                  message: `the ${label} event ${id} was not stored after ${attempts + 1} polls: ${rows === undefined ? "no events table" : "no row"}`,
+                }),
+            ),
             Effect.retry({ schedule: Schedule.spaced("500 millis"), times: attempts }),
           );
 
@@ -352,19 +383,23 @@ it.live(
         yield* Effect.forkScoped(keepAwake);
         const first = yield* event("stored first");
         yield* post([first]);
-        yield* awaitStored(first.id, 240);
+        yield* awaitStored("first", first.id, 240);
         const added = [yield* event("added 1"), yield* event("added 2")];
         yield* post([{ ...first, event_message: "stored again" }, ...added]);
         // A stored sentinel shows Logflare processed the batch before it; a sentinel inserted with
         // that batch is dropped too, so fresh ones follow until one is stored.
         yield* event("sentinel").pipe(
           Effect.tap((sentinel) => post([sentinel])),
-          Effect.flatMap(({ id }) => awaitStored(id, 10)),
+          Effect.flatMap(({ id }) => awaitStored("sentinel", id, 10)),
           Effect.retry({ times: 24 }),
         );
 
         expect(yield* storedIds([first.id, ...added.map(({ id }) => id)])).toEqual([first.id]);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 600_000 },
 );

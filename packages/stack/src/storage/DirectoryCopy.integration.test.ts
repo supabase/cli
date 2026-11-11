@@ -16,7 +16,7 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { copyDirectory } from "./DirectoryCopy.ts";
 
 const run = <A, E>(

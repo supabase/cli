@@ -1,18 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Queue, Ref, Scope, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Queue, Ref, Scope, Stream } from "effect";
+import { makeStandaloneService } from "../tests/standalone-service.ts";
+import { LifecycleEvent } from "./Lifecycle.ts";
+import type { Status } from "./Orchestrator.ts";
 import {
   makeService,
-  ServiceDestroyed,
   ServiceError,
   ServiceLaunchError,
-  ServiceStaleLaunch,
   type RuntimeSession,
   type ServiceDefinition,
-  type ServiceInstance,
-  type ServiceObservation,
 } from "./Service.ts";
 
 type Config = { readonly version: number };
+type Standalone = Effect.Success<ReturnType<typeof makeStandaloneService<Config>>>;
 
 interface ResourceState {
   readonly phase: "created" | "launched" | "stopping" | "stopped";
@@ -39,7 +39,6 @@ interface RuntimePlan {
 interface PreparationPlan {
   readonly gate: Deferred.Deferred<void>;
   readonly started: Deferred.Deferred<void>;
-  readonly completed: Deferred.Deferred<void>;
 }
 
 const makeRuntimePlan = Effect.gen(function* () {
@@ -68,76 +67,48 @@ const makePreparationPlan = Effect.gen(function* () {
   return {
     gate: yield* Deferred.make<void>(),
     started: yield* Deferred.make<void>(),
-    completed: yield* Deferred.make<void>(),
   } satisfies PreparationPlan;
 });
 
 const open = (deferred: Deferred.Deferred<void>) => Deferred.succeed(deferred, undefined);
 
-const waitForObservation = <Config>(
-  service: ServiceInstance<Config>,
-  predicate: (observation: ServiceObservation<Config>) => boolean,
-) =>
+const waitForStatus = (service: Standalone, predicate: (status: Status) => boolean) =>
   service.observation.pipe(
     Stream.filter(predicate),
     Stream.runHead,
     Effect.asVoid,
-    Effect.forkScoped,
+    Effect.forkScoped({ startImmediately: true }),
   );
 
 const makeDefinition = (
   plans: Queue.Queue<RuntimePlan>,
-  preparations?: Queue.Queue<PreparationPlan>,
-  prepared?: Ref.Ref<ReadonlyArray<Config>>,
-  invalid?: Ref.Ref<boolean>,
-  launchFailure?: Ref.Ref<boolean>,
+  options: {
+    readonly preparations?: Queue.Queue<PreparationPlan>;
+    readonly invalid?: Ref.Ref<boolean>;
+  } = {},
 ): ServiceDefinition<Config> => ({
-  prepare:
-    preparations === undefined && prepared === undefined && invalid === undefined
-      ? undefined
-      : (config) => {
-          const queue = preparations;
-          return Effect.gen(function* () {
-            if (invalid !== undefined && (yield* Ref.get(invalid))) {
-              return yield* new ServiceError({
-                operation: "prepare",
-                message: "invalid configuration",
-              });
-            }
-            if (prepared !== undefined)
-              yield* Ref.update(prepared, (values) => [...values, config]);
-            if (queue !== undefined) {
-              const preparation = yield* Queue.take(queue);
-              yield* Deferred.succeed(preparation.started, undefined);
-              yield* Deferred.await(preparation.gate);
-              yield* Deferred.succeed(preparation.completed, undefined);
-            }
-          });
-        },
+  prepare: () =>
+    Effect.gen(function* () {
+      if (options.invalid !== undefined && (yield* Ref.get(options.invalid)))
+        return yield* new ServiceError({ operation: "prepare", message: "invalid configuration" });
+      if (options.preparations === undefined) return;
+      const preparation = yield* Queue.take(options.preparations);
+      yield* open(preparation.started);
+      yield* Deferred.await(preparation.gate);
+    }),
   launch: (_context) =>
     Effect.gen(function* () {
       const plan = yield* Queue.take(plans);
-      yield* Deferred.succeed(plan.launchStarted, undefined);
+      yield* open(plan.launchStarted);
       yield* Deferred.await(plan.launchGate);
-      if (launchFailure !== undefined && (yield* Ref.get(launchFailure))) {
-        yield* Ref.set(launchFailure, false);
-        return yield* new ServiceError({ operation: "launch", message: "launch failed" });
-      }
       yield* Ref.update(plan.state, (state): ResourceState => ({ ...state, phase: "launched" }));
       const session: RuntimeSession = {
         health: Effect.gen(function* () {
-          const state = yield* Ref.get(plan.state);
-          if (state.health !== "not-started") {
-            return yield* new ServiceError({
-              operation: "health",
-              message: "health started twice",
-            });
-          }
           yield* Ref.update(plan.state, (value): ResourceState => ({
             ...value,
             health: "starting",
           }));
-          yield* Deferred.succeed(plan.healthStarted, undefined);
+          yield* open(plan.healthStarted);
           yield* Deferred.await(plan.healthGate);
           yield* Ref.update(plan.state, (value): ResourceState => ({
             ...value,
@@ -150,24 +121,20 @@ const makeDefinition = (
             ...value,
             phase: "stopping",
           }));
-          yield* Deferred.succeed(plan.stopStarted, undefined);
-          if (yield* Ref.get(plan.stopFailure)) {
-            yield* Ref.set(plan.stopFailure, false);
+          yield* open(plan.stopStarted);
+          if (yield* Ref.getAndSet(plan.stopFailure, false))
             return yield* new ServiceError({ operation: "stop", message: "stop failed" });
-          }
-          yield* Deferred.succeed(plan.stopRetryStarted, undefined);
+          yield* open(plan.stopRetryStarted);
           yield* Deferred.await(plan.stopGate);
           yield* Ref.update(plan.state, (value): ResourceState => ({ ...value, phase: "stopped" }));
         }),
         remove: Effect.gen(function* () {
-          yield* Deferred.succeed(plan.removeStarted, undefined);
-          if (yield* Ref.get(plan.removeFailure)) {
-            yield* Ref.set(plan.removeFailure, false);
+          yield* open(plan.removeStarted);
+          if (yield* Ref.getAndSet(plan.removeFailure, false))
             return yield* new ServiceError({
               operation: "remove",
               message: "exact cleanup failed",
             });
-          }
           yield* Deferred.await(plan.removeGate);
           yield* Ref.update(plan.state, (value) => ({ ...value, removed: true }));
         }),
@@ -177,61 +144,108 @@ const makeDefinition = (
   removeData: () => Effect.void,
 });
 
-const makeFixture = Effect.gen(function* () {
-  const plans = yield* Queue.unbounded<RuntimePlan>();
-  const service = yield* makeService(makeDefinition(plans), {
-    id: "database-1",
-    config: { version: 17 },
+const makeFixture = (id: string, definition = makeDefinition) =>
+  Effect.gen(function* () {
+    const plans = yield* Queue.unbounded<RuntimePlan>();
+    const service = yield* makeStandaloneService(definition(plans), {
+      id,
+      config: { version: 17 },
+    });
+    return { plans, service };
   });
-  return { plans, service };
-});
 
-const stopFixture = (service: ServiceInstance<Config>, plan: RuntimePlan) =>
+const partialFailure = new ServiceError({ operation: "launch", message: "initialization failed" });
+
+/** Acquires a runtime, then fails the launch with it retained for cleanup. */
+const partialDefinition = (plans: Queue.Queue<RuntimePlan>): ServiceDefinition<Config> => {
+  const base = makeDefinition(plans);
+  return {
+    launch: (context) =>
+      base
+        .launch(context)
+        .pipe(
+          Effect.flatMap((runtime) =>
+            Effect.fail(new ServiceLaunchError({ failure: partialFailure, runtime })),
+          ),
+        ),
+    removeData: base.removeData,
+  };
+};
+
+/**
+ * Resolves once the next change after the current status is published. The subscription is live
+ * when this returns, so a destroy queued behind a held storage operation, the only change in that
+ * window, can't be missed.
+ */
+const awaitNextChange = (service: Standalone) =>
+  Effect.gen(function* () {
+    const subscribed = yield* Deferred.make<void>();
+    const change = yield* service.observation.pipe(
+      Stream.zipWithIndex,
+      Stream.tap(([, index]) =>
+        index === 0 ? Deferred.succeed(subscribed, undefined) : Effect.void,
+      ),
+      Stream.drop(1),
+      Stream.take(1),
+      Stream.runDrain,
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(subscribed);
+    return change;
+  });
+
+const stopFixture = (service: Standalone, plan: RuntimePlan) =>
   Effect.gen(function* () {
     yield* open(plan.stopGate);
     yield* open(plan.removeGate);
     yield* service.stop;
   });
 
-describe("service kernel", () => {
-  it.live("submits stop while launch is delayed and completes it after launch", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const plan = yield* makeRuntimePlan;
-        yield* Queue.offer(fixture.plans, plan);
-        const starting = yield* fixture.service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(plan.launchStarted);
+describe("service execution", () => {
+  it.live(
+    "stops a launch requested to stop mid-launch once its runtime exists, then cleans it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeFixture("database-mid-launch");
+          const plan = yield* makeRuntimePlan;
+          yield* Queue.offer(fixture.plans, plan);
+          const starting = yield* fixture.service.start.pipe(Effect.exit, Effect.forkScoped);
+          yield* Deferred.await(plan.launchStarted);
 
-        const stopping = yield* fixture.service.stop.pipe(Effect.forkScoped);
-        expect((yield* fixture.service.get).lifecycle).toBe("starting");
-        yield* open(plan.launchGate);
-        yield* Fiber.join(starting);
-        yield* Deferred.await(plan.stopStarted);
-        yield* open(plan.stopGate);
-        yield* Deferred.await(plan.removeStarted);
-        yield* open(plan.removeGate);
-        yield* Fiber.join(stopping);
+          const stopRequested = yield* waitForStatus(
+            fixture.service,
+            (status) => status.lifecycle === "stopping",
+          );
+          const stopping = yield* fixture.service.stop.pipe(Effect.forkScoped);
+          yield* Fiber.join(stopRequested);
+          yield* open(plan.launchGate);
+          yield* Deferred.await(plan.stopStarted);
+          yield* open(plan.stopGate);
+          yield* Deferred.await(plan.removeStarted);
+          yield* open(plan.removeGate);
+          yield* Fiber.join(stopping);
 
-        expect((yield* fixture.service.get).lifecycle).toBe("stopped");
-        expect((yield* Ref.get(plan.state)).removed).toBe(true);
-      }),
-    ),
+          expect(Exit.isFailure(yield* Fiber.join(starting))).toBe(true);
+          expect((yield* fixture.service.get).lifecycle).toBe("stopped");
+          expect((yield* Ref.get(plan.state)).removed).toBe(true);
+        }),
+      ),
   );
 
-  it.live("shares one health program and a canceled readiness waiter does not poison it", () =>
+  it.live("shares one health check and a cancelled readiness caller does not poison it", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeFixture;
+        const fixture = yield* makeFixture("database-shared-health");
         const plan = yield* makeRuntimePlan;
         yield* Queue.offer(fixture.plans, plan);
         yield* open(plan.launchGate);
         yield* fixture.service.start;
         yield* Deferred.await(plan.healthStarted);
 
-        const canceled = yield* fixture.service.ready.pipe(Effect.forkScoped);
+        const cancelled = yield* fixture.service.ready.pipe(Effect.forkScoped);
         const ready = yield* fixture.service.ready.pipe(Effect.forkScoped);
-        yield* Fiber.interrupt(canceled);
+        yield* Fiber.interrupt(cancelled);
         yield* open(plan.healthGate);
         expect(Exit.isSuccess(yield* Fiber.await(ready))).toBe(true);
         expect((yield* Ref.get(plan.state)).health).toBe("healthy");
@@ -241,116 +255,75 @@ describe("service kernel", () => {
     ),
   );
 
-  it.live("cancels after preparation while waiting for the lifecycle gate", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const plans = yield* Queue.unbounded<RuntimePlan>();
-        const preparations = yield* Queue.unbounded<PreparationPlan>();
-        const preparation = yield* makePreparationPlan;
-        const retryPreparation = yield* makePreparationPlan;
-        yield* Queue.offer(preparations, preparation);
-        yield* Queue.offer(preparations, retryPreparation);
-        const service = yield* makeService(makeDefinition(plans, preparations), {
-          id: "database-gate-wait",
-          config: { version: 17 },
-        });
-        const plan = yield* makeRuntimePlan;
-        yield* Queue.offer(plans, plan);
-
-        const storageStarted = yield* Deferred.make<void>();
-        const storageGate = yield* Deferred.make<void>();
-        const storage = yield* service
-          .storage(
-            Effect.gen(function* () {
-              yield* Deferred.succeed(storageStarted, undefined);
-              yield* Deferred.await(storageGate);
-            }),
-          )
-          .pipe(Effect.forkScoped);
-        yield* Deferred.await(storageStarted);
-
-        const start = yield* service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(preparation.started);
-        yield* open(preparation.gate);
-        yield* Deferred.await(preparation.completed);
-        yield* Fiber.interrupt(start);
-        yield* open(storageGate);
-        yield* Fiber.join(storage);
-
-        expect(yield* Deferred.isDone(plan.launchStarted)).toBe(false);
-        const retry = yield* service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(retryPreparation.started);
-        yield* open(retryPreparation.gate);
-        yield* open(plan.launchGate);
-        yield* Fiber.join(retry);
-        expect((yield* service.get).lifecycle).toBe("running");
-        yield* stopFixture(service, plan);
-      }),
-    ),
-  );
-
-  it.live("records a failed wake preparation on the observation", () =>
+  it.live("records a failed preparation on the observation and stays wakeable", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const plans = yield* Queue.unbounded<RuntimePlan>();
         const invalid = yield* Ref.make(true);
-        const service = yield* makeService(makeDefinition(plans, undefined, undefined, invalid), {
-          id: "database-wake-prepare",
+        const service = yield* makeStandaloneService(makeDefinition(plans, { invalid }), {
+          id: "database-prepare-failure",
           config: { version: 17 },
         });
-        yield* service.arm;
-        const failure = yield* service.startAt(0, undefined, true).pipe(Effect.flip);
-        expect(failure).toBeInstanceOf(ServiceError);
-        const observation = yield* service.get;
-        expect(observation.lifecycle).toBe("stopped");
-        expect(observation.wakeEnabled).toBe(true);
-        expect(observation.error?.message).toBe("invalid configuration");
+        const failure = yield* service.start.pipe(Effect.flip);
+        expect(failure.message).toContain("invalid configuration");
+        expect(yield* service.get).toMatchObject({
+          lifecycle: "stopped",
+          wakeEnabled: true,
+          error: { message: "invalid configuration" },
+        });
       }),
     ),
   );
 
-  it.live("keeps a stale preparation failure off a relaunched observation", () =>
+  it.live("keeps a stopped launch's late preparation failure off its successor", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const plans = yield* Queue.unbounded<RuntimePlan>();
         const staleStarted = yield* Deferred.make<void>();
         const staleGate = yield* Deferred.make<void>();
         const attempts = yield* Ref.make(0);
-        const service = yield* makeService(
+        const service = yield* makeStandaloneService(
           {
             ...makeDefinition(plans),
+            // Uninterruptible, so the stop has to wait it out and its failure arrives late.
             prepare: () =>
               Effect.gen(function* () {
                 if ((yield* Ref.updateAndGet(attempts, (value) => value + 1)) > 1) return;
-                yield* Deferred.succeed(staleStarted, undefined);
+                yield* open(staleStarted);
                 yield* Deferred.await(staleGate);
                 return yield* new ServiceError({
                   operation: "prepare",
                   message: "stale preparation",
                 });
-              }),
+              }).pipe(Effect.uninterruptible),
           },
           { id: "database-stale-failure", config: { version: 17 } },
         );
         const plan = yield* makeRuntimePlan;
         yield* Queue.offer(plans, plan);
         yield* open(plan.launchGate);
-        const stale = yield* service.start.pipe(Effect.forkScoped);
+        const stale = yield* service.start.pipe(Effect.exit, Effect.forkScoped);
         yield* Deferred.await(staleStarted);
-        yield* service.start;
-        expect((yield* service.get).lifecycle).toBe("running");
-
+        // The stop of generation 1 is admitted, and waiting on its preparation, before it fails.
+        const stopAdmitted = yield* waitForStatus(
+          service,
+          (status) => status.lifecycle === "stopping",
+        );
+        const restarted = yield* service.restart().pipe(Effect.forkScoped);
+        yield* Fiber.join(stopAdmitted);
         yield* open(staleGate);
-        expect(Exit.isFailure(yield* Fiber.await(stale))).toBe(true);
-        const observation = yield* service.get;
-        expect(observation.lifecycle).toBe("running");
-        expect(observation.error).toBeUndefined();
+        yield* Fiber.join(restarted);
+
+        // The earlier start is satisfied by the restarted generation.
+        expect(Exit.isSuccess(yield* Fiber.join(stale))).toBe(true);
+        expect(yield* service.get).toMatchObject({ lifecycle: "running", error: undefined });
+        expect((yield* Ref.get(plan.state)).phase).toBe("launched");
         yield* stopFixture(service, plan);
       }),
     ),
   );
 
-  it.live("does not prepare concurrent starts more than once", () =>
+  it.live("prepares and launches once for concurrent starts", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const plans = yield* Queue.unbounded<RuntimePlan>();
@@ -359,8 +332,8 @@ describe("service kernel", () => {
         const duplicatePreparation = yield* makePreparationPlan;
         yield* Queue.offer(preparations, preparation);
         yield* Queue.offer(preparations, duplicatePreparation);
-        const service = yield* makeService(makeDefinition(plans, preparations), {
-          id: "database-concurrent-prepare",
+        const service = yield* makeStandaloneService(makeDefinition(plans, { preparations }), {
+          id: "database-concurrent-start",
           config: { version: 17 },
         });
         const plan = yield* makeRuntimePlan;
@@ -368,103 +341,97 @@ describe("service kernel", () => {
 
         const first = yield* service.start.pipe(Effect.forkScoped);
         yield* Deferred.await(preparation.started);
-        yield* open(preparation.gate);
-        yield* Deferred.await(preparation.completed);
-        yield* Deferred.await(plan.launchStarted);
         const second = yield* service.start.pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* open(preparation.gate);
         yield* open(plan.launchGate);
         yield* Fiber.join(first);
-        expect(yield* Deferred.isDone(duplicatePreparation.started)).toBe(false);
         yield* Fiber.join(second);
+        expect(yield* Deferred.isDone(duplicatePreparation.started)).toBe(false);
         expect((yield* service.get).lifecycle).toBe("running");
         yield* stopFixture(service, plan);
       }),
     ),
   );
 
-  it.live("reprepares a queued candidate after the current launch fails", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const plans = yield* Queue.unbounded<RuntimePlan>();
-        const preparations = yield* Queue.unbounded<PreparationPlan>();
-        const firstPreparation = yield* makePreparationPlan;
-        const secondPreparation = yield* makePreparationPlan;
-        yield* Queue.offer(preparations, firstPreparation);
-        yield* Queue.offer(preparations, secondPreparation);
-        const launchFailure = yield* Ref.make(true);
-        const service = yield* makeService(
-          makeDefinition(plans, preparations, undefined, undefined, launchFailure),
-          { id: "database-retry-prepare", config: { version: 17 } },
-        );
-        const firstPlan = yield* makeRuntimePlan;
-        const secondPlan = yield* makeRuntimePlan;
-        yield* Queue.offer(plans, firstPlan);
-        yield* Queue.offer(plans, secondPlan);
-
-        const first = yield* service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(firstPreparation.started);
-        yield* open(firstPreparation.gate);
-        yield* Deferred.await(firstPlan.launchStarted);
-        const second = yield* service
-          .startAt(0, { version: 18 }, false, Effect.void)
-          .pipe(Effect.forkScoped({ startImmediately: true }));
-        yield* open(firstPlan.launchGate);
-        expect(Exit.isFailure(yield* Fiber.await(first))).toBe(true);
-        yield* Deferred.await(secondPreparation.started);
-        yield* open(secondPreparation.gate);
-        yield* open(secondPlan.launchGate);
-        yield* Fiber.join(second);
-        expect((yield* service.get).config.version).toBe(18);
-        yield* stopFixture(service, secondPlan);
-      }),
-    ),
-  );
-
-  it.live("invalidates a prepared start when stop is admitted before preparation finishes", () =>
+  it.live("skips the launch when a stop arrives during preparation", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const plans = yield* Queue.unbounded<RuntimePlan>();
         const preparations = yield* Queue.unbounded<PreparationPlan>();
         const preparation = yield* makePreparationPlan;
         yield* Queue.offer(preparations, preparation);
-        const service = yield* makeService(makeDefinition(plans, preparations), {
-          id: "database-stale-preparation",
+        const service = yield* makeStandaloneService(makeDefinition(plans, { preparations }), {
+          id: "database-stop-in-preparation",
           config: { version: 17 },
         });
         const plan = yield* makeRuntimePlan;
         yield* Queue.offer(plans, plan);
-        const start = yield* service.start.pipe(Effect.forkScoped);
+        const start = yield* service.start.pipe(Effect.exit, Effect.forkScoped);
         yield* Deferred.await(preparation.started);
 
         yield* service.stop;
         yield* open(preparation.gate);
-        const result = yield* Fiber.await(start);
-        expect(Exit.isFailure(result)).toBe(true);
+        expect(Exit.isFailure(yield* Fiber.join(start))).toBe(true);
         expect(yield* Deferred.isDone(plan.launchStarted)).toBe(false);
         expect((yield* service.get).lifecycle).toBe("stopped");
       }),
     ),
   );
 
-  it.live("records a launch failure as stopped and can launch successfully on retry", () =>
+  it.live("never launches a restart whose service is destroyed while it prepares", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const plans = yield* Queue.unbounded<RuntimePlan>();
+        const preparations = yield* Queue.unbounded<PreparationPlan>();
+        const initialPreparation = yield* makePreparationPlan;
+        const restartPreparation = yield* makePreparationPlan;
+        yield* open(initialPreparation.gate);
+        yield* Queue.offer(preparations, initialPreparation);
+        yield* Queue.offer(preparations, restartPreparation);
+        const service = yield* makeStandaloneService(makeDefinition(plans, { preparations }), {
+          id: "database-late-restart",
+          config: { version: 17 },
+        });
+        const original = yield* makeRuntimePlan;
+        const superseded = yield* makeRuntimePlan;
+        yield* Queue.offer(plans, original);
+        yield* Queue.offer(plans, superseded);
+        yield* open(original.launchGate);
+        yield* service.start;
+
+        const restarting = yield* service.restart({ version: 18 }).pipe(Effect.forkScoped);
+        yield* Deferred.await(restartPreparation.started);
+        yield* open(original.stopGate);
+        yield* open(original.removeGate);
+        yield* service.destroy;
+        expect(yield* service.listed).toBe(false);
+        expect((yield* Ref.get(original.state)).removed).toBe(true);
+
+        yield* open(restartPreparation.gate);
+        expect(Exit.isFailure(yield* Fiber.await(restarting))).toBe(true);
+        expect(yield* Deferred.isDone(superseded.launchStarted)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("records a launch failure as stopped and launches successfully on retry", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const plans = yield* Queue.unbounded<RuntimePlan>();
         const failLaunch = yield* Ref.make(true);
         const definition = makeDefinition(plans);
-        const service = yield* makeService(
+        const service = yield* makeStandaloneService(
           {
             launch: (context) =>
-              Effect.gen(function* () {
-                if (yield* Ref.get(failLaunch)) {
-                  yield* Ref.set(failLaunch, false);
-                  return yield* new ServiceError({
-                    operation: "launch",
-                    message: "binary unavailable",
-                  });
-                }
-                return yield* definition.launch(context);
-              }),
+              Ref.getAndSet(failLaunch, false).pipe(
+                Effect.flatMap((fail) =>
+                  fail
+                    ? Effect.fail(
+                        new ServiceError({ operation: "launch", message: "binary unavailable" }),
+                      )
+                    : definition.launch(context),
+                ),
+              ),
             removeData: definition.removeData,
           },
           { id: "database-launch-retry", config: { version: 17 } },
@@ -472,10 +439,11 @@ describe("service kernel", () => {
         const plan = yield* makeRuntimePlan;
         yield* Queue.offer(plans, plan);
 
-        const failed = yield* service.start.pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect((yield* service.get).lifecycle).toBe("stopped");
-        expect((yield* service.get).error?.operation).toBe("launch");
+        expect(Exit.isFailure(yield* service.start.pipe(Effect.exit))).toBe(true);
+        expect(yield* service.get).toMatchObject({
+          lifecycle: "stopped",
+          error: { operation: "launch" },
+        });
         expect((yield* Ref.get(plan.state)).phase).toBe("created");
 
         yield* open(plan.launchGate);
@@ -486,392 +454,348 @@ describe("service kernel", () => {
     ),
   );
 
-  it.live("retains a runtime acquired before launch failure for exact cleanup", () =>
+  it.live("retains a runtime acquired before a launch failure for exact cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeFixture;
+        const failure = partialFailure;
+        const partial = yield* makeFixture("database-partial", partialDefinition);
         const plan = yield* makeRuntimePlan;
-        const base = makeDefinition(fixture.plans);
-        const failure = new ServiceError({ operation: "launch", message: "initialization failed" });
-        const partial = yield* makeService(
-          {
-            launch: (context) =>
-              base
-                .launch(context)
-                .pipe(
-                  Effect.flatMap((runtime) =>
-                    Effect.fail(new ServiceLaunchError({ failure, runtime })),
-                  ),
-                ),
-            removeData: base.removeData,
-          },
-          { id: "database-partial", config: { version: 17 } },
-        );
-        yield* Queue.offer(fixture.plans, plan);
+        yield* Queue.offer(partial.plans, plan);
         yield* open(plan.launchGate);
         yield* Ref.set(plan.stopFailure, true);
 
-        const failed = yield* partial.start.pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect((yield* partial.get).lifecycle).toBe("stopping");
-        expect((yield* partial.get).error).toEqual(failure);
-        expect((yield* partial.get).cleanupError).toBeDefined();
+        expect(Exit.isFailure(yield* partial.service.start.pipe(Effect.exit))).toBe(true);
+        expect(yield* partial.service.get).toMatchObject({ lifecycle: "stopping", error: failure });
         expect((yield* Ref.get(plan.state)).removed).toBe(false);
 
-        const retry = yield* partial.stop.pipe(Effect.forkScoped);
+        const retry = yield* partial.service.stop.pipe(Effect.forkScoped);
         yield* Deferred.await(plan.stopRetryStarted);
         yield* open(plan.stopGate);
         yield* Deferred.await(plan.removeStarted);
         yield* open(plan.removeGate);
         yield* Fiber.join(retry);
-        expect((yield* partial.get).lifecycle).toBe("stopped");
+        expect((yield* partial.service.get).lifecycle).toBe("stopped");
         expect((yield* Ref.get(plan.state)).removed).toBe(true);
 
-        const plans2 = yield* Queue.unbounded<RuntimePlan>();
-        const plan2 = yield* makeRuntimePlan;
-        const base2 = makeDefinition(plans2);
-        const cleanFailure = new ServiceError({
-          operation: "launch",
-          message: "clean partial failure",
-        });
-        const cleaned = yield* makeService(
-          {
-            launch: (context) =>
-              base2
-                .launch(context)
-                .pipe(
-                  Effect.flatMap((runtime) =>
-                    Effect.fail(new ServiceLaunchError({ failure: cleanFailure, runtime })),
-                  ),
-                ),
-            removeData: base2.removeData,
-          },
-          { id: "database-partial-clean", config: { version: 17 } },
-        );
-        yield* Queue.offer(plans2, plan2);
-        yield* open(plan2.launchGate);
-        yield* open(plan2.stopGate);
-        yield* open(plan2.removeGate);
-        expect(Exit.isFailure(yield* cleaned.start.pipe(Effect.exit))).toBe(true);
-        expect((yield* cleaned.get).lifecycle).toBe("stopped");
-        expect((yield* Ref.get(plan2.state)).removed).toBe(true);
+        const cleaned = yield* makeFixture("database-partial-clean", partialDefinition);
+        const cleanPlan = yield* makeRuntimePlan;
+        yield* Queue.offer(cleaned.plans, cleanPlan);
+        yield* open(cleanPlan.launchGate);
+        yield* open(cleanPlan.stopGate);
+        yield* open(cleanPlan.removeGate);
+        expect(Exit.isFailure(yield* cleaned.service.start.pipe(Effect.exit))).toBe(true);
+        expect((yield* cleaned.service.get).lifecycle).toBe("stopped");
+        expect((yield* Ref.get(cleanPlan.state)).removed).toBe(true);
       }),
     ),
   );
 
-  it.live("admits a prepared start after restart and does not relaunch", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const plans = yield* Queue.unbounded<RuntimePlan>();
-        const preparations = yield* Queue.unbounded<PreparationPlan>();
-        const queuedStartPreparation = yield* makePreparationPlan;
-        const restartPreparation = yield* makePreparationPlan;
-        yield* Queue.offer(preparations, queuedStartPreparation);
-        yield* Queue.offer(preparations, restartPreparation);
-        const service = yield* makeService(makeDefinition(plans, preparations), {
-          id: "database-start-after-restart",
-          config: { version: 17 },
-        });
-        const first = yield* makeRuntimePlan;
-        const unused = yield* makeRuntimePlan;
-        yield* Queue.offer(plans, first);
-        yield* Queue.offer(plans, unused);
+  it.live(
+    "keeps a retained runtime pending cleanup, refusing storage, until a stop retry confirms its removal",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeFixture("database-retained", partialDefinition);
+          const plan = yield* makeRuntimePlan;
+          yield* Queue.offer(fixture.plans, plan);
+          yield* open(plan.launchGate);
+          yield* Ref.set(plan.stopFailure, true);
+          expect(Exit.isFailure(yield* fixture.service.start.pipe(Effect.exit))).toBe(true);
 
-        const queuedStart = yield* service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(queuedStartPreparation.started);
+          yield* Ref.set(plan.stopFailure, true);
+          expect(Exit.isFailure(yield* fixture.service.stop.pipe(Effect.exit))).toBe(true);
+          expect((yield* fixture.service.get).lifecycle).toBe("stopping");
+          expect(
+            Exit.isFailure(yield* fixture.service.storage(Effect.void).pipe(Effect.exit)),
+          ).toBe(true);
 
-        const restart = yield* service.restart().pipe(Effect.forkScoped);
-        yield* Deferred.await(restartPreparation.started);
-        yield* open(restartPreparation.gate);
-        yield* open(first.launchGate);
-        yield* Fiber.join(restart);
-        expect((yield* service.get).lifecycle).toBe("running");
-
-        yield* open(queuedStartPreparation.gate);
-        expect(Exit.isSuccess(yield* Fiber.await(queuedStart))).toBe(true);
-        expect((yield* service.get).launchId).toBe(1);
-        expect(yield* Deferred.isDone(unused.launchStarted)).toBe(false);
-        yield* stopFixture(service, first);
-      }),
-    ),
+          yield* open(plan.stopGate);
+          yield* open(plan.removeGate);
+          yield* fixture.service.stop;
+          expect((yield* fixture.service.get).lifecycle).toBe("stopped");
+          expect((yield* Ref.get(plan.state)).removed).toBe(true);
+        }),
+      ),
   );
 
-  it.live("accepts a prepared start queued during restart once restart is running", () =>
+  it.live(
+    "fails a restart whose stop fails instead of waiting, and retries the cleanup on stop",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeFixture("database-restart-stop-failure");
+          const plan = yield* makeRuntimePlan;
+          yield* Queue.offer(fixture.plans, plan);
+          yield* open(plan.launchGate);
+          yield* fixture.service.start;
+          yield* Ref.set(plan.stopFailure, true);
+
+          const failed = yield* fixture.service
+            .restart()
+            .pipe(Effect.flip, Effect.timeoutOption("5 seconds"));
+          expect(Option.getOrUndefined(failed)?.message).toContain("stop failed");
+          expect((yield* fixture.service.get).lifecycle).toBe("stopping");
+
+          yield* stopFixture(fixture.service, plan);
+          expect((yield* fixture.service.get).lifecycle).toBe("stopped");
+          expect((yield* Ref.get(plan.state)).removed).toBe(true);
+        }),
+      ),
+  );
+
+  it.live("never lets a late stop of an older generation touch a newer session", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const plans = yield* Queue.unbounded<RuntimePlan>();
-        const preparations = yield* Queue.unbounded<PreparationPlan>();
-        const initialPreparation = yield* makePreparationPlan;
-        const queuedStartPreparation = yield* makePreparationPlan;
-        const restartPreparation = yield* makePreparationPlan;
-        yield* open(initialPreparation.gate);
-        yield* Queue.offer(preparations, initialPreparation);
-        yield* Queue.offer(preparations, restartPreparation);
-        yield* Queue.offer(preparations, queuedStartPreparation);
-        const service = yield* makeService(makeDefinition(plans, preparations), {
-          id: "database-restart-queue",
+        const service = yield* makeService(makeDefinition(plans), {
+          id: "database-late-stop",
           config: { version: 17 },
+          report: () => Effect.void,
         });
         const first = yield* makeRuntimePlan;
         const second = yield* makeRuntimePlan;
         yield* Queue.offer(plans, first);
         yield* Queue.offer(plans, second);
-        yield* open(first.launchGate);
-        yield* service.start;
+        for (const plan of [first, second])
+          for (const gate of [plan.launchGate, plan.healthGate, plan.stopGate, plan.removeGate])
+            yield* open(gate);
+        const stopOptions = { operation: "stop", discard: false } as const;
 
-        const restartRunning = yield* waitForObservation(
-          service,
-          (value) => value.currentOperation === "restart",
-        );
-        const restart = yield* service.restart().pipe(Effect.forkScoped);
-        yield* Deferred.await(restartPreparation.started);
-        yield* open(restartPreparation.gate);
-        yield* Fiber.join(restartRunning);
-        const queuedStart = yield* service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(queuedStartPreparation.started);
-        yield* Deferred.await(first.stopStarted);
-        yield* open(first.stopGate);
-        yield* Deferred.await(first.removeStarted);
-        yield* open(first.removeGate);
-        yield* Deferred.await(second.launchStarted);
-        yield* open(queuedStartPreparation.gate);
-        yield* open(second.launchGate);
-        yield* Fiber.join(restart);
-        expect(Exit.isSuccess(yield* Fiber.await(queuedStart))).toBe(true);
-        expect((yield* service.get).lifecycle).toBe("running");
-        yield* stopFixture(service, second);
+        yield* service.launch(1, { version: 17 });
+        yield* service.stop(1, stopOptions);
+        yield* service.launch(2, { version: 17 });
+        yield* service.stop(1, stopOptions);
+
+        expect((yield* Ref.get(second.state)).phase).toBe("launched");
+        yield* service.stop(2, stopOptions);
+        expect((yield* Ref.get(second.state)).removed).toBe(true);
       }),
     ),
   );
 
-  it.live("keeps an admitted launch alive after its caller is canceled", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const plan = yield* makeRuntimePlan;
-        yield* Queue.offer(fixture.plans, plan);
-        const running = yield* waitForObservation(
-          fixture.service,
-          (value) => value.lifecycle === "running",
-        );
-        const caller = yield* fixture.service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(plan.launchStarted);
-        yield* Fiber.interrupt(caller);
-        yield* open(plan.launchGate);
-        yield* Fiber.join(running);
-        expect((yield* Ref.get(plan.state)).phase).toBe("launched");
-        yield* stopFixture(fixture.service, plan);
-      }),
-    ),
+  it.live(
+    "keeps a launch, and the resources its scope owns, alive after its caller is cancelled",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const resourceClosed = yield* Deferred.make<void>();
+          const launchStarted = yield* Deferred.make<void>();
+          const launchGate = yield* Deferred.make<void>();
+          const service = yield* makeStandaloneService<Config>(
+            {
+              launch: (context) =>
+                Effect.gen(function* () {
+                  yield* Scope.addFinalizer(
+                    context.scope,
+                    open(resourceClosed).pipe(Effect.asVoid),
+                  );
+                  yield* open(launchStarted);
+                  yield* Deferred.await(launchGate);
+                  return {
+                    health: Effect.void,
+                    exit: Effect.never,
+                    stop: Effect.void,
+                    remove: Effect.void,
+                  } satisfies RuntimeSession;
+                }),
+              removeData: () => Effect.void,
+            },
+            { id: "cold-launch-resource", config: { version: 1 } },
+          );
+          const caller = yield* service.start.pipe(Effect.forkScoped);
+          yield* Deferred.await(launchStarted);
+          yield* Fiber.interrupt(caller);
+          expect(yield* Deferred.isDone(resourceClosed)).toBe(false);
+          yield* open(launchGate);
+          yield* service.ready;
+          expect((yield* service.get).lifecycle).toBe("running");
+          expect(yield* Deferred.isDone(resourceClosed)).toBe(false);
+          yield* service.stop;
+          expect(yield* Deferred.isDone(resourceClosed)).toBe(true);
+        }),
+      ),
   );
 
-  it.live("lets independent instances progress concurrently", () =>
+  it.live("keeps exact cleanup authority after a failed stop and retries only what remains", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const leftFixture = yield* makeFixture;
-        const rightFixture = yield* makeFixture;
-        const leftPlan = yield* makeRuntimePlan;
-        const rightPlan = yield* makeRuntimePlan;
-        yield* Queue.offer(leftFixture.plans, leftPlan);
-        yield* Queue.offer(rightFixture.plans, rightPlan);
-        const leftRunning = yield* waitForObservation(
-          leftFixture.service,
-          (value) => value.lifecycle === "running",
-        );
-        const rightRunning = yield* waitForObservation(
-          rightFixture.service,
-          (value) => value.lifecycle === "running",
-        );
-        const leftStart = yield* leftFixture.service.start.pipe(Effect.forkScoped);
-        const rightStart = yield* rightFixture.service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(leftPlan.launchStarted);
-        yield* Deferred.await(rightPlan.launchStarted);
-        yield* open(leftPlan.launchGate);
-        yield* Fiber.join(leftRunning);
-        expect((yield* leftFixture.service.get).lifecycle).toBe("running");
-        expect((yield* rightFixture.service.get).lifecycle).toBe("starting");
-        yield* open(rightPlan.launchGate);
-        yield* Fiber.join(leftStart);
-        yield* Fiber.join(rightRunning);
-        yield* Fiber.join(rightStart);
-        yield* stopFixture(leftFixture.service, leftPlan);
-        yield* stopFixture(rightFixture.service, rightPlan);
-      }),
-    ),
-  );
-
-  it.live("keeps exact cleanup authority after failure and retries only remaining cleanup", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
+        const fixture = yield* makeFixture("database-cleanup-retry");
         const plan = yield* makeRuntimePlan;
         yield* Queue.offer(fixture.plans, plan);
         yield* open(plan.launchGate);
         yield* fixture.service.start;
         yield* open(plan.stopGate);
         yield* Ref.set(plan.removeFailure, true);
-        const failed = yield* fixture.service.stop.pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect((yield* fixture.service.get).lifecycle).toBe("stopping");
+        expect(Exit.isFailure(yield* fixture.service.stop.pipe(Effect.exit))).toBe(true);
+        expect(yield* fixture.service.get).toMatchObject({
+          lifecycle: "stopping",
+          error: { operation: "remove" },
+        });
         expect((yield* Ref.get(plan.state)).removed).toBe(false);
+
+        const retry = yield* fixture.service.stop.pipe(Effect.forkScoped);
+        yield* Deferred.await(plan.removeStarted);
+        expect((yield* fixture.service.get).lifecycle).toBe("stopping");
         yield* open(plan.removeGate);
-        yield* fixture.service.stop;
+        yield* Fiber.join(retry);
         expect((yield* fixture.service.get).lifecycle).toBe("stopped");
         expect((yield* Ref.get(plan.state)).removed).toBe(true);
       }),
     ),
   );
 
-  it.live("keeps registration after data removal failure", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const plan = yield* makeRuntimePlan;
-        const dataFailure = yield* Ref.make(true);
-        const service = yield* makeService(
-          {
-            launch: makeDefinition(fixture.plans).launch,
-            removeData: () =>
-              Effect.gen(function* () {
-                if (yield* Ref.get(dataFailure)) {
-                  yield* Ref.set(dataFailure, false);
-                  return yield* new ServiceError({ operation: "data", message: "retry" });
-                }
-              }),
-          },
-          { id: "database-data", config: { version: 17 } },
-        );
-        yield* Queue.offer(fixture.plans, plan);
-        yield* open(plan.launchGate);
-        yield* service.start;
-        yield* stopFixture(service, plan);
-        expect(Exit.isFailure(yield* service.destroy.pipe(Effect.exit))).toBe(true);
-        expect((yield* service.get).registered).toBe(true);
-        yield* service.destroy;
-        expect((yield* service.get).registered).toBe(false);
-      }),
-    ),
+  it.live(
+    "reports confirmed termination when removeData cleans up a session a failed stop retained",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Direct `makeService`, not `makeStandaloneService`: the orchestrator's own dispatch
+          // already retries and reports a failed stop correctly (`Lifecycle.ts`'s `retryCleanup`)
+          // and so never exercises this path. Only a direct `removeData` call does.
+          const plans = yield* Queue.unbounded<RuntimePlan>();
+          const events = yield* Ref.make<ReadonlyArray<LifecycleEvent>>([]);
+          const service = yield* makeService(makeDefinition(plans), {
+            id: "database-removedata-retry",
+            config: { version: 17 },
+            report: (event) => Ref.update(events, (current) => [...current, event]),
+          });
+          const plan = yield* makeRuntimePlan;
+          yield* Queue.offer(plans, plan);
+          yield* open(plan.launchGate);
+          yield* open(plan.healthGate);
+          yield* service.launch(1, { version: 17 });
+
+          yield* Ref.set(plan.stopFailure, true);
+          yield* service.stop(1, { operation: "stop", discard: true });
+          expect((yield* Ref.get(events)).some((event) => event._tag === "StopFailed")).toBe(true);
+
+          // The retained session's retry, through `removeData` alone this time.
+          yield* open(plan.stopGate);
+          yield* open(plan.removeGate);
+          yield* service.removeData();
+
+          expect(
+            (yield* Ref.get(events)).some((event) => event._tag === "Exited"),
+            "the retry's confirmed termination must reach the reducer, or it stays Stopping forever",
+          ).toBe(true);
+          expect((yield* Ref.get(plan.state)).removed).toBe(true);
+        }),
+      ),
   );
 
-  it.live("destroys a running instance and retains registration after stop failure", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const plan = yield* makeRuntimePlan;
-        yield* Queue.offer(fixture.plans, plan);
-        yield* open(plan.launchGate);
-        yield* fixture.service.start;
-        yield* open(plan.stopGate);
-        yield* open(plan.removeGate);
-        yield* fixture.service.destroy;
-        expect((yield* fixture.service.get).registered).toBe(false);
-        expect((yield* Ref.get(plan.state)).removed).toBe(true);
+  it.live(
+    "keeps the registration and data of a running instance whose destroy fails to stop it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const plans = yield* Queue.unbounded<RuntimePlan>();
+          const dataRemoved = yield* Ref.make(false);
+          const service = yield* makeStandaloneService(
+            { launch: makeDefinition(plans).launch, removeData: () => Ref.set(dataRemoved, true) },
+            { id: "database-destroy-stop-failure", config: { version: 17 } },
+          );
+          const plan = yield* makeRuntimePlan;
+          yield* Queue.offer(plans, plan);
+          yield* open(plan.launchGate);
+          yield* service.start;
+          yield* Ref.set(plan.stopFailure, true);
 
-        const plans = yield* Queue.unbounded<RuntimePlan>();
-        const dataRemoved = yield* Ref.make(false);
-        const service = yield* makeService(
-          {
-            launch: makeDefinition(plans).launch,
-            removeData: () => Ref.set(dataRemoved, true),
-          },
-          { id: "database-destroy-stop-failure", config: { version: 17 } },
-        );
-        const failedPlan = yield* makeRuntimePlan;
-        yield* Queue.offer(plans, failedPlan);
-        yield* open(failedPlan.launchGate);
-        yield* service.start;
-        yield* Ref.set(failedPlan.stopFailure, true);
+          expect(Exit.isFailure(yield* service.destroy.pipe(Effect.exit))).toBe(true);
+          expect(yield* service.get).toMatchObject({ lifecycle: "stopping" });
+          expect(yield* service.listed).toBe(true);
+          expect(yield* Ref.get(dataRemoved)).toBe(false);
 
-        expect(Exit.isFailure(yield* service.destroy.pipe(Effect.exit))).toBe(true);
-        expect((yield* service.get).lifecycle).toBe("stopping");
-        expect((yield* service.get).registered).toBe(true);
-        expect(yield* Ref.get(dataRemoved)).toBe(false);
-
-        yield* open(failedPlan.stopGate);
-        yield* open(failedPlan.removeGate);
-        yield* service.stop;
-        yield* service.destroy;
-        expect(yield* Ref.get(dataRemoved)).toBe(true);
-        expect((yield* service.get).registered).toBe(false);
-      }),
-    ),
+          yield* open(plan.stopGate);
+          yield* open(plan.removeGate);
+          yield* service.destroy;
+          expect(yield* Ref.get(dataRemoved)).toBe(true);
+          expect(yield* service.listed).toBe(false);
+        }),
+      ),
   );
 
-  it.live("reports a destroyed instance as ServiceDestroyed to readiness callers", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        yield* fixture.service.destroy;
-        const result = yield* fixture.service.ready.pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-        if (Exit.isFailure(result)) {
-          const failure = result.cause.reasons.find(Cause.isFailReason);
-          expect(failure !== undefined && failure.error instanceof ServiceDestroyed).toBe(true);
-        }
-      }),
-    ),
-  );
-
-  it.live("waits for a pending launch before checking readiness", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const plan = yield* makeRuntimePlan;
-        yield* Queue.offer(fixture.plans, plan);
-        const start = yield* fixture.service.start.pipe(Effect.forkScoped);
-        yield* Deferred.await(plan.launchStarted);
-        const ready = yield* fixture.service.ready.pipe(
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        yield* open(plan.launchGate);
-        yield* Deferred.await(plan.healthStarted);
-        yield* open(plan.healthGate);
-        expect(Exit.isSuccess(yield* Fiber.await(ready))).toBe(true);
-        yield* Fiber.join(start);
-        yield* stopFixture(fixture.service, plan);
-      }),
-    ),
-  );
-
-  it.live("serializes storage and destroy through the same gate", () =>
+  it.live("destroys an instance once the storage operation that owns it finishes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const plans = yield* Queue.unbounded<RuntimePlan>();
         const storageStarted = yield* Deferred.make<void>();
         const storageGate = yield* Deferred.make<void>();
-        const service = yield* makeService(
+        const removalStarted = yield* Deferred.make<void>();
+        const removalGate = yield* Deferred.make<void>();
+        const service = yield* makeStandaloneService(
           {
             launch: makeDefinition(plans).launch,
-            removeData: () => Effect.void,
+            removeData: () =>
+              open(removalStarted).pipe(Effect.andThen(Deferred.await(removalGate))),
           },
           { id: "database-storage", config: { version: 17 } },
         );
         const storage = yield* service
-          .storage(
-            Effect.gen(function* () {
-              yield* Deferred.succeed(storageStarted, undefined);
-              yield* Deferred.await(storageGate);
-            }),
-          )
+          .storage(open(storageStarted).pipe(Effect.andThen(Deferred.await(storageGate))))
           .pipe(Effect.forkScoped);
         yield* Deferred.await(storageStarted);
-        const destroying = yield* service.destroy.pipe(Effect.forkScoped);
         expect((yield* service.get).currentOperation).toBe("storage");
+
+        const destroyRequested = yield* awaitNextChange(service);
+        const destroyed = yield* service.destroy.pipe(Effect.forkScoped);
+        yield* Fiber.join(destroyRequested);
+        expect(yield* service.listed).toBe(true);
         yield* open(storageGate);
         yield* Fiber.join(storage);
-        yield* Fiber.join(destroying);
-        expect((yield* service.get).registered).toBe(false);
+        yield* Deferred.await(removalStarted);
+        const refused = yield* service.storage(Effect.void).pipe(Effect.flip);
+        expect(refused.message).toBe("database-storage is being destroyed");
+
+        yield* open(removalGate);
+        yield* Fiber.join(destroyed);
+        expect(yield* service.listed).toBe(false);
       }),
     ),
   );
 
-  it.live("prepares invalid restart configuration before stopping current runtime", () =>
+  it.live("keeps an instance usable when a destroy waiting behind storage is interrupted", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const plans = yield* Queue.unbounded<RuntimePlan>();
-        const prepared = yield* Ref.make<ReadonlyArray<Config>>([]);
+        const storageStarted = yield* Deferred.make<void>();
+        const storageGate = yield* Deferred.make<void>();
+        const dataRemoved = yield* Ref.make(false);
+        const service = yield* makeStandaloneService(
+          { launch: makeDefinition(plans).launch, removeData: () => Ref.set(dataRemoved, true) },
+          { id: "database-storage-interrupted", config: { version: 17 } },
+        );
+        const storage = yield* service
+          .storage(open(storageStarted).pipe(Effect.andThen(Deferred.await(storageGate))))
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(storageStarted);
+
+        const destroyRequested = yield* awaitNextChange(service);
+        const destroyed = yield* service.destroy.pipe(Effect.forkScoped);
+        yield* Fiber.join(destroyRequested);
+        yield* Fiber.interrupt(destroyed);
+        expect(Exit.hasInterrupts(yield* Fiber.await(destroyed))).toBe(true);
+        yield* open(storageGate);
+        yield* Fiber.join(storage);
+
+        expect(yield* service.storage(Effect.succeed("stored"))).toBe("stored");
+        expect(yield* Ref.get(dataRemoved)).toBe(false);
+        expect(yield* service.listed).toBe(true);
+        const plan = yield* makeRuntimePlan;
+        yield* Queue.offer(plans, plan);
+        yield* open(plan.launchGate);
+        yield* service.start;
+        expect((yield* service.get).lifecycle).toBe("running");
+        yield* stopFixture(service, plan);
+      }),
+    ),
+  );
+
+  it.live("prepares an invalid restart configuration before stopping the current runtime", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const plans = yield* Queue.unbounded<RuntimePlan>();
         const invalid = yield* Ref.make(false);
-        const service = yield* makeService(makeDefinition(plans, undefined, prepared, invalid), {
+        const service = yield* makeStandaloneService(makeDefinition(plans, { invalid }), {
           id: "database-restart",
           config: { version: 17 },
         });
@@ -883,64 +807,30 @@ describe("service kernel", () => {
         expect(Exit.isFailure(yield* service.restart({ version: 18 }).pipe(Effect.exit))).toBe(
           true,
         );
-        expect((yield* service.get).lifecycle).toBe("running");
-        expect((yield* service.get).config.version).toBe(17);
+        expect(yield* service.get).toMatchObject({ lifecycle: "running", config: { version: 17 } });
         expect((yield* Ref.get(plan.state)).removed).toBe(false);
         yield* stopFixture(service, plan);
       }),
     ),
   );
 
-  it.live("fails readiness with the crash error and cleans the exact runtime", () =>
+  it.live("fails readiness with the crash error, cleans the exact runtime and stays wakeable", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeFixture;
+        const fixture = yield* makeFixture("database-crash");
         const plan = yield* makeRuntimePlan;
         yield* Queue.offer(fixture.plans, plan);
         yield* open(plan.launchGate);
         yield* fixture.service.start;
         yield* Deferred.await(plan.healthStarted);
-        const ready = yield* fixture.service.ready.pipe(Effect.forkScoped);
-        const stopping = yield* waitForObservation(
+        const ready = yield* fixture.service.ready.pipe(
+          Effect.flip,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const stopped = yield* waitForStatus(
           fixture.service,
-          (value) => value.lifecycle === "stopping",
+          (value) => value.lifecycle === "stopped" && value.currentOperation === undefined,
         );
-        const stopped = yield* waitForObservation(
-          fixture.service,
-          (value) => value.lifecycle === "stopped",
-        );
-        yield* Deferred.succeed(
-          plan.exit,
-          Exit.fail(new ServiceError({ operation: "process", message: "crashed" })),
-        );
-        yield* Deferred.await(plan.stopStarted);
-        yield* open(plan.stopGate);
-        yield* Deferred.await(plan.removeStarted);
-        yield* open(plan.removeGate);
-        yield* Fiber.join(stopping);
-        yield* Fiber.join(stopped);
-        const result = yield* Fiber.await(ready);
-        expect(Exit.isFailure(result)).toBe(true);
-        if (Exit.isFailure(result)) {
-          const failure = result.cause.reasons.find(Cause.isFailReason);
-          expect(failure?.error).toBeInstanceOf(ServiceError);
-          expect(failure?.error).toMatchObject({ operation: "process", message: "crashed" });
-        }
-        expect((yield* fixture.service.get).lifecycle).toBe("stopped");
-        expect((yield* Ref.get(plan.state)).removed).toBe(true);
-        expect((yield* fixture.service.get).wakeEnabled).toBe(false);
-      }),
-    ),
-  );
-
-  it.live("reports stop as the current operation during exit cleanup", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const plan = yield* makeRuntimePlan;
-        yield* Queue.offer(fixture.plans, plan);
-        yield* open(plan.launchGate);
-        yield* fixture.service.start;
         yield* Deferred.succeed(
           plan.exit,
           Exit.fail(new ServiceError({ operation: "process", message: "crashed" })),
@@ -950,166 +840,56 @@ describe("service kernel", () => {
         yield* open(plan.stopGate);
         yield* Deferred.await(plan.removeStarted);
         yield* open(plan.removeGate);
+        yield* Fiber.join(stopped);
+
+        expect((yield* Fiber.join(ready)).message).toContain("crashed");
+        expect(yield* fixture.service.get).toMatchObject({
+          lifecycle: "stopped",
+          wakeEnabled: true,
+          error: { operation: "process", message: "crashed" },
+        });
+        expect((yield* Ref.get(plan.state)).removed).toBe(true);
       }),
     ),
   );
 
-  it.live("preserves cleanupError while a retry is admitted and blocked", () =>
+  it.live("fails an old readiness wait on stop and lets the next launch become ready", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const plan = yield* makeRuntimePlan;
-        yield* Queue.offer(fixture.plans, plan);
-        yield* open(plan.launchGate);
+        const fixture = yield* makeFixture("database-relaunch");
+        const first = yield* makeRuntimePlan;
+        const second = yield* makeRuntimePlan;
+        yield* Queue.offer(fixture.plans, first);
+        yield* Queue.offer(fixture.plans, second);
+        yield* open(first.launchGate);
         yield* fixture.service.start;
-        yield* Ref.set(plan.stopFailure, true);
-        expect(Exit.isFailure(yield* fixture.service.stop.pipe(Effect.exit))).toBe(true);
-        expect((yield* fixture.service.get).cleanupError).toBeDefined();
+        yield* Deferred.await(first.healthStarted);
 
-        const retry = yield* fixture.service.stop.pipe(Effect.forkScoped);
-        yield* Deferred.await(plan.stopRetryStarted);
-        const exited = yield* waitForObservation(
-          fixture.service,
-          (value) => value.exit !== undefined,
-        );
-        yield* Deferred.succeed(
-          plan.exit,
-          Exit.fail(new ServiceError({ operation: "process", message: "crashed" })),
-        );
-        yield* Fiber.join(exited);
-        expect((yield* fixture.service.get).cleanupError).toBeDefined();
-        yield* open(plan.stopGate);
-        yield* Deferred.await(plan.removeStarted);
-        yield* open(plan.removeGate);
-        yield* Fiber.join(retry);
-        expect((yield* fixture.service.get).cleanupError).toBeUndefined();
+        const oldReady = yield* fixture.service.ready.pipe(Effect.exit, Effect.forkScoped);
+        const stopping = yield* fixture.service.stop.pipe(Effect.forkScoped);
+        yield* Deferred.await(first.stopStarted);
+        yield* open(first.stopGate);
+        yield* Deferred.await(first.removeStarted);
+        yield* open(first.removeGate);
+        yield* Fiber.join(stopping);
+        expect(Exit.isFailure(yield* Fiber.join(oldReady))).toBe(true);
+
+        yield* open(second.launchGate);
+        yield* fixture.service.start;
+        yield* Deferred.await(second.healthStarted);
+        const newReady = yield* fixture.service.ready.pipe(Effect.forkScoped);
+        yield* open(second.healthGate);
+        expect(Exit.isSuccess(yield* Fiber.await(newReady))).toBe(true);
+        expect(yield* fixture.service.get).toMatchObject({
+          lifecycle: "running",
+          health: "healthy",
+        });
+        expect((yield* Ref.get(second.state)).health).toBe("healthy");
+        yield* stopFixture(fixture.service, second);
       }),
     ),
   );
-
-  it.live(
-    "makes an old readiness wait stale across stop and lets the new launch become ready",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = yield* makeFixture;
-          const first = yield* makeRuntimePlan;
-          const second = yield* makeRuntimePlan;
-          yield* Queue.offer(fixture.plans, first);
-          yield* Queue.offer(fixture.plans, second);
-          yield* open(first.launchGate);
-          yield* fixture.service.start;
-          yield* Deferred.await(first.healthStarted);
-
-          const oldReady = yield* fixture.service.ready.pipe(Effect.forkScoped);
-          const stopping = yield* fixture.service.stop.pipe(Effect.forkScoped);
-          yield* Deferred.await(first.stopStarted);
-          yield* open(first.stopGate);
-          yield* Deferred.await(first.removeStarted);
-          yield* open(first.removeGate);
-          yield* Fiber.join(stopping);
-          const stale = yield* Fiber.await(oldReady);
-          expect(Exit.isFailure(stale)).toBe(true);
-          if (Exit.isFailure(stale))
-            expect(stale.cause.reasons.find(Cause.isFailReason)?.error).toBeInstanceOf(
-              ServiceStaleLaunch,
-            );
-
-          yield* open(second.launchGate);
-          yield* fixture.service.start;
-          yield* Deferred.await(second.healthStarted);
-          const newReady = yield* fixture.service.ready.pipe(Effect.forkScoped);
-          yield* open(second.healthGate);
-          expect(Exit.isSuccess(yield* Fiber.await(newReady))).toBe(true);
-          expect((yield* fixture.service.get).launchId).toBe(2);
-          yield* stopFixture(fixture.service, second);
-        }),
-      ),
-  );
 });
-
-it.live("retains armed wake after a partially launched process exits during cleanup", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const exited = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
-      const stopping = yield* Deferred.make<void>();
-      const finishStop = yield* Deferred.make<void>();
-      const failure = new ServiceError({ operation: "launch", message: "initialization failed" });
-      const service = yield* makeService(
-        {
-          launch: () =>
-            Effect.fail(
-              new ServiceLaunchError({
-                failure,
-                runtime: {
-                  health: Effect.never,
-                  exit: Deferred.await(exited),
-                  stop: Deferred.succeed(stopping, undefined).pipe(
-                    Effect.andThen(Deferred.await(finishStop)),
-                  ),
-                  remove: Effect.void,
-                },
-              }),
-            ),
-          removeData: () => Effect.void,
-        },
-        { id: "armed-partial", config: {} },
-      );
-      yield* service.arm;
-      const observedExit = yield* waitForObservation(service, (state) => state.exit !== undefined);
-      const starting = yield* service.start.pipe(Effect.forkChild);
-      yield* Deferred.await(stopping);
-      yield* Deferred.succeed(exited, Exit.void);
-      yield* Fiber.join(observedExit);
-      yield* Deferred.succeed(finishStop, undefined);
-      expect(Exit.isFailure(yield* Fiber.await(starting))).toBe(true);
-      expect((yield* service.get).lifecycle).toBe("stopped");
-      expect((yield* service.get).wakeEnabled).toBe(true);
-    }),
-  ),
-);
-
-it.live("keeps a sleeping instance armed when exit observation retries failed removal", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const exited = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
-      const failRemoval = yield* Ref.make(true);
-      const service = yield* makeService(
-        {
-          launch: () =>
-            Effect.succeed({
-              health: Effect.void,
-              exit: Deferred.await(exited),
-              stop: Effect.void,
-              remove: Ref.getAndSet(failRemoval, false).pipe(
-                Effect.flatMap((fail) =>
-                  fail
-                    ? Effect.fail(
-                        new ServiceError({
-                          operation: "remove",
-                          message: "temporary removal failure",
-                        }),
-                      )
-                    : Effect.void,
-                ),
-              ),
-            }),
-          removeData: () => Effect.void,
-        },
-        { id: "sleep-cleanup-retry", config: {} },
-      );
-      yield* service.arm;
-      yield* service.start;
-      yield* service.ready;
-      expect(Exit.isFailure(yield* Effect.exit(service.sleep))).toBe(true);
-      expect((yield* service.get).wakeEnabled).toBe(true);
-      const stopped = yield* waitForObservation(service, (state) => state.lifecycle === "stopped");
-      yield* Deferred.succeed(exited, Exit.void);
-      yield* Fiber.join(stopped);
-      expect((yield* service.get).wakeEnabled).toBe(true);
-    }),
-  ),
-);
 
 const unhealthy = (message: string) => new ServiceError({ operation: "health", message });
 
@@ -1119,7 +899,7 @@ const makeProbedService = (
 ) =>
   Effect.gen(function* () {
     const launches = yield* Ref.make(0);
-    const service = yield* makeService<Config>(
+    const service = yield* makeStandaloneService<Config>(
       {
         launch: () =>
           Ref.updateAndGet(launches, (count) => count + 1).pipe(
@@ -1138,41 +918,14 @@ const makeProbedService = (
     return { service, launches };
   });
 
-const startUnhealthy = (service: ServiceInstance<Config>) =>
+const startUnhealthy = (service: Standalone) =>
   Effect.gen(function* () {
-    const failed = yield* waitForObservation(service, (value) => value.health === "unhealthy");
+    const failed = yield* waitForStatus(service, (value) => value.health === "unhealthy");
     yield* service.start;
     yield* Fiber.join(failed);
   });
 
 describe("service readiness recovery", () => {
-  it.live("serves readiness once a running launch recovers from a failed health check", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const healthy = yield* Ref.make(false);
-        const { service, launches } = yield* makeProbedService(() =>
-          Ref.get(healthy).pipe(
-            Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail(unhealthy("still booting")))),
-          ),
-        );
-        yield* startUnhealthy(service);
-        expect(yield* Effect.flip(service.ready)).toMatchObject({ message: "still booting" });
-
-        yield* Ref.set(healthy, true);
-        yield* service.ready;
-
-        expect(yield* service.get).toMatchObject({
-          lifecycle: "running",
-          health: "healthy",
-          error: undefined,
-          launchId: 1,
-        });
-        expect(yield* Ref.get(launches)).toBe(1);
-        yield* service.stop;
-      }),
-    ),
-  );
-
   it.live("reports the initial check's failure to callers waiting on it without re-probing", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1199,9 +952,7 @@ describe("service readiness recovery", () => {
 
         yield* open(checkGate);
 
-        expect(yield* Fiber.join(waiting)).toMatchObject({
-          message: "rest HTTP readiness timed out",
-        });
+        expect((yield* Fiber.join(waiting)).message).toContain("rest HTTP readiness timed out");
         expect(yield* Ref.get(checks)).toBe(1);
         expect(yield* service.get).toMatchObject({
           health: "unhealthy",
@@ -1227,8 +978,8 @@ describe("service readiness recovery", () => {
         );
         yield* startUnhealthy(service);
 
-        expect(yield* Effect.flip(service.ready)).toMatchObject({ message: "setup failed" });
-        expect(yield* Effect.flip(service.ready)).toMatchObject({ message: "setup failed" });
+        expect((yield* Effect.flip(service.ready)).message).toContain("setup failed");
+        expect((yield* Effect.flip(service.ready)).message).toContain("setup failed");
         expect(yield* Ref.get(checks)).toBe(1);
         yield* service.stop;
       }),
@@ -1266,8 +1017,8 @@ describe("service readiness recovery", () => {
         yield* Deferred.await(probeStarted);
         yield* open(probeGate);
 
-        expect(yield* Fiber.join(first)).toMatchObject({ message: "still booting" });
-        expect(yield* Fiber.join(second)).toMatchObject({ message: "still booting" });
+        expect((yield* Fiber.join(first)).message).toContain("still booting");
+        expect((yield* Fiber.join(second)).message).toContain("still booting");
         expect(yield* Ref.get(checks)).toBe(2);
         yield* service.ready;
         expect(yield* Ref.get(checks)).toBe(3);
@@ -1282,7 +1033,7 @@ describe("service readiness recovery", () => {
         const firstLaunchChecks = yield* Ref.make(0);
         const probeStarted = yield* Deferred.make<void>();
         const probeInterrupted = yield* Deferred.make<void>();
-        const { service } = yield* makeProbedService((launch) =>
+        const { service, launches } = yield* makeProbedService((launch) =>
           launch === 1
             ? Ref.updateAndGet(firstLaunchChecks, (count) => count + 1).pipe(
                 Effect.flatMap((count) =>
@@ -1297,26 +1048,27 @@ describe("service readiness recovery", () => {
             : Effect.fail(unhealthy("second launch unhealthy")),
         );
         yield* startUnhealthy(service);
-        const stale = yield* Effect.forkChild(service.ready, { startImmediately: true });
+        const stale = yield* Effect.forkChild(Effect.exit(service.ready), {
+          startImmediately: true,
+        });
         yield* Deferred.await(probeStarted);
 
-        const relaunched = yield* waitForObservation(
+        const relaunched = yield* waitForStatus(
           service,
-          (value) => value.launchId === 2 && value.health === "unhealthy",
+          (value) =>
+            value.health === "unhealthy" && value.error?.message === "second launch unhealthy",
         );
         yield* service.restart();
         yield* Fiber.join(relaunched);
 
         yield* Deferred.await(probeInterrupted);
-        expect(Exit.isFailure(yield* Fiber.await(stale))).toBe(true);
+        expect(Exit.isFailure(yield* Fiber.join(stale))).toBe(true);
         expect(yield* service.get).toMatchObject({
-          launchId: 2,
           health: "unhealthy",
           error: { message: "second launch unhealthy" },
         });
-        expect(yield* Effect.flip(service.ready)).toMatchObject({
-          message: "second launch unhealthy",
-        });
+        expect(yield* Ref.get(launches)).toBe(2);
+        expect((yield* Effect.flip(service.ready)).message).toContain("second launch unhealthy");
         expect(yield* Ref.get(firstLaunchChecks)).toBe(2);
         yield* service.stop;
       }),
@@ -1346,7 +1098,7 @@ describe("service readiness recovery", () => {
 
         yield* Scope.close(owner, Exit.void);
 
-        expect(yield* Fiber.join(waiting)).toMatchObject({ message: "Session stopped" });
+        expect((yield* Fiber.join(waiting)).message).toBe("Lifecycle owner stopped");
       }),
     ),
   );

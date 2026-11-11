@@ -1,13 +1,13 @@
-import { Config, Effect, FileSystem, Option, Path, Predicate } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Predicate, Ref } from "effect";
 import type { Stack } from "@supabase/stack/effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
-import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { loadProjectEnvValues, readDbConfig } from "../../../command-internal/db-config.read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
@@ -18,7 +18,7 @@ import { bold, yellow } from "../../../command-internal/colors.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
+import { mutuallyExclusiveFlagsMessage } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { DbDumpFlags } from "./dump.command.ts";
 import {
@@ -44,14 +44,14 @@ import {
 } from "../../../command-internal/postgres-client.run.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
-  stackProjectDatabaseVersion,
+  stackProjectDatabasePin,
   stackOpenReadyProject,
   stackRequireProjectRuntime,
 } from "../../../command-internal/stack-local-database.ts";
+import { databaseArtifactPin } from "@supabase/stack/internal/artifacts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
-import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
-import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
-import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
+import { orNoPoolerFallback, runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
   dumpRoleScript,
@@ -62,10 +62,9 @@ import {
  * Mutually-exclusive flag groups, in the established check order (the group
  * keys are sorted alphabetically). Each group's flags are in registration
  * order, matching the `[group]` in the error text; the set of violating
- * flags is alphabetised separately by `cobraMutuallyExclusiveErrorMessage`.
+ * flags is alphabetised separately by `mutuallyExclusiveFlagsMessage`.
  */
 const DUMP_EXCLUSIVE_GROUPS = [
-  ["db-url", "linked", "local"],
   ["keep-comments", "data-only"],
   ["role-only", "data-only"],
   ["schema", "role-only"],
@@ -92,10 +91,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
 
   // Captured so the post-run finalizer can cache the project after the command's
   // own API calls.
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
 
     // Resolves grouped boolean flags' effective values (default false) for code paths
     // that need the value, not just presence.
@@ -114,14 +113,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // 2. Mutually-exclusive flag groups. "Set" means explicitly set: an
     //    Option is set when `Some`, a boolean when explicitly `true`, a
     //    string-slice when non-empty.
-    const isSet = (name: string): boolean => {
+    const isSet = (name: (typeof DUMP_EXCLUSIVE_GROUPS)[number][number]): boolean => {
       switch (name) {
-        case "db-url":
-          return Option.isSome(flags.dbUrl);
-        case "linked":
-          return Option.isSome(flags.linked);
-        case "local":
-          return Option.isSome(flags.local);
         case "data-only":
           return Option.isSome(flags.dataOnly);
         case "role-only":
@@ -130,77 +123,56 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           return Option.isSome(flags.keepComments);
         case "schema":
           return flags.schema.length > 0;
-        default:
-          return false;
       }
     };
     for (const group of DUMP_EXCLUSIVE_GROUPS) {
       const set = group.filter(isSet);
       if (set.length > 1) {
         return yield* new DbDumpMutuallyExclusiveFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(group, set),
+          message: mutuallyExclusiveFlagsMessage(group, set),
         });
       }
     }
 
-    // 3. Resolve the connection: db-url > local > linked, defaulting to linked when
-    //    neither is set (unlike other db subcommands, which default to local).
-    const useLocal = Option.isNone(flags.dbUrl) && Option.isSome(flags.local);
-    const connType: DbConnType = Option.isSome(flags.dbUrl)
-      ? "db-url"
-      : useLocal
-        ? "local"
-        : "linked";
-    // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* new DbDumpMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      });
+    // 3. Resolve the target (`--remote` or an alias, else local) and connect to it.
+    const target = yield* resolveTarget(flags);
+    // The linked-project cache is refreshed unconditionally afterward, even on a
+    // connection-resolution failure.
+    if (target.kind === "linked") {
+      yield* Ref.set(linkedRefForCache, target.ref);
     }
-    // The project ref is resolved before the connection is built, and the
-    // linked-project cache is refreshed unconditionally afterward, even on a
-    // connection-resolution failure. `loadProjectRef` validates the ref up front so an
-    // unvalidated raw `--project-ref` is never stored for the cache finalizer.
-    if (connType === "linked") {
-      const refResolver = yield* ProjectRefResolver;
-      linkedRefForCache = yield* refResolver.loadProjectRef(flags.projectRef);
-    }
-    const {
-      conn,
-      isLocal,
-      ref: resolvedRef,
-    } = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType,
+    const connectionInput = {
+      target,
       dnsResolver,
       password: flags.password,
-      linkedProjectRef: flags.projectRef,
-    });
+      hasPasswordFlag: true,
+      networkBanRemoval: yield* hostedMutationPreapproval,
+    };
+    const { conn, isLocal, ref: resolvedRef } = yield* resolver.resolveConnection(connectionInput);
     const db = isLocal ? "local" : "remote";
     // On the linked path, re-read config with the resolved ref so a matching
     // `[remotes.<ref>]` block overrides `db.major_version` for the pg_dump image.
     const linkedRef = Option.getOrUndefined(resolvedRef ?? Option.none());
     // Guards a `None` from a non-linked path from clobbering the up-front capture.
     if (linkedRef !== undefined) {
-      linkedRefForCache = linkedRef;
+      yield* Ref.set(linkedRefForCache, linkedRef);
     }
 
     // Read before the dry-run print so an invalid merged config fails rather than
     // silently printing a script.
-    const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const tomlValues = yield* readDbConfig(fs, path, cliSettings.workdir, linkedRef);
 
     const backend = yield* currentStackBackend;
     const managedProject =
-      backend.kind === "stack" && connType === "local"
+      backend.kind === "stack" && target.kind === "local"
         ? yield* stackOpenReadyProject.pipe(
-            Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
+            Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })),
             Effect.map(Option.getOrUndefined),
           )
         : undefined;
     const managedStack: Stack | undefined = managedProject?.stack;
     const stackRuntime =
-      backend.kind === "stack" && connType === "local"
+      backend.kind === "stack" && target.kind === "local"
         ? yield* stackRequireProjectRuntime
         : undefined;
     const bundledRuntime =
@@ -209,7 +181,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
-    const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
+    const envNetworkId = yield* supabaseEnvStringWithProjectFallback(
+      "SUPABASE_NETWORK_ID",
+      projectEnv,
+    );
     const dumpUsesHostNetwork =
       backend.kind === "stack"
         ? toolContainerUsesHostNetwork(networkId)
@@ -226,7 +201,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const rewriteLoopbackTarget =
       backend.kind === "stack" ? managedStack === undefined : !dumpUsesHostNetwork;
     const dumpConn = useNativeClient
-      ? connType === "local"
+      ? target.kind === "local"
         ? dumpConnForHostClient(conn)
         : conn
       : rewriteLoopbackTarget
@@ -238,27 +213,32 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             }),
           }
         : conn;
-    const catalogVersion =
-      backend.kind === "stack" && connType === "local"
-        ? ((yield* stackProjectDatabaseVersion) ?? String(tomlValues.majorVersion))
-        : String(tomlValues.majorVersion);
+    // A local stack's client matches its saved database build; any other target uses the
+    // configured major's default pin.
+    const databasePin =
+      backend.kind === "stack"
+        ? yield* Effect.gen(function* () {
+            const saved = target.kind === "local" ? yield* stackProjectDatabasePin : undefined;
+            return saved ?? (yield* databaseArtifactPin(String(tomlValues.majorVersion)));
+          }).pipe(Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })))
+        : undefined;
     const dumpMajor = tomlValues.majorVersion;
     const dumpClient =
-      managedStack !== undefined
-        ? {
-            kind: "stack" as const,
-            stack: managedStack,
-            command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
-            major: Number(catalogVersion.split(".")[0]) === 15 ? (15 as const) : (17 as const),
-          }
-        : backend.kind === "stack"
+      databasePin === undefined
+        ? { kind: "container" as const }
+        : managedStack !== undefined
           ? {
+              kind: "stack" as const,
+              stack: managedStack,
+              command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
+              pin: databasePin,
+            }
+          : {
               kind: "bundled" as const,
               command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
-              version: catalogVersion,
+              pin: databasePin,
               runtime: bundledRuntime,
-            }
-          : { kind: "container" as const };
+            };
 
     // 4. Pick the mode-specific script + env. --schema/-s and --exclude/-x arrive here
     //    already CSV-parsed by `parseSchemaFlags`.
@@ -267,6 +247,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       keepComments,
       excludeTable: flags.exclude,
       columnInsert: !flags.useCopy,
+      remote: !isLocal,
     };
     // The script + diagnostic verb are connection-independent; the env is rebuilt
     // per connection so the pooler-fallback retry can target a different host.
@@ -286,9 +267,9 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const managedDumpConn =
       managedProject === undefined
         ? undefined
-        : parseConnectionString(
+        : yield* parseConnectionString(
             yield* managedProject.database.credentials({ from: "runtime" }).pipe(
-              Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
+              Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })),
               Effect.map((credentials) => credentials.databaseUrl ?? ""),
             ),
           );
@@ -339,8 +320,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       runtimeInfo.platform === "win32" &&
       tty.stdoutIsPipe &&
       Option.isNone(resolvedFile) &&
-      Option.getOrElse(yield* Config.option(Config.string("MSYSTEM")), () => "") === "" &&
-      Option.getOrUndefined(yield* Config.option(Config.string("TERM_PROGRAM"))) !== "mintty";
+      Option.getOrElse(yield* Config.option(Config.String("MSYSTEM")), () => "") === "" &&
+      Option.getOrUndefined(yield* Config.option(Config.String("TERM_PROGRAM"))) !== "mintty";
     let sawNonAscii = false;
 
     // Open (create + truncate) the output file up front so an unwritable
@@ -418,27 +399,18 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       Effect.flatMap((dumped) =>
         runWithPoolerFallback({
           result: dumped,
-          connType,
+          connType: target.kind,
           host: conn.host,
           isLocal,
           projectHost: cliSettings.projectHost,
-          resolvePooler: () =>
-            resolver
-              .resolvePoolerFallback({
-                dbUrl: flags.dbUrl,
-                connType: "linked",
-                dnsResolver,
-                password: flags.password,
-                linkedProjectRef: flags.projectRef,
-              })
-              .pipe(Effect.orElseSucceed(() => Option.none())),
+          resolvePooler: () => orNoPoolerFallback(resolver.resolvePoolerFallback(connectionInput)),
           runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
           reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
         }),
       ),
       Effect.withSpan("db.dump.run"),
       Effect.catchIf(
-        (error): error is DockerRunError =>
+        (error) =>
           Predicate.isTagged(error, "DockerRunError") &&
           stackRuntime === "native" &&
           runtimeInfo.platform === "win32",
@@ -484,8 +456,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // command's own API calls, then flush telemetry. The cache layer no-ops
     // when the file exists / no token / non-200.
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      Effect.flatMap(Ref.get(linkedRefForCache), (ref) =>
+        ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
     Effect.ensuring(telemetryState.flush),

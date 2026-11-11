@@ -1,12 +1,13 @@
-import {
-  artifactServiceKinds,
-  postgresVersion,
-  resolveArtifact,
-} from "@supabase/stack/internal/artifacts";
+import { artifactServiceKinds, type ArtifactSelection } from "@supabase/stack/internal/artifacts";
+import { defaultArtifactSelection } from "@supabase/stack/defaults";
 import { Effect, Result } from "effect";
-import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
-import { envOverrideMajorVersion } from "../../command-internal/local-config-values.ts";
-import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
+import { isConfigValueFailure } from "../../command-internal/config-value-passthrough.ts";
+import {
+  describeConfigLoadFailure,
+  loadResolvedConfigContext,
+} from "../../command-internal/resolved-config-context.ts";
+import { stackArtifactSelection } from "../../command-internal/stack-artifact-selection.ts";
+import { readSelectionOrBundled } from "../../command-internal/stack-lock.ts";
 import type { ServiceVersionRow } from "../../shared/services/services.shared.ts";
 import type { RemoteServiceName } from "../../shared/services/services.shared.ts";
 
@@ -21,43 +22,46 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
   workdir: string,
   remote: Partial<Record<RemoteServiceName, string>> = {},
 ) {
-  const context = yield* loadLocalProjectContext(workdir, (message) => message).pipe(Effect.result);
+  const context = yield* loadResolvedConfigContext(workdir).pipe(Effect.result);
   let configError: string | undefined;
-  let major: number | undefined;
-  if (Result.isFailure(context)) configError = context.failure;
-  else {
-    const resolvedMajor = yield* Effect.try({
-      try: () => {
-        const value = envOverrideMajorVersion(
-          context.success.config.db.major_version,
-          context.success.projectEnvValues,
-        );
-        if (value !== 15 && value !== 17)
-          throw new Error(`unsupported PostgreSQL major version: ${value}`);
-        return value;
-      },
-      catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-    }).pipe(Effect.result);
-    if (Result.isFailure(resolvedMajor)) configError = resolvedMajor.failure;
-    else major = resolvedMajor.success;
+  let selection: ArtifactSelection = defaultArtifactSelection();
+  if (Result.isFailure(context)) {
+    if (isConfigValueFailure(context.failure)) return yield* context.failure;
+    configError = describeConfigLoadFailure(context.failure);
+  } else {
+    const { db, local } = context.success.config;
+    if (db.major_version !== 15 && db.major_version !== 17) {
+      configError = `unsupported PostgreSQL major version: ${db.major_version}`;
+    } else {
+      // A listing never resolves: it shows the locked pins, else the bundled ones.
+      const resolved = yield* readSelectionOrBundled({
+        projectRoot: workdir,
+        majorVersion: db.major_version,
+        orioledbVersion: db.orioledb_version,
+        services: local?.services,
+      }).pipe(
+        Effect.catchTag("LockResolutionError", (error) =>
+          Effect.sync(() => {
+            configError = error.message;
+          }).pipe(Effect.andThen(stackArtifactSelection(db))),
+        ),
+        Effect.mapError((error) => error.message),
+        Effect.result,
+      );
+      if (Result.isFailure(resolved)) configError = resolved.failure;
+      else selection = resolved.success;
+    }
   }
   yield* Effect.annotateCurrentSpan({ "config.load_failed": configError !== undefined });
-  return yield* Effect.forEach(artifactServiceKinds(), (service) =>
-    Effect.gen(function* () {
-      const artifact = yield* resolveArtifact({
-        service,
-        ...(service === "database" && major !== undefined
-          ? { version: postgresVersion(String(major)) }
-          : {}),
-      });
-      const name = artifact.image.split("@")[0]?.replace(/:[^/:]+$/, "") ?? artifact.image;
-      const remoteName = remoteNames[service];
-      return {
-        name,
-        // A slim revision suffix (`-rN`) repackages the same upstream release.
-        local: upstreamVersionFromTag(artifact.version),
-        remote: remoteName === undefined ? "" : (remote[remoteName] ?? ""),
-      } satisfies ServiceVersionRow;
-    }),
-  ).pipe(Effect.map((rows) => ({ rows, configError })));
+  const rows = artifactServiceKinds().map((service) => {
+    const pin = selection[service];
+    const name = pin.image.split("@")[0]?.replace(/:[^/:]+$/, "") ?? pin.image;
+    const remoteName = remoteNames[service];
+    return {
+      name,
+      local: pin.upstreamVersion,
+      remote: remoteName === undefined ? "" : (remote[remoteName] ?? ""),
+    } satisfies ServiceVersionRow;
+  });
+  return { rows, configError };
 });

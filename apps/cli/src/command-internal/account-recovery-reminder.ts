@@ -28,7 +28,6 @@ const message = (state: MockRecoveryState): string => {
 
 interface ReminderContext {
   readonly cleanShowHelp: boolean;
-  readonly delegatedToGo: boolean;
   readonly outputFormat: OutputFormat;
   readonly detectedAgent: boolean;
   readonly isValueTakingFlagToken: (token: string) => boolean;
@@ -40,13 +39,13 @@ export const accountRecoveryReminderHook = (
   info: ReminderContext,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const state = yield* Config.string("SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK").pipe(
+    const state = yield* Config.String("SUPABASE_ACCOUNT_RECOVERY_REMINDER_MOCK").pipe(
       Config.withDefault(""),
     );
     if (state !== "exhausted" && state !== "missing" && state !== "low") return;
-    if (info.cleanShowHelp || info.delegatedToGo || info.outputFormat !== "text") return;
-    const ci = yield* Config.option(Config.string("CI"));
-    const githubActions = yield* Config.option(Config.string("GITHUB_ACTIONS"));
+    if (info.cleanShowHelp || info.outputFormat !== "text") return;
+    const ci = yield* Config.option(Config.String("CI"));
+    const githubActions = yield* Config.option(Config.String("GITHUB_ACTIONS"));
     if (Option.isSome(ci) || Option.isSome(githubActions)) return;
     if (
       info.detectedAgent ||

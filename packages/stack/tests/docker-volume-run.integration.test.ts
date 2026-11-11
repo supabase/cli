@@ -1,8 +1,9 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, DateTime, Effect, FileSystem, Path } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { runDocker } from "./docker-fixture.ts";
+import { DateTime, Effect, FileSystem, Path } from "effect";
+import { SecureRandom } from "effect/crypto";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { runEngine } from "./docker-fixture.ts";
 import {
   encodeRunMarker,
   markerDirectory,
@@ -12,12 +13,12 @@ import {
 } from "./docker-volume-run.ts";
 
 const volumeExists = Effect.fn("DockerVolumeRunTest.volumeExists")((name: string) =>
-  runDocker(["volume", "inspect", name]).pipe(Effect.map((result) => result.code === 0)),
+  runEngine(["volume", "inspect", name]).pipe(Effect.map((result) => result.code === 0)),
 );
 
 const createVolume = Effect.fn("DockerVolumeRunTest.createVolume")(
   (name: string, labels: ReadonlyArray<string>) =>
-    runDocker(["volume", "create", ...labels.flatMap((label) => ["--label", label]), name]).pipe(
+    runEngine(["volume", "create", ...labels.flatMap((label) => ["--label", label]), name]).pipe(
       Effect.flatMap((result) =>
         result.code === 0
           ? Effect.void
@@ -27,7 +28,7 @@ const createVolume = Effect.fn("DockerVolumeRunTest.createVolume")(
 );
 
 const removeVolume = Effect.fn("DockerVolumeRunTest.removeVolume")((name: string) =>
-  runDocker(["volume", "rm", name]).pipe(
+  runEngine(["volume", "rm", name]).pipe(
     Effect.flatMap((result) =>
       result.code === 0 || /no such volume/iu.test(result.output)
         ? Effect.void
@@ -38,17 +39,17 @@ const removeVolume = Effect.fn("DockerVolumeRunTest.removeVolume")((name: string
 );
 
 const containerExists = Effect.fn("DockerVolumeRunTest.containerExists")((name: string) =>
-  runDocker(["inspect", name]).pipe(Effect.map((result) => result.code === 0)),
+  runEngine(["inspect", name]).pipe(Effect.map((result) => result.code === 0)),
 );
 
 const createContainer = Effect.fn("DockerVolumeRunTest.createContainer")(
   (name: string, labels: ReadonlyArray<string>) =>
-    runDocker([
+    runEngine([
       "create",
       "--name",
       name,
       ...labels.flatMap((label) => ["--label", label]),
-      "busybox:1.36",
+      "docker.io/library/busybox:1.36",
       "true",
     ]).pipe(
       Effect.flatMap((result) =>
@@ -60,7 +61,7 @@ const createContainer = Effect.fn("DockerVolumeRunTest.createContainer")(
 );
 
 const removeContainer = Effect.fn("DockerVolumeRunTest.removeContainer")((name: string) =>
-  runDocker(["rm", "--force", "--volumes", name]).pipe(
+  runEngine(["rm", "--force", "--volumes", name]).pipe(
     Effect.flatMap((result) =>
       result.code === 0 || /no such container/iu.test(result.output)
         ? Effect.void
@@ -74,8 +75,8 @@ describe("test-run Docker volume cleanup", { timeout: 120_000 }, () => {
   it.live("removes exactly the volumes labelled for this run", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const crypto = yield* Crypto.Crypto;
-        const suffix = (yield* crypto.randomUUIDv4).slice(0, 8);
+        const crypto = yield* SecureRandom.SecureRandom;
+        const suffix = (yield* crypto.uuidV4()).slice(0, 8);
         const runId = `run-${suffix}`;
         const otherRunId = `other-run-${suffix}`;
         const owned = `sb-test-run-owned-${suffix}`;
@@ -102,7 +103,7 @@ describe("test-run Docker volume cleanup", { timeout: 120_000 }, () => {
         expect(yield* volumeExists(foreign)).toBe(true);
         expect(yield* volumeExists(unlabelled)).toBe(true);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });
 
@@ -114,9 +115,9 @@ describe("dead test-run recovery", { timeout: 120_000 }, () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const suffix = (yield* crypto.randomUUIDv4).slice(0, 8);
+          const suffix = (yield* crypto.uuidV4()).slice(0, 8);
           const deadRunId = `recovery-dead-${suffix}`;
           const liveRunId = `recovery-live-${suffix}`;
           const deadVolume = `sb-recovery-dead-volume-${suffix}`;
@@ -197,6 +198,6 @@ describe("dead test-run recovery", { timeout: 120_000 }, () => {
           expect(yield* volumeExists(unlabelledVolume)).toBe(true);
           expect(yield* containerExists(unlabelledContainer)).toBe(true);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });

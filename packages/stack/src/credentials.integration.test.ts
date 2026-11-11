@@ -1,10 +1,11 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
-import { tmpdir } from "node:os";
 import { create, open } from "./effect.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 it.live("persists effective credentials across service creation, reopen, and restart", () =>
   Effect.scoped(
@@ -14,15 +15,15 @@ it.live("persists effective credentials across service creation, reopen, and res
       const options = {
         projectRoot: root,
         stateRoot: `${root}/state`,
-        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       } as const;
       const stack = yield* create(options);
       yield* Effect.addFinalizer(() => stack.destroy.pipe(Effect.orDie));
       const database = yield* stack.services.create({
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           jwtSecret: Redacted.make("credentials-jwt-override"),
           rootKey: Redacted.make("b".repeat(64)),
           jwtExpiry: 3600,
@@ -53,7 +54,7 @@ it.live("resolves composition credentials before creating services", () =>
       const stack = yield* create({
         projectRoot: root,
         stateRoot: `${root}/state`,
-        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       });
       yield* Effect.addFinalizer(() => stack.destroy.pipe(Effect.orDie));
@@ -61,13 +62,14 @@ it.live("resolves composition credentials before creating services", () =>
       const created = yield* stack.composition.supabase([
         {
           service: "auth",
+          pin: selection.auth,
           config: {},
           endpoints: { http: { port: "auto" } },
         },
         {
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             jwtSecret: Redacted.make("composition-jwt-override"),
             rootKey: Redacted.make("c".repeat(64)),
             jwtExpiry: 3600,

@@ -9,7 +9,7 @@ const E2E_TIMEOUT_MS = 30_000;
 describe("supabase db reset", () => {
   // Docker-free: the confirmation fires after config load and before any connection is dialed.
   it.live(
-    "declining the remote reset prompt prints only context canceled, no --debug hint",
+    "refuses a remote reset that cannot prompt, even with a piped answer, and points at --yes",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -21,14 +21,14 @@ describe("supabase db reset", () => {
           "[db]\nport = 54322\n",
         );
         const { exitCode, stderr } = yield* runSupabaseEffect(
-          ["db", "reset", "--db-url", "postgresql://postgres:postgres@127.0.0.1:9999/postgres"],
-          { cwd: workdir, stdin: "n\n" },
+          ["db", "reset", "--remote=postgresql://postgres:postgres@127.0.0.1:9999/postgres"],
+          { cwd: workdir, stdin: "y\n" },
         );
         expect(exitCode).toBe(1);
-        expect(stripAnsi(stderr)).toContain("[y/N]");
-        const lines = stripAnsi(stderr).trimEnd().split("\n");
-        expect(lines.at(-1)).toBe("context canceled");
-        expect(stderr).not.toContain("Try rerunning the command with --debug");
+        const text = stripAnsi(stderr);
+        expect(text).toContain("Confirmation required");
+        expect(text).toContain("--yes");
+        expect(text).not.toContain("Resetting remote database");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
   );

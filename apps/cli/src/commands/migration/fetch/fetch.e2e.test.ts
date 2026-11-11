@@ -27,7 +27,7 @@ describe("supabase migration fetch", () => {
           "select 1;\n",
         );
 
-        const { exitCode, stderr } = yield* runSupabaseEffect(["migration", "fetch", "--local"], {
+        const { exitCode, stderr } = yield* runSupabaseEffect(["migration", "fetch"], {
           cwd: workdir,
           stdin: "n\n",
         });

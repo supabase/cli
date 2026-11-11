@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option } from "effect";
 
 import {
@@ -30,6 +30,7 @@ import {
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -48,6 +49,7 @@ import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 
 import { dbAdvisorsRuntimeLayer } from "../advisors/advisors.layers.ts";
 import { dbLintRuntimeLayer } from "./lint.layers.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-lint-layers-");
 
@@ -78,15 +80,15 @@ function ambientStubs() {
       connect: () => Effect.die("db-connection not needed for layer-exposure test"),
     }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      resolveRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(CommandPlatformApiFactory, {
@@ -96,6 +98,7 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     // The runtime layer under test builds the real `commandSettingsLayer` against the
     // real filesystem — see `isolatedHomeLayer`'s docs.
     isolatedHomeLayer(tempRoot.current),
@@ -104,17 +107,19 @@ function ambientStubs() {
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/lint-layers-test" }),
     mockCommandCredentialsLayer,
     mockLinkedProjectCacheLayer,
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }
 
 describe("dbLintRuntimeLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {
@@ -126,7 +131,7 @@ describe("dbLintRuntimeLayer — IdentityStitch exposure", () => {
 });
 
 describe("dbAdvisorsRuntimeLayer — IdentityStitch exposure (regression guard)", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {

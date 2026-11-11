@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
 import {
   Cause,
@@ -9,37 +9,42 @@ import {
   Layer,
   Option,
   Redacted,
-  Schema,
   Scope,
   Stream,
 } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the test binds a dead owner's exact port.
 import * as Net from "node:net";
-import { tmpdir } from "node:os";
 import {
   create,
   discover,
   find,
+  findDeleted,
   open,
   type DatabaseInstance,
+  type ServiceCreationInput,
   type ServiceInstance,
+  type StackError,
 } from "./effect.ts";
 import { initialization, postgres } from "./Commands.ts";
 import { fileURLToPath } from "node:url";
+import { testEngine } from "../tests/test-engine.ts";
+import type { ContainerEngine } from "./runtime/Container.ts";
 import { launchHost } from "./HostProcess.ts";
 import * as PromiseApi from "./index.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
 import { assertOwnerExited, watchLeaseRelease } from "../tests/owner.ts";
 import { foreignRelease } from "../tests/release-owner-fixture.ts";
+import { engineStub } from "../tests/docker-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { database15, selection } from "../tests/pins.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
-// Below every OS ephemeral range, so another test's outbound socket cannot already hold it.
-const FIXED_API_PORT = 24_393;
-const databaseOwnerMarker = Schema.fromJsonString(
-  Schema.Struct({ stackId: Schema.String, instanceId: Schema.String }),
-);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
+// Below the stack's native and auto port ranges and every OS ephemeral range, so neither another
+// test's auto allocation nor an outbound socket can already hold it.
+const FIXED_API_PORT = 9_393;
 
 it.live("registers and discovers saved definitions without inventing live observations", () =>
   Effect.gen(function* () {
@@ -69,8 +74,8 @@ it.live("registers and discovers saved definitions without inventing live observ
 
     const database = stack.services.create({
       service: "database",
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make("test"),
         jwtSecret: Redacted.make("test"),
         jwtExpiry: 3600,
@@ -78,6 +83,7 @@ it.live("registers and discovers saved definitions without inventing live observ
     });
     const rest = stack.services.create({
       service: "rest",
+      pin: selection.rest,
       config: { databaseUrl: "postgres://external" },
     });
     expectTypeOf<Effect.Success<typeof database>>().toEqualTypeOf<DatabaseInstance>();
@@ -133,7 +139,11 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
     const stack = yield* create(options);
     yield* Effect.ensuring(
       Effect.gen(function* () {
-        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        const mail = yield* stack.services.create({
+          service: "mail",
+          pin: selection.mail,
+          config: {},
+        });
         yield* stack.stop;
 
         const offline = yield* open({ ...options, id: stack.id });
@@ -151,7 +161,7 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
 );
 
 it.live(
-  "stops the owner after destroy fails and retains saved data for retry",
+  "reports a failed destroy, exits the owner, and lets the next destroy reclaim the stack",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -167,24 +177,24 @@ it.live(
         yield* Effect.addFinalizer(() => stack.stop.pipe(Effect.ignore));
         const instance = yield* stack.services.create({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("destroy-test-password"),
             jwtSecret: Redacted.make("destroy-test-jwt-secret-at-least-thirty-two-characters"),
             jwtExpiry: 3600,
           },
         });
         const dataRoot = `${options.stateRoot}/${stack.id}/data/${instance.id}`;
-        const marker = `${dataRoot}/.supabase-database-owner.json`;
-        yield* fs.makeDirectory(dataRoot, { recursive: true });
-        const writeMarker = Schema.encodeEffect(databaseOwnerMarker);
-        yield* writeMarker({ stackId: "another-stack", instanceId: instance.id }).pipe(
-          Effect.flatMap((value) => fs.writeFileString(marker, value)),
-        );
+        // Ownership is by location: a root that is a symlink (not a real owned directory, perhaps
+        // tampered with) is refused rather than traversed or removed.
+        yield* fs.remove(dataRoot, { recursive: true, force: true });
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "destroy-failure-outside-" });
+        yield* fs.symlink(outside, dataRoot);
         const running = yield* discover(options);
         expect(running).toHaveLength(1);
         expect(running[0]?.host).toBeDefined();
 
+        const released = yield* watchLeaseRelease(options.stateRoot, stack.id);
         const destroyExit = yield* stack.destroy.pipe(Effect.exit);
         expect(Exit.isFailure(destroyExit)).toBe(true);
         if (Exit.isFailure(destroyExit)) {
@@ -196,19 +206,19 @@ it.live(
               {
                 id: instance.id,
                 succeeded: false,
-                error: expect.stringContaining("Database root belongs to another instance"),
+                error: expect.stringContaining("is a symlink"),
               },
             ],
           });
         }
-        expect(yield* fs.readFileString(marker)).toContain("another-stack");
+        expect(yield* fs.readLink(dataRoot).pipe(Effect.isSuccess)).toBe(true);
+        yield* released;
         const retained = yield* discover(options);
         expect(retained).toHaveLength(1);
         expect(retained[0]?.host).toBeUndefined();
+        yield* assertOwnerExited(running[0]?.host?.pid ?? 0);
 
-        yield* writeMarker({ stackId: stack.id, instanceId: instance.id }).pipe(
-          Effect.flatMap((value) => fs.writeFileString(marker, value)),
-        );
+        yield* fs.remove(dataRoot, { force: true });
         yield* stack.destroy;
         expect(yield* discover(options)).toHaveLength(0);
       }),
@@ -216,14 +226,65 @@ it.live(
   { timeout: 30_000 },
 );
 
-const resetDataStory = (runtime: "native" | "docker") =>
+it.live(
+  "stops a running database promptly while a client holds an idle TCP connection",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-stop-idle-tcp-" });
+        const options = {
+          projectRoot: root,
+          stateRoot: `${root}/state`,
+          cacheRoot: testArtifactCacheRoot,
+          runtime: "native",
+        } satisfies Parameters<typeof create>[0];
+        const stack = yield* create(options);
+        yield* Effect.addFinalizer(() => destroyTestStack(stack));
+        const database = yield* stack.services.create({
+          service: "database",
+          pin: selection.database,
+          config: {
+            databasePassword: Redacted.make("idle-tcp-password"),
+            jwtSecret: Redacted.make("idle-tcp-jwt-secret-at-least-thirty-two-characters"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        });
+        yield* database.start;
+        yield* database.ready;
+        const { databaseUrl } = yield* database.credentials({ from: "runtime" });
+        if (databaseUrl === undefined) return yield* Effect.die("database credentials missing");
+        const url = new URL(databaseUrl);
+        const client = yield* Effect.callback<Net.Socket, Error>((resume) => {
+          const connection = Net.createConnection({
+            host: url.hostname,
+            port: Number(url.port),
+          });
+          connection.once("connect", () => resume(Effect.succeed(connection)));
+          connection.once("error", (cause) => resume(Effect.fail(cause)));
+          return Effect.sync(() => connection.destroy());
+        });
+
+        // An idle client must not hold the stop open.
+        yield* stack.stop.pipe(Effect.timeout("5 seconds"));
+
+        client.destroy();
+        expect(yield* discover(options)).toHaveLength(1);
+        expect((yield* discover(options))[0]?.host).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(layer)),
+  { timeout: 60_000 },
+);
+
+const resetDataStory = (runtime: "native" | ContainerEngine) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-reset-data-${runtime}-` });
     const options = {
       projectRoot: root,
       stateRoot: `${root}/state`,
-      cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+      cacheRoot: testArtifactCacheRoot,
       runtime,
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
@@ -233,8 +294,8 @@ const resetDataStory = (runtime: "native" | "docker") =>
         Effect.gen(function* () {
           const target = yield* current.services.create({
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("reset-shared-password"),
               jwtSecret: Redacted.make("reset-shared-jwt-secret-long-enough-32chars"),
               jwtExpiry: 3600,
@@ -243,8 +304,8 @@ const resetDataStory = (runtime: "native" | "docker") =>
           });
           const sibling = yield* current.services.create({
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("reset-shared-password"),
               jwtSecret: Redacted.make("reset-shared-jwt-secret-long-enough-32chars"),
               jwtExpiry: 3600,
@@ -283,7 +344,11 @@ const resetDataStory = (runtime: "native" | "docker") =>
           if (runtime === "native") {
             const existingServices = yield* current.services.list;
             const initialized = yield* current.commands.run(
-              initialization.realtime({ databaseUrl: targetUrl }),
+              initialization.realtime({
+                pin: selection.realtime,
+                databaseId: target.id,
+                databaseUrl: targetUrl,
+              }),
             );
             expect(initialized.exitCode).toBe(0);
             expect((yield* current.services.list).map((service) => service.id)).toEqual(
@@ -299,7 +364,7 @@ const resetDataStory = (runtime: "native" | "docker") =>
             const stdout: Array<string> = [];
             const stderr: Array<string> = [];
             return client.commands
-              .run(postgres.psql({ major: 17 }), {
+              .run(postgres.psql({ pin: selection.database }), {
                 args: ["--dbname", url, "-Atc", sql],
                 stdout: (bytes) => Effect.sync(() => stdout.push(new TextDecoder().decode(bytes))),
                 stderr: (bytes) => Effect.sync(() => stderr.push(new TextDecoder().decode(bytes))),
@@ -397,7 +462,7 @@ it.live("resets native database data through the public RPC", () => resetDataSto
   timeout: 10 * 60_000,
 });
 
-it.live("resets Docker database data through the public RPC", () => resetDataStory("docker"), {
+it.live("resets container database data through the public RPC", () => resetDataStory(testEngine), {
   timeout: 15 * 60_000,
 });
 
@@ -414,7 +479,11 @@ it.live("stops an instance without starting an owner when none is live", () =>
     const stack = yield* create(options);
     yield* Effect.ensuring(
       Effect.gen(function* () {
-        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        const mail = yield* stack.services.create({
+          service: "mail",
+          pin: selection.mail,
+          config: {},
+        });
         yield* stack.stop;
         expect((yield* discover(options))[0]?.host).toBeUndefined();
 
@@ -439,8 +508,8 @@ it.live("rejects an owner of another release while stop and destroy still reach 
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     const startForeignOwner = launchHost(state, {
       ...options,
@@ -464,10 +533,167 @@ it.live("rejects an owner of another release while stop and destroy still reach 
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.live("treats a sweeper's hold as no owner and starts one once the sweep ends", () =>
+it.live("discovers only the stacks whose id starts with the given prefix", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweeping-" });
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-prefix-" });
+    const stateRoot = `${root}/state`;
+    const locations = { projectRoot: root, stateRoot, cacheRoot: `${root}/cache` } as const;
+    const first = yield* create({ ...locations, name: "first", runtime: "native" });
+    const second = yield* create({ ...locations, name: "second", runtime: "native" });
+    const prefix = first.id.slice(0, 12);
+    expect(second.id.startsWith(prefix), "the prefix selects one of two stacks").toBe(false);
+    yield* fs.makeDirectory(`${stateRoot}/${prefix}-broken`);
+    yield* fs.writeFileString(`${stateRoot}/${prefix}-broken/state.json`, "{broken");
+    yield* fs.makeDirectory(`${stateRoot}/other-broken`);
+    yield* fs.writeFileString(`${stateRoot}/other-broken/state.json`, "{broken");
+
+    const reported: Array<string> = [];
+    const selected = yield* discover({
+      stateRoot,
+      idPrefix: prefix,
+      onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+    });
+
+    expect(selected.map(({ definition }) => definition.id)).toEqual([first.id]);
+    expect(reported, "only a prefixed entry is reported as invalid").toEqual([`${prefix}-broken`]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "treats a sweeper's hold as no owner, refuses to stop, and starts one once the sweep ends",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweeping-" });
+      const options = {
+        projectRoot: root,
+        stateRoot: `${root}/state`,
+        cacheRoot: `${root}/cache`,
+        runtime: "native",
+      } satisfies Parameters<typeof create>[0];
+      const stack = yield* create(options);
+      const state = yield* StackNamespace.Service.pipe(
+        Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
+      );
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const sweep = yield* Scope.make();
+          const lease = yield* state.acquireLease(stack.id).pipe(Scope.provide(sweep));
+          yield* lease.publishHolder({
+            role: "sweeper",
+            pid: process.pid,
+            startedAt: "2026-01-01T00:00:00.000Z",
+          });
+          const refused = yield* Effect.flip(stack.stop);
+          expect(refused.message).toContain("holds the stack lease");
+          expect(yield* stack.composition.stop).toEqual([]);
+          expect((yield* discover(options))[0]?.host).toBeUndefined();
+
+          const starting = yield* stack.composition.start.pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* lease.retractHolder;
+          yield* Scope.close(sweep, Exit.void);
+          expect(yield* Fiber.join(starting)).toEqual([]);
+          expect((yield* discover(options))[0]?.host).toBeDefined();
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("reclaims a registered stack's leftovers when stopping without an owner", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ownerless-stop-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+      lifetime: "session",
+    } satisfies Parameters<typeof create>[0];
+    const identity = yield* resolveStackIdentity(options);
+    const id = yield* deriveStackId(identity);
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
+    );
+    yield* state.save({
+      id,
+      identity,
+      lifetime: "session",
+      runtime: "native",
+      instances: [
+        { id: "leftover", creation: { service: "mail", pin: selection.mail, config: {} } },
+      ],
+      composition: { members: [], dependencies: [] },
+    });
+    const leftover = `${options.stateRoot}/${id}/data/leftover`;
+    yield* fs.makeDirectory(leftover, { recursive: true });
+    yield* fs.writeFileString(`${leftover}/state`, "left behind");
+    const stack = yield* open({ ...options, id });
+
+    yield* stack.stop;
+
+    expect(yield* state.read(id)).toBeUndefined();
+    expect(yield* fs.exists(leftover)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+const deletedId = "d".repeat(64);
+const strandedId = "e".repeat(64);
+const foreignId = "f".repeat(64);
+
+/** A state root with one registered stack, and the containers each stub engine starts with. */
+const deletedStackRoot = Effect.fn("StackTest.deletedStackRoot")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs
+    .makeTempDirectoryScoped({ prefix: "stack-find-deleted-" })
+    .pipe(Effect.flatMap(fs.realPath));
+  const locations = { stateRoot: `${root}/state`, cacheRoot: `${root}/cache` };
+  const registered = yield* create({ ...locations, projectRoot: root, runtime: "native" });
+  const containers = [
+    {
+      id: "registered",
+      stackId: registered.id,
+      root: `${locations.stateRoot}/${registered.id}/data`,
+    },
+    { id: "deleted", stackId: deletedId, root: `${locations.stateRoot}/${deletedId}/data` },
+    { id: "elsewhere", stackId: deletedId, root: `${root}/other/${deletedId}/data` },
+    { id: "stranded", stackId: strandedId, root: `${locations.stateRoot}/${strandedId}/data` },
+    { id: "foreign", stackId: foreignId, root: `${root}/other/${foreignId}/data` },
+  ];
+  return { fs, root, locations, registered, containers };
+});
+
+it.live("finds a deleted stack only by the containers left in its own state root", () =>
+  Effect.gen(function* () {
+    const { fs, root, locations, registered, containers } = yield* deletedStackRoot();
+    yield* fs.makeDirectory(`${locations.stateRoot}/${strandedId}/data`, { recursive: true });
+    const engine = engineStub(containers, {
+      podman: "Cannot connect to Podman: connection refused",
+    });
+    const found = (id: string, stateRoot = locations.stateRoot) =>
+      findDeleted({ ...locations, stateRoot, id }).pipe(Effect.provide(engine.layer));
+
+    expect(Option.isNone(yield* found(registered.id)), "a registered stack").toBe(true);
+    expect(Option.isNone(yield* found(foreignId)), "another root's stack").toBe(true);
+    expect(Option.isSome(yield* found(strandedId)), "a directory without its registration").toBe(
+      true,
+    );
+    const file = `${root}/file`;
+    yield* fs.writeFileString(file, "");
+    expect((yield* Effect.flip(found(deletedId, file))).operation, "an unusable state root").toBe(
+      "find",
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("names the directory of a saved stack whose state cannot be decoded", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-unreadable-" });
     const options = {
       projectRoot: root,
       stateRoot: `${root}/state`,
@@ -475,32 +701,124 @@ it.live("treats a sweeper's hold as no owner and starts one once the sweep ends"
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const statePath = `${options.stateRoot}/${stack.id}/state.json`;
+    const saved = yield* fs.readFileString(statePath);
+    yield* fs.writeFileString(
+      statePath,
+      saved.replace('"instances":[]', '"instances":[{"id":"logs","service":"vector"}]'),
     );
-    yield* Effect.ensuring(
-      Effect.gen(function* () {
-        const sweep = yield* Scope.make();
-        expect(yield* state.lease(stack.id).pipe(Scope.provide(sweep))).toBe(true);
-        yield* state.publishHolder(stack.id, {
-          role: "sweeper",
-          pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
-        });
-        yield* stack.stop;
-        expect(yield* stack.composition.stop).toEqual([]);
-        expect((yield* discover(options))[0]?.host).toBeUndefined();
 
-        const starting = yield* stack.composition.start.pipe(
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* state.retractHolder(stack.id);
-        yield* Scope.close(sweep, Exit.void);
-        expect(yield* Fiber.join(starting)).toEqual([]);
-        expect((yield* discover(options))[0]?.host).toBeDefined();
-      }),
-      destroyTestStack(stack),
+    const failure = yield* find({ stateRoot: options.stateRoot, projectRoot: root }).pipe(
+      Effect.flip,
     );
+
+    expect(failure.operation).toBe("find");
+    expect(failure.message).toContain(`Stack ${stack.id} could not be read`);
+    expect(failure.message).toContain(`Remove its directory ${options.stateRoot}/${stack.id}`);
+    expect(yield* fs.exists(statePath)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("removes nothing for a stack whose registration is unreadable", () =>
+  Effect.gen(function* () {
+    const { fs, locations, containers } = yield* deletedStackRoot();
+    yield* fs.makeDirectory(`${locations.stateRoot}/${deletedId}`);
+    yield* fs.writeFileString(`${locations.stateRoot}/${deletedId}/state.json`, "{broken");
+    const engine = engineStub(containers);
+
+    const failure = yield* findDeleted({ ...locations, id: deletedId }).pipe(
+      Effect.provide(engine.layer),
+      Effect.flip,
+    );
+
+    expect(failure.operation).toBe("find");
+    expect(engine.remaining("docker")).toEqual(containers);
+    expect(engine.remaining("podman")).toEqual(containers);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("reports an engine that cannot list or remove a deleted stack's containers", () =>
+  Effect.gen(function* () {
+    const { locations, containers } = yield* deletedStackRoot();
+    const destroyOn = (engine: ReturnType<typeof engineStub>) =>
+      findDeleted({ ...locations, id: deletedId }).pipe(
+        Effect.provide(engine.layer),
+        Effect.flatMap((deleted) => Option.getOrThrow(deleted).destroy),
+        Effect.flip,
+      );
+    const denied = { docker: "permission denied while trying to connect" };
+
+    const unlisted = engineStub(containers, denied);
+    expect(
+      (yield* destroyOn(unlisted)).message,
+      "a failing engine is reported after the other is cleaned",
+    ).toMatch(/^Removed the Podman containers .* Unable to list Docker containers/);
+    expect(unlisted.remaining("podman").map(({ id }) => id)).not.toContain("deleted");
+    const failure = yield* findDeleted({ ...locations, id: deletedId }).pipe(
+      Effect.provide(engineStub([], denied).layer),
+      Effect.flip,
+    );
+    expect(failure.message, "with no match, a refusing engine is reported").toContain(
+      "Unable to list Docker containers",
+    );
+    const stuck = engineStub(containers, { "podman rm": "container is in use" });
+    expect((yield* destroyOn(stuck)).message, "a container that cannot be removed").toContain(
+      "container is in use",
+    );
+    expect(stuck.remaining("podman").map(({ id }) => id)).toContain("deleted");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("removes a deleted stack's containers from both engines, not another root's", () =>
+  Effect.gen(function* () {
+    const { locations, containers } = yield* deletedStackRoot();
+    const engine = engineStub(containers);
+    const deleted = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(engine.layer)),
+    );
+
+    yield* deleted.destroy;
+    const kept = containers.filter(({ id }) => id !== "deleted");
+    expect(engine.remaining("docker")).toEqual(kept);
+    expect(engine.remaining("podman")).toEqual(kept);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("leaves a deleted stack's containers to a registration that returns during destroy", () =>
+  Effect.gen(function* () {
+    const { fs, locations, registered, containers } = yield* deletedStackRoot();
+    const statePath = `${locations.stateRoot}/${registered.id}/state.json`;
+    yield* fs.rename(statePath, `${statePath}.aside`);
+    const reregister = yield* Effect.cached(
+      fs.rename(`${statePath}.aside`, statePath).pipe(Effect.orDie),
+    );
+    const racing = engineStub(containers, {}, (command) =>
+      command[0] === "docker" && command.includes("--quiet") ? reregister : Effect.void,
+    );
+    const unregistered = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: registered.id }).pipe(Effect.provide(racing.layer)),
+    );
+
+    expect((yield* Effect.flip(unregistered.destroy)).message).toContain("was registered again");
+    expect(racing.remaining("podman"), "podman is left to the registration").toEqual(containers);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("leaves a deleted stack's containers alone while another process holds its lease", () =>
+  Effect.gen(function* () {
+    const { locations, containers } = yield* deletedStackRoot();
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: locations.stateRoot })),
+    );
+    yield* state.acquireLease(deletedId);
+    const engine = engineStub(containers);
+    const deleted = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(engine.layer)),
+    );
+
+    expect((yield* Effect.flip(deleted.destroy)).message).toContain("holds this stack's lease");
+    expect(engine.remaining("docker")).toEqual(containers);
+    expect(engine.remaining("podman")).toEqual(containers);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
@@ -515,14 +833,14 @@ it.live("interrupts a call waiting for an owner while a sweeper holds the stack"
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     yield* Effect.ensuring(
       Effect.gen(function* () {
         const sweep = yield* Scope.make();
-        expect(yield* state.lease(stack.id).pipe(Scope.provide(sweep))).toBe(true);
-        yield* state.publishHolder(stack.id, {
+        const lease = yield* state.acquireLease(stack.id).pipe(Scope.provide(sweep));
+        yield* lease.publishHolder({
           role: "sweeper",
           pid: process.pid,
           startedAt: "2026-01-01T00:00:00.000Z",
@@ -531,7 +849,7 @@ it.live("interrupts a call waiting for an owner while a sweeper holds the stack"
         const waited = yield* stack.composition.start.pipe(Effect.timeoutOption("200 millis"));
 
         expect(Option.isNone(waited), "the wait for the sweeper ends at the timeout").toBe(true);
-        yield* state.retractHolder(stack.id);
+        yield* lease.retractHolder;
         yield* Scope.close(sweep, Exit.void);
         expect(yield* stack.composition.start, "the handle still launches afterwards").toEqual([]);
       }),
@@ -551,7 +869,7 @@ it.live("reports a stopped owner as unavailable to attach-only calls", () =>
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    const mail = yield* stack.services.create({ service: "mail", pin: selection.mail, config: {} });
     yield* stack.stop;
 
     const unavailable = yield* Effect.flip(mail.status);
@@ -598,10 +916,10 @@ it.live("sends no call to a process that took a dead owner's port", () =>
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    const mail = yield* stack.services.create({ service: "mail", pin: selection.mail, config: {} });
     yield* mail.status;
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     const holder = yield* state.readHolder(stack.id);
     if (holder?.role !== "owner") return yield* Effect.die("Expected a live owner record");
@@ -629,10 +947,10 @@ it.live("sends no call to a process that took the port of a replaced owner", () 
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    const mail = yield* stack.services.create({ service: "mail", pin: selection.mail, config: {} });
     yield* mail.status;
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     const replaced = yield* state.readHolder(stack.id);
     if (replaced?.role !== "owner") return yield* Effect.die("Expected a live owner record");
@@ -660,7 +978,7 @@ it.live(
       const options = {
         projectRoot: root,
         stateRoot: `${root}/state`,
-        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       } satisfies Parameters<typeof create>[0];
       const handleScope = yield* Scope.make();
@@ -674,7 +992,7 @@ it.live(
         Effect.gen(function* () {
           yield* mail.status;
           yield* mail.followStatus.pipe(Stream.take(1), Stream.runDrain);
-          const version = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+          const version = yield* stack.commands.run(postgres.psql({ pin: selection.database }), {
             args: ["--version"],
             stdout: () => Effect.void,
             stderr: () => Effect.void,
@@ -683,7 +1001,11 @@ it.live(
         });
       yield* Effect.ensuring(
         Effect.gen(function* () {
-          const mail = yield* stack.services.create({ service: "mail", config: {} });
+          const mail = yield* stack.services.create({
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+          });
           yield* useHandle(mail);
           const settled = handleFinalizers();
 
@@ -716,8 +1038,8 @@ it.live("confirms owner exit after shutdown even while a stray handle keeps its 
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     const owner = yield* launchHost(state, {
       ...options,
@@ -745,17 +1067,18 @@ it.live("replaces a dead session stack that holds the requested identity", () =>
     } satisfies Parameters<typeof create>[0];
     const identity = yield* resolveStackIdentity(options);
     const id = yield* deriveStackId(identity);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     yield* state.save({
       id,
       identity,
       lifetime: "session",
       runtime: "native",
-      instances: [{ id: "abandoned", creation: { service: "mail", config: {} } }],
+      instances: [
+        { id: "abandoned", creation: { service: "mail", pin: selection.mail, config: {} } },
+      ],
       composition: { members: [], dependencies: [] },
-      ports: [],
     });
 
     yield* Effect.scoped(
@@ -778,19 +1101,23 @@ it.live(
       const options = {
         projectRoot: root,
         stateRoot: `${root}/state`,
-        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       } satisfies Parameters<typeof create>[0];
       const stack = yield* create(options);
       const version = (stack: Effect.Success<ReturnType<typeof open>>) =>
-        stack.commands.run(postgres.psql({ major: 17 }), {
+        stack.commands.run(postgres.psql({ pin: selection.database }), {
           args: ["--version"],
           stdout: () => Effect.void,
           stderr: () => Effect.void,
         });
       yield* Effect.ensuring(
         Effect.gen(function* () {
-          const mail = yield* stack.services.create({ service: "mail", config: {} });
+          const mail = yield* stack.services.create({
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+          });
           expect((yield* version(stack)).exitCode).toBe(0);
           const first = (yield* discover(options))[0]?.host;
 
@@ -808,6 +1135,38 @@ it.live(
           yield* other.stop;
           expect(yield* other.composition.start).toEqual([]);
           expect((yield* mail.status).lifecycle, "a call follows the new owner").toBe("stopped");
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  { timeout: 120_000 },
+);
+
+it.live(
+  "keeps the saved pin on a configuration-only restart that starts a stopped owner",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-restart-pin-" });
+      const options = {
+        projectRoot: root,
+        stateRoot: `${root}/state`,
+        cacheRoot: testArtifactCacheRoot,
+        runtime: "native",
+      } satisfies Parameters<typeof create>[0];
+      const stack = yield* create(options);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const savedPin = { ...selection.mail, upstreamImage: "axllent/mailpit:saved-pin" };
+          const mail = yield* stack.services.create({ service: "mail", pin: savedPin, config: {} });
+          yield* stack.stop;
+          expect(Option.getOrUndefined(yield* find(options))?.host).toBeUndefined();
+
+          yield* mail.restart({ config: {} });
+
+          const restarted = yield* mail.status;
+          expect(restarted.config.pin).toEqual(savedPin);
+          expect(restarted.lifecycle).toBe("running");
         }),
         destroyTestStack(stack),
       );
@@ -861,8 +1220,8 @@ it.live("plans requested creations against the saved composition and honours eag
       Effect.gen(function* () {
         const database = {
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("plan-database-password"),
             jwtSecret: Redacted.make("plan-database-jwt-secret-at-least-32-chars"),
             jwtExpiry: 3600,
@@ -871,11 +1230,13 @@ it.live("plans requested creations against the saved composition and honours eag
         } as const;
         const rest = {
           service: "rest",
+          pin: selection.rest,
           config: { maxRows: 100 },
           endpoints: { http: { port: FIXED_API_PORT } },
         } as const;
         const auth = {
           service: "auth",
+          pin: selection.auth,
           config: {},
           endpoints: { http: { port: "auto" } },
         } as const;
@@ -894,7 +1255,7 @@ it.live("plans requested creations against the saved composition and honours eag
             database,
             { ...rest, config: { maxRows: 500 } },
             auth,
-            { service: "mail", config: {} },
+            { service: "mail", pin: selection.mail, config: {} },
           ]),
         ).toEqual([
           { id: databaseId, service: "database", member: true, change: "unchanged" },
@@ -907,6 +1268,29 @@ it.live("plans requested creations against the saved composition and honours eag
           },
           { id: authId, service: "auth", member: true, change: "unchanged" },
         ]);
+        // Any pin field counts; only a database release-line change is incompatible.
+        const sameLineDatabasePin = {
+          ...selection.database,
+          revision: selection.database.revision + 1,
+        };
+        const upstreamImageOnlyPin = { ...selection.auth, upstreamImage: "supabase/gotrue:other" };
+        expect(
+          yield* stack.composition.plan([
+            { ...database, pin: sameLineDatabasePin },
+            { ...rest, pin: { ...selection.rest, image: `${selection.rest.image}-other` } },
+            { ...auth, pin: upstreamImageOnlyPin },
+          ]),
+        ).toEqual([
+          {
+            id: databaseId,
+            service: "database",
+            member: true,
+            change: "changed",
+            paths: ["pin"],
+          },
+          { id: restId, service: "rest", member: true, change: "changed", paths: ["pin"] },
+          { id: authId, service: "auth", member: true, change: "changed", paths: ["pin"] },
+        ]);
         const client = yield* Effect.promise(() =>
           PromiseApi.open({ id: stack.id, stateRoot: `${root}/state`, cacheRoot: `${root}/cache` }),
         );
@@ -918,10 +1302,28 @@ it.live("plans requested creations against the saved composition and honours eag
         expect(promisePlan).toEqual([
           { id: restId, service: "rest", member: true, change: "unchanged" },
         ]);
+        if (databaseId === undefined) return yield* Effect.die("Composition is missing a database");
         expect(
           yield* stack.composition.plan([
-            { ...database, config: { ...database.config, version: "15" } },
-            { ...rest, endpoints: { http: { port: 54_999 } } },
+            { ...database, pin: database15 },
+            { ...rest, endpoints: { http: { port: FIXED_API_PORT + 1 } } },
+          ]),
+        ).toEqual([
+          { id: databaseId, service: "database", member: true, change: "changed", paths: ["pin"] },
+          {
+            id: restId,
+            service: "rest",
+            member: true,
+            change: "incompatible",
+            paths: ["endpoints.http.port"],
+            endpointsOnly: true,
+          },
+        ]);
+        yield* markDatabaseInitialized(`${root}/state`, stack.id, databaseId);
+        expect(
+          yield* stack.composition.plan([
+            { ...database, pin: database15 },
+            { ...rest, endpoints: { http: { port: FIXED_API_PORT + 1 } } },
           ]),
         ).toEqual([
           {
@@ -929,7 +1331,8 @@ it.live("plans requested creations against the saved composition and honours eag
             service: "database",
             member: true,
             change: "incompatible",
-            paths: ["config.version"],
+            paths: ["pin"],
+            endpointsOnly: false,
           },
           {
             id: restId,
@@ -937,6 +1340,7 @@ it.live("plans requested creations against the saved composition and honours eag
             member: true,
             change: "incompatible",
             paths: ["endpoints.http.port"],
+            endpointsOnly: true,
           },
         ]);
 
@@ -968,21 +1372,27 @@ it.live("plans a Studio public API URL the project sets but not the one the stac
       Effect.gen(function* () {
         const studio = {
           service: "studio",
+          pin: selection.studio,
           config: {},
           endpoints: { http: { port: "auto" } },
         } as const;
         const members = yield* stack.composition.supabase([
           {
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("plan-database-password"),
               jwtSecret: Redacted.make("plan-database-jwt-secret-at-least-32-chars"),
               jwtExpiry: 3600,
             },
             endpoints: { sql: { port: "auto" } },
           },
-          { service: "rest", config: {}, endpoints: { http: { port: FIXED_API_PORT } } },
+          {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          },
           studio,
         ]);
         const studioId = members.find(({ service }) => service === "studio")?.id;
@@ -1023,11 +1433,13 @@ it.live("plans a project's own URL for an input whose supplying member is absent
         const moved = "postgresql://postgres@moved.example.test:5432/postgres";
         const rest = {
           service: "rest",
+          pin: selection.rest,
           config: { databaseUrl: external },
           endpoints: { http: { port: "auto" } },
         } as const;
         const functions = {
           service: "functions",
+          pin: selection.functions,
           config: { functionsRoot: `${root}/functions`, databaseUrl: external },
           endpoints: { http: { port: "auto" } },
         } as const;
@@ -1064,4 +1476,717 @@ it.live("plans a project's own URL for an input whose supplying member is absent
       destroyTestStack(stack),
     );
   }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+const replanDatabase = (tag: string) =>
+  ({
+    service: "database",
+    pin: selection.database,
+    config: {
+      databasePassword: Redacted.make(`${tag}-password`),
+      jwtSecret: Redacted.make(`${tag}-jwt-secret-at-least-32-characters-long`),
+      jwtExpiry: 3600,
+    },
+    endpoints: { sql: { port: "auto" } },
+  }) as const;
+
+/** Writes the readiness marker a completed database bootstrap leaves, which marks its data initialized. */
+const markDatabaseInitialized = (stateRoot: string, stackId: string, databaseId: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const instanceRoot = `${stateRoot}/${stackId}/data/${databaseId}`;
+    yield* fs.makeDirectory(instanceRoot, { recursive: true });
+    yield* fs.writeFileString(
+      `${instanceRoot}/.supabase-database-ready.json`,
+      '{"runtime":"native","profile":"supabase"}',
+    );
+  });
+
+const restPort = (status: { readonly endpoints: ReadonlyArray<{ name: string; port: number }> }) =>
+  status.endpoints.find(({ name }) => name === "http")?.port;
+
+/** The port the machine-wide registry holds for one of the stack's endpoint keys, if any. */
+const reservedPort = (stateRoot: string, stackId: string, key: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const reservations = yield* PortReservations.Service;
+    return yield* reservations.find(yield* fs.realPath(stateRoot), stackId, key);
+  }).pipe(
+    Effect.provide(PortReservations.layer.pipe(Layer.provide(NodeServices.layer))),
+    Effect.orDie,
+  );
+
+/** Stops the owner, then opens a fresh one that re-plans `requestedCreations` against the saved state. */
+const restartWithReplan = (
+  stack: { readonly id: string; readonly stop: Effect.Effect<void, StackError> },
+  stateRoot: string,
+  cacheRoot: string,
+  requestedCreations: ReadonlyArray<ServiceCreationInput>,
+) =>
+  stack.stop.pipe(
+    Effect.andThen(
+      open({ id: stack.id, stateRoot, cacheRoot, startOwner: true, requestedCreations }),
+    ),
+  );
+
+it.live(
+  "re-plans a stopped stack's fixed endpoint to automatic, keeping data and other saved ports",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-auto-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-auto");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+          const sqlPortBefore = (yield* (yield* stack.services.get(databaseId))
+            .status).endpoints.find(({ name }) => name === "sql")?.port;
+
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            database,
+            requestedAuto,
+          ]);
+          const changes = yield* reopened.startupEndpointChanges;
+          expect(changes).toHaveLength(1);
+          const change = changes[0];
+          expect(change?.service).toBe("rest");
+          expect(change?.endpoint).toBe("http");
+          expect(change?.from).toBe(FIXED_API_PORT);
+          // The fixed port is outside the automatic range, so the claim is a different number
+          // and the live bind agrees with it, checked below.
+          expect(change?.to).toEqual(expect.any(Number));
+          expect(change?.to).not.toBe(FIXED_API_PORT);
+
+          expect(yield* reopened.composition.plan([database, requestedAuto])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+
+          yield* reopened.composition.supabase([database, requestedAuto], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+          const restStatus = yield* (yield* reopened.services.get(restId)).status;
+          expect(restPort(restStatus)).toBe(change?.to);
+          const sqlPortAfter = (yield* (yield* reopened.services.get(databaseId))
+            .status).endpoints.find(({ name }) => name === "sql")?.port;
+          expect(sqlPortAfter).toBe(sqlPortBefore);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "re-plans a stopped stack's automatic endpoint to a fixed port, and a fixed port to a different one",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-fixed-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-fixed");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          const requestedFixed = {
+            ...rest,
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const toFixed = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            database,
+            requestedFixed,
+          ]);
+          expect(yield* toFixed.startupEndpointChanges).toEqual([
+            { service: "rest", endpoint: "http", from: expect.any(Number), to: FIXED_API_PORT },
+          ]);
+          expect(yield* toFixed.composition.plan([database, requestedFixed])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+
+          const requestedOtherFixed = {
+            ...rest,
+            endpoints: { http: { port: FIXED_API_PORT + 1 } },
+          } as const;
+          const toOtherFixed = yield* restartWithReplan(toFixed, stateRoot, cacheRoot, [
+            database,
+            requestedOtherFixed,
+          ]);
+          expect(yield* toOtherFixed.startupEndpointChanges).toEqual([
+            { service: "rest", endpoint: "http", from: FIXED_API_PORT, to: FIXED_API_PORT + 1 },
+          ]);
+          expect(yield* toOtherFixed.composition.plan([database, requestedOtherFixed])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+/** Binds an ephemeral port picked by the OS, so the conflict never collides with another test. */
+const holdPort = Effect.acquireRelease(
+  Effect.callback<Net.Server, Error>((resume) => {
+    const server = Net.createServer();
+    server.once("error", (cause) => resume(Effect.fail(cause)));
+    server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+  }),
+  (server) =>
+    Effect.callback<void>((resume) => {
+      if (!server.listening) return resume(Effect.void);
+      server.close(() => resume(Effect.void));
+    }),
+);
+
+it.live(
+  "fails a start whose requested fixed port is taken, keeping the requested intent saved",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-conflict-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-conflict");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+          yield* stack.stop;
+          expect(
+            yield* reservedPort(stateRoot, stack.id, "api"),
+            "the stopped stack keeps its automatic port",
+          ).toEqual(expect.any(Number));
+
+          const holder = yield* holdPort;
+          const address = holder.address();
+          const conflictingPort =
+            typeof address === "object" && address !== null ? address.port : 0;
+          expect(conflictingPort).toBeGreaterThan(0);
+
+          const requestedConflicting = {
+            ...rest,
+            endpoints: { http: { port: conflictingPort } },
+          } as const;
+          const failure = yield* open({
+            id: stack.id,
+            stateRoot,
+            cacheRoot,
+            startOwner: true,
+            requestedCreations: [database, requestedConflicting],
+          }).pipe(Effect.flip);
+          expect(failure.message).toMatch(new RegExp(`\\b${conflictingPort}\\b.*\\bin use\\b`));
+          expect(failure.conflict).toEqual({
+            port: conflictingPort,
+            endpoint: "api",
+            holder: "foreign",
+          });
+          expect(holder.listening).toBe(true);
+
+          expect(
+            yield* reservedPort(stateRoot, stack.id, "api"),
+            "the old automatic port is released",
+          ).toBeUndefined();
+          const reopened = yield* open({ id: stack.id, stateRoot, cacheRoot });
+          expect(yield* reopened.composition.plan([database, requestedConflicting])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+
+          // Freeing the port lets the next start bind the saved intent.
+          yield* Effect.callback<void>((resume) => {
+            holder.close(() => resume(Effect.void));
+          });
+          const restarted = yield* restartWithReplan(reopened, stateRoot, cacheRoot, [
+            database,
+            requestedConflicting,
+          ]);
+          expect(yield* restarted.startupEndpointChanges).toEqual([]);
+          yield* restarted.composition.supabase([database, requestedConflicting], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+          const restStatus = yield* (yield* restarted.services.get(restId)).status;
+          expect(restPort(restStatus)).toBe(conflictingPort);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "fails a start that re-plans two endpoints onto the same port, keeping the intents saved",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-collide-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-collide");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          yield* stack.composition.supabase([database, rest], { eager: true });
+          yield* stack.stop;
+
+          const collidingPort = FIXED_API_PORT + 11;
+          const requestedDatabase = {
+            ...database,
+            endpoints: { sql: { port: collidingPort } },
+          } as const;
+          const requestedRest = { ...rest, endpoints: { http: { port: collidingPort } } } as const;
+          const failure = yield* open({
+            id: stack.id,
+            stateRoot,
+            cacheRoot,
+            startOwner: true,
+            requestedCreations: [requestedDatabase, requestedRest],
+          }).pipe(Effect.flip);
+          expect(failure.message).toContain("claimed by another listener of this stack");
+
+          const reopened = yield* open({ id: stack.id, stateRoot, cacheRoot });
+          expect(
+            (yield* reopened.composition.plan([requestedDatabase, requestedRest])).map(
+              ({ change }) => change,
+            ),
+          ).toEqual(["unchanged", "unchanged"]);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "leaves a changed Postgres major version incompatible on initialized data without re-planning any endpoint",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-version-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-version");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+          yield* markDatabaseInitialized(stateRoot, stack.id, databaseId);
+
+          const olderVersion = { ...database, pin: database15 };
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            olderVersion,
+            requestedAuto,
+          ]);
+          expect(yield* reopened.startupEndpointChanges).toEqual([]);
+          expect(yield* reopened.composition.plan([olderVersion, requestedAuto])).toEqual([
+            {
+              id: databaseId,
+              service: "database",
+              member: true,
+              change: "incompatible",
+              paths: ["pin"],
+              endpointsOnly: false,
+            },
+            {
+              id: restId,
+              service: "rest",
+              member: true,
+              change: "incompatible",
+              paths: ["endpoints.http.port"],
+              endpointsOnly: true,
+            },
+          ]);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "plans a changed Postgres major version as a restart while the database data is uninitialized",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-uninit-version-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-uninit-version");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          const olderVersion = { ...database, pin: database15 };
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            olderVersion,
+            requestedAuto,
+          ]);
+          const changes = yield* reopened.startupEndpointChanges;
+          expect(
+            changes.map(({ service, endpoint, from }) => ({ service, endpoint, from })),
+          ).toEqual([{ service: "rest", endpoint: "http", from: FIXED_API_PORT }]);
+          expect(yield* reopened.composition.plan([olderVersion, requestedAuto])).toEqual([
+            {
+              id: databaseId,
+              service: "database",
+              member: true,
+              change: "changed",
+              paths: ["pin"],
+            },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "does not let an excluded sibling's stale fixed port mask a shared endpoint moving to automatic",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-excluded-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-excluded");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const auth = {
+            service: "auth",
+            pin: selection.auth,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest, auth], {
+            eager: true,
+          });
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (restId === undefined) return yield* Effect.die("Composition is missing REST");
+
+          // The config now omits [api] port and excludes auth, so only REST is requested.
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            database,
+            requestedAuto,
+          ]);
+          const changes = yield* reopened.startupEndpointChanges;
+          // The claim is a number outside the fixed port and the live bind agrees with it, below.
+          expect(changes).toEqual([
+            { service: "rest", endpoint: "http", from: FIXED_API_PORT, to: expect.any(Number) },
+          ]);
+          expect(changes[0]?.to).not.toBe(FIXED_API_PORT);
+
+          const databaseId = (yield* reopened.services.list).find(
+            ({ service }) => service === "database",
+          )?.id;
+          if (databaseId === undefined) return yield* Effect.die("Composition is missing database");
+          yield* reopened.composition.supabase([database, requestedAuto], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+          const restStatus = yield* (yield* reopened.services.get(restId)).status;
+          expect(restPort(restStatus)).toBe(changes[0]?.to);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "reuses an excluded service's stopped instance once its pinned shared port is re-planned",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-readd-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-readd");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const auth = {
+            service: "auth",
+            pin: selection.auth,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest, auth], {
+            eager: true,
+          });
+          const idOf = (service: string) =>
+            members.find((member) => member.service === service)?.id;
+          const databaseId = idOf("database");
+          const restId = idOf("rest");
+          const authId = idOf("auth");
+          if (databaseId === undefined || restId === undefined || authId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          // Auth is excluded while the shared port stays fixed, leaving its stopped instance saved.
+          const excluded = yield* restartWithReplan(stack, stateRoot, cacheRoot, [database, rest]);
+          yield* excluded.composition.supabase([database, rest], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+
+          // The config drops the fixed port while auth is still excluded.
+          const requestedRest = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const requestedAuth = { ...auth, endpoints: { http: { port: "auto" } } } as const;
+          const moved = yield* restartWithReplan(excluded, stateRoot, cacheRoot, [
+            database,
+            requestedRest,
+          ]);
+          yield* moved.composition.supabase([database, requestedRest], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+
+          // Auth is requested again: its stopped instance now agrees with the shared port.
+          const readded = yield* restartWithReplan(moved, stateRoot, cacheRoot, [
+            database,
+            requestedRest,
+            requestedAuth,
+          ]);
+          expect(
+            yield* readded.composition.plan([database, requestedRest, requestedAuth], {
+              requestKind: "complete",
+            }),
+          ).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+            { id: authId, service: "auth", member: false, change: "unchanged" },
+          ]);
+          yield* readded.composition.supabase([database, requestedRest, requestedAuth], {
+            reuseIds: [databaseId, restId, authId],
+            eager: true,
+          });
+
+          const instances = yield* readded.services.list;
+          expect(instances.filter(({ service }) => service === "auth").map(({ id }) => id)).toEqual(
+            [authId],
+          );
+          const restPortNow = restPort(yield* (yield* readded.services.get(restId)).status);
+          expect(restPortNow).toEqual(expect.any(Number));
+          expect(restPortNow).not.toBe(FIXED_API_PORT);
+          expect(restPort(yield* (yield* readded.services.get(authId)).status)).toBe(restPortNow);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "releases the shared API listener's automatic claim when a different sharing service takes a fixed port",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-swapped-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-swapped");
+          const auth = {
+            service: "auth",
+            pin: selection.auth,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          } as const;
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, auth], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          if (databaseId === undefined) return yield* Effect.die("Composition is missing a member");
+          expect(yield* reservedPort(stateRoot, stack.id, "api")).toEqual(expect.any(Number));
+
+          // The config now excludes auth and fixes the API port for REST, a kind the saved
+          // composition never held.
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [database, rest]);
+          yield* reopened.composition.supabase([database, rest], {
+            reuseIds: [databaseId],
+            eager: true,
+          });
+
+          const restInstance = (yield* reopened.services.list).find(
+            ({ service }) => service === "rest",
+          );
+          if (restInstance === undefined) return yield* Effect.die("REST was not created");
+          expect(restPort(yield* restInstance.status)).toBe(FIXED_API_PORT);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("attaches to a live owner without re-planning or leaving a startup payload behind", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-attach-" });
+    const stateRoot = `${root}/state`;
+    const cacheRoot = `${root}/cache`;
+    const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        const database = replanDatabase("replan-attach");
+        const rest = {
+          service: "rest",
+          pin: selection.rest,
+          config: {},
+          endpoints: { http: { port: FIXED_API_PORT } },
+        } as const;
+        yield* stack.composition.supabase([database, rest], { eager: true });
+
+        const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+        const attached = yield* open({
+          id: stack.id,
+          stateRoot,
+          cacheRoot,
+          startOwner: true,
+          requestedCreations: [database, requestedAuto],
+        });
+        expect(yield* attached.startupEndpointChanges).toEqual([]);
+        expect(yield* reservedPort(stateRoot, stack.id, "api")).toBe(FIXED_API_PORT);
+        const leftover = (yield* fs.readDirectory(`${stateRoot}/${stack.id}`)).filter((name) =>
+          name.startsWith("startup-"),
+        );
+        expect(leftover).toEqual([]);
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "lets only one of several concurrent starts of a stopped stack re-plan its changed endpoint",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-concurrent-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-concurrent");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          yield* stack.composition.supabase([database, rest], { eager: true });
+          yield* stack.stop;
+
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          // Several concurrent starts race on the same lease; only its winner re-plans, and the
+          // others attach to it instead, so every caller observes the identical applied change.
+          const opened = yield* Effect.all(
+            [1, 2, 3].map(() =>
+              open({
+                id: stack.id,
+                stateRoot,
+                cacheRoot,
+                startOwner: true,
+                requestedCreations: [database, requestedAuto],
+              }),
+            ),
+            { concurrency: "unbounded" },
+          );
+          const changeSets = yield* Effect.forEach(
+            opened,
+            (handle) => handle.startupEndpointChanges,
+          );
+          for (const changes of changeSets) expect(changes).toEqual(changeSets[0]);
+          expect(changeSets[0]).toEqual([
+            { service: "rest", endpoint: "http", from: FIXED_API_PORT, to: expect.any(Number) },
+          ]);
+
+          expect(yield* reservedPort(stateRoot, stack.id, "api")).toEqual(expect.any(Number));
+          expect(new Set(opened.map((handle) => handle.id)).size).toBe(1);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
 );

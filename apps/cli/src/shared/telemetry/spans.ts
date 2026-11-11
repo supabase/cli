@@ -1,7 +1,7 @@
 import { Clock, Context, Effect, Exit } from "effect";
 import type { Scope, Tracer } from "effect";
-import type * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { makeHandle, type ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner";
+import type * as ChildProcess from "effect/process/ChildProcess";
+import { makeHandle, type ChildProcessHandle } from "effect/process/ChildProcessSpawner";
 
 /** Whether spawned processes receive `TRACEPARENT`; true only while a trace sink is active. */
 export const ChildTracePropagation = Context.Reference<boolean>(

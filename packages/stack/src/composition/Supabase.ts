@@ -1,11 +1,11 @@
 import { Data, Effect, Exit, Redacted, Schema } from "effect";
-import { postgresVersion } from "../Artifacts.ts";
-import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
+import { postgresLine } from "../Artifacts.ts";
+import { causeMessage, type CompositionConfig, isStoppedAndWakeDisabled } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
-import type { SavedStack, StackKeysInput } from "../State.ts";
+import type { SavedStack, StackKeysInput } from "../StackNamespace.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
-import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
+import { apiRoute, endpointNames, endpointPort, sharesApiEndpoint } from "../host/Endpoints.ts";
 
 const DEFAULT_IDLE_MILLIS = 60_000;
 /** Studio idles slower than its peers: a background tab shouldn't cold-start it every minute. */
@@ -19,6 +19,7 @@ const managedBindings: ReadonlyArray<{
   readonly output: string;
   readonly targetKind: ServiceCreation["service"];
   readonly input: string;
+  readonly lifecycleDependency?: boolean;
 }> = [
   {
     sourceKind: "database",
@@ -110,6 +111,7 @@ const managedBindings: ReadonlyArray<{
     output: "url",
     targetKind: "studio",
     input: "functionsUrl",
+    lifecycleDependency: false,
   },
   {
     sourceKind: "mail",
@@ -120,11 +122,14 @@ const managedBindings: ReadonlyArray<{
   },
 ];
 
-/** Inputs the composition derives, each from its shared API endpoint or a sibling member kind. */
+/**
+ * Inputs the composition derives, each from its shared API endpoint or a sibling member kind;
+ * `api` also covers a value it generates for that endpoint.
+ */
 const derivedInputs: Partial<
   Record<ServiceCreation["service"], Readonly<Record<string, "api" | ServiceCreation["service"]>>>
 > = {
-  auth: { externalApiUrl: "api" },
+  auth: { externalApiUrl: "api", templateBaseUrl: "api", templateToken: "api" },
   studio: {
     apiUrl: "api",
     publicApiUrl: "api",
@@ -187,6 +192,7 @@ export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
     from: "host" | "runtime",
   ) => Effect.Effect<string, E>;
   readonly output: (id: string, name: string) => Effect.Effect<string, E>;
+  readonly randomToken: Effect.Effect<string, E>;
   readonly updateCreation: (
     id: string,
     inputs: Record<string, string | undefined>,
@@ -202,6 +208,8 @@ export interface SupabaseCompositionOptions {
   /** Reuses stopped instances; inputs declare desired bindings, not previous resolved creations. */
   readonly reuseIds?: ReadonlyArray<string>;
   readonly keys?: StackKeysInput;
+  /** Keeps unnamed saved members and dependencies; supports rebinding services without an API endpoint. */
+  readonly retainMembers?: boolean;
   /**
    * Starts every member with the composition. By default the database and members without an
    * endpoint start eagerly, and other members start on their first connection.
@@ -214,9 +222,14 @@ export type CreationChange =
   | { readonly change: "unchanged" }
   | { readonly change: "changed"; readonly paths: ReadonlyArray<string> }
   | {
-      /** The instance cannot adopt the request: its endpoints, artifact or data version differ. */
+      /** The instance cannot adopt the request: its endpoints or database line differ. */
       readonly change: "incompatible";
       readonly paths: ReadonlyArray<string>;
+      /**
+       * Only the intents of endpoints both sides declare differ, which a stopped stack's start
+       * re-plans instead of rejecting.
+       */
+      readonly endpointsOnly: boolean;
     };
 
 /** A saved instance of a requested service kind, compared with that request. */
@@ -248,9 +261,6 @@ const differences = (left: unknown, right: unknown, path: string): ReadonlyArray
   return Object.is(left, right) ? [] : [path];
 };
 
-const sharesApiEndpoint = (creation: ServiceCreationInput): boolean =>
-  apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
-
 /** Fixed ports requested for the shared API endpoint; composition accepts at most one. */
 const fixedApiPorts = (creations: ReadonlyArray<ServiceCreationInput>): ReadonlySet<number> =>
   new Set(
@@ -277,8 +287,11 @@ const comparable = (
   const config: Record<string, unknown> = Object.fromEntries(
     Object.entries(creation.config).filter(([key]) => compared.has(key) || !managed.has(key)),
   );
-  if (creation.service === "database") config.version = postgresVersion(creation.config.version);
-  return { version: creation.version, endpoints: withSharedApiPort(creation, sharedPort), config };
+  return {
+    pin: creation.pin,
+    endpoints: withSharedApiPort(creation, sharedPort),
+    config,
+  };
 };
 
 /** Compares a requested creation with a saved one, ignoring inputs the package supplies. */
@@ -287,6 +300,7 @@ const compareCreation = (
   requested: ServiceCreationInput,
   sharedPort: number | undefined,
   memberKinds: ReadonlySet<ServiceCreation["service"]>,
+  initializedData: boolean,
 ): CreationChange => {
   const overridable = overridableInputs[requested.service] ?? [];
   // Without its supplying member, the composition keeps the project's own value of an input.
@@ -298,42 +312,95 @@ const compareCreation = (
       .filter(([, source]) => !memberKinds.has(source))
       .map(([input]) => input),
   ]);
-  const paths = differences(
-    comparable(saved, undefined, compared),
-    comparable(requested, sharedPort, compared),
-    "",
-  );
+  const requestedComparable = comparable(requested, sharedPort, compared);
+  const paths = [
+    ...new Set(
+      differences(comparable(saved, undefined, compared), requestedComparable, "").map((path) =>
+        path.startsWith("pin.") ? "pin" : path,
+      ),
+    ),
+  ];
+  const isEndpointPath = (path: string) => path === "endpoints" || path.startsWith("endpoints.");
+  // The planner flags a line or major change on initialized data; Database.prepare enforces the
+  // exact build there, so any other pin change is planned as a restart.
+  const databaseLineChanged =
+    initializedData &&
+    saved.service === "database" &&
+    postgresLine(saved.pin.upstreamVersion) !== postgresLine(requested.pin.upstreamVersion);
   const incompatible = paths.filter(
-    (path) =>
-      path === "version" ||
-      path === "endpoints" ||
-      path.startsWith("endpoints.") ||
-      (saved.service === "database" && path === "config.version"),
+    (path) => isEndpointPath(path) || (path === "pin" && databaseLineChanged),
   );
+  const savedNames = endpointNames(saved);
+  const requestedNames = endpointNames({
+    service: requested.service,
+    endpoints: requestedComparable.endpoints,
+  });
+  const endpointsOnly =
+    incompatible.every(isEndpointPath) &&
+    savedNames.length === requestedNames.length &&
+    savedNames.every((name) => requestedNames.includes(name));
   return incompatible.length > 0
-    ? { change: "incompatible", paths: incompatible }
+    ? { change: "incompatible", paths: incompatible, endpointsOnly }
     : paths.length > 0
       ? { change: "changed", paths }
       : { change: "unchanged" };
+};
+
+/**
+ * A `partial` request compares only the kinds it names, so an absent kind falls back to its saved
+ * sibling's port; a `complete` request replaces the whole composition, so an absent kind (for
+ * example one dropped with `--exclude`) must not constrain the shared port it would otherwise
+ * contribute.
+ */
+export interface PlanOptions {
+  readonly requestKind?: "partial" | "complete";
+}
+
+/** Planning options plus what the caller read from the instances' data. */
+export interface PlanInputs extends PlanOptions {
+  /**
+   * The database instances whose data is initialized. A database line or major change is
+   * incompatible only for these, since uninitialized data adopts any build. Omitted, every
+   * database counts as initialized.
+   */
+  readonly initializedDatabases?: ReadonlySet<string>;
+}
+
+/**
+ * The fixed shared API port the request agrees on. A `partial` request falls back to a saved
+ * sibling's port for a member kind it leaves out; a `complete` request never does, so a request
+ * that moves every sharing member it carries to automatic is not masked by that kind's own stale
+ * saved intent, whether that kind is simply absent or deliberately excluded.
+ */
+const sharedApiPortFor = (
+  saved: Pick<SavedStack, "instances" | "composition">,
+  requested: ReadonlyArray<ServiceCreationInput>,
+  options: PlanOptions = {},
+): number | undefined => {
+  const members = new Set(saved.composition.members.map(({ id }) => id));
+  const requestedKinds = new Set(requested.map(({ service }) => service));
+  const ports = fixedApiPorts([
+    ...requested,
+    ...(options.requestKind === "complete"
+      ? []
+      : saved.instances
+          .filter(({ id, creation }) => members.has(id) && !requestedKinds.has(creation.service))
+          .map(({ creation }) => creation)),
+  ]);
+  return ports.size === 1 ? [...ports][0] : undefined;
 };
 
 /** Compares each saved instance of a requested kind with its request, without changing state. */
 export const planSupabaseComposition = (
   saved: Pick<SavedStack, "instances" | "composition">,
   requested: ReadonlyArray<ServiceCreationInput>,
+  options: PlanInputs = {},
 ): ReadonlyArray<PlannedInstance> => {
   const members = new Set(saved.composition.members.map(({ id }) => id));
   const memberKinds = new Set(
     saved.instances.filter(({ id }) => members.has(id)).map(({ creation }) => creation.service),
   );
-  const requestedKinds = new Set(requested.map(({ service }) => service));
-  const ports = fixedApiPorts([
-    ...requested,
-    ...saved.instances
-      .filter(({ id, creation }) => members.has(id) && requestedKinds.has(creation.service))
-      .map(({ creation }) => creation),
-  ]);
-  const sharedPort = ports.size === 1 ? [...ports][0] : undefined;
+  const sharedPort = sharedApiPortFor(saved, requested, options);
   return saved.instances.flatMap(({ id, creation }) => {
     const request = requested.find(({ service }) => service === creation.service);
     return request === undefined
@@ -343,10 +410,149 @@ export const planSupabaseComposition = (
             id,
             service: creation.service,
             member: members.has(id),
-            ...compareCreation(creation, request, sharedPort, memberKinds),
+            ...compareCreation(
+              creation,
+              request,
+              sharedPort,
+              memberKinds,
+              options.initializedDatabases?.has(id) ?? true,
+            ),
           },
         ];
   });
+};
+
+/** The claim key an endpoint binds under: one shared "api" key, or a dedicated one per instance. */
+const endpointKey = (id: string, service: ServiceCreation["service"], name: string): string =>
+  name === "http" && apiRoute(service) !== undefined ? "api" : `${id}:${name}`;
+
+/** A named endpoint whose port a stopped stack's start can migrate to the requested value. */
+interface EndpointPortChange {
+  readonly id: string;
+  readonly service: ServiceCreation["service"];
+  readonly endpoint: string;
+  readonly key: string;
+  /** The saved endpoint intent's port. */
+  readonly previous: number | "auto";
+}
+
+interface EndpointReplan {
+  /** The changed endpoints of saved members, which the owner claims at startup. */
+  readonly changes: ReadonlyArray<EndpointPortChange>;
+  /**
+   * Whether the shared "api" listener's registry row must be released although no saved member
+   * carries the change: a fixed port is requested that the saved members' listener never held.
+   */
+  readonly releasesSharedApi: boolean;
+  /**
+   * Registry keys of the dedicated endpoints a rewritten non-member instance holds, released so
+   * its eventual start binds the requested port; the shared "api" row stays with the members.
+   */
+  readonly releasedKeys: ReadonlyArray<string>;
+  /** Each rewritten instance's requested endpoint intents, members and reusable non-members. */
+  readonly endpointsByInstance: ReadonlyMap<string, unknown>;
+}
+
+/** The endpoint changes that turn a saved instance's intents into the requested ones, if only those differ. */
+const endpointRewrite = (
+  entry: PlannedInstance,
+  saved: Pick<SavedStack, "instances">,
+  requested: ReadonlyArray<ServiceCreationInput>,
+  sharedPort: number | undefined,
+):
+  | { readonly changes: ReadonlyArray<EndpointPortChange>; readonly endpoints: unknown }
+  | undefined => {
+  const savedInstance = saved.instances.find(({ id }) => id === entry.id);
+  const request = requested.find(({ service }) => service === entry.service);
+  if (savedInstance === undefined || request === undefined) return undefined;
+  if (entry.change !== "incompatible" || !entry.endpointsOnly) return undefined;
+
+  const endpoints = withSharedApiPort(request, sharedPort);
+  const requestedIntents = { service: request.service, endpoints };
+  const changes: Array<EndpointPortChange> = [];
+  for (const name of endpointNames(savedInstance.creation)) {
+    const previous = endpointPort(savedInstance.creation, name);
+    if (previous === endpointPort(requestedIntents, name)) continue;
+    changes.push({
+      id: entry.id,
+      service: entry.service,
+      endpoint: name,
+      key: endpointKey(entry.id, request.service, name),
+      previous,
+    });
+  }
+  return { changes, endpoints };
+};
+
+/**
+ * Plans the endpoint port changes a stopped stack's start can apply instead of failing.
+ * Returns `undefined` when a member is incompatible for a reason besides a pure endpoint port
+ * reassignment (an added or removed endpoint), so the caller leaves that case to the existing
+ * incompatible-change rejection.
+ *
+ * A requested kind with no saved member and no compatible stopped instance also has its sole
+ * endpoint-only incompatible instance rewritten, so the start reuses it instead of creating a
+ * second instance beside the stopped one.
+ */
+export const planEndpointReplan = (
+  saved: Pick<SavedStack, "instances" | "composition">,
+  requested: ReadonlyArray<ServiceCreationInput>,
+  initializedDatabases?: ReadonlySet<string>,
+): EndpointReplan | undefined => {
+  // The start re-plan always replaces the whole composition, so an excluded sibling's stale
+  // saved port must not anchor the shared port this request would otherwise move to automatic.
+  const planOptions: PlanInputs = { requestKind: "complete", initializedDatabases };
+  const planned = planSupabaseComposition(saved, requested, planOptions);
+  const sharedPort = sharedApiPortFor(saved, requested, planOptions);
+  const savedMemberIds = new Set(saved.composition.members.map(({ id }) => id));
+  const savedSharedPorts = fixedApiPorts(
+    saved.instances.filter(({ id }) => savedMemberIds.has(id)).map(({ creation }) => creation),
+  );
+  // A new sharing member requesting a fixed port the saved members' listener did not hold finds
+  // the listener's old automatic row, which a fixed claim then rejects as a different assignment.
+  const releasesSharedApi =
+    sharedPort !== undefined &&
+    requested.some(sharesApiEndpoint) &&
+    !(savedSharedPorts.size === 1 && savedSharedPorts.has(sharedPort));
+  const changes: Array<EndpointPortChange> = [];
+  const releasedKeys = new Set<string>();
+  const endpointsByInstance = new Map<string, unknown>();
+
+  for (const entry of planned) {
+    if (!entry.member || entry.change !== "incompatible") continue;
+    const rewrite = endpointRewrite(entry, saved, requested, sharedPort);
+    if (rewrite === undefined) return undefined;
+    changes.push(...rewrite.changes);
+    endpointsByInstance.set(entry.id, rewrite.endpoints);
+  }
+
+  // The start reuses a stopped instance of a kind with no saved member when it is compatible, and
+  // creates a new one when it is not, leaving the stopped one and its data orphaned.
+  const memberKinds = new Set(planned.filter(({ member }) => member).map(({ service }) => service));
+  for (const kind of new Set(requested.map(({ service }) => service))) {
+    if (memberKinds.has(kind)) continue;
+    const [entry, ...others] = planned.filter((other) => !other.member && other.service === kind);
+    if (entry === undefined || others.length > 0) continue;
+    const rewrite = endpointRewrite(entry, saved, requested, sharedPort);
+    if (rewrite === undefined) continue;
+    for (const { key } of rewrite.changes) if (key !== "api") releasedKeys.add(key);
+    endpointsByInstance.set(entry.id, rewrite.endpoints);
+  }
+
+  if (endpointsByInstance.size === 0 && !releasesSharedApi) return undefined;
+
+  const seenKeys = new Set<string>();
+  const uniqueChanges = changes.filter((change) => {
+    if (seenKeys.has(change.key)) return false;
+    seenKeys.add(change.key);
+    return true;
+  });
+  return {
+    changes: uniqueChanges,
+    releasesSharedApi,
+    releasedKeys: [...releasedKeys],
+    endpointsByInstance,
+  };
 };
 
 const compositionError = (message: string, cause?: unknown) =>
@@ -423,7 +629,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
                 operations.status(id).pipe(
                   Effect.mapError(compositionErrorFrom),
                   Effect.flatMap((status) =>
-                    status.lifecycle === "stopped" && !status.wakeEnabled
+                    isStoppedAndWakeDisabled(status)
                       ? Effect.void
                       : Effect.fail(
                           compositionError(
@@ -454,10 +660,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
 
       const reusedByKind = new Map(reusedEntries.map((entry) => [entry.creation.service, entry]));
       const byKind = new Map(normalized.map((creation) => [creation.service, creation]));
-      const apiSource = normalized.find(
-        (creation) =>
-          apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http"),
-      );
+      const apiSource = normalized.find(sharesApiEndpoint);
       if (
         apiSource === undefined &&
         normalized.some((creation) => ["auth", "functions", "studio"].includes(creation.service))
@@ -546,6 +749,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           output: outputName,
           targetKind,
           input: inputName,
+          lifecycleDependency = true,
         } of managedBindings) {
           const source = entriesByKind.get(sourceKind);
           const target = entriesByKind.get(targetKind);
@@ -561,6 +765,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           }
           values[inputName] = yield* operations.output(source.id, outputName);
           configInputs.set(target.id, values);
+          if (!lifecycleDependency) continue;
           const key = `${source.id}->${target.id}`;
           const dependency = dependencyMap.get(key) ?? {
             from: source.id,
@@ -574,7 +779,15 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           Effect.gen(function* () {
             const extra: Record<string, string> =
               entry.creation.service === "auth" && apiHostUrl !== undefined
-                ? { externalApiUrl: `${apiHostUrl}/auth/v1` }
+                ? {
+                    externalApiUrl: `${apiHostUrl}/auth/v1`,
+                    ...(apiRuntimeUrl === undefined || !entry.creation.config.templates?.length
+                      ? {}
+                      : {
+                          templateBaseUrl: apiRuntimeUrl,
+                          templateToken: yield* operations.randomToken,
+                        }),
+                  }
                 : entry.creation.service === "studio" &&
                     apiHostUrl !== undefined &&
                     apiRuntimeUrl !== undefined
@@ -611,20 +824,26 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             return entry;
           }),
         );
+        const requestedIds = new Set(configured.map(({ id }) => id));
+        const retained = options.retainMembers === true;
+        const retainedMembers = retained
+          ? current.members.filter(({ id }) => !requestedIds.has(id))
+          : [];
+        const retainedDependencies = retained
+          ? current.dependencies.filter(({ from, to }) => !dependencyMap.has(`${from}->${to}`))
+          : [];
         const members = configured.map(({ id, creation }) => {
           const lazy =
             options.eager !== true &&
             creation.service !== "database" &&
             endpointNames(creation).length > 0;
           return lazy
-            ? creation.service === "functions"
-              ? { id, activation: "lazy" as const }
-              : { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
+            ? { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
             : { id, activation: "eager" as const };
         });
         yield* operations.configure({
-          members,
-          dependencies: [...dependencyMap.values()],
+          members: [...members, ...retainedMembers],
+          dependencies: [...dependencyMap.values(), ...retainedDependencies],
         });
         return configured;
       });

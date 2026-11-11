@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
@@ -7,7 +7,7 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { StackApi, stackApiLayer } from "../stack.shared.ts";
+import { StackApi, stackApiLayer } from "../../../../command-internal/stack-target.ts";
 import { stackList } from "./list.handler.ts";
 
 const registry = Effect.fn("StackListTest.registry")(function* () {
@@ -26,10 +26,10 @@ const registry = Effect.fn("StackListTest.registry")(function* () {
   return { root, api, fs, path, locations, telemetry, layer };
 });
 
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 
 describe("stack list", () => {
-  it.live("lists real saved identities without starting owners in text and machine output", () =>
+  it.effect("lists real saved identities without starting owners in text and machine output", () =>
     Effect.gen(function* () {
       const fixture = yield* registry();
       for (const name of ["beta", "alpha"]) {
@@ -62,7 +62,7 @@ describe("stack list", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("lists healthy stacks and warns about invalid entries without altering state", () =>
+  it.effect("lists healthy stacks and warns about invalid entries without altering state", () =>
     Effect.gen(function* () {
       const fixture = yield* registry();
       const healthy = yield* fixture.api.create({
@@ -112,7 +112,7 @@ describe("stack list", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("reports an empty registry and rejects the legacy output flag", () =>
+  it.effect("reports an empty registry and rejects the legacy output flag", () =>
     Effect.gen(function* () {
       const fixture = yield* registry();
       const output = mockOutput();

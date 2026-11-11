@@ -1,8 +1,8 @@
 import { generateKeyPairSync } from "node:crypto";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { Cause, DateTime, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { CliOutput, Command } from "effect/cli";
 import { importJWK, jwtVerify } from "jose";
 
 import {
@@ -12,6 +12,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
@@ -19,13 +20,14 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { genBearerJwtCommand, type GenBearerJwtFlags } from "./bearer-jwt.command.ts";
 import { genBearerJwt } from "./bearer-jwt.handler.ts";
 
@@ -40,13 +42,13 @@ const DEFAULT_SIGNING_KEY_PUBLIC = {
 
 function generateEcJwk(kid: string): Record<string, unknown> {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const jwk = privateKey.export({ format: "jwk" }) as Record<string, unknown>;
+  const jwk = privateKey.export({ format: "jwk" });
   return { ...jwk, kty: "EC", alg: "ES256", kid };
 }
 
 function generateRsaJwk(kid: string) {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const jwk = privateKey.export({ format: "jwk" }) as Record<string, unknown>;
+  const jwk = privateKey.export({ format: "jwk" });
   return { ...jwk, kty: "RSA", alg: "RS256", kid };
 }
 
@@ -81,12 +83,13 @@ function setup(options: SetupOptions = {}) {
   });
   const telemetry = options.trackTelemetry ? mockTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     buildTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(CliArgs, { args: [] }),
     mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),
     Layer.succeed(DebugLogger, { debug: () => Effect.void, http: () => Effect.void }),
   );
-  return { layer, out, telemetry };
+  return { layer, out, telemetry, api };
 }
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -122,9 +125,15 @@ const baseFlags: GenBearerJwtFlags = {
   payload: "{}",
 };
 
-function decodeSegment(segment: string): unknown {
-  return JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
-}
+const JwtHeaderJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const JwtClaimsJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const JwtLifetime = Schema.Struct({ exp: Schema.Finite, iat: Schema.Finite });
+
+const decodeHeader = (segment: string) =>
+  Schema.decodeEffect(JwtHeaderJson)(Buffer.from(segment, "base64url").toString("utf8"));
+
+const decodeClaims = (segment: string) =>
+  Schema.decodeEffect(JwtClaimsJson)(Buffer.from(segment, "base64url").toString("utf8"));
 
 function tokenFrom(out: { stdoutText: string }): string {
   return out.stdoutText.trimEnd();
@@ -138,34 +147,44 @@ const testRoot = Command.make("supabase").pipe(
 );
 
 describe("gen bearer-jwt integration", () => {
-  it.live("mints a token with the built-in default ES256 key when no config exists", () => {
-    const { layer, out } = setup();
+  it.effect("mints a token with the built-in default ES256 key when no config exists", () => {
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* genBearerJwt(baseFlags);
+      assertPermissionDrift({
+        command: "gen bearer-jwt",
+        activeFlags: { "valid-for": true },
+        requests: api.requests,
+        exact: true,
+      });
 
       expect(out.stdoutText.endsWith("\n")).toBe(true);
       expect(out.stdoutText.indexOf("\n")).toBe(out.stdoutText.length - 1);
 
       const token = tokenFrom(out);
       const [header, payload] = token.split(".");
-      expect(decodeSegment(header ?? "")).toEqual({
+      expect(yield* decodeHeader(header ?? "")).toEqual({
         alg: "ES256",
         kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
         typ: "JWT",
       });
-      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      const claims = yield* decodeClaims(payload ?? "");
       expect(claims["role"]).toBe("anon");
       expect(typeof claims["exp"]).toBe("number");
       expect(typeof claims["iat"]).toBe("number");
-      expect((claims["exp"] as number) - (claims["iat"] as number)).toBe(1800);
+      const lifetime = yield* Schema.decodeUnknownEffect(JwtLifetime)(claims);
+      expect(lifetime.exp - lifetime.iat).toBe(1800);
 
       const publicKey = yield* Effect.promise(() => importJWK(DEFAULT_SIGNING_KEY_PUBLIC, "ES256"));
-      const verified = yield* Effect.promise(() => jwtVerify(token, publicKey));
+      const now = yield* DateTime.now;
+      const verified = yield* Effect.promise(() =>
+        jwtVerify(token, publicKey, { currentDate: DateTime.toDate(now) }),
+      );
       expect(verified.payload).toMatchObject({ role: "anon" });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "mints a token with the default key when config.toml exists but signing_keys_path is not set",
     () => {
       const { layer, out } = setup();
@@ -175,7 +194,7 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
+        expect(yield* decodeHeader(header ?? "")).toEqual({
           alg: "ES256",
           kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
           typ: "JWT",
@@ -184,18 +203,18 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live("sets is_anonymous when role is authenticated and --sub is not given", () => {
+  it.effect("sets is_anonymous when role is authenticated and --sub is not given", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* genBearerJwt({ ...baseFlags, role: Option.some("authenticated") });
       const [, payload] = tokenFrom(out).split(".");
-      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      const claims = yield* decodeClaims(payload ?? "");
       expect(claims["is_anonymous"]).toBe(true);
       expect("sub" in claims).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not set is_anonymous when role is authenticated and --sub is given", () => {
+  it.effect("does not set is_anonymous when role is authenticated and --sub is given", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* genBearerJwt({
@@ -204,13 +223,13 @@ describe("gen bearer-jwt integration", () => {
         sub: Option.some("user-1"),
       });
       const [, payload] = tokenFrom(out).split(".");
-      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      const claims = yield* decodeClaims(payload ?? "");
       expect(claims["is_anonymous"]).toBeUndefined();
       expect(claims["sub"]).toBe("user-1");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("computes exp from an explicit --exp, with iat = exp - validFor", () => {
+  it.effect("computes exp from an explicit --exp, with iat = exp - validFor", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* genBearerJwt({
@@ -218,13 +237,13 @@ describe("gen bearer-jwt integration", () => {
         exp: Option.some({ wholeSeconds: 2_000_000_000, nanos: 0 }),
       });
       const [, payload] = tokenFrom(out).split(".");
-      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      const claims = yield* decodeClaims(payload ?? "");
       expect(claims["exp"]).toBe(2_000_000_000);
       expect(claims["iat"]).toBe(2_000_000_000 - 1800);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "computes iat with a sub-second --valid-for, truncating only the final timestamp (CLI-1961)",
     () => {
       const { layer, out } = setup();
@@ -235,14 +254,14 @@ describe("gen bearer-jwt integration", () => {
           validFor: 1.5,
         });
         const [, payload] = tokenFrom(out).split(".");
-        const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+        const claims = yield* decodeClaims(payload ?? "");
         expect(claims["exp"]).toBe(1_893_456_000);
         expect(claims["iat"]).toBe(1_893_455_998);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("merges --payload on top of the computed claims", () => {
+  it.effect("merges --payload on top of the computed claims", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* genBearerJwt({
@@ -251,14 +270,14 @@ describe("gen bearer-jwt integration", () => {
         payload: '{"role":"override","sb-role":"mgmt-api"}',
       });
       const [, payload] = tokenFrom(out).split(".");
-      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      const claims = yield* decodeClaims(payload ?? "");
       expect(claims["role"]).toBe("override");
       expect(claims["sb-role"]).toBe("mgmt-api");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "fails with cobra's required-flag error, and still flushes telemetry, when --role is omitted",
+  it.effect(
+    "fails with the required-flag error, and still flushes telemetry, when --role is omitted",
     () => {
       const { layer, out, telemetry } = setup({ trackTelemetry: true });
       return Effect.gen(function* () {
@@ -275,7 +294,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "ignores an ancestor project's signing_keys_path when the resolved workdir has no config.toml of its own (CLI-1961)",
     () => {
       const nestedWorkdir = `${tempRoot.current}/nested/deeper`;
@@ -291,7 +310,7 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
+        expect(yield* decodeHeader(header ?? "")).toEqual({
           alg: "ES256",
           kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
           typ: "JWT",
@@ -303,8 +322,8 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
-    "fails with Go's exact wrapping for a malformed --payload, before any signing-key prompt",
+  it.effect(
+    "fails with the exact wrapping for a malformed --payload, before any signing-key prompt",
     () => {
       const { layer, out } = setup();
       return Effect.gen(function* () {
@@ -320,17 +339,24 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live("Branch A: accepts a pasted RS256 JWK from stdin", () => {
+  it.effect("Branch A: accepts a pasted RS256 JWK from stdin", () => {
     const jwk = generateRsaJwk("rsa-kid");
     const { layer, out } = setup({ pipedAnswer: jsonTextSync(jwk) });
     return Effect.gen(function* () {
       yield* genBearerJwt(baseFlags);
       const token = tokenFrom(out);
       const [header] = token.split(".");
-      expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+      expect(yield* decodeHeader(header ?? "")).toEqual({
+        alg: "RS256",
+        kid: "rsa-kid",
+        typ: "JWT",
+      });
 
       const publicKey = yield* Effect.promise(() => importJWK(publicJwkOf(jwk), "RS256"));
-      const verified = yield* Effect.promise(() => jwtVerify(token, publicKey));
+      const now = yield* DateTime.now;
+      const verified = yield* Effect.promise(() =>
+        jwtVerify(token, publicKey, { currentDate: DateTime.toDate(now) }),
+      );
       expect(verified.payload).toMatchObject({ role: "anon" });
       expect(out.stderrText).toContain(
         "Enter your signing key in JWK format (or leave blank to use local default): ",
@@ -338,7 +364,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Branch A: on a real TTY, still prompts via stdin but does not echo the answer", () => {
+  it.effect("Branch A: on a real TTY, still prompts via stdin but does not echo the answer", () => {
     // Branch A always uses plain text prompting regardless of TTY-ness; only
     // Branches B/C fork on interactivity.
     const jwk = generateEcJwk("ec-kid");
@@ -347,14 +373,18 @@ describe("gen bearer-jwt integration", () => {
       yield* genBearerJwt(baseFlags);
       const token = tokenFrom(out);
       const [header] = token.split(".");
-      expect(decodeSegment(header ?? "")).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+      expect(yield* decodeHeader(header ?? "")).toEqual({
+        alg: "ES256",
+        kid: "ec-kid",
+        typ: "JWT",
+      });
       expect(out.stderrText).toBe(
         "Enter your signing key in JWK format (or leave blank to use local default): ",
       );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Branch A: rejects malformed JSON pasted at the stdin JWK prompt", () => {
+  it.effect("Branch A: rejects malformed JSON pasted at the stdin JWK prompt", () => {
     const { layer } = setup({ pipedAnswer: "not-json-at-all" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
@@ -367,7 +397,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Branch A: rejects a JSON array pasted at the stdin JWK prompt", () => {
+  it.effect("Branch A: rejects a JSON array pasted at the stdin JWK prompt", () => {
     const { layer } = setup({ pipedAnswer: "[1,2,3]" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
@@ -375,51 +405,45 @@ describe("gen bearer-jwt integration", () => {
       if (Exit.isFailure(exit)) {
         const json = Cause.pretty(exit.cause);
         expect(json).toContain("GenBearerJwtKeyParseError");
-        expect(json).toContain("cannot unmarshal array into Go value of type config.JWK");
+        expect(json).toContain("expected a JSON object, got array");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Branch A: rejects a scalar number pasted at the stdin JWK prompt", () => {
+  it.effect("Branch A: rejects a scalar number pasted at the stdin JWK prompt", () => {
     const { layer } = setup({ pipedAnswer: "123" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "cannot unmarshal number into Go value of type config.JWK",
-        );
+        expect(Cause.pretty(exit.cause)).toContain("expected a JSON object, got number");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Branch A: rejects a scalar string pasted at the stdin JWK prompt", () => {
+  it.effect("Branch A: rejects a scalar string pasted at the stdin JWK prompt", () => {
     const { layer } = setup({ pipedAnswer: '"a string"' });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "cannot unmarshal string into Go value of type config.JWK",
-        );
+        expect(Cause.pretty(exit.cause)).toContain("expected a JSON object, got string");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Branch A: rejects a scalar boolean pasted at the stdin JWK prompt", () => {
+  it.effect("Branch A: rejects a scalar boolean pasted at the stdin JWK prompt", () => {
     const { layer } = setup({ pipedAnswer: "true" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(genBearerJwt(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "cannot unmarshal bool into Go value of type config.JWK",
-        );
+        expect(Cause.pretty(exit.cause)).toContain("expected a JSON object, got boolean");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "Branch A: a literal 'null' pasted at the stdin JWK prompt is rejected, NOT the default key",
     () => {
       const { layer } = setup({ pipedAnswer: "null" });
@@ -435,7 +459,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch A: a truly blank answer at the stdin JWK prompt still falls back to the default key",
     () => {
       // Distinct from the literal-`null` case above: an empty answer never
@@ -445,7 +469,7 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
+        expect(yield* decodeHeader(header ?? "")).toEqual({
           alg: "ES256",
           kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
           typ: "JWT",
@@ -454,7 +478,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch A: rejects a pasted JWK with an unsupported alg at decode time, not sign time",
     () => {
       const { layer } = setup({ pipedAnswer: jsonTextSync({ kty: "oct", alg: "HS256" }) });
@@ -470,7 +494,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch A: accepts a pasted JWK missing alg entirely (validated later, at sign time, not decode time)",
     () => {
       const { alg: _alg, ...jwkWithoutAlg } = generateEcJwk("no-alg-kid");
@@ -487,7 +511,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch A: rejects a pasted JWK with a non-string key_ops element (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup({
@@ -500,14 +524,14 @@ describe("gen bearer-jwt integration", () => {
           const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyParseError");
           expect(json).toContain(
-            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.key_ops of type string",
+            "failed to parse JWK: invalid JWK field key_ops: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "Branch A: rejects a pasted JWK with ext given as a string instead of a bool (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup({
@@ -520,14 +544,14 @@ describe("gen bearer-jwt integration", () => {
           const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtKeyParseError");
           expect(json).toContain(
-            "failed to parse JWK: json: cannot unmarshal string into Go struct field JWK.ext of type bool",
+            "failed to parse JWK: invalid JWK field ext: expected a boolean, got string",
           );
         }
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("Branch A: rejects a pasted JWK with a non-string kid", () => {
+  it.effect("Branch A: rejects a pasted JWK with a non-string kid", () => {
     const { layer } = setup({
       pipedAnswer: jsonTextSync({ kty: "oct", alg: "ES256", kid: 123 }),
     });
@@ -536,13 +560,13 @@ describe("gen bearer-jwt integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+          "failed to parse JWK: invalid JWK field kid: expected a string, got number",
         );
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "Branch A: rejects a pasted JWK with a duplicate kid where the earlier occurrence is malformed (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup({
@@ -553,14 +577,14 @@ describe("gen bearer-jwt integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain(
-            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+            "failed to parse JWK: invalid JWK field kid: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "Branch A: rejects a pasted JWK with a duplicate alg where the earlier occurrence fails the allowlist, even though the later one is allowed (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup({
@@ -578,7 +602,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch A: accepts a pasted JWK with a duplicate alg where EVERY occurrence is individually valid and allowed",
     () => {
       const { layer, out } = setup({
@@ -591,7 +615,7 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
+        expect(yield* decodeHeader(header ?? "")).toEqual({
           alg: "ES256",
           kid: "dup-alg-kid",
           typ: "JWT",
@@ -600,34 +624,31 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
-    "Branch A: accepts a pasted JWK with Go-decodable case-variant field names (CLI-1961 Codex review finding)",
-    () => {
-      const jwk = generateEcJwk("case-variant-kid");
-      const caseVariantJwk = {
-        KTY: jwk.kty,
-        ALG: jwk.alg,
-        KID: jwk.kid,
-        CRV: jwk.crv,
-        X: jwk.x,
-        Y: jwk.y,
-        D: jwk.d,
-      };
-      const { layer, out } = setup({ pipedAnswer: jsonTextSync(caseVariantJwk) });
-      return Effect.gen(function* () {
-        yield* genBearerJwt(baseFlags);
-        const token = tokenFrom(out);
-        const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
-          alg: "ES256",
-          kid: "case-variant-kid",
-          typ: "JWT",
-        });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("Branch A: accepts a pasted JWK with case-variant field names", () => {
+    const jwk = generateEcJwk("case-variant-kid");
+    const caseVariantJwk = {
+      KTY: jwk.kty,
+      ALG: jwk.alg,
+      KID: jwk.kid,
+      CRV: jwk.crv,
+      X: jwk.x,
+      Y: jwk.y,
+      D: jwk.d,
+    };
+    const { layer, out } = setup({ pipedAnswer: jsonTextSync(caseVariantJwk) });
+    return Effect.gen(function* () {
+      yield* genBearerJwt(baseFlags);
+      const token = tokenFrom(out);
+      const [header] = token.split(".");
+      expect(yield* decodeHeader(header ?? "")).toEqual({
+        alg: "ES256",
+        kid: "case-variant-kid",
+        typ: "JWT",
+      });
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live(
+  it.effect(
     "Branch A: rejects a pasted JWK with a case-variant duplicate kid where the earlier occurrence is malformed (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup({
@@ -638,33 +659,30 @@ describe("gen bearer-jwt integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain(
-            "failed to parse JWK: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+            "failed to parse JWK: invalid JWK field kid: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
-    "Branch A: a null field value is treated as absent, not a type mismatch (Go's encoding/json no-op)",
-    () => {
-      const { layer, out } = setup({
-        pipedAnswer: jsonTextSync({ ...generateEcJwk("null-ext-kid"), ext: null }),
+  it.effect("Branch A: a null field value is treated as absent, not a type mismatch", () => {
+    const { layer, out } = setup({
+      pipedAnswer: jsonTextSync({ ...generateEcJwk("null-ext-kid"), ext: null }),
+    });
+    return Effect.gen(function* () {
+      yield* genBearerJwt(baseFlags);
+      const token = tokenFrom(out);
+      const [header] = token.split(".");
+      expect(yield* decodeHeader(header ?? "")).toEqual({
+        alg: "ES256",
+        kid: "null-ext-kid",
+        typ: "JWT",
       });
-      return Effect.gen(function* () {
-        yield* genBearerJwt(baseFlags);
-        const token = tokenFrom(out);
-        const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
-          alg: "ES256",
-          kid: "null-ext-kid",
-          typ: "JWT",
-        });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live(
+  it.effect(
     "Branch B: rejects a stored signing key with a non-string key_ops element (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup();
@@ -680,14 +698,14 @@ describe("gen bearer-jwt integration", () => {
           const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain(
-            "failed to decode signing keys: failed to parse response body: json: cannot unmarshal number into Go struct field JWK.key_ops of type string",
+            "failed to decode signing keys: failed to parse response body: invalid JWK field key_ops: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "Branch B: rejects a stored signing key with a duplicate kid where the earlier occurrence is malformed (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup();
@@ -701,14 +719,14 @@ describe("gen bearer-jwt integration", () => {
           const json = Cause.pretty(exit.cause);
           expect(json).toContain("GenBearerJwtDecodeError");
           expect(json).toContain(
-            "failed to decode signing keys: failed to parse response body: json: cannot unmarshal number into Go struct field JWK.kid of type string",
+            "failed to decode signing keys: failed to parse response body: invalid JWK field kid: expected a string, got number",
           );
         }
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "Branch B: rejects a stored signing key with a duplicate alg where the earlier occurrence fails the allowlist (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup();
@@ -729,7 +747,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch B: mints a token from the configured signing_keys_path's only key on a blank kid answer",
     () => {
       const jwk = generateEcJwk("ec-kid");
@@ -741,7 +759,11 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+        expect(yield* decodeHeader(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "ec-kid",
+          typ: "JWT",
+        });
         expect(out.stderrText).toContain(
           "Enter the kid of your signing key (or leave blank to use the first one): ",
         );
@@ -749,37 +771,34 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
-    "Branch B: accepts a stored signing key with Go-decodable case-variant field names (CLI-1961 Codex review finding)",
-    () => {
-      const jwk = generateEcJwk("case-variant-stored-kid");
-      const caseVariantJwk = {
-        KTY: jwk.kty,
-        ALG: jwk.alg,
-        KID: jwk.kid,
-        CRV: jwk.crv,
-        X: jwk.x,
-        Y: jwk.y,
-        D: jwk.d,
-      };
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
-        yield* writeSigningKeys(yield* jsonText([caseVariantJwk]));
+  it.effect("Branch B: accepts a stored signing key with case-variant field names", () => {
+    const jwk = generateEcJwk("case-variant-stored-kid");
+    const caseVariantJwk = {
+      KTY: jwk.kty,
+      ALG: jwk.alg,
+      KID: jwk.kid,
+      CRV: jwk.crv,
+      X: jwk.x,
+      Y: jwk.y,
+      D: jwk.d,
+    };
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys(yield* jsonText([caseVariantJwk]));
 
-        yield* genBearerJwt(baseFlags);
-        const token = tokenFrom(out);
-        const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
-          alg: "ES256",
-          kid: "case-variant-stored-kid",
-          typ: "JWT",
-        });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      yield* genBearerJwt(baseFlags);
+      const token = tokenFrom(out);
+      const [header] = token.split(".");
+      expect(yield* decodeHeader(header ?? "")).toEqual({
+        alg: "ES256",
+        kid: "case-variant-stored-kid",
+        typ: "JWT",
+      });
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live(
+  it.effect(
     "Branch B: resolves signing_keys_path = env(KEYS_PATH) from supabase/.env.development, a file @supabase/config's own default env resolution doesn't read (CLI-1961 Codex review finding)",
     () => {
       // The dotenv cascade runs before the TOML decoder resolves `env(...)`
@@ -795,31 +814,32 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+        expect(yield* decodeHeader(header ?? "")).toEqual({
+          alg: "ES256",
+          kid: "ec-kid",
+          typ: "JWT",
+        });
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
-    "Branch B: fails with Go's exact wrapped message for an unsupported key type (bearerjwt_test.go parity)",
-    () => {
-      const { layer } = setup();
-      return Effect.gen(function* () {
-        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
-        yield* writeSigningKeys(yield* jsonText([{ kty: "oct" }]));
+  it.effect("Branch B: fails with the exact wrapped message for an unsupported key type", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys(yield* jsonText([{ kty: "oct" }]));
 
-        const exit = yield* Effect.exit(genBearerJwt(baseFlags));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const json = Cause.pretty(exit.cause);
-          expect(json).toContain("GenBearerJwtSignError");
-          expect(json).toContain("failed to convert JWK to private key: unsupported key type: oct");
-        }
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      const exit = yield* Effect.exit(genBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = Cause.pretty(exit.cause);
+        expect(json).toContain("GenBearerJwtSignError");
+        expect(json).toContain("failed to convert JWK to private key: unsupported key type: oct");
+      }
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live("Branch B: fails with an empty key type when the stored key omits kty entirely", () => {
+  it.effect("Branch B: fails with an empty key type when the stored key omits kty entirely", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
@@ -835,7 +855,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "Branch B: rejects a configured signing key with an unsupported alg at decode time, not sign time",
     () => {
       const { layer } = setup();
@@ -856,7 +876,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch B: rejects a nested array entry in signing_keys_path instead of partially accepting a later valid key (CLI-1961 Codex review finding)",
     () => {
       const { layer } = setup();
@@ -876,7 +896,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch B: accepts a null entry AFTER a valid key in signing_keys_path, signing with an exact kid match (CLI-1961 Codex review finding)",
     () => {
       const validKey = generateEcJwk("valid-kid");
@@ -888,7 +908,7 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
+        expect(yield* decodeHeader(header ?? "")).toEqual({
           alg: "ES256",
           kid: "valid-kid",
           typ: "JWT",
@@ -897,8 +917,8 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
-    "Branch B: ignores trailing bytes after the first JSON value in signing_keys_path, matching Go's single Decode (CLI-1961 Codex review finding)",
+  it.effect(
+    "Branch B: ignores trailing bytes after the first JSON value in signing_keys_path, ",
     () => {
       const validKey = generateEcJwk("valid-kid");
       const { layer, out } = setup();
@@ -909,7 +929,7 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
+        expect(yield* decodeHeader(header ?? "")).toEqual({
           alg: "ES256",
           kid: "valid-kid",
           typ: "JWT",
@@ -918,29 +938,26 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
-    "Branch B: accepts a stored signing key with a null key_ops element, matching Go's zero-value decode (CLI-1961 Codex review finding)",
-    () => {
-      const jwk = { ...generateEcJwk("null-key-ops-kid"), key_ops: ["sign", null] };
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
-        yield* writeSigningKeys(yield* jsonText([jwk]));
+  it.effect("Branch B: accepts a stored signing key with a null key_ops element, ", () => {
+    const jwk = { ...generateEcJwk("null-key-ops-kid"), key_ops: ["sign", null] };
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys(yield* jsonText([jwk]));
 
-        yield* genBearerJwt(baseFlags);
-        const token = tokenFrom(out);
-        const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
-          alg: "ES256",
-          kid: "null-key-ops-kid",
-          typ: "JWT",
-        });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      yield* genBearerJwt(baseFlags);
+      const token = tokenFrom(out);
+      const [header] = token.split(".");
+      expect(yield* decodeHeader(header ?? "")).toEqual({
+        alg: "ES256",
+        kid: "null-key-ops-kid",
+        typ: "JWT",
+      });
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live(
-    "Branch C: TTY with zero configured signing keys fails with Go's exact 'user aborted' text",
+  it.effect(
+    "Branch C: TTY with zero configured signing keys fails with the exact 'user aborted' text",
     () => {
       const { layer } = setup({ stdinIsTty: true });
       return Effect.gen(function* () {
@@ -958,44 +975,42 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
-    "Branch B: selects a key by exact kid match among several (bearerjwt_test.go parity)",
-    () => {
-      const ecJwk = generateEcJwk("ec-kid");
-      const rsaJwk = generateRsaJwk("rsa-kid");
-      const { layer, out } = setup({ pipedAnswer: "rsa-kid" });
-      return Effect.gen(function* () {
-        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
-        yield* writeSigningKeys(yield* jsonText([ecJwk, rsaJwk]));
+  it.effect("Branch B: selects a key by exact kid match among several", () => {
+    const ecJwk = generateEcJwk("ec-kid");
+    const rsaJwk = generateRsaJwk("rsa-kid");
+    const { layer, out } = setup({ pipedAnswer: "rsa-kid" });
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys(yield* jsonText([ecJwk, rsaJwk]));
 
-        yield* genBearerJwt({ ...baseFlags, role: Option.some("postgres") });
-        const token = tokenFrom(out);
-        const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      yield* genBearerJwt({ ...baseFlags, role: Option.some("postgres") });
+      const token = tokenFrom(out);
+      const [header] = token.split(".");
+      expect(yield* decodeHeader(header ?? "")).toEqual({
+        alg: "RS256",
+        kid: "rsa-kid",
+        typ: "JWT",
+      });
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live(
-    "Branch B: an unmatched kid, with a blank fallback available, still errors (bearerjwt_test.go parity)",
-    () => {
-      const { layer } = setup({ pipedAnswer: "test-key" });
-      return Effect.gen(function* () {
-        yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
-        yield* writeSigningKeys("[]");
+  it.effect("Branch B: an unmatched kid, with a blank fallback available, still errors", () => {
+    const { layer } = setup({ pipedAnswer: "test-key" });
+    return Effect.gen(function* () {
+      yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
+      yield* writeSigningKeys("[]");
 
-        const exit = yield* Effect.exit(genBearerJwt(baseFlags));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const json = Cause.pretty(exit.cause);
-          expect(json).toContain("GenBearerJwtKeyNotFoundError");
-          expect(json).toContain("signing key not found: test-key");
-        }
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      const exit = yield* Effect.exit(genBearerJwt(baseFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = Cause.pretty(exit.cause);
+        expect(json).toContain("GenBearerJwtKeyNotFoundError");
+        expect(json).toContain("signing key not found: test-key");
+      }
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live(
+  it.effect(
     "Branch B: an exact kid match on a key with an empty kid wins ahead of the blank-input fallback-to-first",
     () => {
       const namedKey = generateEcJwk("named-kid");
@@ -1011,12 +1026,12 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({ alg: "ES256", typ: "JWT" });
+        expect(yield* decodeHeader(header ?? "")).toEqual({ alg: "ES256", typ: "JWT" });
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "Branch C: TTY picks a key via the interactive selector and echoes Selected key ID",
     () => {
       const ecJwk = generateEcJwk("ec-kid");
@@ -1029,13 +1044,17 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+        expect(yield* decodeHeader(header ?? "")).toEqual({
+          alg: "RS256",
+          kid: "rsa-kid",
+          typ: "JWT",
+        });
         expect(out.stderrText).toContain("Selected key ID: rsa-kid");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "Branch C: TTY renders an empty label/kid/hint for a stored key missing kid and alg",
     () => {
       const { kid: _kid, alg: _alg, ...bareKey } = generateEcJwk("unused");
@@ -1055,7 +1074,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "Branch C: TTY renders the key's use/ext/key_ops fields when a stored key carries them",
     () => {
       const jwk = {
@@ -1075,8 +1094,8 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
-    "auth.enabled = false with signing_keys_path configured still uses the built-in default key (Go quirk)",
+  it.effect(
+    "auth.enabled = false with signing_keys_path configured still uses the built-in default key",
     () => {
       const otherJwk = generateEcJwk("configured-kid");
       const { layer, out } = setup();
@@ -1087,7 +1106,7 @@ describe("gen bearer-jwt integration", () => {
         yield* genBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        expect(decodeSegment(header ?? "")).toEqual({
+        expect(yield* decodeHeader(header ?? "")).toEqual({
           alg: "ES256",
           kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
           typ: "JWT",
@@ -1096,7 +1115,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "auth.enabled = false with signing_keys_path configured: a real kid from the file is reported not found",
     () => {
       const otherJwk = generateEcJwk("configured-kid");
@@ -1114,7 +1133,7 @@ describe("gen bearer-jwt integration", () => {
     },
   );
 
-  it.live("fails when signing_keys_path is configured but the file is missing", () => {
+  it.effect("fails when signing_keys_path is configured but the file is missing", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
@@ -1129,7 +1148,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the configured signing keys file is not valid JSON at all", () => {
+  it.effect("fails when the configured signing keys file is not valid JSON at all", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
@@ -1145,7 +1164,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the configured signing keys file is not a JSON array at all", () => {
+  it.effect("fails when the configured signing keys file is not a JSON array at all", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
@@ -1161,7 +1180,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the configured signing keys file is a JSON array of non-objects", () => {
+  it.effect("fails when the configured signing keys file is a JSON array of non-objects", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
@@ -1177,7 +1196,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with a config parse error when config.toml is malformed", () => {
+  it.effect("fails with a config parse error when config.toml is malformed", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       yield* writeConfig("not valid toml ][");
@@ -1190,7 +1209,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state after a successful run", () => {
+  it.effect("flushes telemetry state after a successful run", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true });
     return Effect.gen(function* () {
       yield* genBearerJwt(baseFlags);
@@ -1198,7 +1217,7 @@ describe("gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry state even when the signing-key resolution fails", () => {
+  it.effect("flushes telemetry state even when the signing-key resolution fails", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true });
     return Effect.gen(function* () {
       yield* writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n');
@@ -1213,6 +1232,7 @@ describe("gen bearer-jwt integration", () => {
     const analytics = mockAnalytics();
     const layer = Layer.mergeAll(
       BunServices.layer,
+      BunCrypto.layer,
       processControlLayer,
       CliOutput.layer(textCliOutputFormatter()),
       out.layer,
@@ -1251,7 +1271,7 @@ describe("gen bearer-jwt integration", () => {
 
       const token = tokenFrom(out);
       const [, payload] = token.split(".");
-      const claims = decodeSegment(payload ?? "") as Record<string, unknown>;
+      const claims = yield* decodeClaims(payload ?? "");
       expect(claims["role"]).toBe("service_role");
     }).pipe(Effect.provide(layer));
   });

@@ -94,7 +94,7 @@ describe("quietProgressTextOutputLayer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("stays on the text layer so errors keep Go parity (red text on stderr)", () =>
+  it.effect("stays on the text layer so errors keep red text on stderr", () =>
     Effect.gen(function* () {
       const out = yield* Output;
       // `format === "text"` routes `withJsonErrorHandling` to the top-level text `output.fail`
@@ -107,7 +107,7 @@ describe("quietProgressTextOutputLayer", () => {
     Effect.gen(function* () {
       const out = yield* Output;
       yield* out.info("hello");
-      expect(mockClack.log.info).toHaveBeenCalledWith("hello");
+      expect(mockClack.log.info).toHaveBeenCalledWith("hello", expect.anything());
     }).pipe(Effect.provide(layer)),
   );
 });

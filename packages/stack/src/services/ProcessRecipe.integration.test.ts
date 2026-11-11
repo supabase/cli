@@ -2,7 +2,7 @@ import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node"
 import { describe, expect, it } from "@effect/vitest";
 import {
   PlatformError,
-  Crypto,
+  Context,
   Deferred,
   Effect,
   Exit,
@@ -16,17 +16,17 @@ import {
   Sink,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
 import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
 import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
-import { randomPortSpanStart, reserveNativePort } from "../Ports.ts";
-import type * as State from "../State.ts";
+import { makeScopedPorts, nativePortBase, nativePortSpan } from "../Ports.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -39,7 +39,10 @@ import {
   type ContainerProcess,
   type ContainerRuntime,
 } from "../runtime/Container.ts";
-import { makeService, ServiceError } from "../Service.ts";
+import { ServiceError } from "../Service.ts";
+import * as StackNamespace from "../StackNamespace.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 import {
   makeProcessRecipe,
   type ProcessDependencies,
@@ -48,6 +51,7 @@ import {
 import type { CatalogOptions, RecipeCreation } from "./Recipe.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Pooler from "./Pooler.ts";
+import { selection } from "../../tests/pins.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
@@ -65,6 +69,7 @@ if (postgrestVersion === undefined) {
 
 const creation: TestCreation = {
   service: "rest",
+  pin: selection.rest,
   version: postgrestVersion,
   config: {},
 };
@@ -75,6 +80,7 @@ const options: CatalogOptions = {
   root: "/tmp/process-recipe-test",
   cacheRoot: "/tmp/process-recipe-test-cache",
   runtime: "docker",
+  claimNativePort: () => Effect.succeed(true),
 };
 
 const spec: ProcessRecipeSpec<TestCreation> = {
@@ -99,17 +105,6 @@ const isPortOccupied = (port: number): Effect.Effect<boolean> =>
       if (server.listening) server.close();
     });
   });
-
-// No saved stacks to consult.
-const testReadPortClaims = Effect.succeed([]);
-const testReserveNativePort = (
-  key: string,
-  claims: ReadonlyArray<State.StackClaims>,
-  excluded: ReadonlySet<number>,
-) =>
-  Effect.flatMap(Crypto.Crypto, (crypto) =>
-    reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
-  ).pipe(Effect.provide(NodeCrypto.layer));
 
 describe("ProcessRecipe launch cleanup", () => {
   for (const scenario of [
@@ -157,6 +152,7 @@ describe("ProcessRecipe launch cleanup", () => {
           const container: ContainerRuntime = {
             prepare: () => Effect.void,
             prepareImage: (image) => Effect.succeed(image),
+            ensureImage: (image) => Effect.succeed({ image, pulled: false }),
             launchCommand: () =>
               Effect.gen(function* () {
                 const launch = yield* Ref.updateAndGet(startupLaunches, (value) => value + 1);
@@ -197,22 +193,24 @@ describe("ProcessRecipe launch cleanup", () => {
           const dependencies = {
             fs: yield* FileSystem.FileSystem,
             path: yield* Path.Path,
-            crypto: yield* Crypto.Crypto,
+            crypto: yield* SecureRandom.SecureRandom,
+            digest: yield* Digest.Digest,
             client: yield* HttpClient.HttpClient,
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
-            readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
           } satisfies ProcessDependencies;
           const recipe = yield* makeProcessRecipe(options, dependencies, spec);
-          const service = yield* makeService(recipe.definition, {
+          const service = yield* makeStandaloneService(recipe.definition, {
             id: `rest-process-recipe-${scenario}`,
             config: creation,
           });
 
           expect(Exit.isFailure(yield* service.start.pipe(Effect.exit))).toBe(true);
-          expect((yield* service.get).lifecycle).toBe("stopping");
-          expect((yield* service.get).cleanupError?.operation).toBe("stop");
+          expect(yield* service.get).toMatchObject({
+            lifecycle: "stopping",
+            error: { operation: "launch" },
+          });
           expect(yield* Ref.get(startupLaunches)).toBe(1);
           expect(yield* Ref.get(serviceLaunches)).toBe(0);
           expect(yield* Ref.get(active)).toBe(1);
@@ -224,7 +222,11 @@ describe("ProcessRecipe launch cleanup", () => {
           expect(yield* Ref.get(serviceLaunches)).toBe(1);
           expect(yield* Ref.get(active)).toBe(1);
           yield* service.stop;
-        }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
       ),
     );
   }
@@ -234,7 +236,7 @@ describe("ProcessRecipe launch cleanup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const cleanupFailure = yield* Ref.make(true);
@@ -248,7 +250,7 @@ describe("ProcessRecipe launch cleanup", () => {
                 !command.args.some(
                   (argument) =>
                     argument === "__supabase_stack_native__" ||
-                    argument.endsWith("/native-launcher.ts"),
+                    (typeof argument === "string" && argument.endsWith("/native-launcher.ts")),
                 )
               )
                 return handle;
@@ -287,29 +289,34 @@ describe("ProcessRecipe launch cleanup", () => {
           fs,
           path,
           crypto,
+          digest: yield* Digest.Digest,
           client,
           spawner,
           container: undefined,
-          readPortClaims: testReadPortClaims,
-          reserveNativePort: testReserveNativePort,
+          borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(nativeOptions, dependencies, nativeSpec);
-        const service = yield* makeService(recipe.definition, {
+        const service = yield* makeStandaloneService(recipe.definition, {
           id: "rest-process-recipe-native",
           config: creation,
         });
 
         const failure = yield* service.start.pipe(Effect.exit);
         expect(Exit.isFailure(failure)).toBe(true);
-        expect((yield* service.get).lifecycle).toBe("stopping");
-        expect((yield* service.get).cleanupError?.operation).toBe("stop");
+        expect(yield* service.get).toMatchObject({
+          lifecycle: "stopping",
+          error: { operation: "launch" },
+        });
         expect(startupWrapped).toBe(true);
 
         yield* Ref.set(cleanupFailure, false);
         yield* service.stop;
         expect((yield* service.get).lifecycle).toBe("stopped");
-        expect((yield* service.get).cleanupError).toBeUndefined();
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
   );
 
@@ -318,7 +325,7 @@ describe("ProcessRecipe launch cleanup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const testScope = yield* Scope.Scope;
@@ -399,14 +406,14 @@ describe("ProcessRecipe launch cleanup", () => {
           fs,
           path,
           crypto,
+          digest: yield* Digest.Digest,
           client,
           spawner,
           container: undefined,
-          readPortClaims: testReadPortClaims,
-          reserveNativePort: testReserveNativePort,
+          borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(nativeOptions, dependencies, nativeSpec);
-        const service = yield* makeService(recipe.definition, {
+        const service = yield* makeStandaloneService(recipe.definition, {
           id: "rest-process-recipe-port-order",
           config: creation,
         });
@@ -419,8 +426,16 @@ describe("ProcessRecipe launch cleanup", () => {
         expect(blocker?.listening).toBe(true);
         expect(ports).toHaveLength(3);
         expect(ports.every((port) => port > 0)).toBe(true);
+        for (const port of ports) {
+          expect(port).toBeGreaterThanOrEqual(nativePortBase);
+          expect(port).toBeLessThan(nativePortBase + nativePortSpan);
+        }
         yield* service.stop;
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
   );
 });
@@ -440,6 +455,7 @@ const startupContainer = (tool: {
 }): ContainerRuntime => ({
   prepare: () => Effect.void,
   prepareImage: (image) => Effect.succeed(image),
+  ensureImage: (image) => Effect.succeed({ image, pulled: false }),
   launch: () => Effect.die("the main process must not launch after a failed startup"),
   launchCommand: () =>
     Effect.succeed({
@@ -459,6 +475,7 @@ const startupContainer = (tool: {
 const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
   const creation: Realtime.Creation = {
     service: "realtime",
+    pin: selection.realtime,
     config: { databaseUrl: "postgresql://postgres:postgres@host.docker.internal:54322/postgres" },
   };
   const recipe = yield* makeProcessRecipe(
@@ -468,23 +485,24 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
       root: "/unused",
       cacheRoot: "/unused/cache",
       runtime: "docker",
+      claimNativePort: () => Effect.succeed(true),
     },
     {
+      borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
       fs: yield* FileSystem.FileSystem,
       path: yield* Path.Path,
-      crypto: yield* Crypto.Crypto,
+      crypto: yield* SecureRandom.SecureRandom,
+      digest: yield* Digest.Digest,
       client: yield* HttpClient.HttpClient,
       spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
       container,
-      readPortClaims: testReadPortClaims,
-      reserveNativePort: testReserveNativePort,
     },
     Realtime.makeSpec(),
   );
-  return yield* makeService(recipe.definition, { id: "realtime", config: creation });
+  return yield* makeStandaloneService(recipe.definition, { id: "realtime", config: creation });
 });
 
-const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const platform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 const nativeFixtureArtifact = Effect.fn(function* (
   cacheRoot: string,
@@ -506,15 +524,22 @@ const nativeFixtureArtifact = Effect.fn(function* (
           : undefined;
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
 
-  const { releaseVersion } = yield* resolveArtifact({ service: artifact.service });
+  const { releaseVersion, natives } = yield* resolveArtifact({
+    service: artifact.service,
+    pin: selection[artifact.service],
+  });
   const request: ArtifactRequest = {
     key: `slim-services/${artifact.name}/${releaseVersion}/${target}`,
     requiredRuntimePaths: Object.keys(artifact.files),
     executablePath: artifact.executablePath,
   };
   const fs = yield* FileSystem.FileSystem;
+  // The generation directory is content-addressed by this digest: it must match what the real
+  // artifact source resolves for this platform, or this fixture is invisible to consumers that
+  // resolve the real catalog source for the same key.
+  const digest = natives[target].archive;
   const source: ArtifactSource = {
-    checksum: () => Effect.succeed("0".repeat(64)),
+    checksum: () => Effect.succeed(digest),
     materialize: (_entry, destination) =>
       Effect.gen(function* () {
         yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
@@ -659,10 +684,11 @@ const nativeRestRecipe = Effect.fn(function* (
   spawner: ChildProcessSpawnerService["Service"],
   env: Readonly<Record<string, string>> = {},
   nativeReadinessOutput?: ProcessRecipeSpec<TestCreation>["nativeReadinessOutput"],
+  catalog: Partial<CatalogOptions> = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const client = yield* HttpClient.HttpClient;
   const cacheRoot = path.join(root, "cache");
   yield* nativeRestArtifact(cacheRoot, program);
@@ -673,16 +699,17 @@ const nativeRestRecipe = Effect.fn(function* (
       cacheRoot,
       runtime: "native",
       platform: { os: process.platform, arch: process.arch },
+      ...catalog,
     },
     {
+      borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
       fs,
       path,
       crypto,
+      digest: yield* Digest.Digest,
       client,
       spawner,
       container: undefined,
-      readPortClaims: testReadPortClaims,
-      reserveNativePort: testReserveNativePort,
     },
     {
       ...spec,
@@ -756,7 +783,10 @@ describe("process recipe startup", () => {
             `server.listen(Number(process.env.PORT), "127.0.0.1");\n`,
           collidingSpawner,
         );
-        const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "rest",
+          config: creation,
+        });
 
         yield* service.start;
         yield* service.ready;
@@ -766,10 +796,67 @@ describe("process recipe startup", () => {
         expect(yield* Ref.get(taken)).toHaveLength(2);
         expect(yield* Ref.get(taken)).not.toContain(endpoint?.port);
         const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint?.host}:${endpoint?.port}/`),
+          HttpClientRequest.get(`http://${endpoint && httpHost(endpoint)}:${endpoint?.port}/`),
         );
         expect(yield* response.text).toBe("owned-fixture");
         yield* service.stop;
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.live("claims a native service's port across stacks while it runs and frees it on stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-claim-" });
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root: `${root}/state` })),
+          StackNamespace.Service,
+        );
+        const owner = `recipe-claim-owner-${yield* crypto.uuidV4()}`;
+        const other = `recipe-claim-other-${yield* crypto.uuidV4()}`;
+        for (const id of [owner, other])
+          yield* state.save({
+            id,
+            runtime: "native",
+            identity: { projectRoot: root, branchContext: "test", stackName: id },
+            instances: [],
+            lifetime: "detached",
+            composition: { members: [], dependencies: [] },
+          });
+        yield* state.acquireLease(owner);
+        const ports = yield* makeScopedPorts(state);
+        yield* Effect.addFinalizer(() =>
+          Effect.forEach([owner, other], (id) => ports.releaseStack(id)).pipe(Effect.ignore),
+        );
+        const recipe = yield* nativeRestRecipe(
+          root,
+          `const http = require("node:http");\n` +
+            `http.createServer((_request, response) => response.end("claimed-fixture"))` +
+            `.listen(Number(process.env.PORT), "127.0.0.1");\n`,
+          spawner,
+          {},
+          undefined,
+          { claimNativePort: (key, port) => ports.claimNative(owner, key, port) },
+        );
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "rest",
+          config: creation,
+        });
+
+        yield* service.start;
+        yield* service.ready;
+        const endpoint = (yield* Ref.get(recipe.endpoints)).get("http");
+        if (endpoint === undefined) return yield* Effect.die("rest published no http endpoint");
+
+        const whileRunning = yield* Effect.scoped(ports.claimNative(other, "probe", endpoint.port));
+        yield* service.stop;
+        const afterStop = yield* Effect.scoped(ports.claimNative(other, "probe", endpoint.port));
+
+        expect(whileRunning).toBe(false);
+        expect(afterStop).toBe(true);
       }),
     ).pipe(Effect.provide(platform)),
   );
@@ -810,7 +897,10 @@ describe("process recipe startup", () => {
             {},
             (line) => line.includes("listener bound"),
           );
-          const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+          const service = yield* makeStandaloneService(recipe.definition, {
+            id: "rest",
+            config: creation,
+          });
 
           yield* service.start;
           const failure = yield* Effect.flip(service.ready);
@@ -855,7 +945,10 @@ describe("process recipe startup", () => {
           spawner,
           { PID_FILE: pidFile },
         );
-        const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "rest",
+          config: creation,
+        });
 
         yield* service.start;
         const failure = yield* Effect.flip(service.ready);
@@ -873,7 +966,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-race-" });
@@ -886,6 +979,7 @@ describe("process recipe startup", () => {
         yield* Effect.addFinalizer(() => Scope.close(testScope, Exit.void));
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -950,16 +1044,17 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: interceptingSpawner,
             container: undefined,
-            readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
         );
@@ -985,83 +1080,12 @@ describe("process recipe startup", () => {
         );
         expect(yield* competingResponse.text).toBe("competing-listener");
         const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint?.host}:${endpoint?.port}/api/health`),
+          HttpClientRequest.get(
+            `http://${endpoint && httpHost(endpoint)}:${endpoint?.port}/api/health`,
+          ),
         );
         expect(yield* response.text).toBe(`owned-fixture:${endpoint?.port}`);
         expect(yield* Ref.get(collisionInstalled)).toBe(true);
-        yield* runtime.stop;
-      }),
-    ).pipe(Effect.provide(platform)),
-  );
-
-  it.live("reserves a native backend port below the default ephemeral range", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const client = yield* HttpClient.HttpClient;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-range-" });
-        const cacheRoot = path.join(root, "cache");
-        yield* nativePoolerArtifact(cacheRoot);
-        const creation: Pooler.Creation = {
-          service: "pooler",
-          config: {
-            databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
-            jwtSecret: "pooler-port-range-test-secret-with-more-than-32-characters",
-            tenant: "port-range-test",
-            poolMode: "transaction",
-          },
-        };
-        // Pooler reserves "http" and "sql" concurrently; sharing one scan start forces both
-        // to contend for the same first candidate so the reservation has to skip one of them.
-        const sharedStart = Effect.succeed(yield* randomPortSpanStart(crypto));
-        const contendingReserveNativePort = (
-          key: string,
-          claims: ReadonlyArray<State.StackClaims>,
-          excluded: ReadonlySet<number>,
-        ) => reserveNativePort(claims, key, sharedStart, excluded);
-        const recipe = yield* makeProcessRecipe(
-          {
-            stackId: "process-recipe-port-range",
-            instanceId: "instance",
-            root,
-            cacheRoot,
-            runtime: "native",
-            platform: { os: process.platform, arch: process.arch },
-          },
-          {
-            fs,
-            path,
-            crypto,
-            client,
-            spawner,
-            container: undefined,
-            readPortClaims: testReadPortClaims,
-            reserveNativePort: contendingReserveNativePort,
-          },
-          Pooler.makeSpec(),
-        );
-        if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
-        const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-        const runtime = yield* recipe.definition.launch({
-          id: "pooler",
-          launchId: 1,
-          config: creation,
-          scope,
-        });
-        yield* runtime.health;
-        const endpoints = yield* Ref.get(recipe.endpoints);
-        const endpoint = endpoints.get("http");
-        // Below Linux's default ephemeral range, so the released probe port isn't handed to an
-        // outgoing connection there; a custom host dynamic range can still overlap (ADR 0017).
-        expect(endpoint?.port).toBeGreaterThanOrEqual(20000);
-        expect(endpoint?.port).toBeLessThan(32768);
-        // Pooler reserves "http" and "sql" concurrently; they must never settle on the same port.
-        const sql = endpoints.get("sql");
-        expect(sql?.port).toBeDefined();
-        expect(sql?.port).not.toBe(endpoint?.port);
         yield* runtime.stop;
       }),
     ).pipe(Effect.provide(platform)),
@@ -1072,7 +1096,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({
@@ -1084,6 +1108,7 @@ describe("process recipe startup", () => {
         const startupLaunches = yield* Ref.make<ReadonlyArray<string>>([]);
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -1099,20 +1124,24 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches, true),
             container: undefined,
-            readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
         );
-        const service = yield* makeService(recipe.definition, { id: "pooler", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "pooler",
+          config: creation,
+        });
         const subscribed = yield* Deferred.make<void>();
         const exitObserved = yield* Deferred.make<void>();
         yield* service.observation.pipe(
@@ -1155,7 +1184,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-deadline-" });
@@ -1219,6 +1248,7 @@ describe("process recipe startup", () => {
         };
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -1234,16 +1264,17 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: deadlineSpawner,
             container: undefined,
-            readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
         );
@@ -1275,7 +1306,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({
@@ -1287,6 +1318,7 @@ describe("process recipe startup", () => {
         const startupLaunches = yield* Ref.make<ReadonlyArray<string>>([]);
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -1302,16 +1334,17 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches),
             container: undefined,
-            readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
         );
@@ -1344,7 +1377,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-exit-failure-" });
@@ -1397,6 +1430,7 @@ describe("process recipe startup", () => {
         };
         const creation: Pooler.Creation = {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
             jwtSecret: "pooler-collision-test-secret-with-more-than-32-characters",
@@ -1412,16 +1446,17 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: failingSpawner,
             container: undefined,
-            readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
         );

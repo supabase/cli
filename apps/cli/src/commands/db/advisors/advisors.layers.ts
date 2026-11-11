@@ -17,8 +17,8 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
  * Runtime layer for `supabase db advisors`, which spans two backends:
  *
  *   - **`--local` / `--db-url`** — the Postgres connection + db-config resolver.
- *   - **`--linked`** — raw-HTTP advisor GETs, project-ref resolution, and the
- *     linked-project cache.
+ *   - **`--linked`** — typed advisor GETs via the lazy platform-API factory, project-ref
+ *     resolution, and the linked-project cache.
  *
  * Does not use `managementApiRuntimeLayer`: that layer eagerly builds `CommandPlatformApi`,
  * resolving an access token at layer construction, which would make the auth-free `--local` path
@@ -26,8 +26,8 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
  *
  * Instead the project-ref resolver is given the lazy `commandPlatformApiFactoryLayer`, whose
  * `make` is only forced by an interactive project-ref prompt. The linked path resolves the ref
- * via the non-prompting `loadProjectRef`, which never forces the factory; the local path never
- * resolves a project ref at all, so no token is resolved there either.
+ * through target resolution, which never forces the factory; the local path never resolves a
+ * project ref at all, so no token is resolved there either.
  *
  * `commandSettingsLayer` is provided to each consumer that needs it, since `Layer.provide` does
  * not share to merge siblings; layers are memoised by reference so the config / credentials /
@@ -74,10 +74,9 @@ export const dbAdvisorsRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
-  // The one per-command identity stitcher, exposed at top level so the raw-HTTP advisor GETs can
-  // yield it. The same reference is provided to platformApiFactory / linkedProjectCache /
-  // dbConfig above, so memoisation makes them all share one `stitchAttempted` guard, firing at
-  // most once.
+  platformApiFactory,
+  // Exposed at top level so `withCommandTelemetry` can read `stitchedDistinctId()`. Memoised by
+  // reference, so it is the same instance the factory's typed client stitches through.
   identityStitchLayer,
   telemetryStateLayer,
   commandRuntimeLayer(["db", "advisors"]),

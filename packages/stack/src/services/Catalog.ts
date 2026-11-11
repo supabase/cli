@@ -1,15 +1,15 @@
-import { Crypto, Effect, FileSystem, Path, Ref, Schema } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
+import { Effect, FileSystem, Path, Ref, Schema, Tuple } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
+import { ChildProcessSpawner } from "effect/process";
+import { HttpClient } from "effect/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
-import { randomPortSpanStart, reserveNativePort } from "../Ports.ts";
 import { ServiceError, type ServiceDefinition } from "../Service.ts";
-import type * as State from "../State.ts";
 import {
   makeDatabase,
   DatabaseConfig,
   DatabaseCreation,
   DatabaseEndpoints,
+  pinnedDatabaseConfig,
   type DatabaseComponent,
 } from "./Database.ts";
 import * as Analytics from "./Analytics.ts";
@@ -29,8 +29,10 @@ import {
   type CatalogOptions,
   type CatalogRecipe as RecipeCatalogRecipe,
   type ProcessRecipeResult,
+  type ServiceEndpoint,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
+import { borrow } from "../namespace/Paths.ts";
 import { missingInput } from "./ServiceConfig.ts";
 import type { SnapshotScope } from "./DatabaseSnapshot.ts";
 import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
@@ -138,6 +140,11 @@ export const ServiceCreationInput = Schema.Union([
   Pooler.Creation,
 ]);
 export type ServiceCreationInput = Schema.Schema.Type<typeof ServiceCreationInput>;
+/** A restart candidate; a restart keeps the instance's saved pin. */
+export const ServiceRestartInput = ServiceCreationInput.mapMembers(
+  Tuple.map(Schema.fieldsAssign({ pin: Schema.optionalKey(Schema.Never) })),
+);
+export type ServiceRestartInput = Schema.Schema.Type<typeof ServiceRestartInput>;
 export const serviceSchemas = {
   database: DatabaseConfig,
   rest: Rest.Config,
@@ -213,21 +220,24 @@ const databaseRecipe = (
   definition: {
     prepare: (candidate) =>
       candidate.service === "database"
-        ? (component.definition.prepare?.(candidate.config) ?? Effect.void)
+        ? (component.definition.prepare?.(pinnedDatabaseConfig(candidate)) ?? Effect.void)
         : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
     launch: (context) =>
       context.config.service === "database"
-        ? component.definition.launch({ ...context, config: context.config.config })
+        ? component.definition.launch({ ...context, config: pinnedDatabaseConfig(context.config) })
         : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
     removeData: (context) =>
       context.config.service === "database"
-        ? component.definition.removeData({ ...context, config: context.config.config })
+        ? component.definition.removeData({
+            ...context,
+            config: pinnedDatabaseConfig(context.config),
+          })
         : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
   },
   resetDatabaseData: (context) =>
     context.config.service === "database"
       ? component
-          .resetData({ ...context, config: context.config.config })
+          .resetData({ ...context, config: pinnedDatabaseConfig(context.config) })
           .pipe(
             Effect.mapError(
               (cause) => new CatalogError({ operation: "reset", message: cause.message, cause }),
@@ -239,7 +249,7 @@ const databaseRecipe = (
   saveDatabaseSnapshot: (context, key, scope) =>
     context.config.service === "database"
       ? component
-          .saveSnapshot({ ...context, config: context.config.config }, key, scope)
+          .saveSnapshot({ ...context, config: pinnedDatabaseConfig(context.config) }, key, scope)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -252,7 +262,7 @@ const databaseRecipe = (
   restoreDatabaseSnapshot: (context, key, scope) =>
     context.config.service === "database"
       ? component
-          .restoreSnapshot({ ...context, config: context.config.config }, key, scope)
+          .restoreSnapshot({ ...context, config: pinnedDatabaseConfig(context.config) }, key, scope)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -268,6 +278,13 @@ const databaseRecipe = (
   endpoint: (name) =>
     name === "sql"
       ? component.endpoint.pipe(
+          // node-postgres appends the `.s.PGSQL.<port>` suffix itself, so the database keeps the
+          // directory and port private; the catalog's endpoint carries the full socket filename.
+          Effect.map((value): ServiceEndpoint =>
+            value.kind === "unix"
+              ? { ...value, path: `${value.path}/.s.PGSQL.${value.port}` }
+              : value,
+          ),
           Effect.mapError(
             (cause) =>
               new CatalogError({
@@ -289,20 +306,10 @@ const databaseRecipe = (
 });
 
 export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
-  (
-    input: unknown,
-    options: CatalogOptions,
-    readPortClaims: Effect.Effect<ReadonlyArray<State.StackClaims>, State.StateError>,
-  ) =>
+  (input: unknown, options: CatalogOptions) =>
     Effect.gen(function* () {
       const endpointError = validateEndpointNames(input);
       if (endpointError !== undefined) return yield* endpointError;
-      if (isRecord(input) && input.service === "database" && input.version !== undefined)
-        return yield* new CatalogError({
-          operation: "config",
-          message: "Database artifact version belongs in config.version",
-          service: "database",
-        });
       const creation = yield* Schema.decodeUnknownEffect(ServiceCreation)(input).pipe(
         Effect.mapError(
           (cause) =>
@@ -311,7 +318,8 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
       );
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const digest = yield* Digest.Digest;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const client = yield* HttpClient.HttpClient;
       if (creation.service === "database") {
@@ -324,6 +332,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
           runtime: options.runtime,
           ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
           ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+          ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -338,24 +347,28 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         return databaseRecipe(creation, component);
       }
       const container =
-        options.runtime === "native"
+        options.engineTarget === undefined
           ? undefined
           : yield* makeContainerRuntime({
-              engine: options.runtime,
+              target: options.engineTarget,
               root: options.root,
               imageMirrors: slimImageMirrors,
               ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
             });
+      const borrowCallerPath = (candidate: string) =>
+        borrow(fs, path, candidate, options.root, (operation, cause) => {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          return new ServiceError({ operation, message, cause });
+        });
       const deps: ProcessDependencies = {
         fs,
         path,
         crypto,
+        digest,
         client,
         spawner,
         container,
-        readPortClaims,
-        reserveNativePort: (key, claims, excluded) =>
-          reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
+        borrowCallerPath,
       };
       switch (creation.service) {
         case "rest":

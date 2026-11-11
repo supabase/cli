@@ -22,7 +22,7 @@ describe("config diff CLI surface", () => {
       // This hermetic cwd has no config file, so reaching the handler (not just a binary-launch
       // failure) surfaces this load-error text — guarding against a vacuously green regression.
       expect(combined).toContain(
-        "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
+        "failed to read supabase/config.toml, config.json or config.jsonc: file not found. Run `supabase init` to create one.",
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

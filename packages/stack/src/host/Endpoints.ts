@@ -2,8 +2,11 @@ import { allowedEndpointNames, type ServiceCreation } from "../services/Catalog.
 import type { ServiceEndpoint } from "../services/Recipe.ts";
 import { apiPath as storageApiPath } from "../services/Storage.ts";
 import type { NetworkEndpoint } from "../Network.ts";
-import { ProxyError, type BackendAddress } from "../Proxy.ts";
+import type { HttpFileRoute, HttpRoute } from "../HttpProxy.ts";
+import type { BackendAddress } from "../Proxy.ts";
+import { readContainedFile } from "../StackNamespace.ts";
 import { Data, Effect, Redacted } from "effect";
+import { timingSafeEqual } from "node:crypto";
 
 export class EndpointError extends Data.TaggedError("EndpointError")<{
   readonly message: string;
@@ -30,8 +33,11 @@ export const endpointPort = (creation: EndpointIntents, name: string): number | 
   return endpoint.port === "auto" || typeof endpoint.port === "number" ? endpoint.port : "auto";
 };
 
-/** Path prefix of a service on the shared API listener, or `undefined` when it has a dedicated one. */
-export const apiRoute = (service: ServiceCreation["service"]): string | undefined => {
+/**
+ * Path prefix of a service on the shared API listener, or `undefined` when it has a dedicated one.
+ * Accepts a plain string too, for a service kind decoded off an RPC transport.
+ */
+export const apiRoute = (service: string): string | undefined => {
   switch (service) {
     case "rest":
       return "/rest/v1";
@@ -48,13 +54,68 @@ export const apiRoute = (service: ServiceCreation["service"]): string | undefine
   }
 };
 
-type RouteKeys = NonNullable<NonNullable<NetworkEndpoint["shared"]>[number]["keyRewrite"]>["keys"];
+/** Whether the service's configured HTTP endpoint is served on the shared API listener. */
+export const sharesApiEndpoint = (creation: EndpointIntents): boolean =>
+  apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
 
-/** Routes a service's HTTP endpoint on the shared API listener, or `undefined` for a dedicated one. */
+type RouteKeys = NonNullable<HttpRoute["keyRewrite"]>["keys"];
+type RouteFile = HttpFileRoute["file"];
+
+/* Compares in constant time once the lengths agree, so a guess learns nothing from timing. */
+const tokenMatches = (given: string | null, expected: string | undefined) => {
+  if (given === null || expected === undefined) return false;
+  const left = Buffer.from(given);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+};
+
+/**
+ * Reads the Auth email template at `/email/<id>?token=<token>` in the live creation, so
+ * a configuration change applies on the next start; anything else is `undefined`.
+ */
+export const emailTemplateFile = (creation: Effect.Effect<ServiceCreation>): RouteFile => {
+  /* The last failure warned per template path, so Auth's reload polling logs it once. */
+  const warned = new Map<string, string>();
+  return (url) =>
+    creation.pipe(
+      Effect.flatMap((current) => {
+        const [pathname, query] = url.split("?", 2);
+        const template =
+          current.service === "auth" &&
+          tokenMatches(new URLSearchParams(query).get("token"), current.config.templateToken)
+            ? current.config.templates?.find(({ id }) => `/email/${id}` === pathname)
+            : undefined;
+        if (template === undefined) return Effect.undefined;
+        return readContainedFile(template.path, template.root).pipe(
+          Effect.tap(() => Effect.sync(() => warned.delete(template.path))),
+          Effect.catch((cause) =>
+            warned.get(template.path) === cause.message
+              ? Effect.undefined
+              : Effect.sync(() => warned.set(template.path, cause.message)).pipe(
+                  Effect.andThen(
+                    Effect.logWarning(
+                      `Auth email template ${template.id} at ${template.path} was not served`,
+                      cause,
+                    ),
+                  ),
+                  Effect.as(undefined),
+                ),
+          ),
+        );
+      }),
+    );
+};
+
+/**
+ * Routes a service's HTTP endpoint on the shared API listener, or `undefined` for a dedicated one.
+ * `backend` reaches another of the service's endpoints, like PostgREST's admin port.
+ */
 export const sharedRoutes = (
-  creation: ServiceCreation,
+  creation: Pick<ServiceCreation, "service">,
   name: string,
   keys: RouteKeys,
+  backend: (endpoint: string) => NetworkEndpoint["backend"],
+  emailTemplate: RouteFile,
 ): NetworkEndpoint["shared"] => {
   const route = name === "http" ? apiRoute(creation.service) : undefined;
   if (route === undefined) return undefined;
@@ -65,6 +126,7 @@ export const sharedRoutes = (
           prefix: "/realtime/v1/api",
           upstreamPrefix: "/api",
           upstreamHost: "realtime-dev",
+          forwardedPrefix: "/realtime/v1/api",
           keyRewrite: { policy: "bearer", keys },
         },
         {
@@ -80,31 +142,82 @@ export const sharedRoutes = (
         { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
       ];
     case "rest":
+      return [
+        { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
+        {
+          prefix: "/graphql/v1",
+          upstreamPrefix: "/rpc/graphql",
+          forwardedPrefix: "/graphql/v1",
+          addHeaders: { "content-profile": "graphql_public" },
+          keyRewrite: { policy: "bearer", keys },
+        },
+        { prefix: "/rest-admin/v1", upstreamPrefix: "/", target: backend("admin") },
+      ];
     case "auth":
-      return [{ prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } }];
+      return [
+        /* Like legacy Kong, email links, OAuth redirects and discovery keep the client's headers. */
+        ...["verify", "callback", "authorize"].map((path) => ({
+          prefix: `${route}/${path}`,
+          upstreamPrefix: `/${path}`,
+          forwardedPrefix: `${route}/${path}`,
+        })),
+        {
+          prefix: "/.well-known/oauth-authorization-server",
+          upstreamPrefix: "/.well-known/oauth-authorization-server",
+          forwardedPrefix: "/.well-known/oauth-authorization-server",
+        },
+        { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
+        { prefix: "/email", file: emailTemplate },
+      ];
     case "functions":
-      return [{ prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "sb-api-key", keys } }];
+      return [
+        {
+          prefix: route,
+          upstreamPrefix: "/",
+          keyRewrite: { policy: "sb-api-key", keys },
+          upstreamCors: true,
+        },
+      ];
     default:
       return [{ prefix: route, upstreamPrefix: "/" }];
   }
 };
 
-/** Shared-listener routes a dedicated HTTP endpoint also serves: Studio's MCP server at `/mcp`. */
-export const joinRoutes = (creation: ServiceCreation, name: string): NetworkEndpoint["join"] =>
-  creation.service === "studio" && name === "http"
-    ? [{ prefix: "/mcp", upstreamPrefix: "/api/mcp" }]
-    : undefined;
+/**
+ * Shared-listener routes a dedicated HTTP endpoint also serves while its service runs, like
+ * legacy Kong's: Studio's MCP server, postgres-meta, Logflare and Supavisor's API.
+ */
+export const joinRoutes = (
+  creation: Pick<ServiceCreation, "service">,
+  name: string,
+): NetworkEndpoint["join"] => {
+  if (name !== "http") return undefined;
+  switch (creation.service) {
+    case "studio":
+      return [{ prefix: "/mcp", upstreamPrefix: "/api/mcp", forwardedPrefix: "/mcp" }];
+    case "pgmeta":
+      return [{ prefix: "/pg", upstreamPrefix: "/" }];
+    case "analytics":
+      return [{ prefix: "/analytics/v1", upstreamPrefix: "/" }];
+    case "pooler":
+      return [{ prefix: "/pooler/v2", upstreamPrefix: "/v2" }];
+    default:
+      return undefined;
+  }
+};
+
+/**
+ * Whether an endpoint's writes each take a fresh upstream connection instead of the pool: only
+ * Studio's, `/mcp` included; its reads and every other endpoint's writes stay pooled.
+ */
+export const freshWrites = (creation: EndpointIntents, name: string): boolean =>
+  creation.service === "studio" && name === "http";
 
 /** Translates a launched runtime's endpoint into the proxy's backend address. */
-export const backendAddress = (
-  endpoint: ServiceEndpoint,
-): Effect.Effect<BackendAddress, ProxyError> => {
-  if (endpoint.kind === "unix")
-    return endpoint.path === undefined
-      ? Effect.fail(new ProxyError({ message: "Unix endpoint has no path" }))
-      : Effect.succeed({ path: `${endpoint.path}/.s.PGSQL.${endpoint.port}` });
-  return Effect.succeed({ host: endpoint.host ?? "127.0.0.1", port: endpoint.port });
-};
+export const backendAddress = (endpoint: ServiceEndpoint): BackendAddress =>
+  endpoint.kind === "unix"
+    ? { path: endpoint.path }
+    : { host: endpoint.host ?? "127.0.0.1", port: endpoint.port };
 
 export const publicUrl = (host: string, port: number) => `http://${host}:${port}`;
 

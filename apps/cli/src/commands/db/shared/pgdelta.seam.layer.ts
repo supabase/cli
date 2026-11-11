@@ -1,19 +1,22 @@
-import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
+import type { SecureRandom } from "effect/crypto";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "../../../command-internal/global-flags.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
-import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { readDbConfig } from "../../../command-internal/db-config.read.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
 import { imageDigest, imageTag, isSlimImageRef } from "../../../shared/services/slim-images.ts";
 import { upstreamVersionFromTag } from "../../../shared/services/services.shared.ts";
-import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
+import { localDbState } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
-import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
+import { localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
@@ -80,7 +83,8 @@ export const declarativeSeamLayer = Layer.effect(
     const experimentalFlag = yield* ExperimentalFlag;
     const cliArgs = yield* CliArgs;
     const stackCatalogSetup = yield* StackCatalogSetup;
-    const context = yield* Effect.context<StartLocalDatabaseDeps>();
+    const cliConfigValues = yield* CliConfigValues;
+    const context = yield* Effect.context<StartLocalDatabaseDeps | SecureRandom.SecureRandom>();
 
     return DeclarativeSeam.of({
       ensureLocalDatabaseStarted: Effect.gen(function* () {
@@ -94,6 +98,7 @@ export const declarativeSeamLayer = Layer.effect(
             Effect.provideService(ExperimentalFlag, experimentalFlag),
             Effect.provideService(CliArgs, cliArgs),
             Effect.provideService(StackCatalogSetup, stackCatalogSetup),
+            Effect.provideService(CliConfigValues, cliConfigValues),
             Effect.mapError(
               (cause) =>
                 new DeclarativeShadowDbError({
@@ -104,13 +109,7 @@ export const declarativeSeamLayer = Layer.effect(
             ),
           );
         }
-        const running = yield* isLocalDbRunning(
-          spawner,
-          fs,
-          path,
-          cliSettings.workdir,
-          Option.getOrUndefined(cliSettings.projectId),
-        ).pipe(
+        const dbState = yield* localDbState(spawner, fs, path, cliSettings.workdir).pipe(
           // Satisfies the probe's `LocalDockerEngine` requirement from the captured deps.
           Effect.provideContext(context),
           Effect.mapError(
@@ -124,7 +123,7 @@ export const declarativeSeamLayer = Layer.effect(
               }),
           ),
         );
-        if (running) return; // already running — the seam never prints anything here.
+        if (dbState.exists && dbState.running) return; // the seam never prints anything here.
         yield* startLocalDatabase().pipe(
           Effect.provideContext(context),
           Effect.asVoid,
@@ -145,7 +144,8 @@ export const declarativeSeamLayer = Layer.effect(
         if (backend.kind === "stack") return;
         return yield* Effect.scoped(
           Effect.gen(function* () {
-            const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
+            const toml = yield* readDbConfig(fs, path, cliSettings.workdir).pipe(
+              Effect.provideService(CliConfigValues, cliConfigValues),
               Effect.mapError(
                 (error) =>
                   new DeclarativeShadowDbError({
@@ -160,12 +160,18 @@ export const declarativeSeamLayer = Layer.effect(
               toml.majorVersion,
               Option.getOrUndefined(toml.orioledbVersion),
             );
-            const tomlProjectId = toml.projectId;
-            const projectId = resolveLocalProjectId(
-              Option.getOrUndefined(cliSettings.projectId),
-              Option.getOrUndefined(tomlProjectId),
-              cliSettings.workdir,
-            );
+            const projectId = yield* cliConfigValues
+              .load({ workdir: cliSettings.workdir, projectRef: Option.none() })
+              .pipe(
+                Effect.flatMap((snapshot) => snapshot.get(CliConfigKeys.projectId)),
+                Effect.map(({ value }) => value),
+                Effect.mapError(
+                  (error) =>
+                    new DeclarativeShadowDbError({
+                      message: `failed to read config for local Postgres image check: ${error.message}`,
+                    }),
+                ),
+              );
             const containerId = localDbContainerId(projectId);
             const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
               stdin: "ignore",
@@ -181,13 +187,7 @@ export const declarativeSeamLayer = Layer.effect(
                   }),
               ),
             );
-            const stdoutChunks: Array<Uint8Array> = [];
-            const stderrChunks: Array<Uint8Array> = [];
-            yield* Stream.runForEach(child.stdout, (chunk) =>
-              Effect.sync(() => {
-                stdoutChunks.push(chunk);
-              }),
-            ).pipe(
+            const stdoutChunks = yield* Stream.runCollect(child.stdout).pipe(
               Effect.mapError(
                 () =>
                   new DeclarativeShadowDbError({
@@ -196,11 +196,7 @@ export const declarativeSeamLayer = Layer.effect(
                   }),
               ),
             );
-            yield* Stream.runForEach(child.stderr, (chunk) =>
-              Effect.sync(() => {
-                stderrChunks.push(chunk);
-              }),
-            ).pipe(
+            const stderrChunks = yield* Stream.runCollect(child.stderr).pipe(
               Effect.mapError(
                 () =>
                   new DeclarativeShadowDbError({
@@ -256,7 +252,7 @@ export const declarativeSeamLayer = Layer.effect(
             if (actual.length === 0 || actualTag === undefined || expectedTag === undefined) {
               return;
             }
-            // Slim refs never go through a registry mirror, so a family mismatch
+            // A slim ref's ECR Public mirror is the same family; any other family mismatch
             // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
             // expectation) is stale even when the upstream versions happen to match.
             const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
@@ -300,16 +296,14 @@ export function isMissingContainerInspectError(stderr: string): boolean {
   return stderr.toLowerCase().includes("no such container");
 }
 
+const decodeInspectJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
 export function resolveContainerInspectImageName(stdout: string): string {
   const trimmed = stdout.trim();
   if (trimmed.length === 0) return "";
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return trimmed;
-  }
-  const inspect = Array.isArray(parsed) ? parsed[0] : parsed;
+  const parsed = decodeInspectJson(trimmed);
+  if (Option.isNone(parsed)) return trimmed;
+  const inspect = Array.isArray(parsed.value) ? parsed.value[0] : parsed.value;
   if (!isJsonRecord(inspect)) return "";
   const imageName = inspect["ImageName"];
   if (typeof imageName === "string" && imageName.trim().length > 0) {

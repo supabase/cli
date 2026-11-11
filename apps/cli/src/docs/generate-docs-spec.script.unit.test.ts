@@ -1,8 +1,8 @@
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-const cliRoot = path.resolve(import.meta.dirname, "../..");
+const cliRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
  * Subprocess-level coverage of the `scripts/generate-docs-spec.ts` entrypoint (see

@@ -18,6 +18,50 @@ export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")
   readonly appliedRemote?: string;
 }> {}
 
+/** A config document uses keys the config format no longer accepts; `removedKeys` lists every one with its replacement. */
+export class CliConfigRemovedKeyError extends Data.TaggedError("CliConfigRemovedKeyError")<{
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly removedKeys: ReadonlyArray<{ readonly key: string; readonly replacement: string }>;
+}> {
+  override get message(): string {
+    const file = this.path.split(/[\\/]/).slice(-2).join("/");
+    const [only, ...rest] = this.removedKeys;
+    if (only !== undefined && rest.length === 0) {
+      return `${only.key} in ${file} is no longer supported. Use ${only.replacement} instead.`;
+    }
+    return [
+      `${file} uses config keys that are no longer supported:`,
+      ...this.removedKeys.map(({ key, replacement }) => `  ${key}: use ${replacement} instead.`),
+    ].join("\n");
+  }
+}
+
+/** Both `config.json` and `config.jsonc` exist in one project; `paths` lists every conflicting file. */
+export class CliConfigFileConflictError extends Data.TaggedError("CliConfigFileConflictError")<{
+  readonly paths: ReadonlyArray<string>;
+}> {
+  override get message(): string {
+    const files = this.paths.map((path) => path.split(/[\\/]/).slice(-2).join("/"));
+    return `Found both ${files.join(" and ")}. Keep one and delete the other.`;
+  }
+}
+
+/** A config file declares a schema version newer than this package reads. */
+export class CliConfigSchemaVersionError extends Data.TaggedError("CliConfigSchemaVersionError")<{
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly schemaRef: string;
+  /** The declared version in decimal digits, which can exceed the safe integer range. */
+  readonly declaredVersion: string;
+  readonly supportedVersion: number;
+}> {
+  override get message(): string {
+    const file = this.path.split(/[\\/]/).slice(-2).join("/");
+    return `${file} declares config schema v${this.declaredVersion}, but this version of the Supabase CLI only reads up to v${this.supportedVersion}. Upgrade the Supabase CLI to use this config.`;
+  }
+}
+
 const PROJECT_CONFIG_PARSE_ERROR_MESSAGE_PREFIX =
   "Could not read the project config from the Management API response";
 

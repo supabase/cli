@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import {
   Cause,
   Effect,
@@ -13,7 +13,10 @@ import {
 import type * as StackEffect from "./effect.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import { StackError } from "./Rpc.ts";
-import { ServiceCreationInput as CreationSchema } from "./services/Catalog.ts";
+import {
+  ServiceCreationInput as CreationSchema,
+  ServiceRestartInput as RestartSchema,
+} from "./services/Catalog.ts";
 import type { InitializationCommand, PgProveOptions, PostgresCommand } from "./Commands.ts";
 
 /** Optional cancellation ends the caller's wait, or its attached command job. */
@@ -128,7 +131,12 @@ export interface Stack extends Omit<DerivedStack, "services" | "composition" | "
   readonly close: () => Promise<void>;
 }
 
-const clientLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const clientLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layerSecureRandom,
+  NodeCrypto.layerDigest,
+  NodeHttpClient.layerNodeHttp,
+);
 /** Every failure and defect of a cause, so none is hidden behind the first. */
 const causeErrors = (cause: Cause.Cause<unknown>): ReadonlyArray<unknown> =>
   cause.reasons.flatMap((reason) =>
@@ -292,7 +300,17 @@ const makeAdapter = (client: Client) => {
 const creationJson = Schema.toCodecJson(CreationSchema);
 const decodeCreation = (operation: string, creation: unknown) =>
   Schema.decodeUnknownEffect(creationJson)(creation).pipe(
-    Effect.mapError((cause) => new StackError({ operation, message: cause.message })),
+    Effect.mapError(
+      (cause) => new StackError({ operation, message: cause.message, kind: "configuration" }),
+    ),
+  );
+const restartJson = Schema.toCodecJson(RestartSchema);
+const decodeRestart = (candidate: unknown) =>
+  Schema.decodeUnknownEffect(restartJson)(candidate).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StackError({ operation: "restart", message: cause.message, kind: "configuration" }),
+    ),
   );
 const decodeCreations = (operation: string, creations: ReadonlyArray<unknown>) =>
   Effect.forEach(creations, (creation) => decodeCreation(operation, creation));
@@ -312,7 +330,9 @@ export const stackAdapter = (client: Client) => {
   function instance<K extends Kind>(service: StackEffect.ServiceInstances[K]): ServiceInstances[K];
   function instance(service: {
     readonly service: Kind;
-    readonly restart: (input?: StackEffect.ServiceCreationInput) => Effect.Effect<void, StackError>;
+    readonly restart: (
+      input?: Pick<StackEffect.ServiceCreationInput, "config">,
+    ) => Effect.Effect<void, StackError>;
   }): unknown {
     return {
       ...promised(service),
@@ -320,17 +340,15 @@ export const stackAdapter = (client: Client) => {
         client.run(
           input === undefined
             ? service.restart()
-            : decodeCreation(
-                "restart",
-                "service" in input ? input : { service: service.service, config: input.config },
-              ).pipe(
-                Effect.flatMap((creation) =>
-                  creation.service === service.service
-                    ? service.restart(creation)
+            : decodeRestart({ service: service.service, ...input }).pipe(
+                Effect.flatMap((candidate) =>
+                  candidate.service === service.service
+                    ? service.restart(candidate)
                     : Effect.fail(
                         new StackError({
                           operation: "restart",
                           message: "Service kind cannot change",
+                          kind: "configuration",
                         }),
                       ),
                 ),
@@ -424,9 +442,11 @@ export const stackAdapter = (client: Client) => {
             ),
             options,
           ),
-        plan: (creations, options) =>
+        plan: (creations, planOptions, options) =>
           client.run(
-            decodeCreations("plan", creations).pipe(Effect.flatMap(handle.composition.plan)),
+            decodeCreations("plan", creations).pipe(
+              Effect.flatMap((decoded) => handle.composition.plan(decoded, planOptions)),
+            ),
             options,
           ),
       },

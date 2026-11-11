@@ -1,7 +1,8 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
@@ -9,6 +10,8 @@ import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts
 import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
@@ -19,9 +22,10 @@ import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { start } from "./start.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 /**
- * A pflag-style string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
+ * A string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
  * values) and accumulates across repeats, matching `status`'s own `--exclude` handling.
  */
 export const startExcludeFlag = stringSliceFlag(
@@ -32,11 +36,11 @@ export const startExcludeFlag = stringSliceFlag(
 
 const config = {
   exclude: startExcludeFlag,
-  ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
+  ignoreHealthCheck: Flag.Boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
     Flag.withDefault(false),
   ),
-  preview: Flag.boolean("preview").pipe(
+  preview: Flag.Boolean("preview").pipe(
     Flag.withDescription("Connect to feature preview branch"),
     Flag.withDefault(false),
     Flag.withHidden,
@@ -70,6 +74,7 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
 
 const startRuntimeLayer = Layer.mergeAll(
   cliSettings,
+  debugLoggerLayer,
   telemetryStateLayer,
   commandRuntimeLayer(["start"]),
   dockerRunLayer,
@@ -86,8 +91,15 @@ const startRuntimeLayer = Layer.mergeAll(
 export const startCommand = Command.make("start", config).pipe(
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["exclude", "ignore-health-check", "preview"],
+  }),
   Command.withHandler((flags) =>
     start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(startRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

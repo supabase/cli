@@ -1,17 +1,19 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
   mockCommandSettings,
   mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
-  useShadowCacheDisabled,
+  shadowCacheDisabledLayer,
   useTempWorkdir,
+  withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -27,6 +29,7 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
+import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { SUGGEST_DOCKER_INSTALL } from "../../../command-internal/docker-suggest.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
@@ -52,28 +55,31 @@ const pgTag = vi.hoisted(() => {
   return match[1];
 });
 
-vi.mock("@supabase/stack/internal/artifacts", () => {
-  const digest = "d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
-  const nativePin = { archive: digest, manifest: digest };
-  return {
-    catalogPins: () => [
-      {
-        service: "database",
-        sourceService: "postgres",
-        pin: {
-          upstreamVersion: pgTag,
-          revision: 0,
-          image: `ghcr.io/supabase/cli/postgres:${pgTag}-r0@sha256:${digest}`,
-          natives: {
-            "darwin-arm64": nativePin,
-            "linux-amd64": nativePin,
-            "linux-arm64": nativePin,
+vi.mock("@supabase/stack/internal/artifacts", (importOriginal) =>
+  importOriginal<typeof import("@supabase/stack/internal/artifacts")>().then((actual) => {
+    const digest = "d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
+    const nativePin = { archive: digest, manifest: digest };
+    return {
+      ...actual,
+      catalogPins: () => [
+        {
+          service: "database",
+          sourceService: "postgres",
+          pin: {
+            upstreamVersion: pgTag,
+            revision: 0,
+            image: `ghcr.io/supabase/cli/postgres:${pgTag}-r0@sha256:${digest}`,
+            natives: {
+              "darwin-arm64": nativePin,
+              "linux-amd64": nativePin,
+              "linux-arm64": nativePin,
+            },
           },
         },
-      },
-    ],
-  };
-});
+      ],
+    };
+  }),
+);
 
 /**
  * Integration coverage for the fully-native `declarativeSeamLayer`: `generate`/`sync`'s own
@@ -106,7 +112,7 @@ function fakeShadowDbConnection() {
   return { layer };
 }
 
-/** The shadow's own PG15+ one-shot platform-baseline job(s) — Go's `initSchema15`. */
+/** The shadow's own PG15+ one-shot platform-baseline job(s). */
 function fakeShadowSetupDocker() {
   const layer = Layer.succeed(DockerRun, {
     run: () => Effect.die("run unused"),
@@ -115,8 +121,6 @@ function fakeShadowSetupDocker() {
   });
   return { layer };
 }
-
-useShadowCacheDisabled();
 
 const tmp = useTempWorkdir("pgdelta-seam-");
 
@@ -127,6 +131,9 @@ function setup(
     readonly dbInspectFailsWith?: string;
     readonly dbInspectImage?: string;
     readonly stackBackend?: boolean;
+    /** The Engine API's answer for an existing local db container. */
+    readonly dbContainer?: { readonly running: boolean; readonly status: string };
+    readonly env?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const out = mockOutput();
@@ -145,7 +152,22 @@ function setup(
   // `Layer.succeed`s below are ALSO listed as `layer`'s own top-level members (so the test
   // body itself can resolve `Output`/etc.), but that doesn't satisfy `seam`'s OWN identical
   // requirements as a sibling entry in the same merge.
+  const { dbContainer } = opts;
+  const engine =
+    dbContainer === undefined
+      ? mockLocalDockerEngineUnavailableLayer
+      : Layer.succeed(LocalDockerEngine, {
+          inspectContainer: () =>
+            Effect.succeed(
+              Option.some({
+                exists: true as const,
+                running: dbContainer.running,
+                status: dbContainer.status,
+              }),
+            ),
+        });
   const seam = declarativeSeamLayer.pipe(
+    Layer.provide(configValuesLayer({ output: out.layer, env: opts.env })),
     Layer.provide(cliSettings),
     Layer.provide(dbConnection.layer),
     Layer.provide(docker.layer),
@@ -156,18 +178,19 @@ function setup(
     Layer.provide(Layer.succeed(ExperimentalFlag, false)),
     Layer.provide(Layer.succeed(DebugFlag, false)),
     Layer.provide(Layer.succeed(CliArgs, { args: [] })),
-    // The fake `ChildProcessSpawner` must be provided BEFORE the real `BunServices.layer`
-    // fallback below, so it wins over the real one for whatever `ChildProcessSpawner`
-    // `seam` itself resolves — `Layer.provide` fully resolves each requirement it can
-    // satisfy as it's applied, so `BunServices.layer` only ever fills in `FileSystem`/`Path`.
+    // The fake `ChildProcessSpawner` must be provided before the real `BunServices.layer` and
+    // `BunCrypto.layer` fallback below, so it wins for whatever `ChildProcessSpawner` `seam`
+    // resolves — `Layer.provide` resolves each requirement as it's applied, so the fallback only
+    // fills the remaining platform services (`FileSystem`, `Path`) and crypto (`Digest`, `SecureRandom`).
     Layer.provide(shadowSpawner.layer),
-    Layer.provide(mockLocalDockerEngineUnavailableLayer),
+    Layer.provide(engine),
     Layer.provide(unusedStackServices),
-    Layer.provide(BunServices.layer),
+    Layer.provide([BunServices.layer, BunCrypto.layer]),
   );
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     out.layer,
     shadowSpawner.layer,
     dbConnection.layer,
@@ -180,21 +203,18 @@ function setup(
     Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     seam,
+    shadowCacheDisabledLayer,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
   );
 
   return { layer, out, shadowSpawned: shadowSpawner.spawned };
 }
 
-const failError = (exit: Exit.Exit<unknown, unknown>) =>
-  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
-
 describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
   it.effect(
     "carries the inspect failure's daemon marker AND recovery suggestion onto the seam error",
     () => {
-      // Go's `AssertSupabaseDbIsRunning` sets `CmdSuggestion = suggestDockerInstall` on a
-      // daemon-connection failure — the seam's inspect-error mapping must preserve both the
+      // A daemon-connection failure carries a Docker-install suggestion — the seam's inspect-error mapping must preserve both the
       // daemon classification and that suggestion, or the normalizer renders its generic
       // debug hint instead of the actionable Docker recovery text (review: the start-failure
       // catch below it already propagates `suggestion`; this asserts the inspect mapping does
@@ -206,16 +226,63 @@ describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
       });
       return Effect.gen(function* () {
         const seam = yield* DeclarativeSeam;
-        const exit = yield* seam.ensureLocalDatabaseStarted.pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const error = failError(exit);
+        const error = yield* seam.ensureLocalDatabaseStarted.pipe(Effect.flip);
         expect(error).toBeInstanceOf(DeclarativeShadowDbError);
-        const shadowError = error as DeclarativeShadowDbError;
-        expect(shadowError.docker).toBe("daemon");
-        expect(shadowError.suggestion).toBe(SUGGEST_DOCKER_INSTALL);
+        expect(error.docker).toBe("daemon");
+        expect(error.suggestion).toBe(SUGGEST_DOCKER_INSTALL);
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describe("declarativeSeamLayer.ensureLocalDatabaseStarted with an existing db container", () => {
+  beforeEach(() => {
+    vi.stubEnv("BITBUCKET_CLONE_DIR", undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const writeProjectId = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(tmp.current, "supabase", "config.toml"),
+      'project_id = "seam-existing"\n',
+    );
+  });
+
+  it.effect.each(["exited", "created"] as const)(
+    "replaces a db container left %s with a fresh start instead of treating it as running",
+    (status) => {
+      const { layer, shadowSpawned } = setup(tmp.current, {
+        dbContainer: { running: false, status },
+      });
+      return Effect.gen(function* () {
+        yield* writeProjectId;
+        const seam = yield* DeclarativeSeam;
+        yield* seam.ensureLocalDatabaseStarted;
+        expect(
+          shadowSpawned.filter((s) => s.args[0] === "container" && s.args[1] === "rm"),
+        ).toEqual([{ args: ["container", "rm", "-f", "supabase_db_seam-existing"] }]);
+        const create = shadowSpawned.find((s) => s.args[0] === "create");
+        expect(create?.args[create.args.indexOf("--name") + 1]).toBe("supabase_db_seam-existing");
+      }).pipe(Effect.provide(layer), withEmptyConfigEnv);
+    },
+  );
+
+  it.effect("leaves a running db container untouched", () => {
+    const { layer, shadowSpawned } = setup(tmp.current, {
+      dbContainer: { running: true, status: "running" },
+    });
+    return Effect.gen(function* () {
+      yield* writeProjectId;
+      const seam = yield* DeclarativeSeam;
+      yield* seam.ensureLocalDatabaseStarted;
+      expect(shadowSpawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
@@ -234,17 +301,34 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
       const { layer } = setup(dir, { dbInspectImage: dockerfileServiceImageRaw("pg") });
       return Effect.gen(function* () {
         const seam = yield* DeclarativeSeam;
-        const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const error = failError(exit);
+        const error = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.flip);
         expect(error).toBeInstanceOf(DeclarativeShadowDbError);
-        expect((error as DeclarativeShadowDbError).message).toContain(
-          "local Postgres container image is stale",
+        expect(error.message).toContain("local Postgres container image is stale");
+        expect(error.message).toContain("same SUPABASE_USE_SLIM_IMAGES setting");
+        expect(error.message).not.toContain("--no-backup");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "inspects the container named by SUPABASE_PROJECT_ID over config.toml's project_id",
+    () => {
+      const dir = tmp.current;
+      const { layer, shadowSpawned } = setup(dir, {
+        dbInspectImage: dockerfileServiceImageRaw("pg"),
+        env: { SUPABASE_PROJECT_ID: "envproj" },
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(dir, "supabase", "config.toml"),
+          'project_id = "tomlproj"\n',
         );
-        expect((error as DeclarativeShadowDbError).message).toContain(
-          "same SUPABASE_USE_SLIM_IMAGES setting",
-        );
-        expect((error as DeclarativeShadowDbError).message).not.toContain("--no-backup");
+        const seam = yield* DeclarativeSeam;
+        yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
+        expect(shadowSpawned.some((call) => call.args.includes("supabase_db_envproj"))).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -260,18 +344,12 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
     });
     return Effect.gen(function* () {
       const seam = yield* DeclarativeSeam;
-      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const error = failError(exit);
+      const error = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.flip);
       expect(error).toBeInstanceOf(DeclarativeShadowDbError);
-      expect((error as DeclarativeShadowDbError).message).toContain(
-        "local Postgres container image is stale",
-      );
+      expect(error.message).toContain("local Postgres container image is stale");
       // Same family (slim vs slim): the generic remediation, not the family-mismatch wording.
-      expect((error as DeclarativeShadowDbError).message).not.toContain(
-        "same SUPABASE_USE_SLIM_IMAGES setting",
-      );
-      expect((error as DeclarativeShadowDbError).message).toContain("--no-backup");
+      expect(error.message).not.toContain("same SUPABASE_USE_SLIM_IMAGES setting");
+      expect(error.message).toContain("--no-backup");
     }).pipe(Effect.provide(layer));
   });
 
@@ -281,6 +359,19 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
     // The exact image (release version and digest) the fixture catalog pins at r0.
     const { layer } = setup(dir, {
       dbInspectImage: `ghcr.io/supabase/cli/postgres:${pgTag}-r0@sha256:d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c`,
+    });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent.pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("passes when a slim container was pulled from the ECR Public mirror", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const dir = tmp.current;
+    const { layer } = setup(dir, {
+      dbInspectImage: `public.ecr.aws/supabase/cli/postgres:${pgTag}-r0@sha256:d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c`,
     });
     return Effect.gen(function* () {
       const seam = yield* DeclarativeSeam;

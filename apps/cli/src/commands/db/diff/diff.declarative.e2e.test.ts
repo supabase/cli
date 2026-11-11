@@ -103,20 +103,19 @@ describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
 returns void
 language sql
 as $$ select 1; $$;`,
-              "--local",
             ],
             { cwd: projectDir, exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS },
           );
           requireCliSuccess(createFunction, "db query create-function setup");
 
           const revoke = yield* runSupabaseEffect(
-            ["db", "query", "revoke execute on function public.probe_fn() from public;", "--local"],
+            ["db", "query", "revoke execute on function public.probe_fn() from public;"],
             { cwd: projectDir, exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS },
           );
           requireCliSuccess(revoke, "db query revoke setup");
 
           const diff = yield* runSupabaseEffect(
-            ["db", "diff", "--local", "--use-pg-delta", "-f", "revoke_public_execute"],
+            ["db", "diff", "--use-pg-delta", "-f", "revoke_public_execute"],
             { cwd: projectDir, exitTimeoutMs: DIFF_COMMAND_TIMEOUT_MS },
           );
           expect(diff.exitCode, `stdout:\n${diff.stdout}\nstderr:\n${diff.stderr}`).toBe(0);
@@ -128,7 +127,7 @@ as $$ select 1; $$;`,
               f.endsWith("_revoke_public_execute.sql"),
             );
           expect(written, `no migration written; stderr:\n${diff.stderr}`).toBeTruthy();
-          const sql = yield* fs.readFileString(path.join(migrationsDir, written as string));
+          const sql = yield* fs.readFileString(path.join(migrationsDir, written || ""));
 
           // Anchored to the function's own REVOKE statement, up to its terminating `;`, so this
           // cannot pass on an unrelated PUBLIC mention elsewhere in the file.

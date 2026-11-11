@@ -7,6 +7,9 @@ import { edge_runtime } from "./edge_runtime.ts";
 import { experimental } from "./experimental.ts";
 import { functions } from "./functions.ts";
 import { inbucket } from "./inbucket.ts";
+import { local } from "./local.ts";
+import { withRecordValueDecodingDefault } from "./lib/schema.ts";
+import { toPublishedJsonSchemaDocument } from "./json-schema-document.ts";
 import { realtime } from "./realtime.ts";
 import { storage } from "./storage.ts";
 import { studio } from "./studio.ts";
@@ -40,6 +43,7 @@ const baseCliConfigFields = {
   studio,
   compute,
   experimental,
+  local: Schema.optionalKey(local),
 };
 
 const remoteCliConfigBlock = Schema.Struct({
@@ -56,7 +60,7 @@ const remoteCliConfigBlock = Schema.Struct({
   studio,
   compute,
   experimental,
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(withRecordValueDecodingDefault(Effect.succeed({})));
 
 /**
  * Exported separately (not inlined into {@link CliConfigSchema}) so
@@ -80,12 +84,10 @@ export const CliConfigSchema = Schema.Struct({
 });
 
 export function toCliConfigJsonSchema() {
-  const document = Schema.toJsonSchemaDocument(CliConfigSchema);
-  return {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    ...document.schema,
-    ...(Object.keys(document.definitions).length > 0 ? { $defs: document.definitions } : {}),
-  };
+  return toPublishedJsonSchemaDocument(CliConfigSchema, {
+    onExcessProperty: "error",
+    acceptEnvReferences: true,
+  });
 }
 
 export type CliConfig = typeof CliConfigSchema.Type;

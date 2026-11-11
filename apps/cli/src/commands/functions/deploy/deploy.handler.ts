@@ -1,12 +1,11 @@
-import { Effect, Option, Path, Stdio } from "effect";
+import { Effect, Option, Path, Ref, Stdio } from "effect";
 import { deployFunctions } from "../../../shared/functions/deploy.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { resolveYes } from "../../../command-internal/global-flags.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { dashboardUrl } from "../../../command-internal/profile.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -18,39 +17,29 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
 ) {
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
-  // Also honors `SUPABASE_YES`, not just the `--yes` flag, for the `--prune` confirm.
-  const yes = yield* resolveYes;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
   const stdio = yield* Stdio.Stdio;
   const path = yield* Path.Path;
   const rawArgs = yield* stdio.args;
-  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    path.join(cliSettings.workdir, "supabase"),
-  );
-  let resolvedProjectRef = Option.none<string>();
+  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(cliSettings.workdir);
+  const resolvedProjectRef = yield* Ref.make(Option.none<string>());
 
   yield* deployFunctions(flags, {
     api,
+    apiMaxRetries: cliSettings.apiMaxRetries,
     cwd: cliSettings.workdir,
     flagCwd: runtimeInfo.cwd,
     projectRoot: cliSettings.workdir,
     supabaseDir: path.join(cliSettings.workdir, "supabase"),
     dashboardUrl: dashboardUrl(cliSettings.profile),
-    goConfigCompat: functionsGoConfigCompat,
-    yes,
+    localConfigLoader: functionsLocalConfigLoader,
     rawArgs,
     edgeRuntimeVersion,
-    resolveProjectRef: (projectRef) =>
-      resolver.resolve(projectRef).pipe(
-        Effect.tap((ref) =>
-          Effect.sync(() => {
-            resolvedProjectRef = Option.some(ref);
-          }),
-        ),
-      ),
+    resolveProjectRef: resolveProjectTarget(flags).pipe(
+      Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
+    ),
     // Written to stdout, so the TTY color gate must check stdout.
     styleIdentifier: (text) => aqua(text, process.stdout),
     // Written to stderr, matching `bold`'s default TTY gate.
@@ -59,14 +48,16 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     styleWarning: (text) => yellow(text),
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        Option.match(resolvedProjectRef, {
-          onNone: () => Effect.void,
-          onSome: (ref) =>
-            Effect.annotateCurrentSpan("project.ref", ref).pipe(
-              Effect.andThen(linkedProjectCache.cache(ref)),
-            ),
-        }),
+      Ref.get(resolvedProjectRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) =>
+              Effect.annotateCurrentSpan("project.ref", ref).pipe(
+                Effect.andThen(linkedProjectCache.cache(ref)),
+              ),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

@@ -1,6 +1,7 @@
 import { Context, Data, Effect, FileSystem, Layer, Path } from "effect";
 import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { initialization, type InitializationCommand } from "@supabase/stack/commands";
+import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { Output } from "../shared/output/output.service.ts";
 import {
   actionability,
@@ -15,6 +16,7 @@ import {
   applyDatabaseOverlay,
   type ApplyDatabaseOverlayInput,
   type DbSetupError,
+  ensureStackWebhookSchema,
   type SetupDatabaseOptions,
 } from "./db-bootstrap/db-setup.ts";
 import type { MigrationVaultError, VaultSecret } from "./vault.ts";
@@ -60,6 +62,7 @@ export interface StackCatalogSetupInput {
     readonly stack: Stack;
     readonly database: DatabaseInstance;
     readonly databaseServices: ReadonlyArray<DatabaseService>;
+    readonly selection: ArtifactSelection;
   };
   readonly overlay: StackCatalogOverlay;
 }
@@ -90,21 +93,29 @@ const credential = (
 
 const serviceCommand = (
   service: DatabaseService,
+  databaseId: string,
   credentials: ServiceCredentials,
   storagePath: string,
+  selection: ArtifactSelection,
 ): InitializationCommand => {
   switch (service) {
     case "auth":
       return initialization.auth({
+        pin: selection.auth,
+        databaseId,
         databaseUrl: credentials.authDatabaseUrl,
       });
     case "storage":
       return initialization.storage({
+        pin: selection.storage,
+        databaseId,
         databaseUrl: credentials.storageDatabaseUrl,
         filePath: storagePath,
       });
     case "realtime":
       return initialization.realtime({
+        pin: selection.realtime,
+        databaseId,
         databaseUrl: credentials.databaseUrl,
       });
   }
@@ -142,7 +153,15 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         input.target.databaseServices,
         (service) =>
           input.target.stack.commands
-            .run(serviceCommand(service, serviceCredentials, storagePath))
+            .run(
+              serviceCommand(
+                service,
+                input.target.database.id,
+                serviceCredentials,
+                storagePath,
+                input.target.selection,
+              ),
+            )
             .pipe(
               Effect.asVoid,
               Effect.mapError(catalogError),
@@ -153,7 +172,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         { concurrency: "unbounded", discard: true },
       );
 
-      const connection = parseConnectionString(hostDatabaseUrl);
+      const connection = yield* parseConnectionString(hostDatabaseUrl);
       if (connection === undefined)
         return yield* new StackCatalogSetupError({
           message: "failed to parse database URL for catalog overlay",
@@ -162,6 +181,10 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         isLocal: true,
         dnsResolver: "native",
       });
+      const sqlPath = yield* fs
+        .makeTempDirectoryScoped({ prefix: "supabase-stack-catalog-sql-" })
+        .pipe(Effect.mapError(catalogError));
+      yield* ensureStackWebhookSchema(session, fs, path, sqlPath);
       yield* applyDatabaseOverlay(session, fs, path, input.overlay.workdir, {
         webhooksEnabled: input.overlay.webhooksEnabled,
         apiAutoExposeNewTables: input.overlay.apiAutoExposeNewTables,

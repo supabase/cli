@@ -26,8 +26,8 @@
 import type { CliConfig } from "@supabase/config";
 
 import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
-import { formatGoDuration, parseGoDuration } from "../../../command-internal/go-duration.ts";
-import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import { formatDuration, parseDuration } from "../../../command-internal/duration.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/local-jwt.ts";
 import type { ResolvedAuthEmail } from "../../../command-internal/local-config-values.ts";
 import { passwordRequirementsToChar } from "../../../command-internal/password-requirements.ts";
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
@@ -57,7 +57,7 @@ const GOTRUE_DB_ROLE = "supabase_auth_admin";
 /**
  * RFC 7517 JWK fields in fixed declaration order, so {@link buildGotrueEnv}'s
  * `JSON.stringify` produces a stable, canonical serialization. Kept separate
- * from `go-jwt.ts`'s `Jwk` and `shared/auth/jwks.ts`'s `JwkLike` since
+ * from `local-jwt.ts`'s `Jwk` and `shared/auth/jwks.ts`'s `JwkLike` since
  * neither covers this full field set.
  */
 export interface GotrueSigningKey {
@@ -82,7 +82,7 @@ export interface GotrueSigningKey {
 
 /**
  * The default single signing key, used whenever `auth.signing_keys_path` is
- * unset. Hoisted to `go-jwt.ts` so `resolveLocalJwks` publishes this same
+ * unset. Hoisted to `local-jwt.ts` so `resolveLocalJwks` publishes this same
  * key's public form in the JWKS it signs with.
  */
 const GOTRUE_DEFAULT_SIGNING_KEY: GotrueSigningKey = DEFAULT_SIGNING_KEY;
@@ -192,7 +192,7 @@ export interface BuildGotrueEnvInput {
   /**
    * `config.local_smtp`, present iff `local_smtp.enabled` AND {@link smtp}
    * is unset. `adminEmail`/`senderName` default to the literals below when
-   * unset, since `@supabase/config`'s `inbucket.ts` schema has no default
+   * unset, since `@supabase/config`'s `local_smtp` schema has no default
    * for either.
    */
   readonly mailpit?: {
@@ -351,6 +351,10 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
     GOTRUE_API_PORT: GOTRUE_PORT,
 
     GOTRUE_DB_DRIVER: "postgres",
+    // Idle connections spare Auth a reconnect per request; a connection Postgres closes while Auth runs
+    // fails one Auth request before it is replaced.
+    GOTRUE_DB_MAX_POOL_SIZE: "10",
+    GOTRUE_DB_MAX_IDLE_POOL_SIZE: "10",
     GOTRUE_DB_DATABASE_URL: startInternalDbUrl(GOTRUE_DB_ROLE, input.dbHost, input.dbPassword),
 
     GOTRUE_SITE_URL: input.siteUrl,
@@ -373,7 +377,7 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
 
     GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: String(input.enableAnonymousSignIns),
 
-    GOTRUE_SMTP_MAX_FREQUENCY: formatGoDuration(parseGoDuration(input.email.max_frequency)),
+    GOTRUE_SMTP_MAX_FREQUENCY: formatDuration(parseDuration(input.email.max_frequency)),
 
     GOTRUE_MAILER_URLPATHS_INVITE: mailerVerifyUrl,
     GOTRUE_MAILER_URLPATHS_CONFIRMATION: mailerVerifyUrl,
@@ -383,7 +387,7 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
 
     GOTRUE_EXTERNAL_PHONE_ENABLED: String(input.sms.enable_signup),
     GOTRUE_SMS_AUTOCONFIRM: String(!input.sms.enable_confirmations),
-    GOTRUE_SMS_MAX_FREQUENCY: formatGoDuration(parseGoDuration(input.sms.max_frequency)),
+    GOTRUE_SMS_MAX_FREQUENCY: formatDuration(parseDuration(input.sms.max_frequency)),
     GOTRUE_SMS_OTP_EXP: "6000",
     GOTRUE_SMS_OTP_LENGTH: "6",
     GOTRUE_SMS_TEMPLATE: input.sms.template,
@@ -396,6 +400,9 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
     GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: String(input.enableManualLinking),
     GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: String(
       input.email.secure_password_change,
+    ),
+    GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: String(
+      input.email.require_current_password,
     ),
     GOTRUE_MFA_PHONE_ENROLL_ENABLED: String(input.mfa.phone.enroll_enabled),
     GOTRUE_MFA_PHONE_VERIFY_ENABLED: String(input.mfa.phone.verify_enabled),
@@ -441,15 +448,15 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
 
   // Sessions — only emitted when the parsed duration is strictly positive.
   if (input.sessions?.timebox !== undefined) {
-    const nanoseconds = parseGoDuration(input.sessions.timebox);
+    const nanoseconds = parseDuration(input.sessions.timebox);
     if (nanoseconds > 0) {
-      env["GOTRUE_SESSIONS_TIMEBOX"] = formatGoDuration(nanoseconds);
+      env["GOTRUE_SESSIONS_TIMEBOX"] = formatDuration(nanoseconds);
     }
   }
   if (input.sessions?.inactivity_timeout !== undefined) {
-    const nanoseconds = parseGoDuration(input.sessions.inactivity_timeout);
+    const nanoseconds = parseDuration(input.sessions.inactivity_timeout);
     if (nanoseconds > 0) {
-      env["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"] = formatGoDuration(nanoseconds);
+      env["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"] = formatDuration(nanoseconds);
     }
   }
 
@@ -527,8 +534,8 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
   if (input.mfa.phone.enroll_enabled || input.mfa.phone.verify_enabled) {
     env["GOTRUE_MFA_PHONE_TEMPLATE"] = input.mfa.phone.template;
     env["GOTRUE_MFA_PHONE_OTP_LENGTH"] = String(input.mfa.phone.otp_length);
-    env["GOTRUE_MFA_PHONE_MAX_FREQUENCY"] = formatGoDuration(
-      parseGoDuration(input.mfa.phone.max_frequency),
+    env["GOTRUE_MFA_PHONE_MAX_FREQUENCY"] = formatDuration(
+      parseDuration(input.mfa.phone.max_frequency),
     );
   }
 

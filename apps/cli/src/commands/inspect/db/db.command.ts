@@ -1,8 +1,9 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { inspectDbBloatCommand } from "./bloat/bloat.command.ts";
 import { inspectDbBlockingCommand } from "./blocking/blocking.command.ts";
-import { inspectDbCallsCommand } from "./calls/calls.command.ts";
 import { inspectDbCacheHitCommand } from "./cache-hit/cache-hit.command.ts";
+import { inspectDbCallsCommand } from "./calls/calls.command.ts";
+import { inspectDbCollationDriftCommand } from "./collation-drift/collation-drift.command.ts";
 import { inspectDbDbStatsCommand } from "./db-stats/db-stats.command.ts";
 import { inspectDbIndexSizesCommand } from "./index-sizes/index-sizes.command.ts";
 import { inspectDbIndexStatsCommand } from "./index-stats/index-stats.command.ts";
@@ -19,14 +20,18 @@ import { inspectDbTableIndexSizesCommand } from "./table-index-sizes/table-index
 import { inspectDbTableRecordCountsCommand } from "./table-record-counts/table-record-counts.command.ts";
 import { inspectDbTableSizesCommand } from "./table-sizes/table-sizes.command.ts";
 import { inspectDbTableStatsCommand } from "./table-stats/table-stats.command.ts";
+import { inspectDbToastSizesCommand } from "./toast-sizes/toast-sizes.command.ts";
 import { inspectDbTotalIndexSizeCommand } from "./total-index-size/total-index-size.command.ts";
 import { inspectDbTotalTableSizesCommand } from "./total-table-sizes/total-table-sizes.command.ts";
 import { inspectDbTrafficProfileCommand } from "./traffic-profile/traffic-profile.command.ts";
 import { inspectDbUnusedIndexesCommand } from "./unused-indexes/unused-indexes.command.ts";
 import { inspectDbVacuumStatsCommand } from "./vacuum-stats/vacuum-stats.command.ts";
+import { inspectDbXidAgeCommand } from "./xid-age/xid-age.command.ts";
 
 export const inspectDbCommand = Command.make("db").pipe(
-  Command.withDescription("Tools to inspect your Supabase database."),
+  Command.withDescription(
+    "Tools to inspect your Supabase database. They inspect the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
+  ),
   Command.withShortDescription("Inspect database"),
   Command.withSubcommands([
     inspectDbDbStatsCommand,
@@ -36,19 +41,22 @@ export const inspectDbCommand = Command.make("db").pipe(
     inspectDbOutliersCommand,
     inspectDbCallsCommand,
     inspectDbIndexStatsCommand,
+    inspectDbCollationDriftCommand,
     inspectDbLongRunningQueriesCommand,
     inspectDbBloatCommand,
     inspectDbRoleStatsCommand,
     inspectDbVacuumStatsCommand,
     inspectDbTableStatsCommand,
     inspectDbTrafficProfileCommand,
+    inspectDbToastSizesCommand,
+    inspectDbXidAgeCommand,
     inspectDbCacheHitCommand,
     inspectDbIndexUsageCommand,
-    inspectDbTotalIndexSizeCommand,
+    inspectDbTotalIndexSizeCommand.pipe(Command.unlisted),
     inspectDbIndexSizesCommand,
     inspectDbTableSizesCommand,
-    inspectDbTableIndexSizesCommand,
-    inspectDbTotalTableSizesCommand,
+    inspectDbTableIndexSizesCommand.pipe(Command.unlisted),
+    inspectDbTotalTableSizesCommand.pipe(Command.unlisted),
     inspectDbUnusedIndexesCommand,
     inspectDbTableRecordCountsCommand,
     inspectDbSeqScansCommand,

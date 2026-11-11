@@ -1,7 +1,4 @@
-/** Embedded byte-for-byte into the Postgres container's entrypoint heredoc for PG >= 15 only. */
-export const START_DB_WEBHOOK_SQL = `BEGIN;
-
--- Create supabase_functions schema
+const WEBHOOK_SCHEMA_SQL = `-- Create supabase_functions schema
 CREATE SCHEMA supabase_functions AUTHORIZATION supabase_admin;
 
 GRANT USAGE ON SCHEMA supabase_functions TO postgres, anon, authenticated, service_role;
@@ -130,7 +127,9 @@ ALTER table "supabase_functions".hooks OWNER TO supabase_functions_admin;
 ALTER function "supabase_functions".http_request() OWNER TO supabase_functions_admin;
 GRANT supabase_functions_admin TO postgres;
 
--- Remove unused supabase_pg_net_admin role
+`;
+
+const WEBHOOK_PG_NET_POLICY_SQL = `-- Remove unused supabase_pg_net_admin role
 DO
 $$
 BEGIN
@@ -220,12 +219,28 @@ BEGIN
 END
 $$;
 
-INSERT INTO supabase_functions.migrations (version) VALUES ('20210809183423_update_grants');
+`;
+
+const WEBHOOK_UPDATE_GRANTS_SQL = `INSERT INTO supabase_functions.migrations (version) VALUES ('20210809183423_update_grants');
 
 ALTER function supabase_functions.http_request() SECURITY DEFINER;
 ALTER function supabase_functions.http_request() SET search_path = supabase_functions;
 REVOKE ALL ON FUNCTION supabase_functions.http_request() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION supabase_functions.http_request() TO postgres, anon, authenticated, service_role;
 
-COMMIT;
+`;
+
+/** Embedded byte-for-byte into the Postgres container's entrypoint heredoc for PG >= 15 only. */
+export const START_DB_WEBHOOK_SQL = `BEGIN;
+
+${WEBHOOK_SCHEMA_SQL}${WEBHOOK_PG_NET_POLICY_SQL}${WEBHOOK_UPDATE_GRANTS_SQL}COMMIT;
+`;
+
+/**
+ * {@link START_DB_WEBHOOK_SQL} without its pg_net policy, which replaces the image's
+ * `extensions.grant_pg_net_access()` to pin pg_net's functions to SECURITY DEFINER.
+ */
+export const STACK_DB_WEBHOOK_SQL = `BEGIN;
+
+${WEBHOOK_SCHEMA_SQL}${WEBHOOK_UPDATE_GRANTS_SQL}COMMIT;
 `;

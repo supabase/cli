@@ -1,9 +1,9 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   ConfigProvider,
-  Crypto,
+  Context,
   Data,
   Deferred,
   Effect,
@@ -13,31 +13,51 @@ import {
   Layer,
   Option,
   Path,
+  Redacted,
   Ref,
   Schema,
+  Scope,
   Sink,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { TestClock } from "effect/testing";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
-import { HttpClient } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
 import {
   ContainerLaunchError,
   DOCKER_HOST_ALIAS,
   makeContainerRuntime,
   makeHostGateway,
+  resolveEngineTarget,
   type ContainerProcess,
+  type EngineTarget,
 } from "./Container.ts";
+import { failureKind } from "../FailureKind.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import * as Owner from "../Owner.ts";
+import * as StackNamespace from "../StackNamespace.ts";
+import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
+import { reconcileContainerPassword } from "../services/Database.ts";
+import { selection } from "../../tests/pins.ts";
 
 const image = await Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const file = yield* path.fromFileUrl(new URL("../../../../.bun-version", import.meta.url));
   const version = yield* fs.readFileString(file);
-  return `oven/bun:${version.trim()}-slim`;
+  return `docker.io/oven/bun:${version.trim()}-slim`;
 }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+// An unpinned target: these tests exercise the container runtime, not endpoint pinning, so an
+// empty argv prefix leaves every command exactly as it was before pinning existed.
+const containerTarget: EngineTarget = { ...engineTarget, argv: [] };
 const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
+// One probe for every test that does not assert probe behaviour, so engine load stays bounded.
+const sharedHostGateway = await makeHostGateway.pipe(
+  Effect.provideService(Scope.Scope, await Effect.runPromise(Scope.make())),
+  Effect.runPromise,
+);
 const stoppableIdleScript =
   "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)";
 
@@ -46,11 +66,14 @@ class ContainerTestError extends Data.TaggedError("ContainerTestError")<{
   readonly cause?: unknown;
 }> {}
 
-describe("container process adapter", () => {
+describe("container process adapter", { timeout: 120_000 }, () => {
   it.live("recognizes a cached pinned image without pulling", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      const runtime = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+      });
       yield* runtime.prepare(image);
       const repositoryDigest = yield* repoDigest(delegate, image);
       const digest = repositoryDigest.slice(repositoryDigest.indexOf("@") + 1);
@@ -58,22 +81,57 @@ describe("container process adapter", () => {
       const pinnedImage = `${image}@${digest}`;
       const pullAttempted = yield* Ref.make(false);
       const spawner = makePullFailureSpawner(delegate, pullAttempted);
-      yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
-        Effect.flatMap((runtime) => runtime.prepare(pinnedImage)),
+      const ensured = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+      }).pipe(
+        Effect.flatMap((runtime) => runtime.ensureImage(pinnedImage)),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
+      expect(ensured).toEqual({ image: pinnedImage, pulled: false });
       expect(yield* Ref.get(pullAttempted)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
+
+  for (const [engine, stderr] of [
+    [
+      "Podman socket",
+      "Error: unable to connect to Podman socket: dial unix /run/user/1000/podman/podman.sock: connect: connection refused",
+    ],
+    [
+      "Docker TCP daemon",
+      'error during connect: Head "http://127.0.0.1:2375/_ping": dial tcp 127.0.0.1:2375: connect: connection refused',
+    ],
+  ] as const)
+    it.live(
+      `classifies a pull through a refused ${engine} connection as an unreachable engine`,
+      () =>
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const token = yield* (yield* SecureRandom.SecureRandom).uuidV4();
+          const spawner = makePullFailureSpawner(delegate, yield* Ref.make(false), stderr);
+          const result = yield* makeContainerRuntime({ target: containerTarget, root: "." }).pipe(
+            Effect.flatMap((runtime) =>
+              runtime.prepare(`supabase-prepare-regression:${token}`).pipe(Effect.exit),
+            ),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          if (Exit.isSuccess(result)) return yield* Effect.die("pull unexpectedly succeeded");
+          expect(failureKind(result.cause)).toBe("engine-unavailable");
+        }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+    );
 
   it.live("keeps missing image pull failures observable", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const pullAttempted = yield* Ref.make(false);
       const spawner = makePullFailureSpawner(delegate, pullAttempted);
-      const result = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+      const result = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+      }).pipe(
         Effect.flatMap((runtime) =>
           runtime.prepare(`supabase-prepare-regression:${token}`).pipe(Effect.exit),
         ),
@@ -81,15 +139,22 @@ describe("container process adapter", () => {
       );
       expect(Exit.isFailure(result)).toBe(true);
       expect(yield* Ref.get(pullAttempted)).toBe(true);
-      if (Exit.isFailure(result)) expect(Cause.pretty(result.cause)).toContain("pull rejected");
-    }).pipe(Effect.provide(NodeServices.layer)),
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain("pull rejected");
+        expect(failureKind(result.cause)).toBe("image-pull");
+      }
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("prepares, launches, streams, waits, and removes one exact container", () =>
     Effect.gen(function* () {
       const id = yield* Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+          const runtime = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          });
           yield* runtime.prepare(image);
           const process = yield* runtime.launch({
             image,
@@ -116,14 +181,18 @@ describe("container process adapter", () => {
         }),
       );
       expect(yield* exists(id)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("streams tool input and output and preserves a nonzero exit", () =>
     Effect.gen(function* () {
       const id = yield* Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+          const runtime = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          });
           yield* runtime.prepare(image);
           const process = yield* runtime.launchCommand({
             image,
@@ -153,14 +222,14 @@ describe("container process adapter", () => {
         }),
       );
       expect(yield* exists(id)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("maps the stack host alias to an explicit IPv4 host gateway only", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const runtime = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway: yield* makeHostGateway,
         });
@@ -188,7 +257,7 @@ describe("container process adapter", () => {
           `${DOCKER_HOST_ALIAS}:${addresses[0]}`,
         );
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("probes the host gateway once for concurrent launches across runtimes", () =>
@@ -197,7 +266,11 @@ describe("container process adapter", () => {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const probes = yield* Ref.make(0);
         const hostGateway = yield* makeHostGateway;
-        const makeRuntime = makeContainerRuntime({ engine: "docker", root: ".", hostGateway }).pipe(
+        const makeRuntime = makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway,
+        }).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             makeHostGatewayProbeSpawner(delegate, probes, () => undefined),
@@ -227,7 +300,7 @@ describe("container process adapter", () => {
           expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
         }
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("launches without awaiting a background probe that later launches share", () =>
@@ -239,13 +312,13 @@ describe("container process adapter", () => {
         const hostGateway = yield* makeHostGateway;
         const spawner = makeHostGatewayProbeSpawner(delegate, probes, () => undefined, release);
         const database = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway,
           awaitHostGateway: false,
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
         const service = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway,
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
@@ -272,7 +345,7 @@ describe("container process adapter", () => {
         expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
         expect(yield* Ref.get(probes)).toBe(1);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("maps the host alias to the IPv4 gateway listed after an IPv6 one", () =>
@@ -280,7 +353,7 @@ describe("container process adapter", () => {
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const runtime = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway: yield* makeHostGateway,
         }).pipe(
@@ -307,7 +380,7 @@ describe("container process adapter", () => {
           `${DOCKER_HOST_ALIAS}:192.168.65.254`,
         );
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("falls back to host-gateway without reprobing when the gateway has no IPv4 address", () =>
@@ -316,7 +389,7 @@ describe("container process adapter", () => {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const probes = yield* Ref.make(0);
         const runtime = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway: yield* makeHostGateway,
         }).pipe(
@@ -345,7 +418,7 @@ describe("container process adapter", () => {
         }
         expect(yield* Ref.get(probes)).toBe(1);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retries a probe whose image lacks cat before launching", () =>
@@ -354,7 +427,7 @@ describe("container process adapter", () => {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const probes = yield* Ref.make(0);
         const runtime = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway: yield* makeHostGateway,
         }).pipe(
@@ -384,7 +457,7 @@ describe("container process adapter", () => {
         expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
         expect(yield* Ref.get(probes)).toBe(2);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("maps the host alias to the engine's own host address when it rejects host-gateway", () =>
@@ -393,14 +466,14 @@ describe("container process adapter", () => {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const probes = yield* Ref.make(0);
         const runtime = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway: yield* makeHostGateway,
         }).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             makeHostGatewayProbeSpawner(delegate, probes, (attempt) =>
-              attempt === 1 ? hostGatewayRejectionScript : podmanHostsScript,
+              attempt === 1 ? hostGatewayRejectionScript : engineHostsScript,
             ),
           ),
         );
@@ -416,7 +489,7 @@ describe("container process adapter", () => {
         expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
         expect(yield* Ref.get(probes)).toBe(2);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retries the engine host probe after it fails transiently", () =>
@@ -425,7 +498,7 @@ describe("container process adapter", () => {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const probes = yield* Ref.make(0);
         const runtime = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway: yield* makeHostGateway,
         }).pipe(
@@ -435,7 +508,7 @@ describe("container process adapter", () => {
               attempt === 2
                 ? `console.error("daemon busy"); process.exit(1)`
                 : attempt === 4
-                  ? podmanHostsScript
+                  ? engineHostsScript
                   : hostGatewayRejectionScript,
             ),
           ),
@@ -452,7 +525,7 @@ describe("container process adapter", () => {
         expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
         expect(yield* Ref.get(probes)).toBe(4);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("fails launches actionably when an engine rejecting host-gateway maps no IPv4 host", () =>
@@ -460,7 +533,7 @@ describe("container process adapter", () => {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
       const probes = yield* Ref.make(0);
       const runtime = yield* makeContainerRuntime({
-        engine: "docker",
+        target: containerTarget,
         root: ".",
         hostGateway: yield* makeHostGateway,
       }).pipe(
@@ -485,10 +558,12 @@ describe("container process adapter", () => {
           }),
         ).pipe(Effect.flip);
         expect(failure._tag).toBe("ContainerError");
-        expect(failure.message).toContain("upgrade Podman or use --runtime podman");
+        expect(failure.message).toContain(
+          "rejects host-gateway in --add-host and maps no IPv4 address",
+        );
       }
       expect(yield* Ref.get(probes)).toBe(2);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("recreates an unawaited launch the engine rejects for host-gateway", () =>
@@ -497,7 +572,7 @@ describe("container process adapter", () => {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const probes = yield* Ref.make(0);
         const database = yield* makeContainerRuntime({
-          engine: "docker",
+          target: containerTarget,
           root: ".",
           hostGateway: yield* makeHostGateway,
           awaitHostGateway: false,
@@ -507,7 +582,7 @@ describe("container process adapter", () => {
             makeHostGatewayProbeSpawner(
               makeHostGatewayRejectingCreateSpawner(delegate),
               probes,
-              (attempt) => (attempt === 1 ? hostGatewayRejectionScript : podmanHostsScript),
+              (attempt) => (attempt === 1 ? hostGatewayRejectionScript : engineHostsScript),
             ),
           ),
         );
@@ -523,13 +598,17 @@ describe("container process adapter", () => {
         expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
         expect(yield* Ref.get(probes)).toBe(2);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("names and labels a service container for compose-style grouping", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        });
         yield* runtime.prepare(image);
         const process = yield* runtime.launch({
           image,
@@ -547,13 +626,17 @@ describe("container process adapter", () => {
         expect(labels["com.docker.compose.service"]).toBe("auth");
         expect(labels["com.docker.compose.oneoff"]).toBeUndefined();
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("marks a one-shot container's name and compose labels as a task", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        });
         yield* runtime.prepare(image);
         const process = yield* runtime.launchCommand({
           image,
@@ -570,16 +653,20 @@ describe("container process adapter", () => {
         expect(labels["com.docker.compose.service"]).toBe("auth");
         expect(labels["com.docker.compose.oneoff"]).toBe("True");
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("labels a created container with the configured test run", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        });
         yield* runtime.prepare(image);
-        const crypto = yield* Crypto.Crypto;
-        const testRunId = `container-test-run-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const testRunId = `container-test-run-${(yield* crypto.uuidV4()).slice(0, 8)}`;
         const process = yield* runtime
           .launch({
             image,
@@ -598,7 +685,7 @@ describe("container process adapter", () => {
         const labels = yield* inspectLabels(process.id);
         expect(labels["com.supabase.stack-test-run"]).toBe(testRunId);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live(
@@ -606,7 +693,11 @@ describe("container process adapter", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+          const runtime = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          });
           yield* runtime.prepare(image);
           const launch = (instanceId: string, marker: string) =>
             runtime.launch({
@@ -637,12 +728,16 @@ describe("container process adapter", () => {
           yield* Fiber.interrupt(firstReady);
           yield* Fiber.interrupt(secondReady);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("stops a container with its configured stop signal", () =>
     Effect.gen(function* () {
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      const runtime = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+        hostGateway: sharedHostGateway,
+      });
       yield* runtime.prepare(image);
       const process = yield* runtime.launch({
         image,
@@ -663,12 +758,16 @@ describe("container process adapter", () => {
 
       yield* process.remove;
       yield* Fiber.interrupt(logs);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("waits until a discarded container stops before returning", () =>
     Effect.gen(function* () {
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      const runtime = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+        hostGateway: sharedHostGateway,
+      });
       yield* runtime.prepare(image);
       const process = yield* runtime.launch({
         image,
@@ -689,13 +788,17 @@ describe("container process adapter", () => {
       yield* process.remove;
       expect(yield* exists(process.id)).toBe(false);
       yield* Fiber.interrupt(logs);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("returns cleanup authority when container start fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        });
         yield* runtime.prepare(image);
         const result = yield* runtime
           .launch({
@@ -717,13 +820,117 @@ describe("container process adapter", () => {
         yield* failure.value.process.remove;
         expect(yield* exists(id)).toBe(false);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+  );
+
+  it.live(
+    "gives up after bounded attempts when a published host port keeps colliding, leaving only the last container",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const runtime = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          });
+          yield* runtime.prepare(image);
+          const { spawner, started } = makeFailingStartSpawner(
+            delegate,
+            dockerPortAllocated,
+            Number.POSITIVE_INFINITY,
+          );
+          const result = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          }).pipe(
+            Effect.flatMap((rejecting) =>
+              rejecting.launch({
+                image,
+                stackId: "c".repeat(64),
+                instanceId: "port-allocated",
+                env: {},
+                args: ["-e", "process.exit(0)"],
+                ports: [8080],
+              }),
+            ),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.exit,
+          );
+          const failure = Exit.isFailure(result)
+            ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+            : undefined;
+          if (!(failure instanceof ContainerLaunchError))
+            return yield* Effect.die("publish failure did not retain cleanup authority");
+          expect(failureKind(failure)).toBe("port-allocation");
+          expect(failure.failure.message).toContain("port is already allocated");
+          expect(started).toHaveLength(3);
+          expect(new Set(started).size).toBe(3);
+          expect(yield* Effect.forEach(started, exists)).toEqual([false, false, true]);
+          expect(failure.process.id).toBe(started[2]);
+          yield* failure.process.remove;
+          expect(yield* exists(started[2]!)).toBe(false);
+        }),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+  );
+
+  it.live(
+    "recreates a container whose published host port was taken before the engine bound it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const fs = yield* FileSystem.FileSystem;
+          const { spawner, started, envFiles } = makeFailingStartSpawner(
+            delegate,
+            pastaAddressInUse,
+            1,
+          );
+          const process = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          }).pipe(
+            Effect.flatMap((flaky) =>
+              flaky.prepare(image).pipe(
+                Effect.andThen(
+                  flaky.launch({
+                    image,
+                    stackId: "c".repeat(64),
+                    instanceId: "port-recreated",
+                    env: {},
+                    ports: [8080],
+                    args: [
+                      "-e",
+                      "Bun.serve({ hostname: '0.0.0.0', port: 8080, fetch() { return new Response('ok') } }); console.log('ready')",
+                    ],
+                  }),
+                ),
+              ),
+            ),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(started).toHaveLength(2);
+          expect(process.id).toBe(started[1]);
+          expect(yield* exists(started[0]!)).toBe(false);
+          expect(yield* exists(started[1]!)).toBe(true);
+          expect(process.ports[8080]).toBeDefined();
+          expect(envFiles).toHaveLength(2);
+          expect(yield* fs.exists(envFiles[0]!)).toBe(false);
+          expect(yield* fs.exists(envFiles[1]!)).toBe(true);
+        }),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("keeps exit observation shared after a caller cancels its wait", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        });
         yield* runtime.prepare(image);
         const process = yield* runtime.launch({
           image,
@@ -743,7 +950,7 @@ describe("container process adapter", () => {
         expect(yield* process.exitCode).toBe(23);
         yield* Fiber.interrupt(logs);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("releases a log follower that exits while its container keeps running", () =>
@@ -751,7 +958,11 @@ describe("container process adapter", () => {
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const released = yield* Deferred.make<void>();
-        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        }).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             makeLogFollowerSpawner(
@@ -780,7 +991,7 @@ describe("container process adapter", () => {
         expect(yield* running(process.id)).toBe(true);
         yield* process.discard;
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("releases a still running log follower when its launch scope closes", () =>
@@ -789,7 +1000,11 @@ describe("container process adapter", () => {
       const released = yield* Deferred.make<void>();
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+          const runtime = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          }).pipe(
             Effect.provideService(
               ChildProcessSpawner.ChildProcessSpawner,
               makeLogFollowerSpawner(delegate, released, "setInterval(() => {}, 1000)"),
@@ -808,18 +1023,22 @@ describe("container process adapter", () => {
         }),
       );
       expect(yield* Deferred.isDone(released)).toBe(true);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("treats an externally removed container as already stopped", () =>
     Effect.gen(function* () {
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `externally-removed-${token}`;
       yield* Effect.ensuring(
         Effect.scoped(
           Effect.gen(function* () {
-            const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+            const runtime = yield* makeContainerRuntime({
+              target: containerTarget,
+              root: ".",
+              hostGateway: sharedHostGateway,
+            });
             yield* runtime.prepare(image);
             const process = yield* runtime.launch({
               image,
@@ -836,14 +1055,14 @@ describe("container process adapter", () => {
         ),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("confirms absence after the remove client loses its result", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `lost-remove-result-${token}`;
       const lostResult = yield* Ref.make(false);
       const spawner = makeLostRemoveResultSpawner(delegate, lostResult);
@@ -851,7 +1070,11 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -873,14 +1096,14 @@ describe("container process adapter", () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains a remove failure for a still-present non-removing container", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-remove-${token}`;
       const failed = yield* Ref.make(false);
       const spawner = makeRemoveFailureSpawner(delegate, failed);
@@ -888,7 +1111,11 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -914,14 +1141,14 @@ describe("container process adapter", () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains both remove and reconciliation failures", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-reconciliation-${token}`;
       const failed = yield* Ref.make(false);
       const failProbe = yield* Ref.make(true);
@@ -930,7 +1157,11 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -958,14 +1189,14 @@ describe("container process adapter", () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("waits for a real removal observed as removing", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `pending-remove-${token}`;
       const pendingProbes = yield* Ref.make(2);
       const lostResult = yield* Ref.make(false);
@@ -974,7 +1205,11 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -997,14 +1232,14 @@ describe("container process adapter", () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains the remove failure when removing never reaches absence", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `stalled-remove-${token}`;
       const pendingProbes = yield* Ref.make(Number.POSITIVE_INFINITY);
       const lostResult = yield* Ref.make(false);
@@ -1013,7 +1248,11 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -1044,14 +1283,14 @@ describe("container process adapter", () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("preserves caller interruption and reconciles during scope close", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `interrupted-remove-${token}`;
       const completed = yield* Deferred.make<void>();
       const consumed = yield* Ref.make(false);
@@ -1060,7 +1299,11 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -1088,7 +1331,7 @@ describe("container process adapter", () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("reports a scope failure when stop fails and leaves cleanup authority", () =>
@@ -1097,14 +1340,18 @@ describe("container process adapter", () => {
       const failStop = yield* Ref.make(true);
       const processRef = yield* Ref.make<Option.Option<ContainerProcess>>(Option.none());
       const spawner = makeStopFailureSpawner(delegate, failStop);
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-stop-${token}`;
       yield* Effect.ensuring(
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
                 image,
@@ -1143,21 +1390,25 @@ describe("container process adapter", () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains cleanup authority when create reports failure after creating a container", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-create-after-commit-${token}`;
       const created = yield* Ref.make(false);
       const spawner = makeCreateFailureSpawner(delegate, created, true);
       yield* Effect.ensuring(
         Effect.scoped(
           Effect.gen(function* () {
-            const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+            const runtime = yield* makeContainerRuntime({
+              target: containerTarget,
+              root: ".",
+              hostGateway: sharedHostGateway,
+            });
             yield* runtime.prepare(image);
             const result = yield* runtime
               .launch({
@@ -1183,14 +1434,14 @@ describe("container process adapter", () => {
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains cleanup authority when create fails without creating a container", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `failed-create-empty-${token}`;
       const created = yield* Ref.make(false);
       const spawner = makeCreateFailureSpawner(delegate, created, false);
@@ -1198,7 +1449,11 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const result = yield* Effect.scoped(
             Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
               yield* runtime.prepare(image);
               return yield* runtime
                 .launch({
@@ -1223,14 +1478,14 @@ describe("container process adapter", () => {
         }),
         removeByInstance(instanceId).pipe(Effect.orDie),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("retains cleanup authority when create is cancelled before its result is exposed", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const token = yield* crypto.uuidV4();
       const instanceId = `pending-create-${token}`;
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -1238,7 +1493,11 @@ describe("container process adapter", () => {
       const spawner = makePendingCreateSpawner(delegate, started, release, present);
       const result = yield* Effect.scoped(
         Effect.gen(function* () {
-          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+          const runtime = yield* makeContainerRuntime({
+            target: containerTarget,
+            root: ".",
+            hostGateway: sharedHostGateway,
+          });
           yield* runtime.prepare(image);
           const launch = yield* runtime
             .launch({
@@ -1261,15 +1520,17 @@ describe("container process adapter", () => {
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       expect(Exit.isFailure(result)).toBe(true);
       expect(yield* Ref.get(present)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("bounds a hung docker create and removes the container it may still create", () =>
     Effect.gen(function* () {
       const engine = yield* makeHangingCreateSpawner();
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
-        Effect.provide(engine.layer),
-      );
+      const runtime = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+        hostGateway: sharedHostGateway,
+      }).pipe(Effect.provide(engine.layer));
       const launch = yield* Effect.scoped(
         runtime.launch({ image, stackId: "i".repeat(64), instanceId: "hung-create", env: {} }),
       ).pipe(Effect.provide(engine.layer), Effect.exit, Effect.forkChild);
@@ -1285,15 +1546,45 @@ describe("container process adapter", () => {
         failure instanceof ContainerLaunchError ? failure.failure.message : undefined,
       ).toContain("did not respond");
       expect(engine.commands).toContainEqual(["rm", "--force", engine.createdName()]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+  );
+
+  it.effect(
+    "names the stalled engine subcommand and its stderr when an engine command times out",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* makeStalledStartSpawner("Error: waiting for network sandbox");
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        }).pipe(Effect.provide(engine.layer));
+        const launch = yield* Effect.scoped(
+          runtime.launch({ image, stackId: "s".repeat(64), instanceId: "stalled-start", env: {} }),
+        ).pipe(Effect.provide(engine.layer), Effect.exit, Effect.forkChild);
+        yield* Deferred.await(engine.stderrRead);
+        yield* TestClock.adjust("30 seconds");
+        const result = yield* Fiber.join(launch);
+
+        const failure = Exit.isFailure(result)
+          ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+          : undefined;
+        expect(failure instanceof ContainerLaunchError).toBe(true);
+        expect(failureKind(failure)).toBe("engine-timeout");
+        expect(failure instanceof ContainerLaunchError ? failure.failure.message : undefined).toBe(
+          "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox",
+        );
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("removes the container a hung docker create may still create when interrupted", () =>
     Effect.gen(function* () {
       const engine = yield* makeHangingCreateSpawner();
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
-        Effect.provide(engine.layer),
-      );
+      const runtime = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+        hostGateway: sharedHostGateway,
+      }).pipe(Effect.provide(engine.layer));
       const launch = yield* Effect.scoped(
         runtime.launch({ image, stackId: "i".repeat(64), instanceId: "interrupted", env: {} }),
       ).pipe(Effect.provide(engine.layer), Effect.forkChild);
@@ -1302,7 +1593,204 @@ describe("container process adapter", () => {
       expect(Exit.hasInterrupts(yield* Fiber.await(launch))).toBe(true);
       expect(engine.createdName()).toMatch(/^supabase-/u);
       expect(engine.commands).toContainEqual(["rm", "--force", engine.createdName()]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+  );
+
+  it.live(
+    "resolveEngineTarget pins the context resolved at startup by name, unaffected by a later context switch",
+    () =>
+      Effect.gen(function* () {
+        const contextCalls: Array<ReadonlyArray<string>> = [];
+        let activeContext = "alpha";
+        const handle = (exitCode: number, stdout = "") =>
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(0),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            stdout: Stream.succeed(new TextEncoder().encode(stdout)),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          });
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command) || command.command !== "docker")
+            return Effect.die("Unexpected command");
+          const args = command.args.map(String);
+          if (args[0] === "context" && args[1] === "show") {
+            contextCalls.push(args);
+            return Effect.succeed(handle(0, `${activeContext}\n`));
+          }
+          // Identity is resolved through the same pinned context, so "info" arrives prefixed with
+          // the `--context <name>` pin this very call resolved, by name, not by endpoint: pinning
+          // by name (rather than an inspected endpoint) is what keeps a TLS context's own
+          // certificate material intact for this and every later invocation.
+          if (args[0] === "--context" && args[2] === "info")
+            return Effect.succeed(handle(0, `daemon-at-${args[1]}`));
+          return Effect.die(`Unexpected docker command: ${args.join(" ")}`);
+        });
+        const target = yield* resolveEngineTarget(spawner, "docker");
+        // Simulates `docker context use beta` run elsewhere, after this target was resolved.
+        activeContext = "beta";
+        expect(contextCalls).toHaveLength(1);
+        expect(target.argv).toEqual(["--context", "alpha"]);
+        expect(target.daemonId).toBe("daemon-at-alpha");
+      }).pipe(
+        Effect.provide(
+          Layer.merge(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
+        ),
+      ),
+  );
+
+  it.live(
+    "keeps helper creation, runtime launches, password reconcile and reconcile pinned to the context an owner resolved at startup, despite a later context switch",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "engine-target-pin-" });
+        const commands: Array<ReadonlyArray<string>> = [];
+        let activeContext = "alpha";
+        // An orphaned container found by label alone: listed once (for removal), then gone.
+        const orphanId = "orphan00000000000000000000000000001";
+        let psCalls = 0;
+        const handle = (exitCode: number, stdout = "") =>
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(0),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            stdout: stdout === "" ? Stream.empty : Stream.succeed(new TextEncoder().encode(stdout)),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          });
+        // A permissive fake: every engine call this test's consumers make succeeds, so the only
+        // thing under test is the argv each one is actually invoked with.
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command) || command.command !== "docker")
+            return Effect.die("Unexpected command");
+          commands.push(command.args.map(String));
+          if (command.args[0] === "context" && command.args[1] === "show")
+            return Effect.succeed(handle(0, `${activeContext}\n`));
+          // Every other call carries the `--context <name>` pin this test's resolution produced.
+          const unpinned = command.args.slice(2).map(String);
+          if (unpinned[0] === "info") return Effect.succeed(handle(0, "fake-daemon-id"));
+          if (unpinned[0] === "version") return Effect.succeed(handle(0, "27.0.0|27.0.0"));
+          if (unpinned[0] === "inspect")
+            return Effect.succeed(handle(0, '{"Ports":{},"Status":"running","ExitCode":0}'));
+          if (unpinned[0] === "run") return Effect.succeed(handle(0, "abcdef012345"));
+          if (unpinned[0] === "start") return Effect.succeed(handle(0, "supabase-helper-ready\n"));
+          // Two call sites share "ps": the launched container's own `--rm` removal poll (filtered
+          // by name, always confirmed gone) and the label-based orphan discovery below.
+          if (unpinned[0] === "ps" && unpinned.some((arg) => arg.includes("com.supabase.stack="))) {
+            psCalls += 1;
+            return Effect.succeed(handle(0, psCalls === 1 ? `${orphanId}\n` : ""));
+          }
+          if (unpinned[0] === "ps") return Effect.succeed(handle(0, ""));
+          return Effect.succeed(handle(0));
+        });
+
+        // Resolved once, as an owner's own startup would.
+        const target = yield* resolveEngineTarget(spawner, "docker");
+        expect(target.argv).toEqual(["--context", "alpha"]);
+        // Simulates `docker context use beta` run elsewhere, after this target was resolved.
+        activeContext = "beta";
+        // Only the resolution above may run unpinned; every consumer exercised below must carry
+        // the context it pinned, regardless of the later switch.
+        commands.length = 0;
+
+        const container = yield* makeContainerRuntime({
+          target,
+          root,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+        // Runtime launches.
+        yield* container
+          .prepare(image)
+          .pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        yield* Effect.scoped(
+          container.launchCommand({
+            image,
+            stackId: "f".repeat(64),
+            instanceId: "engine-target-pin-launch",
+            env: {},
+            args: ["-e", "process.exit(0)"],
+          }),
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+        // Helper creation, sharing the same container runtime a real stack would.
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "docker",
+          target,
+          stackId: "engine-target-pin",
+          instanceId: "database",
+          instanceRoot: root,
+          root,
+          cacheRoot: path.join(root, "cache"),
+          fs,
+          path,
+          crypto,
+          digest: yield* Digest.Digest,
+          container,
+          spawner,
+        });
+        yield* storage.prepare(selection.database);
+
+        // Password reconcile: the consumer F2 found spawning the engine unpinned.
+        yield* reconcileContainerPassword(
+          target,
+          "password-reconcile-container",
+          Redacted.make("engine-target-pin-password"),
+          spawner,
+        );
+
+        // Reconcile: an orphaned container, found and removed by label alone, through the same
+        // pinned target.
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root: path.join(root, "state") })),
+          StackNamespace.Service,
+        );
+        const saved = {
+          id: "engine-target-pin",
+          runtime: "docker" as const,
+          identity: { projectRoot: root, branchContext: "main", stackName: "engine-target-pin" },
+          instances: [],
+          lifetime: "detached" as const,
+          composition: { members: [], dependencies: [] },
+        };
+        yield* state.save(saved);
+        yield* Owner.sweepContainers(saved, root, target).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+
+        // Every call these consumers made, after the target was resolved, carries the context
+        // pinned at startup: asserted of the whole list, not merely of a filtered subset, so a
+        // consumer that forgets the pin (as the password reconcile once did) fails this test
+        // instead of being silently excluded from it.
+        expect(commands.length).toBeGreaterThan(0);
+        for (const args of commands) expect(args.slice(0, 2)).toEqual(["--context", "alpha"]);
+        // Each consumer is actually exercised, not vacuously skipped.
+        expect(commands.some((args) => args.includes("pull"))).toBe(true);
+        expect(commands.some((args) => args.includes("version"))).toBe(true);
+        expect(commands.some((args) => args.includes("password-reconcile-container"))).toBe(true);
+        expect(commands.some((args) => args.includes("rm") && args.includes(orphanId))).toBe(true);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            ConfigProvider.layer(ConfigProvider.fromEnvRecord({})),
+          ),
+        ),
+      ),
   );
 });
 
@@ -1310,7 +1798,7 @@ const repoDigest = (spawner: ChildProcessSpawnerService["Service"], image: strin
   Effect.gen(function* () {
     const child = yield* spawner.spawn(
       ChildProcess.make(
-        "docker",
+        testEngine,
         ["image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", image],
         { stdin: "ignore" },
       ),
@@ -1336,14 +1824,18 @@ const repoDigest = (spawner: ChildProcessSpawnerService["Service"], image: strin
     return digest;
   });
 
+const registryRefusedStderr =
+  "pull rejected by cached-image regression: dial tcp 127.0.0.1:9: connect: connection refused";
+
 const makePullFailureSpawner = (
   delegate: ChildProcessSpawnerService["Service"],
   pullAttempted: Ref.Ref<boolean>,
+  stderr = registryRefusedStderr,
 ) =>
   ChildProcessSpawner.make((command) => {
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "pull"
     )
       return Effect.gen(function* () {
@@ -1351,25 +1843,63 @@ const makePullFailureSpawner = (
         return yield* delegate.spawn(
           ChildProcess.make(
             process.execPath,
-            ["-e", "console.error('pull rejected by cached-image regression'); process.exit(73)"],
-            { stdin: "ignore" },
+            ["-e", "console.error(process.env.PULL_STDERR); process.exit(73)"],
+            { stdin: "ignore", env: { ...process.env, PULL_STDERR: stderr } },
           ),
         );
       });
     return delegate.spawn(command);
   });
 
+const dockerPortAllocated =
+  "Error response from daemon: driver failed programming external connectivity on endpoint port-allocated: Bind for 127.0.0.1:54321 failed: port is already allocated";
+const pastaAddressInUse =
+  'Error: unable to start container "abc": pasta failed with exit code 1:\nListen failed for HOST TCP port 127.0.0.1/42651: Address in use';
+
+/** Fails the first `failures` engine `start` calls with `message`, recording every started container name. */
+const makeFailingStartSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  message: string,
+  failures: number,
+) => {
+  const started: Array<string> = [];
+  const envFiles: Array<string> = [];
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (ChildProcess.isStandardCommand(command) && command.command === testEngine) {
+      const envFile = command.args[command.args.indexOf("--env-file") + 1];
+      if (command.args[0] === "create" && typeof envFile === "string") envFiles.push(envFile);
+    }
+    if (
+      !ChildProcess.isStandardCommand(command) ||
+      command.command !== testEngine ||
+      command.args[0] !== "start"
+    )
+      return delegate.spawn(command);
+    started.push(String(command.args.map(String).at(-1)));
+    return started.length > failures
+      ? delegate.spawn(command)
+      : delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            ["-e", `console.error(${JSON.stringify(message)}); process.exit(1)`],
+            { stdin: "ignore" },
+          ),
+        );
+  });
+  return { spawner, started, envFiles };
+};
+
 const hostGatewayRejectionScript = `console.error(${JSON.stringify(
   'Error response from daemon: invalid IP address in add-host: "host-gateway"',
 )}); process.exit(125)`;
 
-const podmanHostsScript = `console.log("10.88.0.1\\thost.containers.internal host.docker.internal")`;
+const engineHostsScript = `console.log("10.88.0.1\\thost.docker.internal")`;
 
-/** Rejects a `docker create` that maps the host alias to `host-gateway`, as older Podman does. */
+/** Rejects a `docker create` that maps the host alias to `host-gateway`. */
 const makeHostGatewayRejectingCreateSpawner = (delegate: ChildProcessSpawnerService["Service"]) =>
   ChildProcessSpawner.make((command) =>
     ChildProcess.isStandardCommand(command) &&
-    command.command === "docker" &&
+    command.command === testEngine &&
     command.args[0] === "create" &&
     command.args.includes(`${DOCKER_HOST_ALIAS}:host-gateway`)
       ? delegate.spawn(
@@ -1393,7 +1923,7 @@ const makeHostGatewayProbeSpawner = (
   ChildProcessSpawner.make((command) => {
     if (
       !ChildProcess.isStandardCommand(command) ||
-      command.command !== "docker" ||
+      command.command !== testEngine ||
       command.args[0] !== "run" ||
       !command.args.includes("/etc/hosts")
     )
@@ -1416,7 +1946,7 @@ const makeStopFailureSpawner = (
   ChildProcessSpawner.make((command) => {
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "stop"
     ) {
       return Effect.gen(function* () {
@@ -1441,7 +1971,7 @@ const makeLogFollowerSpawner = (
   ChildProcessSpawner.make((command) => {
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "logs"
     )
       return Effect.gen(function* () {
@@ -1460,7 +1990,7 @@ const makeLostRemoveResultSpawner = (
   ChildProcessSpawner.make((command) => {
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "rm"
     ) {
       return Effect.gen(function* () {
@@ -1494,9 +2024,11 @@ const makeRemoveFailureSpawner = (
     if (
       failProbe !== undefined &&
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "ps" &&
-      command.args.some((arg) => arg.startsWith("name=^/?"))
+      // Excludes the host-gateway probe's own throwaway "-task-" container, created and awaited
+      // absent during `launch`, before this test's own instance container ever reaches `remove`.
+      command.args.map(String).some((arg) => arg.startsWith("name=^/?") && !arg.includes("-task-"))
     ) {
       return Effect.gen(function* () {
         if (!(yield* Ref.get(failProbe))) return yield* delegate.spawn(command);
@@ -1512,7 +2044,7 @@ const makeRemoveFailureSpawner = (
     }
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "rm"
     ) {
       return Effect.gen(function* () {
@@ -1538,9 +2070,11 @@ const makePendingRemoveSpawner = (
   ChildProcessSpawner.make((command) => {
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "ps" &&
-      command.args.some((arg) => arg.startsWith("name=^/?"))
+      // Excludes the host-gateway probe's own throwaway "-task-" container, created and awaited
+      // absent during `launch`, before this test's own instance container ever reaches `remove`.
+      command.args.map(String).some((arg) => arg.startsWith("name=^/?") && !arg.includes("-task-"))
     ) {
       return Effect.gen(function* () {
         const remaining = yield* Ref.get(pendingProbes);
@@ -1555,7 +2089,7 @@ const makePendingRemoveSpawner = (
     }
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "rm"
     ) {
       return Effect.gen(function* () {
@@ -1588,7 +2122,7 @@ const makeInterruptedRemoveSpawner = (
   ChildProcessSpawner.make((command) => {
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "rm"
     ) {
       return Effect.gen(function* () {
@@ -1624,7 +2158,7 @@ const makeCreateFailureSpawner = (
   ChildProcessSpawner.make((command) => {
     if (
       ChildProcess.isStandardCommand(command) &&
-      command.command === "docker" &&
+      command.command === testEngine &&
       command.args[0] === "create"
     ) {
       return Effect.gen(function* () {
@@ -1659,7 +2193,7 @@ const makePendingCreateSpawner = (
   present: Ref.Ref<boolean>,
 ) =>
   ChildProcessSpawner.make((command) => {
-    if (!ChildProcess.isStandardCommand(command) || command.command !== "docker")
+    if (!ChildProcess.isStandardCommand(command) || command.command !== testEngine)
       return delegate.spawn(command);
     if (command.args[0] === "stop" || command.args[0] === "rm") {
       return Effect.gen(function* () {
@@ -1687,14 +2221,14 @@ const makePendingCreateSpawner = (
     });
   });
 
-const successfulHandle = () =>
+const successfulHandle = (stdout = "") =>
   ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(0),
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     stdin: Sink.drain,
-    stdout: Stream.empty,
+    stdout: stdout === "" ? Stream.empty : Stream.succeed(new TextEncoder().encode(stdout)),
     stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -1702,12 +2236,46 @@ const successfulHandle = () =>
     unref: Effect.succeed(Effect.void),
   });
 
+/** Answers every engine command except `start`, which writes `stderr` and never exits. */
+const makeStalledStartSpawner = Effect.fn("ContainerTest.stalledStartSpawner")(function* (
+  stderr: string,
+) {
+  const stderrRead = yield* Deferred.make<void>();
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+    if (command.args[0] === "info") return Effect.succeed(successfulHandle("fake-daemon-id"));
+    if (command.args[0] !== "start") return Effect.succeed(successfulHandle());
+    // The second pull only happens once the reader has consumed the stderr line.
+    const stalledStderr = Stream.succeed(new TextEncoder().encode(stderr)).pipe(
+      Stream.concat(Stream.fromEffectDrain(Deferred.succeed(stderrRead, undefined))),
+      Stream.concat(Stream.never),
+    );
+    return Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(0),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: stalledStderr,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      }),
+    );
+  });
+  return { stderrRead, layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner) };
+});
+
 const makeHangingCreateSpawner = Effect.fn("ContainerTest.hangingCreateSpawner")(function* () {
   const commands: string[][] = [];
   const createStarted = yield* Deferred.make<void>();
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
-    commands.push([...command.args]);
+    commands.push(command.args.map(String));
+    if (command.args[0] === "info") return Effect.succeed(successfulHandle("fake-daemon-id"));
     if (command.args[0] !== "create") return Effect.succeed(successfulHandle());
     // The engine never answers create; the real daemon may or may not have committed it.
     return Deferred.succeed(createStarted, undefined).pipe(
@@ -1759,7 +2327,7 @@ const exists = (id: string) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["inspect", id], {
+      ChildProcess.make(testEngine, ["inspect", id], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -1772,7 +2340,7 @@ const inspectLabels = (id: string) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["inspect", "--format={{json .Config.Labels}}", id], {
+      ChildProcess.make(testEngine, ["inspect", "--format={{json .Config.Labels}}", id], {
         stdin: "ignore",
       }),
     );
@@ -1786,7 +2354,7 @@ const inspectExtraHosts = (id: string) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["inspect", "--format={{json .HostConfig.ExtraHosts}}", id], {
+      ChildProcess.make(testEngine, ["inspect", "--format={{json .HostConfig.ExtraHosts}}", id], {
         stdin: "ignore",
       }),
     );
@@ -1800,7 +2368,7 @@ const removeExternally = (id: string) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["rm", "--force", id], {
+      ChildProcess.make(testEngine, ["rm", "--force", id], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -1809,7 +2377,7 @@ const removeExternally = (id: string) =>
     const code = yield* child.exitCode;
     if (Number(code) !== 0)
       return yield* new ContainerTestError({
-        message: `docker rm --force exited with ${String(code)}`,
+        message: `${testEngine} rm --force exited with ${String(code)}`,
       });
   });
 
@@ -1818,7 +2386,7 @@ const idsByInstance = (instanceId: string) =>
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
       ChildProcess.make(
-        "docker",
+        testEngine,
         [
           "ps",
           "--all",
@@ -1843,7 +2411,7 @@ const removeByInstance = (instanceId: string) =>
     if (ids.length === 0) return;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["rm", "--force", ...ids], { stdin: "ignore" }),
+      ChildProcess.make(testEngine, ["rm", "--force", ...ids], { stdin: "ignore" }),
     );
     const [stderr, code] = yield* Effect.all([
       child.stderr.pipe(Stream.decodeText, Stream.mkString),
@@ -1860,7 +2428,7 @@ const running = (id: string) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["inspect", "--format={{.State.Running}}", id], {
+      ChildProcess.make(testEngine, ["inspect", "--format={{.State.Running}}", id], {
         stdin: "ignore",
       }),
     );

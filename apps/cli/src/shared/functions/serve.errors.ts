@@ -11,6 +11,19 @@ import {
 } from "../telemetry/error-actionability.ts";
 
 /**
+ * Exit codes a supervisor uses to tear a container down (`supabase stop`, CI cancellation), not a
+ * self-raised crash signal; 137 is excluded because it needs `OOMKilled` to tell a memory-limit
+ * kill from a kill the CLI cannot attribute.
+ */
+export const externalTerminationExitCodes: ReadonlySet<number> = new Set([
+  15, // SIGTERM as edge-runtime reports it: the raw signal number, not 128 + 15
+  129, // SIGHUP
+  130, // SIGINT
+  131, // SIGQUIT
+  143, // SIGTERM
+]);
+
+/**
  * The edge runtime container exited with a real crash signal or other non-zero code while
  * streaming logs. Supervisor-initiated shutdowns (SIGHUP/SIGINT/SIGQUIT/SIGTERM) end the
  * `functions serve` session successfully instead of reaching this error. `oomKilled` means the
@@ -60,6 +73,8 @@ export class DockerLogsStreamError extends Data.TaggedError("DockerLogsStreamErr
    * False when that inspect failed and there is no container state to read.
    */
   readonly oomKilled: boolean;
+  /** The stopped container's exit code from the follow-up inspect, absent when that inspect failed. */
+  readonly containerExitCode?: number;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.oomKilled) {
@@ -68,7 +83,16 @@ export class DockerLogsStreamError extends Data.TaggedError("DockerLogsStreamErr
     if (this.daemonDown) {
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
     }
-    return actionability.unknown;
+    if (this.containerExitCode === undefined) {
+      return { ...actionability.unknown, fingerprint_suffix: "engine_command_inspect" };
+    }
+    if (this.containerExitCode === 137) {
+      return { ...actionability.unknown, fingerprint_suffix: "container_killed" };
+    }
+    if (this.containerExitCode === 0 || externalTerminationExitCodes.has(this.containerExitCode)) {
+      return { ...actionability.unknown, fingerprint_suffix: "runtime_stopped" };
+    }
+    return actionability.runtimeCrash;
   }
 
   /** Keeps the user-visible remediation in sync with the actionability above. */

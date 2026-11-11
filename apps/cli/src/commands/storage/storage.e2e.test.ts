@@ -23,9 +23,9 @@ const withStorageProject = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
 
 /**
- * Golden-path e2e for `storage`: the compiled binary and `--linked`/`--local` flag
- * parsing. Object list/copy/move/remove behavior is covered by the integration and
- * unit suites, which don't need a live local stack.
+ * Golden-path e2e for `storage`: the compiled binary and `--remote` target selection. Object
+ * list/copy/move/remove behavior is covered by the integration and unit suites, which don't
+ * need a live local stack.
  */
 describe("supabase storage", () => {
   it.live(
@@ -46,19 +46,19 @@ describe("supabase storage", () => {
   );
 
   it.live(
-    "rejects passing both --local and --linked",
+    "rejects passing both --local and --remote",
     () =>
       withStorageProject("supabase-storage-e2e-mutex-", (projectDir) =>
         Effect.gen(function* () {
-          // The experimental gate runs before the mutex check, so --experimental must be
-          // set here to reach the mutex check at all.
+          // The experimental gate runs before the target check, so --experimental must be
+          // set here to reach the target check at all.
           const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-            ["storage", "ls", "--local", "--linked", "ss:///", "--experimental"],
+            ["storage", "ls", "ss:///", "--experimental", "--local", "--remote"],
             { cwd: projectDir },
           );
           expect(exitCode).toBe(1);
           expect(`${stdout}${stderr}`).toContain(
-            "if any flags in the group [linked local] are set none of the others can be",
+            "Only one of --remote, --linked and --local can be set; got --remote and --local.",
           );
         }),
       ),
@@ -71,7 +71,7 @@ describe("supabase storage", () => {
       withStorageProject("supabase-storage-e2e-gate-", (projectDir) =>
         Effect.gen(function* () {
           const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-            ["storage", "ls", "ss:///", "--local"],
+            ["storage", "ls", "ss:///"],
             { cwd: projectDir },
           );
           expect(exitCode).toBe(1);
@@ -84,14 +84,12 @@ describe("supabase storage", () => {
   );
 
   it.live(
-    "accepts --local after the subcommand token",
+    "accepts --remote after the subcommand token",
     () =>
-      withStorageProject("supabase-storage-e2e-local-", (projectDir) =>
+      withStorageProject("supabase-storage-e2e-remote-", (projectDir) =>
         Effect.gen(function* () {
-          // --linked/--local are per-leaf flags, not global ones — Effect CLI requires
-          // unique global-flag names tree-wide and `seed` already owns those names.
           const { stdout, stderr } = yield* runSupabaseEffect(
-            ["storage", "ls", "ss:///", "--local", "--experimental"],
+            ["storage", "ls", "ss:///", "--experimental", "--remote"],
             { cwd: projectDir },
           );
           const combined = `${stdout}${stderr}`;

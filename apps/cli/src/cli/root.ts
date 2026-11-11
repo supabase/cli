@@ -1,5 +1,5 @@
-import { Effect, Layer, Option } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Effect, type Exit, Layer } from "effect";
+import { Command } from "effect/cli";
 import { backupsCommand } from "../commands/backups/backups.command.ts";
 import { bootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
 import { branchesCommand } from "../commands/branches/branches.command.ts";
@@ -17,7 +17,12 @@ import { stackStartCommand } from "../commands/experimental/stack/start/start.co
 import { stackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../command-internal/stack-backend.ts";
-import { stackBackendLayer } from "../command-internal/stack-backend.ts";
+import { isFunctionsServePath, stackBackendLayer } from "../command-internal/stack-backend.ts";
+import type { ExperimentalFeatureFlagError } from "../shared/config/experimental-feature.ts";
+import {
+  type ProjectStateMode,
+  projectStateModeLayer,
+} from "../shared/config/project-state-mode.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
@@ -26,6 +31,7 @@ import { initCommand } from "../commands/init/init.command.ts";
 import { inspectCommand } from "../commands/inspect/inspect.command.ts";
 import { issueCommand } from "../commands/issue/issue.command.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
+import { logsCommandFor } from "../commands/logs/logs.command.ts";
 import { loginCommand } from "../commands/login/login.command.ts";
 import { logoutCommand } from "../commands/logout/logout.command.ts";
 import { migrationCommand } from "../commands/migration/migration.command.ts";
@@ -52,28 +58,23 @@ import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
+import { machineErrorContextLayer } from "../shared/output/machine-error-context.layer.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
+import { isMachineResourceFormat } from "../shared/output/resource-format.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
-import { makeGoProxyLayer } from "../command-internal/go-proxy.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
-import type { CliRootCommand } from "../shared/cli/run.ts";
+import { extractCommandPath, type CliRootCommand } from "../shared/cli/run.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
+import type { OutputFormat } from "../shared/output/types.ts";
 import {
-  GLOBAL_FLAGS,
+  ROOT_GLOBAL_FLAGS,
   AgentFlag,
-  CreateTicketFlag,
-  DebugFlag,
-  DnsResolverFlag,
-  ExperimentalFlag,
-  NetworkIdFlag,
   OutputFlag,
   OutputFormatFlag,
-  ProfileFlag,
-  WorkdirFlag,
-  YesFlag,
 } from "../command-internal/global-flags.ts";
 
 // The stack backend's `start`/`status`/`stop` are the same commands as `stack
@@ -133,6 +134,8 @@ export function rootDescription(version: string): string {
       return "Supabase CLI.";
     case "beta":
       return "Supabase CLI (beta channel).";
+    case "next":
+      return "Supabase CLI (next channel).";
     case "preview":
       return "Supabase CLI (preview build).";
     case "development":
@@ -140,12 +143,22 @@ export function rootDescription(version: string): string {
   }
 }
 
-export const rootCommandForFeatures = (
-  options: {
-    readonly stackBackend?: StackBackend;
-    readonly computeEnabled?: boolean;
-  } = {},
-) =>
+interface RootCommandFeatures {
+  readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
+  readonly stackBackend?: StackBackend;
+  readonly computeEnabled?: boolean;
+}
+
+/** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
+const agentDefaultOutputFormatFor = (
+  features: RootCommandFeatures,
+  args: ReadonlyArray<string>,
+): OutputFormat =>
+  features.stackBackend === "stack" && isFunctionsServePath(extractCommandPath(args))
+    ? "stream-json"
+    : "json";
+
+export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
   Command.make("supabase").pipe(
     Command.withDescription(rootDescription(CLI_VERSION)),
     Command.withSubcommands([
@@ -167,6 +180,7 @@ export const rootCommandForFeatures = (
       linkCommand,
       loginCommand,
       logoutCommand,
+      logsCommandFor(),
       migrationCommand,
       networkBansCommand,
       networkRestrictionsCommand,
@@ -196,15 +210,7 @@ export const rootCommandForFeatures = (
       Layer.unwrap(
         Effect.gen(function* () {
           const explicitOutputFormat = yield* OutputFormatFlag;
-          const goOutput = yield* OutputFlag;
-          const profile = yield* ProfileFlag;
-          const debug = yield* DebugFlag;
-          const workdir = yield* WorkdirFlag;
-          const experimental = yield* ExperimentalFlag;
-          const networkId = yield* NetworkIdFlag;
-          const yes = yield* YesFlag;
-          const dnsResolver = yield* DnsResolverFlag;
-          const createTicket = yield* CreateTicketFlag;
+          const resourceOutput = yield* OutputFlag;
           const agent = yield* AgentFlag;
           const cliArgs = yield* CliArgs;
 
@@ -213,48 +219,45 @@ export const rootCommandForFeatures = (
           // human table), so the agent JSON default only applies when it's absent.
           const outputFormat = resolveAgentOutputFormat({
             explicitOutputFormat,
-            goOutputFormat: goOutput,
+            agentDefaultOutputFormat: agentDefaultOutputFormatFor(options, cliArgs.args),
+            outputFlagFormat: resourceOutput,
             agentOverride: agent,
             detectedAgentName: aiTool.name,
             isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
           });
 
-          const globalArgs: string[] = [];
-          if (Option.isSome(goOutput)) {
-            globalArgs.push("--output", goOutput.value);
-          } else if (outputFormat !== "text") {
-            globalArgs.push("--output", "json");
-          }
-          if (profile !== "supabase") globalArgs.push("--profile", profile);
-          if (debug) globalArgs.push("--debug");
-          if (Option.isSome(workdir)) globalArgs.push("--workdir", workdir.value);
-          if (experimental) globalArgs.push("--experimental");
-          if (Option.isSome(networkId)) globalArgs.push("--network-id", networkId.value);
-          if (yes) globalArgs.push("--yes");
-          if (dnsResolver !== "native") globalArgs.push("--dns-resolver", dnsResolver);
-          if (createTicket) globalArgs.push("--create-ticket");
-          if (agent !== "auto") globalArgs.push("--agent", agent);
-
           // Machine formats keep the text layer's error rendering but suppress the progress
           // spinner, which would otherwise corrupt the stdout payload. `-o pretty`/`-o table`
           // (db query's human default) and no `-o` keep the normal text/json layers.
-          const goFmt = Option.getOrUndefined(goOutput);
-          const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
-          const outputLayer = isGoMachineFormat
+          const outputLayer = isMachineResourceFormat(resourceOutput)
             ? quietProgressTextOutputLayer
             : outputLayerFor(outputFormat);
 
+          // A command that provides its own `machineErrorContextLayer` shadows the default cell.
           return Layer.mergeAll(
+            options.projectState === undefined
+              ? Layer.empty
+              : projectStateModeLayer(options.projectState),
             options.stackBackend === undefined
               ? Layer.empty
               : stackBackendLayer(options.stackBackend),
-            outputLayer,
-            makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
+            commandTargetLayer.pipe(Layer.provideMerge(outputLayer)),
+            machineErrorContextLayer,
+            Layer.succeed(AiTool, aiTool),
           );
         }),
       ),
     ),
-    Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
+    Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
   ) satisfies CliRootCommand;
+
+/** Pairs the root with the agent default `runCli` applies before this root parses. */
+export const cliEntrypointForFeatures = (
+  features: RootCommandFeatures,
+  args: ReadonlyArray<string>,
+) => ({
+  rootCommand: rootCommandForFeatures(features),
+  agentDefaultOutputFormat: agentDefaultOutputFormatFor(features, args),
+});
 
 export const rootCommand = rootCommandForFeatures();

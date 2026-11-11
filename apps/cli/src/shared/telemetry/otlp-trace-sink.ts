@@ -5,14 +5,16 @@ import {
   Layer,
   Option,
   PlatformError,
+  Predicate,
   Redacted,
   Semaphore,
 } from "effect";
-import type { Crypto, Scope, Tracer } from "effect";
-import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
-import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
-import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
+import type { Scope, Tracer } from "effect";
+import type { SecureRandom } from "effect/crypto";
+import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/http";
+import * as OtlpExporter from "effect/observability/OtlpExporter";
+import * as OtlpSerialization from "effect/observability/OtlpSerialization";
+import * as OtlpTracer from "effect/observability/OtlpTracer";
 import { makeTraceSanitizer } from "./trace-sanitize.ts";
 
 const EXPORT_TIMEOUT_MS = 2_000;
@@ -41,7 +43,11 @@ export const makeOtlpTracer = (options: {
   readonly url: string;
   readonly headers: Redacted.Redacted<Readonly<Record<string, string>>>;
   readonly resource: OtlpTraceResource;
-}): Effect.Effect<Tracer.Tracer, never, HttpClient.HttpClient | Crypto.Crypto | Scope.Scope> =>
+}): Effect.Effect<
+  Tracer.Tracer,
+  never,
+  HttpClient.HttpClient | SecureRandom.SecureRandom | Scope.Scope
+> =>
   OtlpTracer.make({
     url: options.url,
     headers: Redacted.value(options.headers),
@@ -81,10 +87,9 @@ export const fileTransportLayer = (path: string) =>
       // A file we did not create may belong to someone else; owner-only mode is then best-effort.
       yield* Effect.ignore(fs.chmod(path, 0o600));
       return HttpClient.make((request) => {
-        const write =
-          request.body._tag === "Uint8Array"
-            ? fs.writeFile(path, appendNewline(request.body.body), { flag: "a", mode: 0o600 })
-            : Effect.void;
+        const write = Predicate.isTagged(request.body, "Uint8Array")
+          ? fs.writeFile(path, appendNewline(request.body.body), { flag: "a", mode: 0o600 })
+          : Effect.void;
         return lock
           .withPermits(1)(write)
           .pipe(

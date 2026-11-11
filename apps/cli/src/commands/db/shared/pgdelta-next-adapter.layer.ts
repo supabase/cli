@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Predicate } from "effect";
 import type { Pool } from "pg";
 import {
   serializeSnapshot,
@@ -347,19 +347,18 @@ function pgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptions | u
   if (raw === undefined || raw.trim().length === 0) return pgDeltaNextDefaultFormatOptions;
   const parsed: unknown = JSON.parse(raw);
   if (parsed === null) return undefined;
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!Predicate.isObject(parsed)) {
     return pgDeltaNextDefaultFormatOptions;
   }
-  const value = (key: string): unknown => Reflect.get(parsed, key);
-  const keywordCase = value("keywordCase");
-  const commaStyle = value("commaStyle");
-  const indent = value("indent");
-  const maxWidth = value("maxWidth");
-  const alignColumns = value("alignColumns");
-  const alignKeyValues = value("alignKeyValues");
-  const preserveRoutineBodies = value("preserveRoutineBodies");
-  const preserveViewBodies = value("preserveViewBodies");
-  const preserveRuleBodies = value("preserveRuleBodies");
+  const keywordCase = parsed["keywordCase"];
+  const commaStyle = parsed["commaStyle"];
+  const indent = parsed["indent"];
+  const maxWidth = parsed["maxWidth"];
+  const alignColumns = parsed["alignColumns"];
+  const alignKeyValues = parsed["alignKeyValues"];
+  const preserveRoutineBodies = parsed["preserveRoutineBodies"];
+  const preserveViewBodies = parsed["preserveViewBodies"];
+  const preserveRuleBodies = parsed["preserveRuleBodies"];
   return {
     ...pgDeltaNextDefaultFormatOptions,
     ...(keywordCase === "upper" || keywordCase === "lower" || keywordCase === "preserve"

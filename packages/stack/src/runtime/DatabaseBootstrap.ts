@@ -74,8 +74,12 @@ export interface DatabaseSession {
   ) => Effect.Effect<void, DatabaseBootstrapError>;
 }
 
-const REALTIME_SCHEMA_STATEMENT =
-  "CREATE SCHEMA IF NOT EXISTS _realtime;\nALTER SCHEMA _realtime OWNER TO postgres;";
+// One statement per string: the native Postgres client sends every query through the extended
+// protocol, which rejects multiple commands.
+const REALTIME_SCHEMA_STATEMENTS = [
+  "CREATE SCHEMA IF NOT EXISTS _realtime;",
+  "ALTER SCHEMA _realtime OWNER TO postgres;",
+];
 const ADVISORY_LOCK_STATEMENT = `SELECT pg_advisory_xact_lock(hashtext('supabase_internal.bootstrap'));`;
 
 /** Private database created outside the bootstrap transaction. */
@@ -101,9 +105,11 @@ export const runDatabaseBootstrap = Effect.fn("DatabaseBootstrap.run")(function*
       yield* transaction
         .execute(ADVISORY_LOCK_STATEMENT)
         .pipe(Effect.mapError((error) => statementError(error, ADVISORY_LOCK_STATEMENT)));
-      yield* transaction
-        .execute(REALTIME_SCHEMA_STATEMENT)
-        .pipe(Effect.mapError((error) => statementError(error, REALTIME_SCHEMA_STATEMENT)));
+      for (const statement of REALTIME_SCHEMA_STATEMENTS) {
+        yield* transaction
+          .execute(statement)
+          .pipe(Effect.mapError((error) => statementError(error, statement)));
+      }
       yield* transaction.execute("SET LOCAL log_statement = 'none'");
       yield* transaction.execute("SET LOCAL log_min_error_statement = 'panic'");
       yield* transaction.execute("SET LOCAL log_min_duration_statement = -1");

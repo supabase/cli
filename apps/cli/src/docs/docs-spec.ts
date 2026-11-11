@@ -1,7 +1,8 @@
+import { hasOptionalSubcommand } from "../shared/output/optional-subcommand-usage.ts";
 import { Option } from "effect";
 import { stringify } from "yaml";
-import { GlobalFlag } from "effect/unstable/cli";
-import type { Command, Param } from "effect/unstable/cli";
+import { GlobalFlag } from "effect/cli";
+import type { Command, Param } from "effect/cli";
 import {
   choiceKeysOf,
   commandInternals,
@@ -9,6 +10,8 @@ import {
   userGlobalFlagParams,
 } from "./docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
+import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
+import { remoteFlagName } from "../shared/output/target-help.ts";
 import {
   DOCS_ARG_OVERRIDES,
   DOCS_CHOICE_OVERRIDES,
@@ -148,9 +151,9 @@ function docsPrimitiveVarname(
   switch (single.primitiveType._tag) {
     case "Boolean":
       return undefined;
-    case "Integer":
+    case "Int":
       return "int";
-    case "Float":
+    case "Finite":
       return "float";
     case "Date":
       return "time";
@@ -165,7 +168,7 @@ function docsTypeDefault(
 ): string {
   if (single.primitiveType._tag === "Boolean") return "false";
   if (isVariadic) return "[]";
-  if (single.primitiveType._tag === "Integer" || single.primitiveType._tag === "Float") return "0";
+  if (single.primitiveType._tag === "Int" || single.primitiveType._tag === "Finite") return "0";
   return "";
 }
 
@@ -179,7 +182,7 @@ function docsNormalizeText(text: string): string {
 }
 
 /** Doc for a visible flag; `undefined` for hidden flags; throws on an unrecognizable param. */
-function docsFlagDoc(
+export function docsFlagDoc(
   commandPath: ReadonlyArray<string>,
   param: Param.AnyFlag,
 ): DocsFlag | undefined {
@@ -207,9 +210,11 @@ function docsFlagDoc(
   const varname = enumType ?? docsPrimitiveVarname(single, isVariadic);
 
   const shorthand = single.aliases.find((alias) => alias.length === 1);
-  const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${single.name}${
-    varname === undefined ? "" : ` <${varname}>`
-  }`;
+  const longName =
+    isRemoteFlag(single) && single.typeName !== undefined
+      ? remoteFlagName(single.typeName)
+      : `${single.name}${varname === undefined ? "" : ` <${varname}>`}`;
+  const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${longName}`;
 
   const required = DOCS_REQUIRED.has(overrideKey);
 
@@ -333,7 +338,8 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     const docId = commandPath.join("-");
     const children = docsVisibleChildren(command);
     const internals = commandInternals(command);
-    const isLeaf = children.length === 0;
+    const optionalSubcommand = hasOptionalSubcommand(command);
+    const isExecutable = children.length === 0 || optionalSubcommand;
     emittedIds.add(docId);
 
     const overlayPath = docsOverlayPath(commandPath);
@@ -344,7 +350,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     );
 
     const flags: Array<DocsFlag> = [];
-    if (isLeaf) {
+    if (isExecutable) {
       const declared = flagDocsFor(commandPath, internals.config.flags);
       const declaredIds = new Set(declared.map((flag) => flag.id));
       const extraFlags = DOCS_EXTRA_FLAGS[docId];
@@ -377,7 +383,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     }
 
     let usage: string | undefined;
-    if (isLeaf) {
+    if (isExecutable) {
       const argOverride = DOCS_ARG_OVERRIDES[docId];
       if (argOverride !== undefined) consumedArgOverrideIds.add(docId);
       const argUsages =
@@ -386,7 +392,12 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
           : internals.config.arguments
               .map((param) => docsArgumentUsage(commandPath, param))
               .filter((part) => part !== undefined);
-      usage = [...commandPath, ...argUsages, "[flags]"].join(" ");
+      usage = [
+        ...commandPath,
+        ...argUsages,
+        ...(optionalSubcommand ? ["[subcommand]"] : []),
+        "[flags]",
+      ].join(" ");
     }
 
     const tags = DOCS_TAGS[docId];
@@ -423,7 +434,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       flags,
     });
 
-    // A non-root command's own global flags (e.g. `seed`'s `--linked`/`--local`) behave like
+    // A non-root command's own global flags (e.g. `seed`'s `--remote`) behave like
     // persistent flags: they're surfaced on every leaf beneath it, alongside shared flags.
     const childInherited = [
       ...inheritedParams,
@@ -489,7 +500,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
 /**
  * Serializes the spec for publication. Uses YAML 1.1 quoting so scalars like `yes`/`no` stay
- * strings for downstream YAML 1.1 parsers (PyYAML, Psych, go-yaml v2); the output remains
+ * strings for downstream YAML 1.1 parsers (PyYAML, Psych); the output remains
  * valid YAML 1.2. Anchors/aliases are disabled since the injected `--experimental` doc is the
  * same object on every experimental leaf, and the serializer would otherwise emit `&a1`/`*a1`
  * references the published file never carried.

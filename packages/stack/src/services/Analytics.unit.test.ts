@@ -1,9 +1,11 @@
 import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { makeSpec, type Creation } from "./Analytics.ts";
+import { selection } from "../../tests/pins.ts";
 
 const creation = (databaseUrl: string): Creation => ({
   service: "analytics",
+  pin: selection.analytics,
   config: { databaseUrl, apiKey: "analytics-key" },
 });
 
@@ -40,5 +42,17 @@ it.effect("gives Logflare's sources and events the default credentials a URL lea
       DB_PASSWORD: "postgres",
       POSTGRES_BACKEND_URL: "postgresql://supabase_admin:postgres@db.internal/_supabase",
     });
+  }),
+);
+
+it.effect("caps Logflare's BEAM port table", () =>
+  Effect.gen(function* () {
+    const env = yield* makeSpec().env(
+      creation("postgresql://db.internal/_supabase"),
+      new Map(),
+      true,
+    );
+
+    expect(env).toMatchObject({ ERL_MAX_PORTS: "65536" });
   }),
 );

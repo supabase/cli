@@ -1,4 +1,5 @@
-import { Crypto, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Schedule } from "effect";
+import { Digest } from "effect/crypto";
 import * as Net from "node:net";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -10,6 +11,7 @@ import {
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
@@ -17,7 +19,7 @@ import {
   buildLocalDbContainerInputs,
   type LocalDbContainerInputs,
 } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
-import { waitForShadowReady } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import {
   acquireShadowDatabase,
   peekShadowBaseline,
@@ -38,9 +40,9 @@ import {
   shadowRunInputFromLocalContainerInputs,
   setupShadowDatabase,
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import { ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/process/ChildProcessSpawner";
+import * as HttpClient from "effect/http/HttpClient";
 
 import {
   PgDeltaNextShadow,
@@ -60,11 +62,16 @@ import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-
 
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
   const server = Net.createServer();
-  server.once("error", () => resume(Effect.succeed(Option.none())));
+  const onError = () => resume(Effect.succeed(Option.none()));
+  server.once("error", onError);
   server.listen(0, "127.0.0.1", () => {
     const address = server.address();
     const port = typeof address === "object" && address !== null ? address.port : 0;
     server.close(() => resume(Effect.succeed(port > 0 ? Option.some(port) : Option.none())));
+  });
+  return Effect.sync(() => {
+    server.removeListener("error", onError);
+    if (server.listening) server.close();
   });
 });
 
@@ -135,7 +142,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
     const networkIdFlag = yield* NetworkIdFlag;
@@ -148,12 +155,13 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     const httpClient = yield* HttpClient.HttpClient;
     const cliSettings = yield* CommandSettings;
     const stackApi = yield* StackApi;
+    const cliConfigValues = yield* CliConfigValues;
 
     const runtimeWith = (outputService: typeof Output.Service) => {
       const deps = Layer.mergeAll(
         Layer.succeed(FileSystem.FileSystem, fs),
         Layer.succeed(Path.Path, path),
-        Layer.succeed(Crypto.Crypto, crypto),
+        Layer.succeed(Digest.Digest, crypto),
         Layer.succeed(DebugFlag, debugFlag),
         Layer.succeed(ExperimentalFlag, experimentalFlag),
         Layer.succeed(NetworkIdFlag, networkIdFlag),
@@ -163,28 +171,31 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         Layer.succeed(DockerRun, docker),
         Layer.succeed(DbConnection, dbConnection),
         Layer.succeed(HttpClient.HttpClient, httpClient),
-        Layer.succeed(Crypto.Crypto, crypto),
         Layer.succeed(CommandSettings, cliSettings),
         Layer.succeed(StackApi, stackApi),
+        Layer.succeed(CliConfigValues, cliConfigValues),
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
-      return Layer.mergeAll(deps, stackCatalogSetupLayer.pipe(Layer.provide(deps)));
+      return stackCatalogSetupLayer.pipe(Layer.provideMerge(deps));
     };
     const runtime = runtimeWith(output);
 
     const nextPort = (excluded?: number) =>
-      Effect.gen(function* () {
-        for (let attempt = 0; attempt < 10; attempt++) {
-          const candidate = yield* allocateFreeHostPort;
-          if (Option.isSome(candidate) && candidate.value !== excluded) return candidate.value;
-        }
-        return yield* new DeclarativeShadowDbError({
-          message:
-            excluded === undefined
-              ? "failed to allocate a host port for pg-delta shadow database"
-              : `failed to allocate a host port distinct from ${excluded}`,
-        });
-      });
+      allocateFreeHostPort.pipe(
+        Effect.flatMap((candidate) =>
+          Option.isSome(candidate) && candidate.value !== excluded
+            ? Effect.succeed(candidate.value)
+            : Effect.fail(
+                new DeclarativeShadowDbError({
+                  message:
+                    excluded === undefined
+                      ? "failed to allocate a host port for pg-delta shadow database"
+                      : `failed to allocate a host port distinct from ${excluded}`,
+                }),
+              ),
+        ),
+        Effect.retry(Schedule.recurs(9)),
+      );
 
     const buildNativeBase = (request: PgDeltaNextShadowInput) =>
       Effect.gen(function* () {
@@ -196,7 +207,6 @@ export const pgDeltaNextShadowLayer = Layer.effect(
           runtimeInfo.platform,
           debug,
           request.projectRef,
-          request.toml.remoteOverrideKeys,
         );
         const image =
           (yield* currentStackBackend).kind === "stack"
@@ -242,7 +252,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
       );
 
     const awaitShadowReady = (input: NativeShadowInput, handle: ShadowAcquiredHandle) =>
-      waitForShadowReady(input.spawner, handle.containerId, shadowConnConfig(input.base), {
+      waitForPostgresReady(input.spawner, handle.containerId, shadowConnConfig(input.base), {
         timeoutSeconds: input.base.healthTimeoutSeconds,
         image: input.base.image,
       });
@@ -385,7 +395,8 @@ export const pgDeltaNextShadowLayer = Layer.effect(
           strategy === "parallel"
             ? withPeek(cacheOpts(opts, "disabled"), declarativePeek)
             : cacheOpts(opts, "disabled");
-        const buffered = strategy === "sequential" ? undefined : bufferedShadowOutput(output);
+        const buffered =
+          strategy === "sequential" ? undefined : yield* bufferedShadowOutput(output);
         const provisions = runPlanShadowProvisions({
           strategy,
           provisionMigrations: (onBaselineSeam) =>

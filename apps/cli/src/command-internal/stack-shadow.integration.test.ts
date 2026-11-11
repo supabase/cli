@@ -1,13 +1,20 @@
-import { StackError, type Stack } from "@supabase/stack/effect";
+import {
+  StackError,
+  type ServiceCreationInput,
+  type ServiceInstances,
+  type Stack,
+} from "@supabase/stack/effect";
 import { CliConfigSchema } from "@supabase/config";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, FileSystem, Layer, Option, Path, Ref, Schema } from "effect";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
+import { loadLocalProjectContext } from "./local-project-context.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { StackCatalogSetup, stackCatalogSetupLayer } from "./stack-catalog-setup.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
@@ -17,8 +24,16 @@ import {
   stackWithShadowDatabase,
 } from "./stack-shadow.ts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
+import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
+import {
+  database15,
+  orioledb,
+  orioledbConfigVersion,
+  selection,
+} from "../../tests/helpers/pins.ts";
+import { seedLock, unbundled } from "../../tests/helpers/stack-lock.ts";
 
-const defaultConfig = Schema.decodeUnknownSync(CliConfigSchema)({});
+const defaultConfig = Schema.decodeSync(CliConfigSchema)({});
 
 const recordingApi = (
   roots: string[],
@@ -37,52 +52,54 @@ const recordingApi = (
         create: Effect.fn("ShadowTest.create")((options) =>
           Effect.sync(() => roots.push(options.projectRoot)).pipe(
             Effect.andThen(api.create(options)),
-            Effect.map((stack) => ({
-              ...stack,
-              services: {
-                ...stack.services,
-                create: Effect.fn("ShadowTest.createService")((creation) =>
-                  stack.services.create(creation).pipe(
-                    Effect.flatMap((instance) => {
-                      if (instance.service !== "database") return Effect.succeed(instance);
-                      return Effect.gen(function* () {
-                        const restored = yield* Ref.make(false);
-                        return {
-                          ...instance,
-                          ready: Effect.gen(function* () {
-                            if (yield* Ref.get(restored)) {
-                              const remaining = yield* Ref.getAndUpdate(readyFailures, (value) =>
-                                Math.max(0, value - 1),
-                              );
-                              if (remaining > 0)
-                                return yield* new StackError({
-                                  operation: "ready",
-                                  message: "injected ready failure",
-                                });
-                            }
-                            yield* instance.ready;
-                          }),
-                          restoreSnapshot: (key: string) =>
-                            Effect.gen(function* () {
-                              const remaining = yield* Ref.getAndUpdate(failures, (value) =>
-                                Math.max(0, value - 1),
-                              );
-                              if (remaining > 0)
-                                return yield* new StackError({
-                                  operation: "restoreSnapshot",
-                                  message: "injected restore failure",
-                                });
-                              const restoredSnapshot = yield* instance.restoreSnapshot(key);
-                              yield* Ref.set(restored, restoredSnapshot);
-                              return restoredSnapshot;
-                            }),
-                        };
-                      });
+            Effect.map((stack) => {
+              const createService = Effect.fn("ShadowTest.createService")(function* (
+                creation: ServiceCreationInput,
+              ) {
+                const instance = yield* stack.services.create(creation);
+                if (instance.service !== "database") return instance;
+                const restored = yield* Ref.make(false);
+                return {
+                  ...instance,
+                  ready: Effect.gen(function* () {
+                    if (yield* Ref.get(restored)) {
+                      const remaining = yield* Ref.getAndUpdate(readyFailures, (value) =>
+                        Math.max(0, value - 1),
+                      );
+                      if (remaining > 0)
+                        return yield* new StackError({
+                          operation: "ready",
+                          message: "injected ready failure",
+                        });
+                    }
+                    yield* instance.ready;
+                  }),
+                  restoreSnapshot: (key: string) =>
+                    Effect.gen(function* () {
+                      const remaining = yield* Ref.getAndUpdate(failures, (value) =>
+                        Math.max(0, value - 1),
+                      );
+                      if (remaining > 0)
+                        return yield* new StackError({
+                          operation: "restoreSnapshot",
+                          message: "injected restore failure",
+                        });
+                      const restoredSnapshot = yield* instance.restoreSnapshot(key);
+                      yield* Ref.set(restored, restoredSnapshot);
+                      return restoredSnapshot;
                     }),
-                  ),
-                ),
-              },
-            })),
+                };
+              });
+              function create<Input extends ServiceCreationInput>(
+                creation: Input,
+              ): Effect.Effect<ServiceInstances[Input["service"]], StackError>;
+              function create(
+                creation: ServiceCreationInput,
+              ): Effect.Effect<ServiceInstances[ServiceCreationInput["service"]], StackError> {
+                return createService(creation);
+              }
+              return { ...stack, services: { ...stack.services, create } };
+            }),
             Effect.tap((stack) =>
               Effect.sync(() => {
                 handles.push(stack);
@@ -142,7 +159,7 @@ const input = (
 });
 
 const query = Effect.fn("ShadowTest.query")(function* (url: string, sql: string) {
-  const connection = parseConnectionString(url);
+  const connection = yield* parseConnectionString(url);
   if (connection === undefined) return yield* Effect.die("invalid shadow URL");
   const db = yield* DbConnection;
   const session = yield* db.connect(connection, { isLocal: true, dnsResolver: "native" });
@@ -160,7 +177,7 @@ describe("stack shadow databases", () => {
         yield* fs.makeDirectory(path.join(root, "supabase", "migrations"), { recursive: true });
         yield* fs.writeFileString(
           path.join(root, "supabase", "migrations", "20260919000000_shadow.sql"),
-          "CREATE TABLE public.shadow_probe(value text); INSERT INTO public.shadow_probe VALUES ('migrated');",
+          "CREATE TABLE public.shadow_probe(value text); INSERT INTO public.shadow_probe VALUES ('migrated'); CREATE TRIGGER shadow_probe_hook AFTER INSERT ON public.shadow_probe FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request('http://127.0.0.1:9', 'POST', '{}', '{}', '1000');",
         );
         const output = mockOutput();
         const roots: string[] = [];
@@ -248,7 +265,7 @@ describe("stack shadow databases", () => {
                 const credentials = yield* handle.database.credentials({ from: "host" });
                 if (credentials.databaseUrl === undefined)
                   return yield* Effect.die("missing database credentials");
-                const connection = parseConnectionString(credentials.databaseUrl);
+                const connection = yield* parseConnectionString(credentials.databaseUrl);
                 if (connection === undefined) return yield* Effect.die("invalid database URL");
                 expect(sql.port).toBe(handle.port);
                 expect(connection.port).toBe(sql.port);
@@ -310,7 +327,7 @@ describe("stack shadow databases", () => {
           const api = yield* StackApi;
           expect(yield* api.discover({ stateRoot: path.join(root, "stacks") })).toEqual([]);
         }).pipe(Effect.provide(layers));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     420_000,
   );
 
@@ -353,7 +370,7 @@ describe("stack shadow databases", () => {
         }).pipe(Effect.provide(layers));
         for (const shadowRoot of roots) expect(yield* fs.exists(shadowRoot)).toBe(false);
         expect(output.stderrText).not.toContain("Failed to destroy");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     180_000,
   );
 
@@ -394,7 +411,7 @@ describe("stack shadow databases", () => {
               const credentials = yield* recovered.database.credentials({ from: "host" });
               if (credentials.databaseUrl === undefined)
                 return yield* Effect.die("missing database credentials");
-              const connection = parseConnectionString(credentials.databaseUrl);
+              const connection = yield* parseConnectionString(credentials.databaseUrl);
               if (connection === undefined) return yield* Effect.die("invalid database URL");
               expect(sql.port).toBe(recovered.port);
               expect(connection.port).toBe(sql.port);
@@ -413,7 +430,7 @@ describe("stack shadow databases", () => {
             }),
           );
         }).pipe(Effect.provide(layers));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     180_000,
   );
 
@@ -429,10 +446,7 @@ describe("stack shadow databases", () => {
         const handles: Stack[] = [];
         const result = yield* stackWithShadowDatabase(
           input(fs, path, root),
-          (_handle) =>
-            Effect.gen(function* () {
-              return yield* Effect.fail("consumer failed");
-            }),
+          (_handle) => Effect.fail("consumer failed"),
           { runtime: "native" },
         ).pipe(
           Effect.provide(
@@ -453,20 +467,19 @@ describe("stack shadow databases", () => {
         expect(output.stderrText).not.toContain("Failed to destroy");
         expect(roots).toHaveLength(1);
         for (const root of roots) expect(yield* fs.exists(root)).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     120_000,
   );
 
   it.live(
-    "prints the cleanup commands when a shadow's destroy skips its engine",
+    "reports a shadow whose destroy fails because its engine is unreachable",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-skipped-" });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-unreachable-" });
         const output = mockOutput();
-        const cleanupCommand = "docker rm --force $(docker ps --all --quiet)";
-        // A real registration whose database creation fails fast and whose destroy reports skipped cleanup.
+        // A real registration whose database creation fails fast and whose destroy fails with the engine unreachable.
         const api = Layer.effect(
           StackApi,
           Effect.gen(function* () {
@@ -482,16 +495,18 @@ describe("stack shadow databases", () => {
                       create: () =>
                         Effect.fail(new StackError({ operation: "create", message: "injected" })),
                     },
-                    destroy: Effect.succeed({
-                      runtimeCleanup: "skipped",
-                      engine: "docker",
-                      cleanupCommands: [cleanupCommand],
-                    } as const),
+                    destroy: Effect.fail(
+                      new StackError({
+                        operation: "destroy",
+                        message: "Docker CLI or daemon isn't reachable",
+                        reason: "runtime-unavailable",
+                      }),
+                    ),
                   })),
                 ),
             });
           }),
-        ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+        ).pipe(Layer.provide(stackApiLayer), Layer.provide([BunServices.layer, BunCrypto.layer]));
 
         yield* stackWithShadowDatabase(input(fs, path, root), () => Effect.void, {
           runtime: "native",
@@ -510,9 +525,248 @@ describe("stack shadow databases", () => {
         );
 
         expect(output.stderrText).toMatch(
-          /Warning: Docker was unavailable, so Docker resources for shadow stack [0-9a-f]{64} were not removed\. Once it is running, remove them with:\n {2}docker rm --force \$\(docker ps --all --quiet\)\n/u,
+          /Failed to destroy shadow stack [0-9a-f]{64}: Docker CLI or daemon isn't reachable\.\n/u,
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     120_000,
+  );
+
+  for (const target of [
+    {
+      name: "OrioleDB build",
+      db: { major_version: 17, orioledb_version: orioledbConfigVersion, settings: {} },
+      pin: orioledb,
+    },
+    { name: "stock Postgres 15 build", db: { major_version: 15, settings: {} }, pin: database15 },
+    {
+      name: "database build the project lock pins",
+      db: { major_version: 17, settings: {} },
+      pin: unbundled(selection.database),
+      locked: true,
+    },
+  ]) {
+    it.live(`creates the shadow database on the selected ${target.name}`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-orioledb-pinned-" });
+        const pins: ArtifactPin[] = [];
+        if (target.locked === true) {
+          yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(root, "supabase", "config.toml"),
+            'project_id = "proj"\n',
+          );
+          yield* seedLock(root, (services) => ({
+            ...services,
+            database: { ...services.database, resolved: target.pin },
+          })).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                runtimeInfoLayer,
+                mockCommandSettings({ workdir: root, supabaseHome: root }),
+              ),
+            ),
+          );
+        }
+        // Stops at the database creation, so the test asserts the wiring without running OrioleDB.
+        const capturingApi = Layer.effect(
+          StackApi,
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            return StackApi.of({
+              ...api,
+              create: (options) =>
+                api.create(options).pipe(
+                  Effect.map((stack) => ({
+                    ...stack,
+                    services: {
+                      ...stack.services,
+                      create: (creation) => {
+                        if (creation.service === "database") pins.push(creation.pin);
+                        return Effect.fail(
+                          new StackError({ operation: "create", message: "captured" }),
+                        );
+                      },
+                    },
+                  })),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+        const base = input(fs, path, root);
+        const setup = {
+          ...base,
+          db: target.db,
+          setup: { ...base.setup, majorVersion: target.db.major_version },
+        };
+
+        yield* stackWithShadowDatabase(setup, () => Effect.void, { runtime: "native" }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              capturingApi,
+              stackCatalogSetupLayer,
+              dbConnectionLayer,
+              runtimeInfoLayer,
+              mockCommandSettings({ workdir: root, supabaseHome: root }),
+              mockOutput().layer,
+            ),
+          ),
+          Effect.exit,
+        );
+
+        expect(pins).toEqual([target.pin]);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+  }
+
+  for (const remote of [
+    {
+      title: "a linked diff whose remote block sets major 15 runs the remote major's bundled pin",
+      major: 15,
+      remoteDb: "major_version = 15",
+      db: { major_version: 15, settings: {} },
+      pin: database15,
+    },
+    {
+      title: "a linked diff whose remote block sets major 17 keeps the lock's pin",
+      major: 17,
+      remoteDb: "major_version = 17",
+      db: { major_version: 17, settings: {} },
+      pin: unbundled(selection.database),
+    },
+    {
+      title:
+        "a linked diff whose remote block sets an OrioleDB version at the same major runs the bundled OrioleDB pin",
+      major: 17,
+      remoteDb: `orioledb_version = "${orioledbConfigVersion}"`,
+      db: { major_version: 17, orioledb_version: orioledbConfigVersion, settings: {} },
+      pin: orioledb,
+    },
+  ]) {
+    it.live(remote.title, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-remote-major-" });
+        const ref = "abcdefghijklmnopqrst";
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          [
+            `project_id = "${ref}"`,
+            "[db]",
+            "major_version = 17",
+            `[remotes.${ref.slice(0, 4)}]`,
+            `project_id = "${ref}"`,
+            `[remotes.${ref.slice(0, 4)}.db]`,
+            remote.remoteDb,
+            "",
+          ].join("\n"),
+        );
+        const settings = Layer.mergeAll(
+          runtimeInfoLayer,
+          mockCommandSettings({ workdir: root, supabaseHome: root }),
+          cliConfigValuesTestLayer,
+        );
+        const locked = unbundled(selection.database);
+        yield* seedLock(root, (services) => ({
+          ...services,
+          database: { ...services.database, resolved: locked },
+        })).pipe(Effect.provide(settings));
+        const context = yield* loadLocalProjectContext(root, (message) => message, ref).pipe(
+          Effect.provide(settings),
+        );
+        expect(Option.isSome(context.resolvedConfig.appliedRemote)).toBe(true);
+        expect(context.config.db.major_version).toBe(remote.major);
+        expect(context.config.db.orioledb_version).toBe(remote.db.orioledb_version);
+
+        const pins: ArtifactPin[] = [];
+        const capturingApi = Layer.effect(
+          StackApi,
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            return StackApi.of({
+              ...api,
+              create: (options) =>
+                api.create(options).pipe(
+                  Effect.map((stack) => ({
+                    ...stack,
+                    services: {
+                      ...stack.services,
+                      create: (creation) => {
+                        if (creation.service === "database") pins.push(creation.pin);
+                        return Effect.fail(
+                          new StackError({ operation: "create", message: "captured" }),
+                        );
+                      },
+                    },
+                  })),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+        const base = input(fs, path, root);
+
+        yield* stackWithShadowDatabase(
+          {
+            ...base,
+            db: remote.db,
+            context,
+            setup: { ...base.setup, majorVersion: remote.major },
+          },
+          () => Effect.void,
+          { runtime: "native" },
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              capturingApi,
+              stackCatalogSetupLayer,
+              dbConnectionLayer,
+              settings,
+              mockOutput().layer,
+            ),
+          ),
+          Effect.exit,
+        );
+
+        expect(pins).toEqual([remote.pin]);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+  }
+
+  it.live("refuses an unpinned OrioleDB version before creating a shadow stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-orioledb-" });
+      const output = mockOutput();
+      const roots: string[] = [];
+      const setup = {
+        ...input(fs, path, root),
+        db: { major_version: 17, orioledb_version: "17.0.0.000", settings: {} },
+      };
+
+      const error = yield* stackWithShadowDatabase(setup, () => Effect.void, {
+        runtime: "native",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            recordingApi(roots, []),
+            stackCatalogSetupLayer,
+            dbConnectionLayer,
+            runtimeInfoLayer,
+            mockCommandSettings({ workdir: root, supabaseHome: root }),
+            output.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error.message).toContain(
+        "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships",
+      );
+      expect(roots).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });

@@ -1,4 +1,4 @@
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { Effect, FileSystem, Option } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -12,22 +12,27 @@ import {
   serviceContainerIds,
   localDbContainerId,
 } from "../../command-internal/docker-ids.ts";
+import { healthCheckExecUnavailableWarning } from "../../command-internal/db-bootstrap/health-check.ts";
 import {
+  formatNotReadyReason,
+  healthCheckCannotExec,
   inspectContainerState,
   listContainersByLabel,
 } from "../../command-internal/docker-lifecycle.ts";
 import {
   encodeEnv,
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../command-internal/go-output.encoders.ts";
+} from "../../command-internal/output.encoders.ts";
 import {
   formatLinkedStateBlock,
-  linkedStateGoFields,
+  linkedStateFields,
   linkedStateJsonField,
   resolveLinkedState,
 } from "../../command-internal/linked-state.ts";
+import { CliConfigValueError } from "../../config/cli-config.errors.ts";
+import { loadResolvedConfigSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
 import {
   loadLocalProjectContext,
   recordLocalProjectOrioleDbTelemetry,
@@ -53,42 +58,49 @@ import {
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import type { StatusFlags } from "./status.command.ts";
 
+const REMOVED_OVERRIDE_KEYS: ReadonlyMap<string, string> = new Map([
+  ["inbucket.url", "mailpit.url"],
+]);
+
 /**
  * Parses `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` entries into a `fieldKey -> outputName`
- * map. Each entry must be `KEY=VALUE`; an unknown `KEY` is silently ignored, not an error.
+ * map. Each entry must be `KEY=VALUE`; a removed `KEY` fails naming its replacement and any other
+ * unknown `KEY` is silently ignored.
  */
-function parseOverrides(
-  entries: ReadonlyArray<string>,
-): Effect.Effect<ReadonlyMap<string, string>, StatusOverrideParseError> {
+const parseOverrides = Effect.fnUntraced(function* (entries: ReadonlyArray<string>) {
   const knownKeys = new Set(STATUS_FIELDS.map((field) => field.fieldKey));
   const overrides = new Map<string, string>();
   for (const entry of entries) {
     const separatorIndex = entry.indexOf("=");
     if (separatorIndex <= 0) {
-      return Effect.fail(
-        new StatusOverrideParseError({
-          message: `invalid override-name entry, expected KEY=VALUE: ${entry}`,
-        }),
-      );
+      return yield* new StatusOverrideParseError({
+        message: `invalid override-name entry, expected KEY=VALUE: ${entry}`,
+      });
     }
     const key = entry.slice(0, separatorIndex);
     const value = entry.slice(separatorIndex + 1);
+    const replacement = REMOVED_OVERRIDE_KEYS.get(key);
+    if (replacement !== undefined) {
+      return yield* new StatusOverrideParseError({
+        message: `--override-name entry "${entry}" refers to ${key}, which was removed; use ${replacement} instead.`,
+      });
+    }
     if (!knownKeys.has(key)) {
       continue;
     }
     overrides.set(key, value);
   }
-  return Effect.succeed(overrides);
-}
+  return overrides;
+});
 
 /** The established `"Stopped services:", stopped` slice format. */
-function formatGoStringSlice(items: ReadonlyArray<string>): string {
+function formatStringSlice(items: ReadonlyArray<string>): string {
   return `[${items.join(" ")}]`;
 }
 
 export const status = Effect.fn("status")(function* (flags: StatusFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -97,7 +109,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
   // `-o` (env|json|toml|yaml|pretty) is a complete format choice and takes priority over
   // `--output-format` — hoisted so the linked-state print gate below and the final render
   // branching share one computation.
-  const goFmt = Option.getOrUndefined(goOutputFlag);
+  const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
   yield* Effect.gen(function* () {
     // Resolves the current linked project/branch in every output mode (never fails) so agents
@@ -106,7 +118,10 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // fails to reach Docker, and inside the telemetry-ensured scope so an interrupted lookup
     // still flushes telemetry state.
     const linkedState = yield* resolveLinkedState();
-    if (output.format === "text" && (goFmt === undefined || goFmt === "pretty")) {
+    if (
+      output.format === "text" &&
+      (outputFlagFormat === undefined || outputFlagFormat === "pretty")
+    ) {
       yield* output.raw(formatLinkedStateBlock(linkedState));
     }
     if (output.format === "json" || output.format === "stream-json") {
@@ -135,6 +150,10 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // 2. An absent config.toml is not a hard failure — only a malformed one is; a missing file
     // proceeds with template defaults. `loadLocalProjectContext` also resolves the sanitized
     // project id used below; see its own doc comment for the full rationale.
+    yield* loadResolvedConfigSurfacingValueErrors(
+      cliSettings.workdir,
+      (message) => new StatusConfigLoadError({ message }),
+    );
     const context = yield* loadLocalProjectContext(
       cliSettings.workdir,
       (message) => new StatusConfigLoadError({ message }),
@@ -144,20 +163,20 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // 3. Config validation runs entirely before the health check/container listing below, so a
     // config error (`InvalidJwtSecretError`, a malformed `SUPABASE_*_PORT`/`_ENABLED` override, a
     // signing-keys-file error) fails here rather than being masked by a Docker/DB error.
-    const localState = yield* Effect.try({
-      try: () =>
-        resolveStatusLocalState(
-          context.config,
-          context.hostname,
-          cliSettings.workdir,
-          context.projectEnvValues,
-          context.loaded?.document,
-        ),
-      catch: (cause) =>
-        new StatusInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const localState = yield* resolveStatusLocalState(
+      context.config,
+      context.hostname,
+      cliSettings.workdir,
+      context.projectEnvValues,
+      context.resolvedConfig.loaded.document,
+      context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
+    ).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof CliConfigValueError
+          ? cause
+          : new StatusInvalidConfigError({ message: cause.message }),
+      ),
+    );
 
     // 4. `status` has no --project-id flag: resolution is env → toml → workdir basename, then
     // sanitized to match the same string the Docker label `start` writes (see
@@ -186,9 +205,13 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
         });
       }
       if (state.health !== undefined && state.health !== "healthy") {
-        return yield* new StatusDbNotReadyError({
-          message: `${dbContainerId} container is not ready: ${state.health}`,
-        });
+        if (!healthCheckCannotExec(state)) {
+          return yield* new StatusDbNotReadyError({
+            message: `${dbContainerId} ${formatNotReadyReason(state)}`,
+          });
+        }
+        yield* Effect.annotateCurrentSpan("db.health_exec_unavailable", true);
+        yield* output.raw(healthCheckExecUnavailableWarning([dbContainerId]), "stderr");
       }
     }
 
@@ -212,7 +235,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
       "status.ignore_health_check": flags.ignoreHealthCheck,
     });
     if (stopped.length > 0) {
-      yield* output.raw(`Stopped services: ${formatGoStringSlice(stopped)}\n`, "stderr");
+      yield* output.raw(`Stopped services: ${formatStringSlice(stopped)}\n`, "stderr");
     }
 
     // 7. Merge health-derived exclusions with the user's --exclude flag.
@@ -227,7 +250,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
 
     // The pretty renderer always uses a fresh, empty override map — `--override-name` only
     // affects the env/json/toml/yaml path, never the pretty table — remapped from the
-    // already-resolved `state` so it stays consistent without a second (throwing) resolution.
+    // already-resolved `state` so it stays consistent without a second (fallible) resolution.
     const renderPretty = Effect.fnUntraced(function* () {
       yield* output.raw(`${aqua("supabase")} local development setup is running.\n\n`, "stderr");
       const pretty = statusValuesFromState(state, new Map());
@@ -239,30 +262,30 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // fields resolved above (absent entirely when not linked); the pretty table never sees them.
     // `values` spreads last so an `--override-name`-renamed field always wins a key collision
     // with the linked-state extension, never the other way round.
-    const valuesWithLinkedState = { ...linkedStateGoFields(linkedState), ...values };
+    const valuesWithLinkedState = { ...linkedStateFields(linkedState), ...values };
 
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw(encodeEnv(valuesWithLinkedState) + "\n");
       return;
     }
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(valuesWithLinkedState));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(valuesWithLinkedState));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       yield* output.raw(encodeToml(valuesWithLinkedState) + "\n");
       return;
     }
-    if (goFmt === "yaml") {
+    if (outputFlagFormat === "yaml") {
       yield* output.raw(encodeYaml(valuesWithLinkedState));
       return;
     }
-    if (goFmt === "pretty") {
+    if (outputFlagFormat === "pretty") {
       yield* renderPretty();
       return;
     }
 
-    // goFmt is undefined: defer to --output-format for json/stream-json, otherwise render the
+    // outputFlagFormat is undefined: defer to --output-format for json/stream-json, otherwise render the
     // grouped rounded-table (the `-o pretty` default).
     if (output.format === "json" || output.format === "stream-json") {
       // `null` when not linked. `values` spreads last so an `--override-name`-renamed field

@@ -1,24 +1,25 @@
-import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
-import { PgClient } from "@effect/sql-pg";
-import { Cause, Duration, Effect, Exit, Layer, Scope } from "effect";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
-// `pg` is `@effect/sql-pg`'s transitive driver; used directly here for COPY and
-// extended-protocol batches, which `@effect/sql-pg` does not expose. Keep the direct `pg`
-// version in package.json aligned with the one `@effect/sql-pg` resolves.
+import { Cause, Duration, Effect, Exit, FileSystem, Layer, Option, Scope } from "effect";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
+// `pg` drives the pool behind `makePoolSqlClient` and the raw COPY and extended-protocol batch
+// connections; `@effect/sql-pg` only supplies the statement compiler.
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
 import {
-  SUGGEST_LOCAL_STACK,
   connectFailureMessage,
   connectSuggestion,
+  isCertificateVerificationFailure,
+  isNetworkRestrictionFailure,
   isDialFailure,
   isIPv6ConnectivityErrorCause,
   isSqlState,
+  isTlsNegotiationFailure,
+  localStackSuggestion,
 } from "./connect-errors.ts";
 import { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
+import { makePoolSqlClient } from "./db-connection.pool-client.ts";
 import {
   type DbBatchStatement,
   type DbBatchValue,
@@ -27,6 +28,7 @@ import {
   type DbSession,
   type PgConnInput,
 } from "./db-connection.service.ts";
+import { Output } from "../shared/output/output.service.ts";
 import { resolveHostsOverHttps } from "./db-dns.ts";
 
 // `@types/pg` doesn't declare `queryMode` on `QueryConfig`, `verify` on `PoolConfig` (run for
@@ -88,7 +90,7 @@ function needsRoleStepDown(user: string): boolean {
 
 // These SQLSTATEs terminate the multi-host fallback chain instead of trying the next host,
 // since they indicate the server rejected the attempt rather than being unreachable; `28000`
-// only terminates when the failed attempt used TLS.
+// only terminates once the target has been tried over TLS.
 const TERMINAL_SQLSTATES = new Set(["28P01", "3D000", "42501"]);
 const TLS_GATED_SQLSTATE = "28000";
 
@@ -99,12 +101,15 @@ const TLS_GATED_SQLSTATE = "28000";
  * Postgres SQLSTATE as a `code` property on the server error, carried through `@effect/sql`'s
  * `SqlError.cause`, so this walks the `cause` chain looking for one.
  */
-export function isTerminalConnectError(error: unknown, usedTls: boolean): boolean {
+export function isTerminalConnectError(error: unknown, triedTls: boolean): boolean {
   const code = extractSqlState(error);
   if (code === undefined) return false;
   if (TERMINAL_SQLSTATES.has(code)) return true;
-  return code === TLS_GATED_SQLSTATE && usedTls;
+  return code === TLS_GATED_SQLSTATE && triedTls;
 }
+
+const permitsPlaintextDowngrade = (error: unknown): boolean =>
+  isTlsNegotiationFailure(error) || extractSqlState(error) === TLS_GATED_SQLSTATE;
 
 /**
  * Extracts the Postgres SQLSTATE from a driver error. The `pg` driver attaches the
@@ -201,13 +206,14 @@ export function batchFailureError(
   error: Error,
   batch: { readonly completed: number; readonly outcome: BatchOutcome } | undefined,
   isLocal: boolean,
+  linkedCheckout?: boolean,
 ): DbExecError | DbConnectError {
   if (batch === undefined || batch.outcome === "unsent") {
     return new DbConnectError({
       message: `${BATCH_CONNECTION_LOST}: ${error.message}`,
       // The checkout failure a tick earlier carries this same hint, so losing the
       // connection mid-batch must not silently drop it.
-      ...(isLocal ? { suggestion: SUGGEST_LOCAL_STACK } : {}),
+      ...(isLocal ? { suggestion: localStackSuggestion(linkedCheckout) } : {}),
     });
   }
   const mapped = toExecError(error);
@@ -397,9 +403,9 @@ export interface ClientCert {
 }
 
 /**
- * `sslmode` values that demand TLS. `prefer` and `allow` describe a fallback libpq would perform
- * and {@link sslConfigsFor} does not, so neither counts as a demand; treating them as one would
- * turn a plaintext-capable target into a handshake failure.
+ * `sslmode` values that demand TLS. `prefer` and `allow` fall back across plaintext and TLS in
+ * {@link sslConfigsFor}, so neither counts as a demand; treating them as one would turn a
+ * plaintext-capable target into a handshake failure.
  */
 const TLS_DEMANDING_SSLMODES = new Set(["require", "verify-ca", "verify-full"]);
 
@@ -460,11 +466,12 @@ export function sslOptionFor(
 }
 
 /**
- * The ordered list of `ssl` configs to try for a connection: `disable` → plaintext only;
- * `allow` → plaintext then TLS; `prefer`/unset/`require`/`verify-ca`/`verify-full` → TLS only,
- * so a failed handshake on the default `prefer` mode fails loudly rather than silently
- * downgrading to plaintext. `servername` targets the original hostname per dial host when a
- * DoH-resolved IP was substituted; `caCert` promotes `require` to `verify-ca` when set.
+ * The ordered list of `ssl` configs to try for a connection, following libpq: `disable` →
+ * plaintext only; `allow` → plaintext then TLS; `prefer`/unset → TLS then plaintext (the
+ * plaintext retry runs only after a TLS negotiation failure or a `28000` rejection, see
+ * {@link permitsPlaintextDowngrade}); `require`/`verify-ca`/`verify-full` → TLS only.
+ * `servername` targets the original hostname per dial host when a DoH-resolved IP was
+ * substituted; `caCert` promotes `require` to `verify-ca` when set.
  * `isLocal` is the caller's TLS-exemption decision, not the raw target classification: a local
  * target that explicitly set `sslmode`/`sslrootcert` (see {@link tlsExplicitlyRequested}) is not
  * exempt, so the caller passes `false` for it in that case. `allow`'s fallback bypasses that
@@ -496,10 +503,11 @@ export function sslConfigsFor(
   ) {
     return [sslOptionFor(effectiveMode, false, servername, caCert, clientCert)];
   }
-  // prefer (and the unset default) is TLS-only: a failed handshake must error, never downgrade
-  // to plaintext.
-  return [sslOptionFor(sslmode, false, servername, caCert, clientCert)];
+  return [sslOptionFor(sslmode, false, servername, caCert, clientCert), false];
 }
+
+const isTlsConfig = (ssl: boolean | ConnectionOptions | undefined): boolean =>
+  ssl !== undefined && ssl !== false;
 
 /**
  * The raw `pg.ClientConfig` for a dial target: the connection-string form when a libpq
@@ -642,18 +650,26 @@ export const toConnectError = (
   cfg: PgConnInput,
   isLocal: boolean,
   error: unknown,
+  tlsError?: unknown,
 ): DbConnectError => {
   const suggestion =
     cfg.suggestionContext === undefined
       ? undefined
       : connectSuggestion(error, { ...cfg.suggestionContext, isLocal });
   return new DbConnectError({
-    message: `failed to connect to postgres: ${connectFailureMessage(cfg, error)}`,
+    message: `failed to connect to postgres: ${
+      tlsError === undefined ? "" : `${connectFailureMessage(cfg, tlsError)}; then without TLS: `
+    }${connectFailureMessage(cfg, error)}`,
     ...(suggestion === undefined ? {} : { suggestion }),
     ...(isDialFailure(error) ? { retryable: true } : {}),
+    ...(isCertificateVerificationFailure(error) ? { certificateRejected: true } : {}),
+    ...(isNetworkRestrictionFailure(error) ? { networkRestricted: true } : {}),
     ...(isIPv6ConnectivityErrorCause(error) ? { ipv6Unreachable: true } : {}),
   });
 };
+
+const readFileUtf8 = (fs: FileSystem.FileSystem, path: string) =>
+  fs.readFile(path).pipe(Effect.map((bytes) => Buffer.from(bytes).toString("utf8")));
 
 /**
  * Acquires the winning raw pool through the full connection attempt chain (DNS resolution, TLS
@@ -663,6 +679,7 @@ export const toConnectError = (
  */
 const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbConnectOptions) =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     // A local target that explicitly set `sslmode`/`sslrootcert` (e.g. a TLS tunnel on the
     // loopback stack) is not exempt from TLS; only the default loopback case stays plaintext.
     const explicitTls = tlsExplicitlyRequested(cfg);
@@ -723,53 +740,60 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
     // ({@link sslConfigsFor} already plaintexts socket targets).
     const rootcertPath = cfg.sslrootcert;
     const anyTcpTarget = dialTargets.some(({ dialHost }) => !isUnixSocketHost(dialHost));
+    /* `sslmode=disable` never dials TLS, so leftover CA or client-cert paths cannot abort it. */
+    const plaintextOnly = cfg.sslmode === "disable";
     const caCert =
       cfg.sslrootcertInline !== undefined &&
       cfg.sslrootcertInline.length > 0 &&
       (!isLocal || explicitTls)
         ? cfg.sslrootcertInline
-        : rootcertPath !== undefined &&
+        : !plaintextOnly &&
+            rootcertPath !== undefined &&
             rootcertPath.length > 0 &&
             (!isLocal || explicitTls) &&
             anyTcpTarget
-          ? yield* Effect.try({
-              try: () => readFileSync(rootcertPath, "utf8"),
-              catch: (error) =>
-                new DbConnectError({
-                  message: `failed to read sslrootcert ${rootcertPath}: ${error}`,
-                }),
-            })
+          ? yield* readFileUtf8(fs, rootcertPath).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DbConnectError({
+                    message: `failed to read sslrootcert ${rootcertPath}: ${error.reason.cause ?? error.message}`,
+                  }),
+              ),
+            )
           : undefined;
 
     // Loads the client `sslcert`/`sslkey` for cert auth, using the same non-local/TCP gate as
     // the CA bundle; `sslpassword` decrypts an encrypted key. Bound to locals so the narrowing
-    // holds in the `Effect.try` closures below.
+    // holds in the `mapError` closures below.
     const certPath = cfg.sslcert;
     const keyPath = cfg.sslkey;
     const clientCert =
-      certPath !== undefined && keyPath !== undefined && !isLocal && anyTcpTarget
+      !plaintextOnly && certPath !== undefined && keyPath !== undefined && !isLocal && anyTcpTarget
         ? {
-            cert: yield* Effect.try({
-              try: () => readFileSync(certPath, "utf8"),
-              catch: (error) =>
-                new DbConnectError({
-                  message: `failed to read sslcert ${certPath}: ${error}`,
-                }),
-            }),
-            key: yield* Effect.try({
-              try: () => readFileSync(keyPath, "utf8"),
-              catch: (error) =>
-                new DbConnectError({
-                  message: `failed to read sslkey ${keyPath}: ${error}`,
-                }),
-            }),
+            cert: yield* readFileUtf8(fs, certPath).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DbConnectError({
+                    message: `failed to read sslcert ${certPath}: ${error.reason.cause ?? error.message}`,
+                  }),
+              ),
+            ),
+            key: yield* readFileUtf8(fs, keyPath).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DbConnectError({
+                    message: `failed to read sslkey ${keyPath}: ${error.reason.cause ?? error.message}`,
+                  }),
+              ),
+            ),
             ...(cfg.sslpassword !== undefined ? { passphrase: cfg.sslpassword } : {}),
           }
         : undefined;
 
-    // Builds the ordered attempt list: each TLS config from {@link sslConfigsFor} tried against
+    // Builds the ordered attempt list: each `ssl` config from {@link sslConfigsFor} tried against
     // each dial target (host × resolved IPs), with `servername` per target set to the original
-    // hostname when dialing a DoH-resolved IP.
+    // hostname when dialing a DoH-resolved IP. `isTlsDowngrade` marks the plaintext retry that
+    // follows a TLS attempt on the same target.
     const attempts = dialTargets.flatMap(({ dialHost, port, servername }) =>
       sslConfigsFor(
         cfg.sslmode,
@@ -778,11 +802,14 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
         caCert,
         dialHost,
         clientCert,
-      ).map((ssl) => ({
+      ).map((ssl, index, configs) => ({
+        host: servername ?? dialHost,
         pool: makePool(dialHost, port, ssl),
-        // The fallback chain only short-circuits on an auth error when the failed attempt used
-        // TLS; a TLS config is any non-plaintext `ssl` value.
-        usedTls: ssl !== undefined && ssl !== false,
+        // A 28000 rejection is final once the target has been tried over TLS: `allow` still
+        // follows a plaintext rejection with its TLS attempt, while a `prefer` plaintext retry
+        // that is rejected too ends the chain instead of moving on to the next host.
+        triedTls: configs.slice(0, index + 1).some(isTlsConfig),
+        isTlsDowngrade: index > 0 && !isTlsConfig(ssl) && isTlsConfig(configs[index - 1]),
         rawConfig: buildRawPgConfig(cfg, dialHost, port, ssl, connectTimeoutSeconds),
       })),
     );
@@ -803,7 +830,7 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
         const sessionScope = yield* Scope.Scope;
         const attemptScope = yield* Scope.fork(sessionScope);
         return yield* attempt.pool.pipe(
-          Effect.map((pool) => ({ pool, rawConfig: attempt.rawConfig })),
+          Effect.map((pool) => ({ pool, attempt })),
           Scope.provide(attemptScope),
           Effect.onExit((exit) =>
             Exit.isSuccess(exit) ? Effect.void : Scope.close(attemptScope, exit),
@@ -811,18 +838,55 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
         );
       });
     const lastIndex = attempts.length - 1;
-    const { pool, rawConfig: winningRawConfig } = yield* attempts
-      .slice(0, lastIndex)
-      .reduceRight(
-        (next, attempt) =>
-          probe(attempt).pipe(
-            Effect.catch((error) =>
-              isTerminalConnectError(error, attempt.usedTls) ? Effect.fail(error) : next,
-            ),
-          ),
-        probe(attempts[lastIndex]!),
-      )
-      .pipe(Effect.mapError((error) => toConnectError(cfg, isLocal, error)));
+    // A failed attempt falls through to the next one unless its error is terminal. The plaintext
+    // retry after a TLS attempt (libpq's `prefer`) runs only when the server could not do TLS:
+    // negotiation failed or `pg_hba` has no TLS entry for the client (28000). Otherwise it is
+    // skipped, so an unreachable host or a wrong password is not retried in plaintext.
+    const run = (
+      index: number,
+    ): Effect.Effect<
+      Effect.Success<ReturnType<typeof probe>>,
+      {
+        readonly error: Effect.Error<ReturnType<typeof probe>>;
+        readonly index: number;
+        readonly tlsError?: unknown;
+      },
+      Effect.Services<ReturnType<typeof probe>>
+    > =>
+      probe(attempts[index]!).pipe(
+        Effect.catch((error) => {
+          if (index === lastIndex) return Effect.fail({ error, index });
+          const next = attempts[index + 1]!;
+          if (next.isTlsDowngrade && permitsPlaintextDowngrade(error)) {
+            return run(index + 1).pipe(
+              Effect.mapError((failure) =>
+                failure.index === index + 1 && extractSqlState(error) === TLS_GATED_SQLSTATE
+                  ? { ...failure, tlsError: error }
+                  : failure,
+              ),
+            );
+          }
+          if (isTerminalConnectError(error, attempts[index]!.triedTls)) {
+            return Effect.fail({ error, index });
+          }
+          const nextIndex = next.isTlsDowngrade ? index + 2 : index + 1;
+          return nextIndex > lastIndex ? Effect.fail({ error, index }) : run(nextIndex);
+        }),
+      );
+    const { pool, attempt: winner } = yield* run(0).pipe(
+      Effect.mapError(({ error, tlsError }) => toConnectError(cfg, isLocal, error, tlsError)),
+    );
+    const winningRawConfig = winner.rawConfig;
+    // libpq downgrades silently. Surfacing it tells a user who expected TLS (every hosted project
+    // offers it) that this connection is unencrypted, so a refused TLS attempt does not go unseen.
+    if (winner.isTlsDowngrade) {
+      const output = yield* Effect.serviceOption(Output);
+      if (Option.isSome(output)) {
+        yield* output.value.warn(
+          `Connected to ${winner.host} without TLS: the TLS connection failed or was rejected. Set PGSSLMODE=require (or verify-full) to refuse unencrypted connections.`,
+        );
+      }
+    }
 
     // Steps down from the temp/privileged login role before any further SQL, remote
     // connections only; a local `--db-url` using `supabase_admin`/`cli_login_*` must not run it.
@@ -847,27 +911,24 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
 export const acquirePgPool = (
   cfg: PgConnInput,
   options: DbConnectOptions,
-): Effect.Effect<Pg.Pool, DbConnectError, Scope.Scope> =>
+): Effect.Effect<Pg.Pool, DbConnectError, FileSystem.FileSystem | Scope.Scope> =>
   acquirePgPoolConnection(cfg, options).pipe(Effect.map(({ pool }) => pool));
 
 /**
- * Default `DbConnection` layer, backed by `@effect/sql-pg` (pure-JS `pg` driver, no native
+ * Default `DbConnection` layer, backed by a node-postgres pool (pure-JS `pg` driver, no native
  * addon, so it bundles under `bun build --compile`). Each `connect` builds a scoped
  * single-client connection that closes on scope exit.
  */
 const connect = (
   cfg: PgConnInput,
   options: DbConnectOptions,
-): Effect.Effect<DbSession, DbConnectError, Scope.Scope> =>
+): Effect.Effect<DbSession, DbConnectError, FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
     const { pool, winningRawConfig, stepDownRequired } = yield* acquirePgPoolConnection(
       cfg,
       options,
     );
-    const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
-      Effect.provide(Reactivity.layer),
-      Effect.mapError((error) => toConnectError(cfg, options.isLocal, error)),
-    );
+    const client = yield* makePoolSqlClient(pool).pipe(Effect.provide(Reactivity.layer));
 
     // `inspect report` runs ~14 `COPY (...) TO STDOUT` statements. node-postgres' COPY protocol
     // needs a raw client, which `@effect/sql-pg` does not surface, so the session opens one
@@ -958,7 +1019,16 @@ const connect = (
                 resume(Effect.void);
                 return;
               }
-              resume(Effect.fail(batchFailureError(error, batchQuery, options.isLocal)));
+              resume(
+                Effect.fail(
+                  batchFailureError(
+                    error,
+                    batchQuery,
+                    options.isLocal,
+                    cfg.suggestionContext?.linkedCheckout,
+                  ),
+                ),
+              );
             };
             batchQuery = new PgBatchQuery(statements, finish);
             try {
@@ -1031,7 +1101,7 @@ const connect = (
           return {
             fields: result.fields.map((field) => field.name),
             // Surface the column type OIDs so the table/CSV formatter can render float4/float8
-            // with %g-style formatting while integer columns stay plain.
+            // in shortest round-trip form while integer columns stay plain.
             fieldTypeIds: result.fields.map((field) => field.dataTypeID),
             rows: result.rows,
             commandTag,
@@ -1054,5 +1124,14 @@ const connect = (
     return session;
   });
 
-/** The active `DbConnection` layer, backed by `@effect/sql-pg`. */
-export const dbConnectionLayer = Layer.succeed(DbConnection, { connect });
+/** The active `DbConnection` layer, backed by node-postgres. */
+export const dbConnectionLayer = Layer.effect(
+  DbConnection,
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return DbConnection.of({
+      connect: (cfg, options) =>
+        connect(cfg, options).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+    });
+  }),
+);

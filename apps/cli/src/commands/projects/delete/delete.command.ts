@@ -1,14 +1,16 @@
-import { Layer } from "effect";
-import { Argument, Command } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  ref: Argument.string("ref").pipe(
+  ref: Argument.String("ref").pipe(
     Argument.withDescription("Project ref to delete."),
     Argument.optional,
   ),
@@ -24,13 +26,28 @@ export const projectsDeleteCommand = Command.make("delete", config).pipe(
       description: "Delete a project by ref",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v1-list-all-projects",
+            kind: "required",
+            context:
+              "no ref argument (or an empty one) and an interactive terminal (stdin TTY and text output); SUPABASE_PROJECT_ID and supabase/.temp/project-ref are ignored",
+          },
+          { operationId: "v1-delete-a-project", kind: "required" },
+        ],
+      },
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     projectsDelete(flags).pipe(
       withCommandTelemetry({ flags, safeFlags: [] }),
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer`: the delete confirmation reads piped stdin via `promptYesNo`
-  // on a non-TTY stdin.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["projects", "delete"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["projects", "delete"])),
+  withTargetPolicy({ group: "account", consent: "no" }),
 );

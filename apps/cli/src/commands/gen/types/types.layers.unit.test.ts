@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option } from "effect";
 
 import {
@@ -22,6 +22,7 @@ import {
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -37,6 +38,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 
 import { genTypesRuntimeLayer } from "./types.layers.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-gen-types-layers-");
 
@@ -62,8 +64,8 @@ function ambientStubs() {
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      resolveRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(CommandPlatformApiFactory, {
@@ -73,6 +75,7 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     // Builds the real commandSettingsLayer against the real filesystem — see
     // isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
@@ -81,17 +84,19 @@ function ambientStubs() {
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/gen-types-layers-test" }),
     mockCommandCredentialsLayer,
     mockLinkedProjectCacheLayer,
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }
 
 describe("genTypesRuntimeLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {

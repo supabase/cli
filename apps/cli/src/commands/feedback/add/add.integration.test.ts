@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer, Option, Path, Schema, Stdio, Stream } from "effect";
 import { systemError } from "effect/PlatformError";
 import type { FeedbackSubmission } from "../../../shared/feedback/feedback-client.service.ts";
@@ -27,7 +27,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { invalidOutputFormatMessage } from "../../../command-internal/go-output-flag.ts";
+import { invalidOutputFormatMessage } from "../../../command-internal/output-formats.ts";
 import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/project-ref.service.ts";
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import type { FeedbackAddArgs } from "./add.command.ts";
@@ -118,8 +118,8 @@ function setupFeedback(
     stdin?: Layer.Layer<Stdin>;
     agentName?: string;
     agentFlag?: "auto" | "yes" | "no";
-    /** Simulates the Go-compat `-o`/`--output` global flag. */
-    goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+    /** Simulates the `-o`/`--output` global flag. */
+    outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
     submitFailWith?: string;
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `CommandSettings` reads. */
     projectIdEnv?: string;
@@ -151,10 +151,11 @@ function setupFeedback(
     }),
     mockAiTool(opts.agentName),
     Layer.succeed(AgentFlag, opts.agentFlag ?? "auto"),
-    Layer.succeed(OutputFlag, Option.fromNullishOr(opts.goOutput)),
+    Layer.succeed(OutputFlag, Option.fromNullishOr(opts.outputFlag)),
     // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
     // temp workdir, so this must not be stubbed out.
     BunServices.layer,
+    BunCrypto.layer,
   );
   return { layer, out, submitter, telemetryState };
 }
@@ -171,14 +172,16 @@ function setupFeedbackHandler(
     base.layer,
     analytics.layer,
     processControl.layer,
-    commandRuntimeLayer(["feedback", "add"]).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(["feedback", "add"]).pipe(
+      Layer.provide([BunServices.layer, BunCrypto.layer]),
+    ),
     Stdio.layerTest({ args: Effect.succeed([...(opts.args ?? ["feedback", "add"])]) }),
   );
   return { ...base, layer, analytics, processControl };
 }
 
 describe("feedback add", () => {
-  it.live("submits a quoted message with CLI version, os, and arch attached", () => {
+  it.effect("submits a quoted message with CLI version, os, and arch attached", () => {
     const { layer, out, submitter, telemetryState } = setupFeedback();
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["port conflicts when running two stacks"]));
@@ -212,7 +215,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("joins bare words into a single message", () => {
+  it.effect("joins bare words into a single message", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["ports", "conflict", "a", "lot"]));
@@ -221,7 +224,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("marks the submission as agent feedback when an AI tool is detected", () => {
+  it.effect("marks the submission as agent feedback when an AI tool is detected", () => {
     const { layer, submitter } = setupFeedback({ agentName: "claude_code" });
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["agents need --yes everywhere"]));
@@ -231,7 +234,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suppresses agent metadata when --agent no overrides a detected tool", () => {
+  it.effect("suppresses agent metadata when --agent no overrides a detected tool", () => {
     const { layer, submitter } = setupFeedback({
       agentName: "claude_code",
       agentFlag: "no",
@@ -246,7 +249,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("marks the submission as agent feedback when --agent yes forces it", () => {
+  it.effect("marks the submission as agent feedback when --agent yes forces it", () => {
     const { layer, submitter } = setupFeedback({ agentFlag: "yes" });
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["undetected agent"]));
@@ -256,7 +259,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("attaches the linked project ref written by supabase link", () => {
+  it.effect("attaches the linked project ref written by supabase link", () => {
     const { layer, out, submitter } = setupFeedback();
     return Effect.gen(function* () {
       yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
@@ -274,7 +277,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prefers SUPABASE_PROJECT_ID over the linked ref file", () => {
+  it.effect("prefers SUPABASE_PROJECT_ID over the linked ref file", () => {
     const { layer, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
     return Effect.gen(function* () {
       yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
@@ -284,7 +287,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prefers --project-ref over SUPABASE_PROJECT_ID and the linked ref file", () => {
+  it.effect("prefers --project-ref over SUPABASE_PROJECT_ID and the linked ref file", () => {
     // Attribution from an unlinked (or differently linked) checkout, the same
     // way `feedback delete` and every other command accept the flag.
     const { layer, out, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
@@ -304,7 +307,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a malformed --project-ref before any request", () => {
+  it.effect("rejects a malformed --project-ref before any request", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
       const error = yield* feedbackAdd(
@@ -320,7 +323,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("treats an empty --project-ref as unset, like ProjectRefResolver", () => {
+  it.effect("treats an empty --project-ref as unset, like ProjectRefResolver", () => {
     const { layer, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["empty flag feedback"], { projectRef: Option.some("") }));
@@ -329,7 +332,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("attaches the persisted gotrue user id when logged in", () => {
+  it.effect("attaches the persisted gotrue user id when logged in", () => {
     const { layer, submitter } = setupFeedback({
       distinctId: "11111111-2222-3333-4444-555555555555",
     });
@@ -340,7 +343,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends no user id when not logged in", () => {
+  it.effect("sends no user id when not logged in", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["logged out feedback"]));
@@ -349,7 +352,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends no user id when telemetry consent is denied", () => {
+  it.effect("sends no user id when telemetry consent is denied", () => {
     // Submit-side attribution is consent-gated: opted-out users submit
     // anonymously even when a persisted gotrue id exists.
     const { layer, submitter } = setupFeedback({
@@ -363,7 +366,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sends no project ref when the workdir is not linked", () => {
+  it.effect("sends no project ref when the workdir is not linked", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["unlinked feedback"]));
@@ -372,7 +375,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("still submits when the linked ref file cannot be read", () => {
+  it.effect("still submits when the linked ref file cannot be read", () => {
     // A broken ref file must not block feedback — it degrades to "unlinked".
     const { layer, out, submitter } = setupFeedback();
     return Effect.gen(function* () {
@@ -386,7 +389,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("discards ref-file contents that are not a well-formed project ref", () => {
+  it.effect("discards ref-file contents that are not a well-formed project ref", () => {
     // The workdir can be an untrusted checkout where `.temp/project-ref` is a
     // symlink to a local secret (e.g. an access token). Anything that fails the
     // PROJECT_REF_PATTERN boundary must be dropped, not sent as `project_ref`.
@@ -401,7 +404,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a malformed SUPABASE_PROJECT_ID instead of submitting unlinked", () => {
+  it.effect("rejects a malformed SUPABASE_PROJECT_ID instead of submitting unlinked", () => {
     // A value the user supplied is validated the way `ProjectRefResolver` does
     // for every command: a typo fails as invalid input rather than silently
     // falling through to the linked ref file (or to "unlinked").
@@ -418,7 +421,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads the message from piped stdin when no argument is given", () => {
+  it.effect("reads the message from piped stdin when no argument is given", () => {
     const { layer, submitter } = setupFeedback({
       stdinIsTTY: false,
       pipedInput: "piped feedback\n",
@@ -430,7 +433,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("discards a partially read pipe when stdin fails mid-stream", () => {
+  it.effect("discards a partially read pipe when stdin fails mid-stream", () => {
     // The pipe delivers a chunk and then the read fails. The buffered prefix
     // must not be submitted as if it were the whole message — a truncated
     // sentence is corrupted feedback, not the user's feedback. With no other
@@ -460,7 +463,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prompts for the message on an interactive terminal", () => {
+  it.effect("prompts for the message on an interactive terminal", () => {
     const { layer, submitter } = setupFeedback({
       output: { interactive: true, promptTextResponses: ["typed feedback"] },
     });
@@ -471,7 +474,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not prompt when piped stdin is exhausted, even with a TTY stdout", () => {
+  it.effect("does not prompt when piped stdin is exhausted, even with a TTY stdout", () => {
     // `printf ' ' | supabase feedback add` in a terminal: stdout is a TTY (so
     // `output.interactive` is true) but stdin is a drained pipe the prompt
     // cannot read from. This must fail like the non-interactive case instead
@@ -492,7 +495,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails without prompting when stdout is not interactive, even on a TTY stdin", () => {
+  it.effect("fails without prompting when stdout is not interactive, even on a TTY stdin", () => {
     // `supabase feedback add > out.txt` in a terminal: stdin is a TTY but
     // stdout is redirected, so the text layer reports interactive: false and
     // there is nowhere to render a prompt.
@@ -505,7 +508,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with a helpful error when there is no message anywhere", () => {
+  it.effect("fails with a helpful error when there is no message anywhere", () => {
     // Whitespace-only args and whitespace-only pipe both fall through; a
     // non-interactive terminal leaves nothing left to ask.
     const { layer, submitter } = setupFeedback({
@@ -524,7 +527,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a message over the 1000 character limit before any request", () => {
+  it.effect("rejects a message over the 1000 character limit before any request", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
       const error = yield* feedbackAdd(addArgs(["x".repeat(1001)])).pipe(Effect.flip);
@@ -537,7 +540,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects piped input past the byte cap without buffering the whole pipe", () => {
+  it.effect("rejects piped input past the byte cap without buffering the whole pipe", () => {
     // `cat huge.log | supabase feedback add`: the capped reader stops at the
     // 64 KB byte cap and fails as over-limit instead of collecting the stream.
     const { layer, submitter } = setupFeedback({
@@ -555,7 +558,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects piped input over the character limit but under the byte cap", () => {
+  it.effect("rejects piped input over the character limit but under the byte cap", () => {
     const { layer, submitter } = setupFeedback({
       stdinIsTTY: false,
       pipedInput: `${"x".repeat(1001)}\n`,
@@ -571,7 +574,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("accepts a message at exactly the limit, counted in code points", () => {
+  it.effect("accepts a message at exactly the limit, counted in code points", () => {
     // 1000 astral-plane characters are 2000 UTF-16 units; Postgres
     // `char_length` counts code points, so the client-side check must too or
     // it would reject a message the server accepts.
@@ -585,7 +588,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the delete token in the json acknowledgement", () => {
+  it.effect("emits the delete token in the json acknowledgement", () => {
     const { layer, out, submitter } = setupFeedback({ output: { format: "json" } });
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["json mode feedback"]));
@@ -601,15 +604,15 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits only the machine payload on stdout with -o json", () => {
-    const { layer, out, submitter } = setupFeedback({ goOutput: "json" });
+  it.effect("emits only the machine payload on stdout with -o json", () => {
+    const { layer, out, submitter } = setupFeedback({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* feedbackAdd(addArgs(["go machine format feedback"]));
+      yield* feedbackAdd(addArgs(["machine output flag feedback"]));
 
       expect(submitter.submissions).toHaveLength(1);
       expect(out.rawChunks).toHaveLength(1);
       expect(out.rawChunks[0]?.stream).toBe("stdout");
-      const payload: unknown = yield* jsonValue(out.rawChunks[0]!.text);
+      const payload: unknown = yield* jsonValue(out.rawChunks[0]?.text ?? "");
       expect(payload).toEqual({ delete_token: MOCK_DELETE_TOKEN });
       // No human-readable acknowledgement — stdout is payload-only.
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
@@ -617,12 +620,12 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not prompt under -o json even on an interactive terminal", () => {
+  it.effect("does not prompt under -o json even on an interactive terminal", () => {
     // `-o json` leaves output.format === "text", so the interactive text layer
     // would happily render the clack prompt — onto stdout, ahead of the raw
     // JSON payload. Machine mode must fail as empty instead.
     const { layer, out, submitter } = setupFeedback({
-      goOutput: "json",
+      outputFlag: "json",
       output: { interactive: true, promptTextResponses: ["never read"] },
     });
     return Effect.gen(function* () {
@@ -637,9 +640,9 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects an -o value outside feedback's pretty|json enum", () => {
+  it.effect("rejects an -o value outside feedback's pretty|json enum", () => {
     const { layer, submitter } = setupFeedbackHandler({
-      goOutput: "yaml",
+      outputFlag: "yaml",
       args: ["feedback", "add", "doomed", "--output", "yaml"],
     });
     return Effect.gen(function* () {
@@ -653,7 +656,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a json error and exit code 1 when the message is missing in json mode", () => {
+  it.effect("reports a json error and exit code 1 when the message is missing in json mode", () => {
     const { layer, out, submitter, processControl } = setupFeedbackHandler({
       output: { format: "json" },
       stdinIsTTY: false,
@@ -669,7 +672,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a submitter failure", () => {
+  it.effect("surfaces a submitter failure", () => {
     const { layer, out, telemetryState } = setupFeedback({
       submitFailWith: "backend unavailable",
     });
@@ -686,7 +689,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("records --project-ref by name only, never its value, in PostHog", () => {
+  it.effect("records --project-ref by name only, never its value, in PostHog", () => {
     const { layer, analytics, submitter } = setupFeedbackHandler({
       args: ["feedback", "add", "attributed", "--project-ref", "abcdefghijklmnopqrst"],
     });
@@ -707,7 +710,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("never sends the feedback message content to PostHog", () => {
+  it.effect("never sends the feedback message content to PostHog", () => {
     const { layer, analytics, submitter } = setupFeedbackHandler({
       args: ["feedback", "add", "my", "secret", "papercut", "--debug"],
     });

@@ -1,6 +1,9 @@
 import { Layer } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import {
@@ -13,33 +16,34 @@ import { debugLoggerLayer } from "../../../../command-internal/debug-logger.laye
 import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeNew } from "./new.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  name: Argument.string("name").pipe(
+  name: Argument.String("name").pipe(
     Argument.withDescription(
       "Compute name. Doubles as its directory, and its hostname. Prompted when omitted.",
     ),
     Argument.optional,
   ),
-  runtime: Flag.choice("runtime", COMPUTE_RUNTIMES).pipe(
+  runtime: Flag.Literals("runtime", COMPUTE_RUNTIMES).pipe(
     Flag.withDescription(
-      "Runtime to scaffold and record in supabase/config.toml. Prompted when omitted.",
+      "Runtime to scaffold and record in the project config file. Prompted when omitted.",
     ),
     Flag.optional,
   ),
-  size: Flag.choice("size", COMPUTE_SIZES).pipe(
+  size: Flag.Literals("size", COMPUTE_SIZES).pipe(
     Flag.withDescription(
-      "Instance size to record in supabase/config.toml. Each size implies its own vCPU count, so there is no separate --cpu. Prompted when omitted.",
+      "Instance size to record in the project config file. Each size implies its own vCPU count, so there is no separate --cpu. Prompted when omitted.",
     ),
     Flag.optional,
   ),
-  exposure: Flag.choice("exposure", COMPUTE_EXPOSURES).pipe(
+  exposure: Flag.Literals("exposure", COMPUTE_EXPOSURES).pipe(
     Flag.withDescription(
-      "Whether the compute is reachable from the internet, recorded as `exposure` in supabase/config.toml. Prompted when omitted.",
+      "Whether the compute is reachable from the internet, recorded as `exposure` in the project config file. Prompted when omitted.",
     ),
     Flag.optional,
   ),
-  instances: Flag.integer("instances").pipe(
+  instances: Flag.Int("instances").pipe(
     // Bounded at the parser, the same way `push --instances` and the config
     // schema's own `instances` are.
     Flag.filter(
@@ -47,13 +51,13 @@ const config = {
       (instances) => `--instances ${instances} is negative; pass zero or more.`,
     ),
     Flag.withDescription(
-      "Number of instances to record in supabase/config.toml. Not prompted for, and recorded only when it differs from the default of 1.",
+      "Number of instances to record in the project config file. Not prompted for, and recorded only when it differs from the default of 1.",
     ),
     Flag.optional,
   ),
-  source: Flag.string("source").pipe(
+  source: Flag.String("source").pipe(
     Flag.withDescription(
-      "Scaffold the compute here instead of the default compute directory, recorded as `source` in supabase/config.toml.",
+      "Scaffold the compute here instead of the default compute directory, recorded as `source` in the project config file.",
     ),
     Flag.optional,
   ),
@@ -72,7 +76,7 @@ const computeNewRuntimeLayer = Layer.mergeAll(
 
 export const computeNewCommand = Command.make("new", config).pipe(
   Command.withDescription(
-    "Scaffold a compute directory from a runtime's starter files and record the choices in supabase/config.toml. Nothing is deployed.",
+    "Scaffold a compute directory from a runtime's starter files and record the choices in the project config file. Nothing is deployed.",
   ),
   Command.withShortDescription("Scaffold a compute locally"),
   Command.withExamples([
@@ -101,8 +105,15 @@ export const computeNewCommand = Command.make("new", config).pipe(
       description: "Scaffold the compute outside the compute directory",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["runtime", "size", "exposure", "instances", "source"],
+  }),
   Command.withHandler((flags) =>
     computeNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(computeNewRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

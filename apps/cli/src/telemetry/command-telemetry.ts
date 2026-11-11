@@ -1,17 +1,28 @@
-import { Cause, Clock, Effect, Exit, Option, Ref, Stdio } from "effect";
-import { Param } from "effect/unstable/cli";
+import { Cause, Clock, Effect, Exit, Option, Ref, Result, Stdio } from "effect";
+import { Param } from "effect/cli";
 import {
   CommandRuntime,
   getCommandRuntimeCommand,
   getCommandRuntimeSpanName,
 } from "../shared/runtime/command-runtime.service.ts";
+import { failureBesideClosedStdout } from "../shared/output/errors.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { GLOBAL_FLAGS, OutputFlag, globalFlagValues } from "../command-internal/global-flags.ts";
+import {
+  CreateTicketFlag,
+  GLOBAL_FLAGS,
+  OutputFlag,
+  globalFlagValues,
+} from "../command-internal/global-flags.ts";
+import { removedFlag, type RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
-import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
+import {
+  type AnalyticsContext,
+  withAnalyticsContext,
+} from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import {
+  CliErrorCategory,
   type CliErrorActionability,
   classifyCliErrorActionability,
   unknownProcessControlledFailureActionability,
@@ -20,7 +31,9 @@ import { DbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.t
 import { DbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
 import {
   EventCommandExecuted,
+  PropConfigKey,
   PropDurationMs,
+  PropErrorCategory,
   PropExitCode,
   PropOutputFormat,
   PropStackBackend,
@@ -33,15 +46,20 @@ import {
   RESOURCE_OUTPUT_FORMATS,
   InvalidOutputFormatError,
   invalidOutputFormatMessage,
-} from "../command-internal/go-output-flag.ts";
+} from "../command-internal/output-formats.ts";
 import { TelemetryOutputFormat } from "./telemetry-output-format.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
+import { BOOLEAN_FLAG_VALUES } from "../shared/cli/agent-output.ts";
 import {
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
-} from "../command-internal/db-target-flags.ts";
+} from "../shared/cli/value-consuming-flags.ts";
 import { unwrapToSingleParam } from "../command-internal/param-introspection.ts";
 import { StackBackendContext } from "../command-internal/stack-backend.ts";
+import { parseRemoteValue } from "../command-internal/target/remote-value.ts";
+import { REMOTE_FLAG_NAME } from "../command-internal/target/remote-vocabulary.ts";
+import { TargetPolicy } from "../command-internal/target/target-policy.ts";
+import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
@@ -70,14 +88,14 @@ interface CommandTelemetryOptions<Flags extends Record<string, unknown> = never>
   // passed through regardless of this list.
   readonly safeFlags?: ReadonlyArray<string>;
   // A command's flag config record (the object passed to `Command.make`). Any
-  // `Flag.choice`/`Flag.choiceWithValue` flag in it is treated as telemetry-safe automatically, so
+  // `Flag.Literals`/`Flag.ChoiceWithValue` flag in it is treated as telemetry-safe automatically, so
   // enum flags don't need hand-listing in `safeFlags`. The three global choice flags (`--output`,
   // `--dns-resolver`, `--agent`) are covered separately via `GLOBAL_CHOICE_FLAG_NAMES` below.
   readonly config?: Record<string, Param.Any>;
   // The `-o`/`--output` values this command accepts. Defaults to the resource-command set; `db
   // query` overrides with `json|table|csv`. The shared global `OutputFlag` accepts the union of
   // every command's values, so this re-validates against the command's own narrower set. See
-  // `go-output-flag.ts`.
+  // `output-formats.ts`.
   readonly outputFormats?: ReadonlyArray<string>;
   // Short-flag → canonical-flag-name map (e.g. `{ s: "schema" }`) for this command's own flags,
   // so a `-s public` invocation records the `schema` flag rather than `s`. Global shorthands
@@ -98,11 +116,9 @@ export const validateOutputFormat = (allowed: ReadonlyArray<string>) =>
     if (Option.isNone(flag) || Option.isNone(flag.value)) return;
     const value = flag.value.value;
     if (allowed.includes(value)) return;
-    return yield* Effect.fail(
-      new InvalidOutputFormatError({
-        message: invalidOutputFormatMessage(value, allowed),
-      }),
-    );
+    return yield* new InvalidOutputFormatError({
+      message: invalidOutputFormatMessage(value, allowed),
+    });
   });
 
 const REDACTED_VALUE = "<redacted>";
@@ -110,14 +126,38 @@ const REDACTED_VALUE = "<redacted>";
 // `TelemetryOutputFormat` (`db query` does, so its `json|table|csv` reports correctly there
 // instead); this set only governs the fallback, where a non-machine `-o` (`table`/`pretty`)
 // collapses to the resolved text format.
-const GO_MACHINE_OUTPUT_FORMATS = new Set(["env", "json", "toml", "yaml", "csv"]);
-const GO_OUTPUT_FORMATS = new Set([...GO_MACHINE_OUTPUT_FORMATS, "pretty"]);
+const MACHINE_OUTPUT_FLAG_FORMATS = new Set(["env", "json", "toml", "yaml", "csv"]);
+const OUTPUT_FLAG_FORMATS = new Set([...MACHINE_OUTPUT_FLAG_FORMATS, "pretty"]);
+
+const TARGET_FLAG_NAMES: ReadonlySet<string> = new Set([
+  REMOTE_FLAG_NAME,
+  "linked",
+  "local",
+  "db-url",
+  "project-ref",
+  "project-id",
+]);
+
+const TRUE_FLAG_LITERALS: ReadonlySet<string> = new Set(["true", "yes", "on", "1", "y"]);
+
+// A project ref is telemetry-safe; a branch name or database URL is user data.
+function remoteTelemetryValue(raw: string): string | boolean {
+  const remote = Result.getOrUndefined(parseRemoteValue(raw));
+  switch (remote?._tag) {
+    case "Linked":
+      return true;
+    case "Ref":
+      return remote.ref;
+    default:
+      return REDACTED_VALUE;
+  }
+}
 
 function toCliFlagName(key: string): string {
   return key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
 }
 
-function extractGoOutputFormat(args: ReadonlyArray<string>): string | undefined {
+function extractOutputFlagFormat(args: ReadonlyArray<string>): string | undefined {
   let format: string | undefined;
 
   for (let index = 0; index < args.length; index++) {
@@ -126,7 +166,7 @@ function extractGoOutputFormat(args: ReadonlyArray<string>): string | undefined 
 
     if (arg === "--output" || arg === "-o") {
       const value = args[index + 1];
-      if (value !== undefined && GO_OUTPUT_FORMATS.has(value)) {
+      if (value !== undefined && OUTPUT_FLAG_FORMATS.has(value)) {
         format = value;
       }
       index++;
@@ -135,7 +175,7 @@ function extractGoOutputFormat(args: ReadonlyArray<string>): string | undefined 
 
     if (arg.startsWith("--output=") || arg.startsWith("-o=")) {
       const value = arg.slice(arg.indexOf("=") + 1);
-      if (GO_OUTPUT_FORMATS.has(value)) {
+      if (OUTPUT_FLAG_FORMATS.has(value)) {
         format = value;
       }
     }
@@ -145,18 +185,25 @@ function extractGoOutputFormat(args: ReadonlyArray<string>): string | undefined 
 }
 
 function resolveOutputFormatForTelemetry(args: ReadonlyArray<string>, outputFormat: string) {
-  const goOutputFormat = extractGoOutputFormat(args);
-  if (goOutputFormat !== undefined && GO_MACHINE_OUTPUT_FORMATS.has(goOutputFormat)) {
-    return goOutputFormat;
+  const outputFlagFormat = extractOutputFlagFormat(args);
+  if (outputFlagFormat !== undefined && MACHINE_OUTPUT_FLAG_FORMATS.has(outputFlagFormat)) {
+    return outputFlagFormat;
   }
   return outputFormat;
 }
 
-function extractChangedFlagNames(
+interface FlagOccurrence {
+  readonly name: string;
+  readonly inline?: string | undefined;
+  // The token after a bare `--name`: the value of a value-consuming flag or an explicit boolean.
+  readonly next?: string | undefined;
+}
+
+function scanFlags(
   args: ReadonlyArray<string>,
   aliases: Readonly<Record<string, string>> = {},
-): ReadonlyArray<string> {
-  const used = new Set<string>();
+): ReadonlyArray<FlagOccurrence> {
+  const occurrences: Array<FlagOccurrence> = [];
   let skipNext = false;
 
   for (let index = 0; index < args.length; index++) {
@@ -164,15 +211,14 @@ function extractChangedFlagNames(
     if (arg === undefined) continue;
 
     // Skip a token that was consumed as the value of the previous flag — even
-    // when that token is `--` (pflag lets a value-taking flag consume `--`).
+    // when that token is `--` (a value-taking flag consumes `--`).
     if (skipNext) {
       skipNext = false;
       continue;
     }
 
-    // End-of-options sentinel: pflag-style parsing stops at a bare `--`, so everything after it
-    // is positional (e.g. `test db -- --linked` makes `--linked` a path arg, not a flag). Mirrors
-    // `resolveDbTargetFlags`'s `--` handling.
+    // End-of-options sentinel: parsing stops at a bare `--`, so everything after it
+    // is positional (e.g. `test db -- --linked` makes `--linked` a path arg, not a flag).
     if (arg === "--") break;
 
     if (arg.startsWith("--")) {
@@ -181,8 +227,12 @@ function extractChangedFlagNames(
       const flagName = eqIdx === -1 ? raw : raw.slice(0, eqIdx);
       const isBare = eqIdx === -1;
       if (flagName.length === 0) continue;
-      used.add(flagName);
-      // A bare value-consuming flag's next token is its value (pflag space-separated form) —
+      occurrences.push({
+        name: flagName,
+        inline: isBare ? undefined : raw.slice(eqIdx + 1),
+        next: isBare ? args[index + 1] : undefined,
+      });
+      // A bare value-consuming flag's next token is its value (space-separated form) —
       // skip it so only the flag name itself is recorded, not the value that follows.
       if (isBare && VALUE_CONSUMING_LONG_FLAGS.has(flagName)) {
         skipNext = true;
@@ -197,7 +247,7 @@ function extractChangedFlagNames(
       const short = arg[1];
       if (short === undefined) continue;
       const canonical = aliases[short];
-      if (canonical !== undefined) used.add(canonical);
+      if (canonical !== undefined) occurrences.push({ name: canonical });
       // A bare short flag (`-s`, length 2) takes its value from the next token; attached forms
       // (`-svalue`, `-s=value`) carry it inline, so no skip is needed there.
       // Known aliases use their canonical flag because shorthand arity can differ between commands.
@@ -211,8 +261,62 @@ function extractChangedFlagNames(
     }
   }
 
-  return [...used].sort((left, right) => left.localeCompare(right));
+  return occurrences;
 }
+
+function extractChangedFlagNames(
+  args: ReadonlyArray<string>,
+  aliases: Readonly<Record<string, string>> = {},
+): ReadonlyArray<string> {
+  const names = new Set(scanFlags(args, aliases).map(({ name }) => name));
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function targetFlagValue(
+  name: string,
+  inline: string | undefined,
+  next: string | undefined,
+): string | boolean {
+  switch (name) {
+    case REMOTE_FLAG_NAME:
+      return inline === undefined ? true : remoteTelemetryValue(inline);
+    case "linked":
+    case "local": {
+      const explicit = inline ?? (BOOLEAN_FLAG_VALUES.has(next ?? "") ? next : undefined);
+      return explicit === undefined || TRUE_FLAG_LITERALS.has(explicit);
+    }
+    case "db-url":
+      return REDACTED_VALUE;
+    default: {
+      const value = inline ?? next;
+      return value !== undefined && PROJECT_REF_PATTERN.test(value) ? value : REDACTED_VALUE;
+    }
+  }
+}
+
+// A repeated flag takes its first occurrence, as the flag parser does.
+function extractTargetFlagValues(
+  args: ReadonlyArray<string>,
+): ReadonlyMap<string, string | boolean> {
+  const values = new Map<string, string | boolean>();
+  for (const { name, inline, next } of scanFlags(args)) {
+    if (TARGET_FLAG_NAMES.has(name) && !values.has(name)) {
+      values.set(name, targetFlagValue(name, inline, next));
+    }
+  }
+  return values;
+}
+
+/**
+ * Fails when argv carries the removed global `--create-ticket` (with any value). Runs inside the
+ * recorded region, so the rejection still emits `cli_command_executed`.
+ */
+const rejectRemovedGlobalFlags = Effect.gen(function* () {
+  const stdio = yield* Stdio.Stdio;
+  const args = yield* stdio.args;
+  if (!extractChangedFlagNames(args).includes(CreateTicketFlag.id)) return;
+  return yield* removedFlag("--create-ticket", "Report CLI problems with `supabase issue bug`.");
+});
 
 function normalizeFlagValue(value: unknown): unknown {
   if (value === undefined) return undefined;
@@ -221,9 +325,9 @@ function normalizeFlagValue(value: unknown): unknown {
   return normalizeFlagValue(value.value);
 }
 
-// Every `Flag.choice`/`Flag.choiceWithValue` flag is treated as telemetry-safe automatically —
+// Every `Flag.Literals`/`Flag.ChoiceWithValue` flag is treated as telemetry-safe automatically —
 // checks the unwrapped `Single`'s primitive `_tag`. Restricted to `kind === Param.flagKind` so a
-// same-named `Argument.choice` positional can never be mistaken for a `--flag`.
+// same-named `Argument.Literals` positional can never be mistaken for a `--flag`.
 function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): ReadonlySet<string> {
   const names = new Set<string>();
   if (config === undefined) return names;
@@ -258,8 +362,8 @@ const GLOBAL_SHORT_ALIASES: Readonly<Record<string, string>> = (() => {
 })();
 
 /**
- * CLI-name set for every global/persistent flag that is itself a `Flag.choice`/
- * `Flag.choiceWithValue` (today `output`, `dns-resolver`, `agent`), derived from `GLOBAL_FLAGS`
+ * CLI-name set for every global/persistent flag that is itself a `Flag.Literals`/
+ * `Flag.ChoiceWithValue` (today `output`, `dns-resolver`, `agent`), derived from `GLOBAL_FLAGS`
  * the same way `GLOBAL_SHORT_ALIASES` is. Applied only to the global-fallback path in
  * `buildFlagsMap` (`!isFromHandler`): a command that registers its own differently-typed local
  * flag under the same CLI name (e.g. `db diff`'s local string `--output`) must pass that flag in
@@ -278,6 +382,8 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
   readonly safeFlagSet: ReadonlySet<string>;
   readonly changedFlagNames: ReadonlyArray<string>;
   readonly choiceFlagNames: ReadonlySet<string>;
+  // The target flags' recorded values, read from argv for a command that acts on a project.
+  readonly targetFlagValues: ReadonlyMap<string, string | boolean>;
 }): Record<string, unknown> | undefined {
   const {
     flags,
@@ -285,6 +391,7 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
     safeFlagSet,
     changedFlagNames,
     choiceFlagNames,
+    targetFlagValues,
   } = options;
   if (changedFlagNames.length === 0) return undefined;
 
@@ -297,6 +404,12 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
   }
 
   for (const cliName of changedFlagNames) {
+    const target = targetFlagValues.get(cliName);
+    if (target !== undefined) {
+      result[cliName] = target;
+      continue;
+    }
+
     // A command's own flag always wins over a global/persistent flag sharing the same CLI name
     // (e.g. `db diff`'s local `--output` file-path flag shadows the global `--output` enum) —
     // only fall back to the live global-flag value when the handler never declared this name.
@@ -373,12 +486,18 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           ...options?.aliases,
         });
         const globalFlags = yield* globalFlagValues;
+        const targetPolicy = yield* Effect.serviceOption(TargetPolicy);
+        const actsOnTarget = Option.exists(
+          targetPolicy,
+          ({ group }) => group === "hosted" || group === "selectable",
+        );
         const flags = buildFlagsMap({
           flags: options?.flags,
           globalFlagValues: globalFlags,
           safeFlagSet,
           changedFlagNames,
           choiceFlagNames,
+          targetFlagValues: actsOnTarget ? extractTargetFlagValues(args) : new Map(),
         });
         const analyticsContext = {
           command_run_id: commandRuntime.commandRunId,
@@ -397,7 +516,8 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           Effect.exit,
         );
         const finishedAt = yield* Clock.currentTimeMillis;
-        const recordedAttributes = yield* Ref.get(attributes);
+        // A config failure the command swallowed must not label a success or an unrelated failure.
+        const { [PropConfigKey]: configKey, ...recordedAttributes } = yield* Ref.get(attributes);
 
         // A command that resolves its own `--output` (e.g. `db query`, defaulting `table`/`json`
         // by agent mode) records it here; read optionally so commands that don't provide the
@@ -418,9 +538,13 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
         const processExitCode = yield* processControl.getExitCode;
         const isConfigDiffDriftSignal =
           Exit.isSuccess(exit) && command === "config diff" && processExitCode === 2;
+        // A closed stdout alone ends the command with exit 0, as `runCli` reports it.
+        const failureCause = Exit.isFailure(exit)
+          ? failureBesideClosedStdout(exit.cause)
+          : undefined;
         const recordedExitCode = isConfigDiffDriftSignal
           ? 2
-          : Exit.isFailure(exit) || (processExitCode !== undefined && processExitCode !== 0)
+          : failureCause !== undefined || (processExitCode !== undefined && processExitCode !== 0)
             ? 1
             : 0;
 
@@ -433,15 +557,22 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           const id = svc.stitchedDistinctId();
           return id === undefined ? Option.none() : Option.some(id);
         });
+        const failedProjectRef =
+          failureCause === undefined ? undefined : failureProjectRef(failureCause);
+        const contextWithProject: AnalyticsContext =
+          failedProjectRef === undefined
+            ? analyticsContext
+            : { ...analyticsContext, groups: { project: failedProjectRef } };
         const captureContext = Option.match(stitchedDistinctId, {
-          onNone: () => analyticsContext,
-          onSome: (distinct_id) => ({ ...analyticsContext, distinct_id }),
+          onNone: () => contextWithProject,
+          onSome: (distinct_id) => ({ ...contextWithProject, distinct_id }),
         });
-        const failureMetadata = Exit.isFailure(exit)
-          ? failureTelemetryPropertiesForCause(exit.cause)
-          : recordedExitCode === 1
-            ? toFailureTelemetryProperties(processControlledFailureActionability(command))
-            : {};
+        const failureMetadata =
+          failureCause !== undefined
+            ? failureTelemetryPropertiesForCause(failureCause)
+            : recordedExitCode === 1
+              ? toFailureTelemetryProperties(processControlledFailureActionability(command))
+              : {};
 
         yield* analytics
           .capture(EventCommandExecuted, {
@@ -453,6 +584,10 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
             ...(Option.isSome(stackBackend) ? { [PropStackBackend]: stackBackend.value.kind } : {}),
             ...recordedAttributes,
             ...failureMetadata,
+            ...(configKey !== undefined &&
+            failureMetadata[PropErrorCategory] === CliErrorCategory.InvalidConfig
+              ? { [PropConfigKey]: configKey }
+              : {}),
           })
           .pipe(
             withAnalyticsContext(captureContext),
@@ -472,11 +607,21 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
     });
 }
 
+/** The project a typed failure names in its `projectRef` field, for the event's project group. */
+function failureProjectRef(cause: Cause.Cause<unknown>): string | undefined {
+  const error = Cause.findErrorOption(cause);
+  if (Option.isNone(error) || typeof error.value !== "object" || error.value === null) {
+    return undefined;
+  }
+  const ref: unknown = Reflect.get(error.value, "projectRef");
+  return typeof ref === "string" && PROJECT_REF_PATTERN.test(ref) ? ref : undefined;
+}
+
 export function withCommandTelemetry(): <A, E, R>(
   self: Effect.Effect<A, E, R>,
 ) => Effect.Effect<
   A,
-  E | InvalidOutputFormatError,
+  E | InvalidOutputFormatError | RemovedSurfaceError,
   R | Analytics | CommandRuntime | Stdio.Stdio | Output | ProcessControl
 >;
 export function withCommandTelemetry<Flags extends Record<string, unknown>>(
@@ -485,7 +630,7 @@ export function withCommandTelemetry<Flags extends Record<string, unknown>>(
   self: Effect.Effect<A, E, R>,
 ) => Effect.Effect<
   A,
-  E | InvalidOutputFormatError,
+  E | InvalidOutputFormatError | RemovedSurfaceError,
   R | Analytics | CommandRuntime | Stdio.Stdio | Output | ProcessControl
 >;
 export function withCommandTelemetry<Flags extends Record<string, unknown>>(
@@ -499,5 +644,8 @@ export function withCommandTelemetry<Flags extends Record<string, unknown>>(
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     // Validate the `-o` enum before instrumentation runs the handler, so a rejected flag fails
     // without emitting a `cli_command_executed` event.
-    Effect.andThen(validateOutputFormat(allowed), instrument(self));
+    Effect.andThen(
+      validateOutputFormat(allowed),
+      instrument(Effect.andThen(rejectRemovedGlobalFlags, self)),
+    );
 }

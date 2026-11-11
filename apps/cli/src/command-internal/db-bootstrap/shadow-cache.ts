@@ -10,6 +10,7 @@ import { createHash, scryptSync } from "node:crypto";
 import type { CliConfig } from "@supabase/config";
 import {
   Clock,
+  DateTime,
   Effect,
   Match,
   Option,
@@ -18,9 +19,9 @@ import {
   Semaphore,
   type FileSystem,
 } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
-import { viperEnvBoolWithProjectFallback } from "../viper-env.ts";
+import { supabaseEnvBoolWithProjectFallback } from "../supabase-env.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { containerCliExitCode, describeContainerCliFailure } from "../container-cli.ts";
 import { DbConnection } from "../db-connection.service.ts";
@@ -39,7 +40,7 @@ import { START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { CREATE_VAULT_KV, READ_VAULT_KV, UPDATE_VAULT_KV, type VaultSecret } from "../vault.ts";
-import { waitForShadowReady } from "./health-check.ts";
+import { waitForPostgresReady } from "./health-check.ts";
 import {
   exportPgDataTar,
   pgDataRestoreArchive,
@@ -60,7 +61,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `SUPABASE_SHADOW_CACHE` — opt-out gate (viper bool when set; unset is ON). */
+/** `SUPABASE_SHADOW_CACHE` — opt-out gate (parsed as a boolean when set; unset is ON). */
 export const SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
@@ -270,9 +271,7 @@ const resolveShadowCacheKeyInputs = <E>(
       .readFileString(rolesPath)
       .pipe(
         Effect.catchTag("PlatformError", (error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.succeed("")
-            : Effect.succeed(undefined),
+          Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed("") : Effect.undefined,
         ),
       );
     if (rolesSql === undefined) return Option.none();
@@ -435,7 +434,7 @@ const SHADOW_PARTIAL_ABANDON_MS = 5 * 60 * 1000;
  */
 const sweepAbandonedShadowBaselinePartials = <E>(input: ShadowSetupInput<E>): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const entries = yield* input.fs
       .readDirectory(cacheDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -465,7 +464,7 @@ const sweepShadowBaselineRetention = <E>(
   retainFileName?: string,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const names = yield* input.fs
       .readDirectory(cacheDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -496,7 +495,7 @@ const sweepShadowBaselineRetention = <E>(
 /** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
 const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const now = new Date(yield* Clock.currentTimeMillis);
+    const now = yield* DateTime.nowAsDate;
     yield* fs.utimes(tarPath, now, now);
   }).pipe(Effect.orElseSucceed(() => undefined));
 
@@ -533,7 +532,7 @@ const awaitShadowReady = <E>(
   containerId: string,
   what: string,
 ): Effect.Effect<void, ShadowCacheUnavailable, DbConnection> =>
-  waitForShadowReady(spawner, containerId, shadowConnConfig(input), {
+  waitForPostgresReady(spawner, containerId, shadowConnConfig(input), {
     timeoutSeconds: input.healthTimeoutSeconds,
     image: input.image,
   }).pipe(
@@ -570,7 +569,7 @@ const writeShadowBaselineTar = <E>(
         const published = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
         if (published) return;
       }
-      const cacheDir = shadowBaselineCacheDir(input.path);
+      const cacheDir = yield* shadowBaselineCacheDir(input.path);
       yield* input.fs
         .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
         .pipe(
@@ -610,9 +609,7 @@ const exportShadowBaseline = <E>(
           .readFileString(input.path.join(input.workdir, "supabase", "roles.sql"))
           .pipe(
             Effect.catchTag("PlatformError", (error) =>
-              Predicate.isTagged(error.reason, "NotFound")
-                ? Effect.succeed("")
-                : Effect.succeed(undefined),
+              Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed("") : Effect.undefined,
             ),
           );
         if (rolesSqlNow !== keyedRolesSql) {
@@ -688,7 +685,10 @@ export const peekShadowBaseline = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {})
+      !(yield* supabaseEnvBoolWithProjectFallback(
+        SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+      ))
     ) {
       return { state: "uncachable" } as const;
     }
@@ -696,7 +696,7 @@ export const peekShadowBaseline = <E>(
     if (Option.isNone(keyInputs)) return { state: "uncachable" } as const;
     const key = shadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(
-      shadowBaselineCacheDir(input.path),
+      yield* shadowBaselineCacheDir(input.path),
       shadowBaselineTarFileName(key),
     );
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
@@ -868,9 +868,13 @@ export const acquireShadowDatabase = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, input.setup.projectEnvValues ?? {}, {
-        whenUnset: true,
-      })
+      !(yield* supabaseEnvBoolWithProjectFallback(
+        SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+        {
+          whenUnset: true,
+        },
+      ))
     ) {
       yield* annotateCacheState("disabled");
       return yield* uncachedShadow(spawner, input);
@@ -892,7 +896,7 @@ export const acquireShadowDatabase = <E>(
     // can't be written. The mkdir alone isn't a sufficient probe — it succeeds on an
     // already-existing directory regardless of permission — so `access(W_OK)` catches a
     // pre-existing read-only root (EACCES, EROFS, a root-squashing NFS server).
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const cacheRoot = yield* Effect.result(
       input.fs
         .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })

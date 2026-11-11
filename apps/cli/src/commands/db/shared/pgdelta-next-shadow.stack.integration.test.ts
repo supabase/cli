@@ -1,10 +1,11 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
 
-import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { mockCommandSettings, withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 import { containerEngineSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
@@ -21,17 +22,16 @@ import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts"
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { pgDeltaNextShadowLayer } from "./pgdelta-next-shadow.layer.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
-import type { DbTomlValues } from "../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 
 const toml = {
   projectEnv: {},
-  envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
+  exposedSchemas: ["public", "graphql_public"],
   port: 54321,
   shadowPort: 54320,
   password: "postgres",
-  poolerConnectionString: Option.none(),
-  projectId: Option.some("test"),
+  projectId: "test",
   majorVersion: 17,
   orioledbVersion: Option.none(),
   denoVersion: 2,
@@ -54,8 +54,8 @@ const toml = {
   seed: { enabled: false, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-  remoteOverrideKeys: new Set<string>(),
-} satisfies DbTomlValues;
+  configFile: { format: "toml", path: "supabase/config.toml" },
+} satisfies DbConfigValues;
 
 const fakeDocker = Layer.succeed(DockerRun, {
   run: () => Effect.die("Docker is not used by the native stack backend"),
@@ -68,7 +68,7 @@ const query = Effect.fn("PgDeltaNextShadowStackTest.query")(function* (
   url: string,
   sql: string,
 ) {
-  const connection = parseConnectionString(url);
+  const connection = yield* parseConnectionString(url);
   if (connection === undefined) return yield* Effect.die("invalid shadow URL");
   const session = yield* db.connect(connection, { isLocal: true, dnsResolver: "native" });
   return yield* session.query(sql);
@@ -97,7 +97,7 @@ describe("pg-delta next stack shadow provisioning", () => {
         const output = mockOutput().layer;
         const apiLayer = stackApiLayer.pipe(
           Layer.provide(FetchHttpClient.layer),
-          Layer.provide(BunServices.layer),
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
         );
         const shadowLayer = pgDeltaNextShadowLayer.pipe(
           Layer.provide(apiLayer),
@@ -107,16 +107,16 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.provide(settings),
           Layer.provide(runtimeInfoLayer),
           Layer.provide(output),
+          Layer.provide(cliConfigValuesTestLayer),
           Layer.provide(Layer.succeed(DebugFlag, false)),
           Layer.provide(Layer.succeed(ExperimentalFlag, false)),
           Layer.provide(Layer.succeed(NetworkIdFlag, Option.none())),
           Layer.provide(Layer.succeed(CliArgs, { args: [] })),
           // Without a reachable container engine, automatic selection keeps the shadows native.
           Layer.provide(engines.hidingLayer),
-          Layer.provide(BunServices.layer),
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
         );
         const services = Layer.mergeAll(
-          BunServices.layer,
           FetchHttpClient.layer,
           stackBackendLayer("stack"),
           apiLayer,
@@ -129,7 +129,7 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.succeed(NetworkIdFlag, Option.none()),
           Layer.succeed(CliArgs, { args: [] }),
           shadowLayer,
-        );
+        ).pipe(Layer.provideMerge(BunServices.layer));
 
         const urls = yield* Effect.scoped(
           Effect.gen(function* () {
@@ -168,7 +168,7 @@ describe("pg-delta next stack shadow provisioning", () => {
         expect(api).toEqual([]);
       }).pipe(
         Effect.scoped,
-        (body) => withEnvVar("SUPABASE_SHADOW_CACHE", "1", body),
+        (body) => withConfigEnv({ SUPABASE_SHADOW_CACHE: "1" }, body),
         Effect.provide(BunServices.layer),
       ),
     180_000,

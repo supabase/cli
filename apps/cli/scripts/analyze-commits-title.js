@@ -14,6 +14,25 @@ function highestRelease(current, candidate) {
   return current;
 }
 
+export function releaseTypeForTitle(title) {
+  const match = titlePattern.exec(title.split(/\r?\n/, 1)[0]);
+  if (!match) {
+    return null;
+  }
+
+  const { type, breaking } = match.groups;
+  if (breaking === "!") {
+    return "major";
+  }
+  if (type === "feat" || type === "FEAT") {
+    return "minor";
+  }
+  if (type === "fix" || type === "FIX" || type === "perf" || type === "revert") {
+    return "patch";
+  }
+  return null;
+}
+
 export function analyzeCommits(_pluginConfig, context) {
   let releaseType = null;
 
@@ -25,21 +44,7 @@ export function analyzeCommits(_pluginConfig, context) {
     }
 
     context.logger.log("Analyzing commit: %s", title);
-    const match = titlePattern.exec(title);
-    if (!match) {
-      context.logger.log("The commit should not trigger a release");
-      continue;
-    }
-
-    const { type, breaking } = match.groups;
-    const commitReleaseType =
-      breaking === "!"
-        ? "major"
-        : type === "feat" || type === "FEAT"
-          ? "minor"
-          : type === "fix" || type === "FIX" || type === "perf" || type === "revert"
-            ? "patch"
-            : null;
+    const commitReleaseType = releaseTypeForTitle(title);
 
     if (!commitReleaseType) {
       context.logger.log("The commit should not trigger a release");

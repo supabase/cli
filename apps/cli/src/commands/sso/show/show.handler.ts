@@ -1,13 +1,16 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Result } from "effect";
+import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
-import { GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -19,6 +22,7 @@ import {
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { ssoReadRequestOptions, warnIfProjectUnhealthy } from "../sso.request-policy.ts";
 import type { SsoShowFlags } from "./show.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({
@@ -29,39 +33,42 @@ const mapStatusOrNetwork = mapHttpError({
 });
 
 const handleShowError = (providerId: string, cause: SupabaseApiError) =>
-  Effect.gen(function* () {
-    const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
+  mapStatusOrNetwork(cause).pipe(
     // `show` does not fire upgrade-suggestion telemetry, unlike add/update/list.
-    if (mapped._tag === "SsoShowUnexpectedStatusError" && mapped.status === 404) {
-      return yield* new SsoShowNotFoundError({
-        message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
-      });
-    }
-    return yield* Effect.fail(mapped);
-  });
+    Effect.catchTag("SsoShowUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        if (mapped.status === 404) {
+          return yield* new SsoShowNotFoundError({
+            message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+          });
+        }
+        return yield* mapped;
+      }),
+    ),
+  );
 
 export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const providerId = yield* validateUuid(flags.providerId).pipe(
-      Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
-    );
+    const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const fetching =
         output.format === "text" ? yield* output.task("Fetching SSO provider...") : undefined;
-      const response = yield* api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch((cause) => handleShowError(providerId, cause)),
-      );
+      const response = yield* api.v1
+        .getASsoProvider({ ref, provider_id: providerId }, yield* ssoReadRequestOptions)
+        .pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.tapError((cause) => warnIfProjectUnhealthy(ref, cause)),
+          Effect.catch((cause) => handleShowError(providerId, cause)),
+        );
       yield* fetching?.clear ?? Effect.void;
 
       // `--metadata` short-circuits regardless of `--output`.
@@ -70,25 +77,25 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
         return;
       }
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         return yield* new SsoShowEnvNotSupportedError({
           message: "--output env flag is not supported",
         });
       }
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(response));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(response));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(response, GO_SSO_PROVIDER_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(response, SSO_PROVIDER_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
-        // TOML encoding can fail on a nil element in an attribute-mapping `default` array.
+      if (outputFlagFormat === "toml") {
+        // TOML encoding can fail on a null element in an attribute-mapping `default` array.
         const toml = yield* Effect.try({
-          try: () => encodeGoToml(response, GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeStructToml(response, SSO_PROVIDER_RESPONSE_SHAPE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,

@@ -9,28 +9,34 @@ import {
 } from "@supabase/config/effect";
 import {
   applyConfigEdits,
-  decodeCliConfigDocumentForValidationEffect,
   writeCliConfigDocumentText,
   type ConfigEdit,
   type ConfigEditRefusalReason,
-  type DecodeCliConfigDocumentForValidationEffectOptions,
+  parseCliConfigDocument,
 } from "@supabase/config/internal";
 import type { ConfigChange } from "@supabase/config";
 import { operationDefinitions } from "@supabase/api/effect";
-import { Effect, FileSystem, Result, Schema, SchemaIssue } from "effect";
+import { Effect, FileSystem, Option, Result, Schema, SchemaIssue } from "effect";
 
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { Output } from "../shared/output/output.service.ts";
+import {
+  decodeCliConfigDocumentForValidation,
+  type CliConfigValidationOptions,
+} from "../config/cli-config-validation.ts";
+import { block } from "./command-permissions/model.ts";
 import { sanitizeErrorBody, sanitizeInlineName } from "./http-errors.ts";
-import type { ConfigTarget } from "./project-target.ts";
+import type { LinkedTarget } from "./target/resolve-target.ts";
 import { BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
 import {
   configDeepSetAtPath,
   configIsRecord,
   configPathKey,
 } from "../commands/config/config.paths.ts";
-import { loadLocalConfig, relativeConfigPath } from "../commands/config/config.load.ts";
+import { configFileName } from "./config-advice.ts";
+import { loadDeclaredFileConfig, relativeConfigPath } from "../commands/config/config.load.ts";
 import {
   CONFIG_CLASS_LABELS,
   configApiScope,
@@ -88,7 +94,7 @@ import {
  */
 
 export interface ConfigPullPlanRequest {
-  readonly target: ConfigTarget;
+  readonly target: Pick<LinkedTarget, "ref" | "branch">;
   readonly remoteLabel: string | undefined;
   readonly source: ConfigPullSource;
 }
@@ -298,7 +304,7 @@ function configPullChangeRelativeValue(
 }
 
 /**
- * Converts a failed {@link decodeCliConfigDocumentForValidationEffect} attempt's
+ * Converts a failed {@link decodeCliConfigDocumentForValidation} attempt's
  * `SchemaIssue` paths into `ConfigChange.path`-relative segments. `isLabelPrefixed` strips
  * one leading segment for the raw/unmerged projection of a remote destination, whose issue
  * paths start with the `remotes` map's own key (the label) rather than already being
@@ -372,16 +378,16 @@ function configPullFamiliesForChangePaths(
 }
 
 /**
- * Runs {@link decodeCliConfigDocumentForValidationEffect}, capturing only its own
+ * Runs {@link decodeCliConfigDocumentForValidation}, capturing only its own
  * `CliConfigParseError` failure into a `Result`. A genuinely malformed `.env`/`.env.local`,
  * or a filesystem failure reading one, is not a decode-attribution failure, so those
- * propagate uncaught, matching how the real `loadCliConfig` call already handles them.
+ * propagate uncaught, matching how the resolved config load handles them.
  */
 function decodeConfigPullValidation(
   document: Record<string, unknown>,
-  options: DecodeCliConfigDocumentForValidationEffectOptions,
+  options: CliConfigValidationOptions,
 ) {
-  return decodeCliConfigDocumentForValidationEffect(document, options).pipe(
+  return decodeCliConfigDocumentForValidation(document, options).pipe(
     Effect.map(Result.succeed),
     Effect.catchTag("CliConfigParseError", (cause) => Effect.succeed(Result.fail(cause))),
   );
@@ -389,7 +395,7 @@ function decodeConfigPullValidation(
 
 /**
  * The change-path keys ({@link configPathKey}) that already fail
- * {@link decodeCliConfigDocumentForValidationEffect} in `rawDocument` as it sits on disk
+ * {@link decodeCliConfigDocumentForValidation} in `rawDocument` as it sits on disk
  * right now, before this pull's own writes are projected. {@link validateConfigPullPlan}
  * excludes these from the families it forms — pulling should never attribute, drop, or fail
  * over a pre-existing problem; it only needs to leave the file no worse than it was. Runs
@@ -406,7 +412,6 @@ const configPullPreExistingFailingChangePathKeys = Effect.fnUntraced(function* (
   const rawDecoded = yield* decodeConfigPullValidation(input.rawDocument, {
     path: input.configPath,
     format: input.format,
-    goViperCompat: true,
   });
   if (Result.isFailure(rawDecoded)) {
     for (const path of configPullSchemaIssueChangePaths(
@@ -420,7 +425,6 @@ const configPullPreExistingFailingChangePathKeys = Effect.fnUntraced(function* (
     const mergedDecoded = yield* decodeConfigPullValidation(input.rawDocument, {
       path: input.configPath,
       format: input.format,
-      goViperCompat: true,
       remoteName: input.destination.label,
     });
     if (Result.isFailure(mergedDecoded)) {
@@ -438,7 +442,7 @@ const CONFIG_PULL_VALIDATION_ROUND_CAP = 4;
 
 /**
  * `config pull`'s schema-validation gate: decodes the projected final document the way the
- * next `loadCliConfig` call will (including a `[remotes.*]` destination's `remoteName`-merged
+ * next config load will (including a `[remotes.*]` destination's `remoteName`-merged
  * projection, since a block can pass the raw check yet still fail once selected), and never
  * writes a file the CLI itself couldn't load. A failure already present in
  * {@link configPullPreExistingFailingChangePathKeys} is ignored; a new one drops its
@@ -471,14 +475,12 @@ const validateConfigPullPlan = Effect.fnUntraced(function* (input: {
       input.projectRef,
     );
     const rawDecoded = yield* decodeConfigPullValidation(document, {
-      goViperCompat: true,
       path: input.configPath,
       format: input.format,
     });
     const mergedDecoded =
       destination.kind === "remote"
         ? yield* decodeConfigPullValidation(document, {
-            goViperCompat: true,
             path: input.configPath,
             format: input.format,
             remoteName: destination.label,
@@ -533,25 +535,7 @@ const validateConfigPullPlan = Effect.fnUntraced(function* (input: {
   });
 });
 
-/** Builds the file-load helpers for one `cliSettings.workdir`, narrowed to `workdir` and
- * `explicitWorkdir` since that's all `loadLocalConfig` needs; only this family's own tagged
- * error class is local. */
-function makeConfigLoader(cliSettings: {
-  readonly workdir: string;
-  readonly explicitWorkdir: boolean;
-}) {
-  const toRelativeConfigPath = (path: string): string =>
-    relativeConfigPath(cliSettings.workdir, path);
-
-  const loadConfig = (projectRef: string | undefined) =>
-    loadLocalConfig(
-      cliSettings,
-      projectRef,
-      (message) => new ConfigPullLoadConfigError({ message }),
-    );
-
-  return { toRelativeConfigPath, loadConfig };
-}
+const makeLoadError = (message: string) => new ConfigPullLoadConfigError({ message });
 
 /**
  * The paired base config load and its exact on-disk text, produced only by
@@ -573,21 +557,30 @@ export interface ConfigPullSource {
  */
 export const openConfigPullSource = Effect.fn("ConfigPull.openSource")(function* () {
   const cliSettings = yield* CommandSettings;
-  const { loadConfig, toRelativeConfigPath } = makeConfigLoader(cliSettings);
 
-  const loaded = yield* loadConfig(undefined);
+  const { loaded } = yield* loadDeclaredFileConfig(cliSettings, Option.none(), makeLoadError);
 
   if (loaded.rawText === undefined) {
     // The loader guarantees `rawText` for any file it parsed off disk; treat this like a
     // concurrent edit rather than re-reading, which would reopen the race this baseline
     // exists to close.
     return yield* new ConfigPullFileChangedError({
-      message: `${toRelativeConfigPath(loaded.path)} could not be read: the config loader returned no on-disk text. Rerun the command.`,
+      message: `${relativeConfigPath(cliSettings.workdir, loaded.path)} could not be read: the config loader returned no on-disk text. Rerun the command.`,
     });
   }
 
   return { loaded, text: loaded.rawText };
 });
+
+function configPullSourceDocument(source: ConfigPullSource): Readonly<Record<string, unknown>> {
+  const parsed = parseCliConfigDocument(source.text, source.loaded.format);
+  return configIsRecord(parsed) ? parsed : {};
+}
+
+/** `planConfigPullRun`'s remote config read, shared by `config pull` and `pull`. */
+export const configPullRun = block("config-pull-run", [
+  { operationId: "v2-get-project-config", kind: "required" },
+]);
 
 /**
  * Resolves the pull destination, reloads with the `[remotes.*]` overlay when block reuse
@@ -604,7 +597,6 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const { ref, branch } = request.target;
-  const { loadConfig, toRelativeConfigPath } = makeConfigLoader(cliSettings);
 
   const branchLabelCandidate =
     branch !== undefined && !BRANCH_UUID_PATTERN.test(branch) ? branch : undefined;
@@ -636,14 +628,14 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
   // A brand-new block has nothing to overlay yet.
   let loaded = request.source.loaded;
   if (destination.kind === "remote" && !destination.created) {
-    loaded = yield* loadConfig(ref);
+    ({ loaded } = yield* loadDeclaredFileConfig(cliSettings, Option.some(ref), makeLoadError));
   }
 
   const context: ConfigPullContext = {
     projectRef: ref,
     branch,
     configSchema: loaded.schemaRef ?? CLI_CONFIG_SCHEMA_URL,
-    configPath: toRelativeConfigPath(loaded.path),
+    configPath: relativeConfigPath(cliSettings.workdir, loaded.path),
     format: loaded.format,
     appliedRemote: loaded.appliedRemote,
     destination,
@@ -713,6 +705,7 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
     changeSet,
     destination,
     rootDocument: request.source.loaded.document ?? {},
+    sourceDocument: configPullSourceDocument(request.source),
     projectRef: ref,
   });
   const planWithDefectCheck = yield* configPullDefectAndUnpushableCheck(plan, fixpoint.residual);
@@ -755,6 +748,7 @@ export const applyConfigPullRun = Effect.fn("ConfigPull.apply")(function* (input
   readonly source: ConfigPullSource;
 }) {
   const fs = yield* FileSystem.FileSystem;
+  const configValues = yield* CliConfigValues;
   const { plan, context, configFilePath } = input.runPlan;
   yield* Effect.annotateCurrentSpan("config.write_count", plan.writes.length);
 
@@ -792,12 +786,14 @@ export const applyConfigPullRun = Effect.fn("ConfigPull.apply")(function* (input
       message: `cannot write ${context.configPath}: ${configPullRefusalPhrase(reason)}${location} — ${detail}. ${configPullRefusalRemediation(reason)}`,
     });
   }
-  yield* writeCliConfigDocumentText(configFilePath, editOutcome.text).pipe(
-    Effect.catchTag(
-      "CliConfigWriteError",
-      (cause) => new ConfigPullWriteError({ message: cause.message }),
-    ),
-  );
+  yield* configValues
+    .writeThrough(writeCliConfigDocumentText(configFilePath, editOutcome.text))
+    .pipe(
+      Effect.catchTag(
+        "CliConfigWriteError",
+        (cause) => new ConfigPullWriteError({ message: cause.message }),
+      ),
+    );
 });
 
 interface ChangeStatus {
@@ -838,10 +834,10 @@ function writtenCount(plan: ConfigPullPlan, outcome: ConfigPullOutcome): number 
   return outcome.dryRun || outcome.declined ? 0 : plan.writes.length;
 }
 
-function renderLocal(local: unknown, declared: boolean): string {
+function renderLocal(local: unknown, declared: boolean, configPath: string): string {
   const value = configRenderValue(local, "(unset)");
   return local !== undefined && !declared
-    ? `${value} (schema default — not declared in config.toml)`
+    ? `${value} (schema default — not declared in ${configFileName(configPath)})`
     : value;
 }
 
@@ -947,7 +943,7 @@ export function renderConfigPullText(
       change.envVariables === undefined
         ? ""
         : ` (from env ${sanitizeInlineName(change.envVariables.join(", "))})`;
-    lines.push(`  local:  ${renderLocal(change.local, change.declared)}${env}`);
+    lines.push(`  local:  ${renderLocal(change.local, change.declared, configPath)}${env}`);
     lines.push(`  remote: ${configRenderValue(change.remote, "(not returned)")}`);
     lines.push("");
   }

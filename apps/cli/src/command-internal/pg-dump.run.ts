@@ -1,15 +1,17 @@
-import { Effect, Option } from "effect";
+import { Config, Effect, FileSystem, Option, Path } from "effect";
 import type { Stack } from "@supabase/stack/effect";
+import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import { postgres } from "@supabase/stack/commands";
 type StackRuntimePreference =
   | { readonly kind: "native" }
   | { readonly kind: "container"; readonly engine: "docker" | "podman" };
 
 import { NetworkIdFlag } from "./global-flags.ts";
-import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "./supabase-env.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
+import { DbConnectError } from "./db-connection.errors.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 import { BundledPostgresClient, resolveBundledPostgresRuntime } from "./bundled-postgres-client.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -51,12 +53,13 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
   const networkIdFlag = yield* NetworkIdFlag;
 
   // Dump never falls back to generated `supabase_network_*`; host is the default.
-  const network = dumpNetworkMode(
+  const network = yield* dumpNetworkMode(
     Option.getOrUndefined(networkIdFlag),
     params.forceHostNetwork === true,
     params.projectEnvValues ?? {},
   );
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
+  const tls = yield* containerTlsFiles(params.env, params.script);
 
   const image = yield* getRegistryImageUrl(params.image, params.projectEnvValues).pipe(
     Effect.mapError(
@@ -72,11 +75,11 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
   return yield* docker.runStream<E>(
     {
       image,
-      cmd: ["bash", "-c", params.script, "--"],
-      env: params.env,
-      binds: [],
+      cmd: ["bash", "-c", tls.script, "--"],
+      env: tls.env,
+      binds: tls.mounts.map((mount) => `${mount.source}:${mount.target}:ro`),
       workingDir: Option.none(),
-      securityOpt: [],
+      securityOpt: tls.securityOpt,
       extraHosts,
       network,
       projectEnvValues: params.projectEnvValues,
@@ -85,18 +88,114 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
   );
 });
 
+const CONTAINER_TLS_FILES = [
+  ["PGSSLROOTCERT", "sslrootcert", "/run/supabase/tls/root.crt"],
+  ["PGSSLCERT", "sslcert", "/run/supabase/tls/client.crt"],
+  ["PGSSLKEY", "sslkey", "/run/supabase/tls/client.key"],
+] as const;
+
+const CONTAINER_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
+const CONTAINER_PRIVATE_KEY = "/tmp/supabase-client.key";
+
+const HOST_CA_BUNDLES = [
+  "/etc/ssl/cert.pem",
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/ssl/ca-bundle.pem",
+] as const;
+
+/* Verifying without a root cert, or with `system`, needs a CA bundle libpq can read. */
+const usesDefaultTrustRoots = (env: Readonly<Record<string, string>>): boolean =>
+  env["PGSSLROOTCERT"] === "system" ||
+  ((env["PGSSLMODE"] === "verify-ca" || env["PGSSLMODE"] === "verify-full") &&
+    env["PGSSLROOTCERT"] === undefined);
+
+const opensslOverride = (name: string) =>
+  Config.option(Config.NonEmptyString(name)).pipe(
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+const nativeTlsEnv = Effect.fnUntraced(function* (
+  env: Readonly<Record<string, string>>,
+  homeDir: string,
+  clientVersion: string,
+) {
+  if (!usesDefaultTrustRoots(env)) return env;
+  if (env["PGSSLROOTCERT"] === "system") {
+    /* `system` means OpenSSL's verify paths, which honour these; libpq reads `system` from 16. */
+    const certFile = yield* opensslOverride("SSL_CERT_FILE");
+    const certDir = yield* opensslOverride("SSL_CERT_DIR");
+    if (
+      Number.parseInt(clientVersion, 10) >= 16 &&
+      (Option.isSome(certFile) || Option.isSome(certDir))
+    )
+      return env;
+    if (Option.isSome(certFile)) return { ...env, PGSSLROOTCERT: certFile.value };
+  }
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
+  /* libpq already trusts ~/.postgresql/root.crt by default, so leave it in charge. */
+  if (
+    env["PGSSLROOTCERT"] === undefined &&
+    (yield* exists(path.join(homeDir, ".postgresql", "root.crt")))
+  )
+    return env;
+  for (const bundle of HOST_CA_BUNDLES)
+    if (yield* exists(bundle)) return { ...env, PGSSLROOTCERT: bundle };
+  return env;
+});
+
+const containerTlsFiles = Effect.fnUntraced(function* (
+  env: Readonly<Record<string, string>>,
+  script: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const mounted = { ...env };
+  const mounts: Array<{ source: string; target: string; readOnly: true }> = [];
+  for (const [key, setting, target] of CONTAINER_TLS_FILES) {
+    const value = env[key];
+    if (value === undefined || (key === "PGSSLROOTCERT" && value === "system")) continue;
+    const source = path.resolve(value);
+    const unreadable = (reason: string) =>
+      new DbConnectError({ message: `failed to read ${setting} ${value}: ${reason}` });
+    /* A colon past a Windows drive prefix would split the `-v` spec into extra fields. */
+    if (source.replace(/^[A-Za-z]:[\\/]/u, "").includes(":"))
+      return yield* unreadable("a Docker bind mount cannot contain ':'");
+    /* `docker run -v` would create a missing source as a host directory. */
+    const info = yield* fs
+      .stat(source)
+      .pipe(Effect.mapError((error) => unreadable(String(error.reason.cause ?? error.message))));
+    if (info.type !== "File") return yield* unreadable("not a file");
+    mounts.push({ source, target, readOnly: true });
+    mounted[key] = target;
+  }
+  if (usesDefaultTrustRoots(env)) mounted["PGSSLROOTCERT"] = CONTAINER_CA_BUNDLE;
+  const key = mounted["PGSSLKEY"];
+  let prelude = "";
+  if (key !== undefined) {
+    /* libpq rejects a key Docker Desktop shares with loose permissions; use a private copy. */
+    prelude = `(umask 077 && cp ${key} ${CONTAINER_PRIVATE_KEY}) || exit 1\n`;
+    mounted["PGSSLKEY"] = CONTAINER_PRIVATE_KEY;
+  }
+  /* SELinux blocks label-confined containers from reading host files. */
+  const securityOpt = mounts.length > 0 ? ["label:disable"] : [];
+  return { env: mounted, mounts, securityOpt, script: prelude + script };
+});
+
 export type PgDumpClient =
   | { readonly kind: "container" }
   | {
       readonly kind: "stack";
       readonly stack: Stack;
       readonly command: "pg_dump" | "pg_dumpall";
-      readonly major: 15 | 17;
+      readonly pin: ArtifactPin;
     }
   | {
       readonly kind: "bundled";
       readonly command: "pg_dump" | "pg_dumpall";
-      readonly version: string;
+      readonly pin: ArtifactPin;
       readonly runtime?: StackRuntimePreference;
     };
 
@@ -106,30 +205,34 @@ export const pgDumpClientExitMessage = (client: PgDumpClient, exitCode: number):
     : `error running container: exit ${exitCode}`;
 
 /** Network for a pg_dump tool container; host unless `--network-id` or `SUPABASE_NETWORK_ID` names one. */
-export const dumpNetworkMode = (
+export const dumpNetworkMode = Effect.fnUntraced(function* (
   networkId: string | undefined,
   forceHostNetwork: boolean,
   projectEnvValues: Readonly<Record<string, string>>,
-): { readonly _tag: "named"; readonly name: string } | { readonly _tag: "host" } => {
+): Effect.fn.Return<{ readonly _tag: "named"; readonly name: string } | { readonly _tag: "host" }> {
   if (networkId !== undefined && networkId.length > 0) return { _tag: "named", name: networkId };
   if (forceHostNetwork) return { _tag: "host" };
-  const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues);
+  const envNetworkId = yield* supabaseEnvStringWithProjectFallback(
+    "SUPABASE_NETWORK_ID",
+    projectEnvValues,
+  );
   return envNetworkId.length > 0 ? { _tag: "named", name: envNetworkId } : { _tag: "host" };
-};
+});
 
-const bundledDumpNetwork = (
+const bundledDumpNetwork = Effect.fnUntraced(function* (
   networkId: string | undefined,
   forceHostNetwork: boolean,
   projectEnvValues: Readonly<Record<string, string>>,
-): "host" | { readonly name: string } => {
-  const network = dumpNetworkMode(networkId, forceHostNetwork, projectEnvValues);
+): Effect.fn.Return<"host" | { readonly name: string }> {
+  const network = yield* dumpNetworkMode(networkId, forceHostNetwork, projectEnvValues);
   return network._tag === "host" ? "host" : { name: network.name };
-};
+});
 
 const transformDumpLine = (
   line: string,
   script: string,
   env: Readonly<Record<string, string>>,
+  inQuotedSql = false,
 ): string | undefined => {
   const applyExtraSed = (value: string | undefined): string | undefined =>
     env["EXTRA_SED"] === "/^--/d" && value?.startsWith("--") ? undefined : value;
@@ -146,6 +249,13 @@ const transformDumpLine = (
     if (reservedRole.test(line))
       return dropComments(allowedConfig.test(line) ? line : `-- ${line}`);
     if (new RegExp(`GRANT ".*" TO "(${reservedRoles})"`, "u").test(line))
+      return dropComments(`-- ${line}`);
+    if (
+      !inQuotedSql &&
+      new RegExp(`^GRANT [A-Z ,]+ ON PARAMETER ".*" TO "(${reservedRoles})"([ ;]|$)`, "u").test(
+        line,
+      )
+    )
       return dropComments(`-- ${line}`);
     if (line.startsWith("-- ") && allowedConfig.test(line.slice(3)))
       return dropComments(line.slice(3));
@@ -202,6 +312,25 @@ const stackDumpStdout = <E>(
   const encoder = new TextEncoder();
   let carry = "";
   let previous: string | undefined;
+  let quote = "";
+  const transformLine = (line: string) => {
+    const inQuotedSql = quote !== "";
+    // pg_dumpall doubles quotes in literals and identifiers, including E-strings.
+    if (script.includes("pg_dumpall")) {
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        const next = line[i + 1];
+        if (quote !== "") {
+          if (char === quote) {
+            if (next === quote) i++;
+            else quote = "";
+          }
+        } else if (char === "'" || char === '"') quote = char;
+        else if (char === "-" && next === "-") break;
+      }
+    }
+    return transformDumpLine(line, script, env, inQuotedSql);
+  };
   const onChunk = (bytes: Uint8Array) =>
     Effect.suspend(() => {
       carry += decoder.decode(bytes, { stream: true });
@@ -210,7 +339,7 @@ const stackDumpStdout = <E>(
       return Effect.forEach(
         lines,
         (line) => {
-          const transformed = transformDumpLine(line, script, env);
+          const transformed = transformLine(line);
           if (
             transformed === undefined ||
             (script.includes("pg_dumpall") && transformed === previous)
@@ -225,7 +354,7 @@ const stackDumpStdout = <E>(
   const flush = () =>
     Effect.suspend(() => {
       carry += decoder.decode();
-      const final = transformDumpLine(carry, script, env);
+      const final = transformLine(carry);
       return final === undefined ||
         final.length === 0 ||
         (script.includes("pg_dumpall") && final === previous)
@@ -298,8 +427,8 @@ export const streamPgDumpWithClient = Effect.fn("streamPgDumpWithClient")(functi
       yield* params.onStdout(new TextEncoder().encode("SET session_replication_role = replica;\n"));
     const result = yield* params.client.stack.commands.run(
       params.client.command === "pg_dump"
-        ? postgres.pgDump({ major: params.client.major })
-        : postgres.pgDumpAll({ major: params.client.major }),
+        ? postgres.pgDump({ pin: params.client.pin })
+        : postgres.pgDumpAll({ pin: params.client.pin }),
       {
         args,
         env: params.env,
@@ -328,12 +457,27 @@ export const streamPgDumpWithClient = Effect.fn("streamPgDumpWithClient")(functi
       runtime.kind === "container" && runtimeInfo.platform === "linux"
         ? ["host.docker.internal:host-gateway"]
         : [];
+    const tls =
+      runtime.kind === "container"
+        ? yield* containerTlsFiles(params.env, params.script)
+        : {
+            env: yield* nativeTlsEnv(
+              params.env,
+              runtimeInfo.homeDir,
+              params.client.pin.upstreamVersion,
+            ),
+            mounts: [],
+            securityOpt: [],
+            script: params.script,
+          };
     return yield* bundled.run({
-      version: params.client.version,
+      pin: params.client.pin,
       runtime,
-      argv: ["bash", "-c", params.script, "--"],
-      env: params.env,
-      network: bundledDumpNetwork(
+      argv: ["bash", "-c", tls.script, "--"],
+      env: tls.env,
+      mounts: tls.mounts,
+      securityOpt: tls.securityOpt,
+      network: yield* bundledDumpNetwork(
         Option.getOrUndefined(networkIdFlag),
         params.forceHostNetwork === true,
         params.projectEnvValues ?? {},

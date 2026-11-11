@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { EventCommandExecuted } from "../../../shared/telemetry/event-catalog.ts";
@@ -17,7 +17,7 @@ function testRoot() {
 }
 
 describe("completion bash", () => {
-  it.live("prints the native bash completion script", () => {
+  it.effect("prints the native bash completion script", () => {
     const out = setupCompletionBash();
     return Effect.gen(function* () {
       yield* completionBash({ noDescriptions: false });
@@ -27,7 +27,7 @@ describe("completion bash", () => {
     }).pipe(Effect.provide(out.layer));
   });
 
-  it.live(
+  it.effect(
     "prints the native bash completion script without descriptions when --no-descriptions is set",
     () => {
       const out = setupCompletionBash();
@@ -38,7 +38,7 @@ describe("completion bash", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "accepts --no-descriptions from real argv via the command parser and still prints the no-desc script",
     () => {
       const out = setupCompletionBash();
@@ -49,6 +49,7 @@ describe("completion bash", () => {
         out.layer,
         mockAnalytics().layer,
         BunServices.layer,
+        BunCrypto.layer,
         processControlLayer,
       );
       return Effect.gen(function* () {
@@ -61,22 +62,20 @@ describe("completion bash", () => {
     },
   );
 
-  it.live(
-    "fires the cli_command_executed telemetry event, matching Go's PersistentPostRun (CLI-1965 review finding)",
-    () => {
-      const out = setupCompletionBash();
-      const analytics = mockAnalytics();
-      const layer = Layer.mergeAll(
-        out.layer,
-        analytics.layer,
-        BunServices.layer,
-        processControlLayer,
-      );
-      return Effect.gen(function* () {
-        yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["bash"]);
-        const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
-        expect(event).toBeDefined();
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("fires the cli_command_executed telemetry event (CLI-1965 review finding)", () => {
+    const out = setupCompletionBash();
+    const analytics = mockAnalytics();
+    const layer = Layer.mergeAll(
+      out.layer,
+      analytics.layer,
+      BunServices.layer,
+      BunCrypto.layer,
+      processControlLayer,
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["bash"]);
+      const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+      expect(event).toBeDefined();
+    }).pipe(Effect.provide(layer));
+  });
 });

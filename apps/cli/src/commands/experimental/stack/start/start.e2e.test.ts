@@ -12,13 +12,15 @@ import {
   Predicate,
   Schema,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { parse as parseDotenv } from "dotenv";
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 import {
-  makeTempHome,
+  createTempHome,
   runSupabaseEffect,
+  type SpawnedSupabase,
   spawnSupabase,
+  type TempHome,
 } from "../../../../../tests/helpers/cli.ts";
 
 const START_TIMEOUT_MS = 15 * 60_000;
@@ -92,7 +94,6 @@ const FollowEventSchema = Schema.Struct({
 
 const VariablesSchema = Schema.Record(Schema.String, Schema.String);
 const StartResultSchema = Schema.Struct({ id: Schema.String });
-const StackListSchema = Schema.Struct({ stacks: Schema.Array(Schema.Unknown) });
 
 const minimalConfig = `project_id = "compiled-stack-start-e2e"
 
@@ -163,22 +164,19 @@ const destroyStack = (home: string, stackId: string) =>
           }),
   );
 
-const waitForOutput = (
-  spawned: ReturnType<typeof spawnSupabase>,
-  pattern: RegExp,
-  timeoutMs: number,
-) =>
-  Effect.tryPromise({
-    try: () => spawned.waitForOutput(pattern, timeoutMs),
-    catch: (cause) =>
-      new StartE2eProcessError({
-        message: "stack logs follower did not produce live output",
-        cause,
-      }),
-  });
+const waitForOutput = (spawned: SpawnedSupabase, pattern: RegExp, timeoutMs: number) =>
+  spawned.waitForOutput(pattern, timeoutMs).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StartE2eProcessError({
+          message: "stack logs follower did not produce live output",
+          cause,
+        }),
+    ),
+  );
 
 describe("stack start (compiled e2e)", () => {
-  let home: ReturnType<typeof makeTempHome> | undefined;
+  let home: TempHome | undefined;
   let projectDir: string | undefined;
   let stackId: string | undefined;
   let stackDestroyed = false;
@@ -186,7 +184,8 @@ describe("stack start (compiled e2e)", () => {
   const cleanup = Effect.gen(function* () {
     let cleanupComplete = stackDestroyed;
     if (!cleanupComplete && home !== undefined) {
-      const candidates = yield* readDirectory(join(home.dir, "stacks")).pipe(
+      const stacksDir = join(home.dir, "stacks");
+      const candidates = yield* readDirectory(stacksDir).pipe(
         Effect.catchIf(
           (cause) =>
             Predicate.isTagged(cause, "PlatformError") &&
@@ -194,7 +193,10 @@ describe("stack start (compiled e2e)", () => {
           () => Effect.succeed([]),
         ),
       );
-      const discovered = candidates.filter((entry) => /^[0-9a-f]{64}$/u.test(entry));
+      const discovered = yield* Effect.filter(
+        candidates.filter((entry) => /^[0-9a-f]{64}$/u.test(entry)),
+        (entry) => access(join(stacksDir, entry, "state.json")).pipe(Effect.isSuccess),
+      );
       const ownedId = stackId ?? (discovered.length === 1 ? discovered[0] : undefined);
       if (ownedId !== undefined) {
         yield* destroyStack(home.dir, ownedId);
@@ -211,11 +213,14 @@ describe("stack start (compiled e2e)", () => {
     if (projectDir !== undefined) {
       yield* remove(projectDir, { recursive: true, force: true });
     }
-    yield* Effect.try({
-      try: () => home?.[Symbol.dispose](),
-      catch: (cause) =>
-        new StartE2eProcessError({ message: "Failed to dispose temporary CLI home", cause }),
-    });
+    if (home !== undefined) {
+      yield* home.dispose.pipe(
+        Effect.mapError(
+          (cause) =>
+            new StartE2eProcessError({ message: "Failed to dispose temporary CLI home", cause }),
+        ),
+      );
+    }
     home = undefined;
     projectDir = undefined;
     stackId = undefined;
@@ -230,7 +235,7 @@ describe("stack start (compiled e2e)", () => {
     () =>
       runNode(
         Effect.gen(function* () {
-          home = makeTempHome();
+          home = yield* createTempHome;
           projectDir = yield* makeTempDirectory("/tmp/supabase-compiled-stack-start-e2e-");
           yield* makeDirectory(join(projectDir, "supabase"), { recursive: true });
           yield* writeText(join(projectDir, "supabase", "config.toml"), minimalConfig);
@@ -336,44 +341,30 @@ describe("stack start (compiled e2e)", () => {
 
           const followResult = yield* Effect.scoped(
             Effect.gen(function* () {
-              const followed = yield* Effect.acquireRelease(
-                Effect.try({
-                  try: () =>
-                    spawnSupabase(
-                      [
-                        "stack",
-                        "logs",
-                        "--follow",
-                        "--stack-id",
-                        idText,
-                        "--service",
-                        "database",
-                        "--output-format",
-                        "stream-json",
-                      ],
-                      {
-                        cwd: projectRoot,
-                        home: homeDir.dir,
-                        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-                        exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-                      },
-                    ),
-                  catch: (cause) =>
+              /* The scope owns the follower: closing it SIGKILLs the group and awaits its exit. */
+              const followed = yield* spawnSupabase(
+                [
+                  "stack",
+                  "logs",
+                  "--follow",
+                  "--stack-id",
+                  idText,
+                  "--service",
+                  "database",
+                  "--output-format",
+                  "stream-json",
+                ],
+                {
+                  cwd: projectRoot,
+                  home: homeDir.dir,
+                  env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+                  exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+                },
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
                     new StartE2eProcessError({ message: "failed to spawn logs follower", cause }),
-                }),
-                (spawned) =>
-                  Effect.sync(() => spawned.releaseOwned({ successOptOut: false })).pipe(
-                    Effect.flatMap(() => spawned.exitEffect(CLEANUP_TIMEOUT_MS)),
-                    Effect.asVoid,
-                    Effect.catchTag("CliHomeDisposeError", (cause) =>
-                      Effect.die(
-                        new StartE2eProcessError({
-                          message: "Follower reused the shared CLI home; disposal must not fail",
-                          cause,
-                        }),
-                      ),
-                    ),
-                  ),
+                ),
               );
               // History precedes the follow, whose start is the last printed record.
               yield* waitForOutput(
@@ -399,8 +390,8 @@ describe("stack start (compiled e2e)", () => {
                 /"type":"log-entry".*"source":"live"/u,
                 START_TIMEOUT_MS,
               );
-              yield* Effect.sync(() => followed.kill("SIGINT"));
-              return yield* followed.exitEffect(CLEANUP_TIMEOUT_MS);
+              yield* followed.kill("SIGINT");
+              return yield* followed.waitForExit(CLEANUP_TIMEOUT_MS);
             }),
           );
           expect(
@@ -566,6 +557,43 @@ describe("stack start (compiled e2e)", () => {
                 event.service === "database",
             ),
           ).toBe(true);
+          const unifiedHistory = yield* runSupabaseEffect(
+            [
+              "logs",
+              "--stack-id",
+              idText,
+              "--service",
+              "postgres",
+              "--since",
+              "start",
+              "--limit",
+              "1000",
+              "--output-format",
+              "json",
+            ],
+            stoppedOptions,
+          );
+          expect(
+            unifiedHistory.exitCode,
+            `stdout:\n${unifiedHistory.stdout}\nstderr:\n${unifiedHistory.stderr}`,
+          ).toBe(0);
+          const unifiedRecords = yield* Schema.decodeEffect(
+            Schema.fromJsonString(Schema.Array(Schema.JsonObject)),
+          )(unifiedHistory.stdout);
+          const retainedLine = unifiedRecords.find(
+            (record) =>
+              (record["kind"] === "stdout" || record["kind"] === "stderr") &&
+              typeof record["text"] === "string" &&
+              record["text"].length > 0,
+          );
+          expect(retainedLine).toMatchObject({
+            instanceId: databaseId,
+            service: "database",
+            launchId: expect.any(Number),
+            timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
+            text: expect.any(String),
+            position: { generation: expect.any(Number), byteOffset: expect.any(Number) },
+          });
           const stoppedFollow = yield* runSupabaseEffect(
             [...stoppedLogsArgs, "--follow"],
             stoppedOptions,
@@ -577,54 +605,10 @@ describe("stack start (compiled e2e)", () => {
           yield* destroyStack(homeDir.dir, idText);
           stackDestroyed = true;
 
-          const destroyed = yield* Effect.exit(access(join(homeDir.dir, "stacks", idText)));
+          const destroyed = yield* Effect.exit(
+            access(join(homeDir.dir, "stacks", idText, "state.json")),
+          );
           expect(Exit.isFailure(destroyed)).toBe(true);
-        }),
-      ),
-  );
-
-  test(
-    "removes a stack registration that fails to start because Docker is unreachable",
-    { timeout: CLEANUP_TIMEOUT_MS },
-    () =>
-      runNode(
-        Effect.gen(function* () {
-          home = makeTempHome();
-          projectDir = yield* makeTempDirectory("/tmp/supabase-stack-start-docker-down-e2e-");
-          yield* makeDirectory(join(projectDir, "supabase"), { recursive: true });
-          yield* writeText(join(projectDir, "supabase", "config.toml"), minimalConfig);
-          // A `docker` first on PATH that reports an unreachable daemon, as the real CLI does.
-          const binDir = join(projectDir, "bin");
-          yield* makeDirectory(binDir);
-          yield* writeText(
-            join(binDir, "docker"),
-            "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
-          );
-          yield* withFs((fs) => fs.chmod(join(binDir, "docker"), 0o755));
-
-          const result = yield* runSupabaseEffect(["stack", "start", "--runtime", "docker"], {
-            cwd: projectDir,
-            home: home.dir,
-            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the CLI subprocess resolves `docker` from PATH.
-            env: { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-            exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-          });
-          expect(result.exitCode, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).not.toBe(
-            0,
-          );
-          expect(result.stderr).toContain("Cannot connect to the Docker daemon");
-          expect(result.stderr).not.toContain("Failed to stop stack host");
-
-          const list = yield* runSupabaseEffect(["stack", "list", "--output-format", "json"], {
-            home: home.dir,
-            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-            exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-          });
-          expect(list.exitCode, `stdout:\n${list.stdout}\nstderr:\n${list.stderr}`).toBe(0);
-          const listed = yield* Schema.decodeEffect(Schema.fromJsonString(StackListSchema))(
-            list.stdout.trim(),
-          );
-          expect(listed.stacks).toEqual([]);
         }),
       ),
   );

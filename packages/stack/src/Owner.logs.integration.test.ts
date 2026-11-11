@@ -1,8 +1,8 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Context,
-  Crypto,
+  Data,
   Effect,
   Exit,
   Fiber,
@@ -11,19 +11,24 @@ import {
   Path,
   Queue,
   Redacted,
+  Ref,
   Scope,
   Stream,
 } from "effect";
-import { tmpdir } from "node:os";
+import { SecureRandom } from "effect/crypto";
+import { HttpClient } from "effect/http";
+import { testArtifactCacheRoot as cacheRoot } from "../tests/artifact-cache.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 import type { LogRecord } from "./host/LogRecord.ts";
 import { StackError, streamStackLogs } from "./effect.ts";
 import * as LogStore from "./host/LogStore.ts";
-import * as State from "./State.ts";
-import type { SavedStack } from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import type { SavedStack } from "./StackNamespace.ts";
+import { selection } from "../tests/pins.ts";
+import { failOnStall } from "../tests/stall-guard.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
-const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const services = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 const stackFor = (id: string, runtime: SavedStack["runtime"]): SavedStack => ({
   id,
@@ -32,7 +37,6 @@ const stackFor = (id: string, runtime: SavedStack["runtime"]): SavedStack => ({
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 /** Opens an owner that destroys its stack on scope exit unless `kept` preserves it for a later read. */
@@ -43,18 +47,22 @@ const openOwner = (
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const path = yield* Path.Path;
     const root = kept?.root ?? (yield* fs.makeTempDirectoryScoped({ prefix }));
-    const stack = stackFor(
-      `owner-logs-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`,
-      runtime,
-    );
+    const stack = stackFor(`owner-logs-${(yield* crypto.uuidV4()).replaceAll("-", "")}`, runtime);
     const state = Context.get(
-      yield* Layer.build(State.layer({ root: `${root}/state` })),
-      State.Service,
+      yield* Layer.build(StackNamespace.layer({ root: `${root}/state` })),
+      StackNamespace.Service,
     );
     yield* state.save(stack);
-    const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+    const owner = yield* ownerFor({
+      saved: stack,
+      state,
+      root: `${root}/data`,
+      cacheRoot,
+      ...(runtime === "native" ? {} : { engineTarget }),
+    });
     if (kept === undefined)
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
     return {
@@ -62,14 +70,67 @@ const openOwner = (
       state,
       stack,
       stateRoot: `${root}/state`,
-      logsRoot: state.logsRoot(stack.id),
+      logsRoot: StackNamespace.stackLogsRoot(path, `${root}/state`, stack.id),
     };
   });
+
+/** The port the shared API listener serves a service's `http` endpoint on. */
+const httpPort = (
+  observation: Effect.Effect<
+    { readonly endpoints: ReadonlyArray<{ readonly name: string; readonly port: number }> },
+    StackError
+  >,
+) =>
+  observation.pipe(
+    Effect.flatMap(({ endpoints }) => {
+      const http = endpoints.find(({ name }) => name === "http");
+      return http === undefined
+        ? Effect.die("the service has no http endpoint")
+        : Effect.succeed(http.port);
+    }),
+  );
 
 const isOutput = (record: LogRecord) => record.kind === "stdout" || record.kind === "stderr";
 
 const firstOutput = (records: Stream.Stream<LogRecord, StackError>) =>
   records.pipe(Stream.filter(isOutput), Stream.take(1), Stream.runCollect);
+
+class NativeMailStallError extends Data.TaggedError("NativeMailStallError")<{
+  readonly message: string;
+}> {}
+
+type NativeMailPhase = {
+  readonly step: string;
+  readonly id?: string;
+  readonly history?: (id: string) => Stream.Stream<LogRecord, StackError>;
+};
+
+/** Fails a stalled native Mailpit step within the test timeout, naming the step and its persisted output. */
+const guardNativeMail = (phase: Ref.Ref<NativeMailPhase>) =>
+  failOnStall(
+    "25 seconds",
+    Effect.gen(function* () {
+      const { step, id, history } = yield* Ref.get(phase);
+      const output =
+        id === undefined || history === undefined
+          ? []
+          : yield* history(id).pipe(
+              Stream.filter(isOutput),
+              Stream.runCollect,
+              Effect.timeoutOrElse({
+                duration: "2 seconds",
+                orElse: () => Effect.succeed([]),
+              }),
+              Effect.orElseSucceed(() => []),
+            );
+      const text = Array.from(output, (record) => record.text ?? "")
+        .join("")
+        .slice(-2_000);
+      return yield* new NativeMailStallError({
+        message: `native Mailpit ${step}${id === undefined ? "" : ` (${id})`} did not finish within 25 seconds; output:\n${text || "(none)"}`,
+      });
+    }),
+  );
 
 /** Follows from the oldest record until `count` launch markers are persisted. */
 const awaitLaunches = (records: Stream.Stream<LogRecord, StackError>, count: number) =>
@@ -82,39 +143,56 @@ const awaitLaunches = (records: Stream.Stream<LogRecord, StackError>, count: num
 
 describe("owner persisted logs", () => {
   it.live("persists native output, serves history and follow, and deletes it on destroy", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const owner = yield* openOwner("owner-logs-native-", "native");
-        const mail = yield* owner.rpc.createService({
-          service: "mail",
-          config: {},
-          endpoints: { http: { port: "auto" } },
-        });
-        yield* owner.rpc.startService({ id: mail.id });
-        yield* owner.rpc.readyService({ id: mail.id });
+    Effect.gen(function* () {
+      const phase = yield* Ref.make<NativeMailPhase>({ step: "owner start" });
+      const enter = (step: string, id?: string) =>
+        Ref.update(phase, (current) => ({ ...current, step, id }));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const owner = yield* openOwner("owner-logs-native-", "native");
+          yield* Effect.addFinalizer(() => enter("owner teardown"));
+          yield* Ref.set(phase, {
+            step: "create",
+            history: (id) => owner.rpc.readLogs({ id, follow: false }),
+          });
+          const mail = yield* owner.rpc.createService({
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          });
+          yield* enter("artifact preparation and start", mail.id);
+          yield* owner.rpc.startService({ id: mail.id });
+          yield* enter("readiness", mail.id);
+          yield* owner.rpc.readyService({ id: mail.id });
+          yield* enter("first followed output", mail.id);
+          const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
+          yield* enter("history read", mail.id);
+          const history = Array.from(
+            yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
+          );
 
-        const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
-        const history = Array.from(
-          yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
-        );
+          expect(history[0]).toMatchObject({ kind: "launch", launchId: 1 });
+          expect(history).toContainEqual(followed);
+          const directory = path.join(owner.logsRoot, "mail", mail.id);
+          expect(yield* fs.exists(directory)).toBe(true);
+          yield* enter("offline history read", mail.id);
+          const offline = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
+            Stream.filter(({ instanceId }) => instanceId === mail.id),
+            Stream.runCollect,
+          );
+          expect(offline.slice(0, history.length).map(({ position }) => position)).toEqual(
+            history.map(({ position }) => position),
+          );
 
-        expect(history[0]).toMatchObject({ kind: "launch", launchId: 1 });
-        expect(history).toContainEqual(followed);
-        const directory = path.join(owner.logsRoot, "mail", mail.id);
-        expect(yield* fs.exists(directory)).toBe(true);
-        const offline = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
-          Stream.runCollect,
-        );
-        expect(offline.slice(0, history.length).map(({ position }) => position)).toEqual(
-          history.map(({ position }) => position),
-        );
-
-        yield* owner.rpc.destroyService({ id: mail.id });
-        expect(yield* fs.exists(directory)).toBe(false);
-      }),
-    ).pipe(Effect.provide(services)),
+          yield* enter("destroy", mail.id);
+          yield* owner.rpc.destroyService({ id: mail.id });
+          expect(yield* fs.exists(directory)).toBe(false);
+        }),
+      ).pipe(guardNativeMail(phase));
+    }).pipe(Effect.provide(services)),
   );
 
   it.live("streams history through the public API after the owner stops", () =>
@@ -128,6 +206,7 @@ describe("owner persisted logs", () => {
         );
         const mail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -137,9 +216,12 @@ describe("owner persisted logs", () => {
         yield* owner.rpc.stopService({ id: mail.id });
         yield* Scope.close(ownerScope, Exit.void);
 
-        const selection = { stateRoot: owner.stateRoot, stackId: owner.stack.id };
-        const records = yield* streamStackLogs(selection).pipe(Stream.runCollect);
-        const invalid = yield* streamStackLogs({ ...selection, since: "soon" }).pipe(
+        const logSelection = { stateRoot: owner.stateRoot, stackId: owner.stack.id };
+        const records = yield* streamStackLogs(logSelection).pipe(
+          Stream.filter(({ instanceId }) => instanceId === mail.id),
+          Stream.runCollect,
+        );
+        const invalid = yield* streamStackLogs({ ...logSelection, since: "soon" }).pipe(
           Stream.runDrain,
           Effect.flip,
         );
@@ -162,6 +244,7 @@ describe("owner persisted logs", () => {
         );
         const mail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -170,8 +253,8 @@ describe("owner persisted logs", () => {
         yield* owner.rpc.stopService({ id: mail.id });
         yield* Scope.close(firstRun, Exit.void);
         const state = Context.get(
-          yield* Layer.build(State.layer({ root: owner.stateRoot })),
-          State.Service,
+          yield* Layer.build(StackNamespace.layer({ root: owner.stateRoot })),
+          StackNamespace.Service,
         );
         const saved = yield* state.read(owner.stack.id);
         if (saved === undefined) return yield* Effect.die("stack state missing");
@@ -196,52 +279,74 @@ describe("owner persisted logs", () => {
     ).pipe(Effect.provide(services)),
   );
 
-  it.live("continues after the launch ids in its logs when its saved state has none", () =>
+  it.live("keeps shared API requests as gateway logs across owner restarts until destroy", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-unsaved-launch-" });
-        const firstRun = yield* Scope.make();
-        const owner = yield* openOwner("owner-logs-unsaved-launch-", "native", { root }).pipe(
-          Scope.provide(firstRun),
+        const path = yield* Path.Path;
+        const client = yield* HttpClient.HttpClient;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-gateway-" });
+        const firstScope = yield* Scope.make();
+        // Closes the first owner if the test fails before the restart closes it.
+        yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
+        const first = yield* openOwner("owner-logs-gateway-", "native", { root }).pipe(
+          Scope.provide(firstScope),
         );
-        const mail = yield* owner.rpc.createService({
-          service: "mail",
+        const rest = yield* first.rpc.createService({
+          service: "rest",
+          pin: selection.rest,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
-        yield* Scope.close(firstRun, Exit.void);
+        yield* first.rpc.configureComposition({
+          members: [{ id: rest.id, activation: "lazy" }],
+          dependencies: [],
+        });
+        yield* first.rpc.startComposition();
+        const api = yield* httpPort(first.rpc.status({ id: rest.id }));
+
+        const response = yield* client.get(`http://127.0.0.1:${api}/unrouted`);
+        const [recorded] = yield* firstOutput(first.rpc.readLogs({ id: "gateway", follow: true }));
+
+        expect(response.status).toBe(404);
+        expect(recorded).toMatchObject({ launchId: 1, text: expect.stringContaining("/unrouted") });
+        const directory = path.join(first.logsRoot, "gateway", "gateway");
+        expect(yield* fs.readDirectory(directory)).toEqual(["0000000001.log"]);
+        yield* Scope.close(firstScope, Exit.void);
+        // A crash right after rotation leaves an empty newest segment.
+        yield* fs.writeFileString(path.join(directory, "0000000002.log"), "");
+
         const state = Context.get(
-          yield* Layer.build(State.layer({ root: owner.stateRoot })),
-          State.Service,
+          yield* Layer.build(StackNamespace.layer({ root: first.stateRoot })),
+          StackNamespace.Service,
         );
-        const saved = yield* state.read(owner.stack.id);
-        if (saved === undefined) return yield* Effect.die("stack state missing");
-        // Logs a state saved before launch ids were persisted left behind at launch 3.
-        const directory = `${owner.logsRoot}/mail/${mail.id}`;
-        yield* fs.makeDirectory(directory, { recursive: true });
-        yield* fs.writeFileString(
-          `${directory}/0000000001.log`,
-          "2026-01-01T00:00:00.000Z launch 3 | \n2026-01-01T00:00:00.001Z stdout 3 | earlier\n",
+        const saved = yield* state.read(first.stack.id);
+        if (saved === undefined) return yield* Effect.die("the stopped stack was not saved");
+        const second = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        const history = Array.from(
+          yield* second.rpc.readLogs({ id: "gateway", follow: false }).pipe(Stream.runCollect),
         );
-        const restarted = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
-        yield* Effect.addFinalizer(() => restarted.namespace.destroy.pipe(Effect.ignore));
+        const begun = yield* second.rpc.readLogs({ id: "gateway", follow: true }).pipe(
+          Stream.filter(({ kind, launchId }) => kind === "launch" && launchId === 2),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.timeout("5 seconds"),
+        );
+        yield* second.rpc.startComposition();
+        const reopened = yield* httpPort(second.rpc.status({ id: rest.id }));
+        const again = yield* second.rpc.readLogs({ id: "gateway", follow: true }).pipe(
+          Stream.filter((record) => isOutput(record) && record.text?.includes("/again") === true),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* client.get(`http://127.0.0.1:${reopened}/again`);
 
-        const launched = yield* awaitLaunches(
-          restarted.rpc.readLogs({ id: mail.id, follow: true }),
-          2,
-        );
-        yield* restarted.rpc.startService({ id: mail.id });
-        yield* restarted.rpc.readyService({ id: mail.id });
-        yield* Fiber.join(launched);
-        const records = yield* restarted.rpc
-          .readLogs({ id: mail.id, follow: false })
-          .pipe(Stream.runCollect);
-
-        expect(saved.instances.find(({ id }) => id === mail.id)?.launchId).toBeUndefined();
-        expect(
-          records.filter(({ kind }) => kind === "launch").map(({ launchId }) => launchId),
-        ).toEqual([3, 4]);
+        expect(history).toContainEqual(recorded);
+        expect(begun).toHaveLength(1);
+        expect(Array.from(yield* Fiber.join(again))).toMatchObject([{ launchId: 2 }]);
+        yield* second.namespace.destroy;
+        expect(yield* fs.exists(first.logsRoot)).toBe(false);
       }),
     ).pipe(Effect.provide(services)),
   );
@@ -252,11 +357,13 @@ describe("owner persisted logs", () => {
         const owner = yield* openOwner("owner-logs-resume-", "native");
         const mail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
         yield* owner.rpc.startService({ id: mail.id });
         yield* owner.rpc.readyService({ id: mail.id });
+        yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
         const history = Array.from(
           yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
         );
@@ -289,8 +396,8 @@ describe("owner persisted logs", () => {
           const owner = yield* openOwner("owner-logs-reset-", "native");
           const database = yield* owner.rpc.createService({
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("owner-logs-reset-password"),
               jwtExpiry: 3600,
             },
@@ -322,9 +429,10 @@ describe("owner persisted logs", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const owner = yield* openOwner("owner-logs-docker-", "docker");
+          const owner = yield* openOwner("owner-logs-docker-", testEngine);
           const mail = yield* owner.rpc.createService({
             service: "mail",
+            pin: selection.mail,
             config: {},
             endpoints: { http: { port: "auto" } },
           });

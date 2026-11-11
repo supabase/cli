@@ -28,6 +28,7 @@ describe("cliBuildChannel", () => {
   it.each([
     ["3.0.0", "stable"],
     ["3.0.0-beta.12", "beta"],
+    ["3.0.0-next.4", "next"],
     ["0.0.0-pr.1234", "preview"],
     ["0.0.0-dev", "development"],
     ["0.0.0-automated", "development"],

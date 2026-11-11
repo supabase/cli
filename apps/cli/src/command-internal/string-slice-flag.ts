@@ -6,13 +6,14 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Parses a pflag `StringSliceVar` flag: CSV-splits each occurrence, matching
- * `encoding/csv`, and accumulates across repeats. A naive `.split(",")`
+ * Parses a repeatable string-slice flag: CSV-splits each occurrence
+ * and accumulates across repeats. A naive `.split(",")`
  * diverges on quoted/embedded commas (e.g. `'"a,b",c'`).
  *
  * Whitespace is not trimmed and empty fields are not dropped.
  */
-import { Flag } from "effect/unstable/cli";
+import { Data } from "effect";
+import { Flag } from "effect/cli";
 
 const QUOTE = 0x22; // "
 const COMMA = 0x2c; // ,
@@ -31,13 +32,14 @@ const lengthNL = (b: Uint8Array): number => (b.length > 0 && b[b.length - 1] ===
  * (with a `record on line N; ` prefix when the record started on an earlier
  * line), or the literal `EOF` when the value is only blank lines.
  */
-export class StringSliceFlagParseError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "StringSliceFlagParseError";
+export class StringSliceFlagParseError extends Data.Error<{
   readonly value: string;
+  readonly message: string;
+}> {
+  static readonly [ErrorActionabilityFingerprintId] = "StringSliceFlagParseError";
+  override readonly name = "StringSliceFlagParseError";
   private constructor(value: string, message: string) {
-    super(message);
-    this.name = "StringSliceFlagParseError";
-    this.value = value;
+    super({ value, message });
   }
   /** Line/column are 1-based; column is a byte offset within the physical line. */
   static parse(
@@ -64,8 +66,7 @@ export class StringSliceFlagParseError extends Error {
 }
 
 /**
- * Parses one CSV record from `val`, matching Go's `encoding/csv` reader as
- * used by pflag's `readAsCSV`. Only the first record is read — an unquoted
+ * Parses one CSV record from `val`. Only the first record is read — an unquoted
  * newline ends it and the rest is dropped. Blank lines before the record are
  * skipped; blank-only input throws `EOF`. `\r\n` normalizes to `\n`, and
  * parse errors report 1-based line/byte-column positions.
@@ -242,10 +243,10 @@ export function parseStringSliceFlag(rawValues: ReadonlyArray<string>): Readonly
 }
 
 /**
- * Builds a repeatable CSV-split flag matching pflag's `StringSliceVar`
- * behavior, including its `invalid argument %q for %q flag: %v` diagnostic.
+ * Builds a repeatable CSV-split flag, including its `invalid argument "<value>" for "<flag>" flag: <reason>`
+ * diagnostic.
  *
- * `options.alias` must be registered here, not piped on afterwards: pflag's
+ * `options.alias` must be registered here, not piped on afterwards: the
  * diagnostic frames both spellings (`-x, --exclude`), so the alias must be
  * present when the error message is built.
  */
@@ -255,14 +256,14 @@ export function stringSliceFlag(
   options?: { readonly alias?: string },
 ) {
   const alias = options?.alias;
-  const pflagName = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
-  const base = Flag.string(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
+  const flagLabel = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
+  const base = Flag.String(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
   return (alias === undefined ? base : base.pipe(Flag.withAlias(alias))).pipe(
     Flag.mapTryCatch(
       (rawValues) => parseStringSliceFlag(rawValues),
       (err) =>
         err instanceof StringSliceFlagParseError
-          ? `invalid argument ${JSON.stringify(err.value)} for "${pflagName}" flag: ${err.message}`
+          ? `invalid argument ${JSON.stringify(err.value)} for "${flagLabel}" flag: ${err.message}`
           : err instanceof Error
             ? err.message
             : String(err),

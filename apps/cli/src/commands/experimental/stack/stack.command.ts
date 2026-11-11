@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
@@ -17,8 +17,10 @@ import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destro
 import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts";
 import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
 import { stackRestartCommand as stackRestartCommandBase } from "./restart/restart.command.ts";
-import { stackPrepareCommand as stackPrepareCommandBase } from "./prepare/prepare.command.ts";
-import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
+import { stackInstallCommand as stackInstallCommandBase } from "./install/install.command.ts";
+import { stackOutdatedCommand as stackOutdatedCommandBase } from "./outdated/outdated.command.ts";
+import { stackUpdateCommand as stackUpdateCommandBase } from "./update/update.command.ts";
+import { stackApiLayer, stackTargetResolverLayer } from "../../../command-internal/stack-target.ts";
 import { configureLoopbackProxyBypass } from "../../../command-internal/hostname.ts";
 
 const stackCommandSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
@@ -38,9 +40,6 @@ export const stackRuntimeLayer = Layer.mergeAll(
   telemetryStateLayer,
 );
 
-// Same static `HttpClient`/Management-API-factory requirement as `dbResetRuntimeLayer` in
-// `commands/db/reset/reset.layers.ts`; scoped to `start` so sibling stack subcommands don't
-// pick up its `--dns-resolver` requirement.
 const startCliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const startHttpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 const startCredentials = commandCredentialsLayer.pipe(
@@ -81,8 +80,15 @@ const stackListCommand = stackListCommandBase.pipe(
 const stackRestartCommand = stackRestartCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "restart"])),
 );
-const stackPrepareCommand = stackPrepareCommandBase.pipe(
-  Command.provide(commandRuntimeLayer(["stack", "prepare"])),
+const stackInstallCommand = stackInstallCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "install"])),
+);
+const stackOutdatedCommand = stackOutdatedCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "outdated"])),
+);
+const stackUpdateCommand = stackUpdateCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "update"])),
+  Command.provide(stackStartRuntimeLayer),
 );
 
 export const stackCommand = Command.make("stack").pipe(
@@ -92,13 +98,15 @@ export const stackCommand = Command.make("stack").pipe(
   Command.withShortDescription("Manage experimental local stacks"),
   Command.withSubcommands([
     stackDestroyCommand,
+    stackInstallCommand,
     stackListCommand,
     stackLogsCommand,
-    stackPrepareCommand,
+    stackOutdatedCommand,
     stackRestartCommand,
     stackStartCommand,
     stackStatusCommand,
     stackStopCommand,
+    stackUpdateCommand,
   ]),
   Command.provide(stackRuntimeLayer),
 );

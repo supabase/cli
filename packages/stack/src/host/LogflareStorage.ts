@@ -48,7 +48,7 @@ export const analyticsDatabase = Effect.fnUntraced(function* (
   );
   for (const name of replaced) url.searchParams.delete(name);
   // A socket directory is passed as the `host` parameter, which takes precedence over the hostname.
-  if (bound.kind === "unix" && bound.path !== undefined) url.searchParams.set("host", bound.path);
+  if (bound.kind === "unix") url.searchParams.set("host", bound.path);
   else url.hostname = bound.host ?? "127.0.0.1";
   url.port = String(bound.port);
   return { url: url.toString() } satisfies AnalyticsDatabase;
@@ -69,7 +69,11 @@ export const make = Effect.fn("LogflareStorage.make")(function* <E>(
     acquire: database.pipe(
       Effect.flatMap((connection) =>
         Layer.build(
-          PgClient.layer({ url: Redacted.make(connection.url), connectTimeout: "2 seconds" }),
+          PgClient.layer({
+            url: Redacted.make(connection.url),
+            connectTimeout: "2 seconds",
+            idleTimeout: "10 seconds",
+          }),
         ),
       ),
       Effect.map((context) => Context.get(context, PgClient.PgClient)),

@@ -1,4 +1,9 @@
-import { Effect, type FileSystem, type Path, Schema } from "effect";
+import {
+  applyConfigEdits,
+  parseCliConfigDocumentFile,
+  writeCliConfigDocumentText,
+} from "@supabase/config/internal";
+import { Effect, type FileSystem, Option, type Path, Schema } from "effect";
 import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -32,12 +37,14 @@ export interface DeclarativeWriteResult {
   readonly preservedUnmanagedFiles: ReadonlyArray<string>;
 }
 
-function safeDeclarativeExportName(path: Path.Path, name: string): string {
+function safeDeclarativeExportName(
+  path: Path.Path,
+  name: string,
+): Effect.Effect<string, DeclarativeWriteError> {
   const rel = path.normalize(name.split("\\").join("/"));
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw declarativeWriteError(`unsafe declarative export path: ${name}`);
-  }
-  return rel.split("\\").join("/");
+  return rel.startsWith("..") || path.isAbsolute(rel)
+    ? Effect.fail(declarativeWriteError(`unsafe declarative export path: ${name}`))
+    : Effect.succeed(rel.split("\\").join("/"));
 }
 
 function isCustomDeclarativePath(name: string): boolean {
@@ -89,19 +96,17 @@ export const writeDeclarativeSchemas = Effect.fn("PgDelta.writeDeclarativeSchema
   output: PgDeltaDeclarativeExportResult,
 ) {
   const proposed = yield* Effect.forEach(output.files, (file) =>
-    Effect.try({
-      try: () => {
-        const name = safeDeclarativeExportName(path, file.name);
-        if (isCustomDeclarativePath(name)) {
-          throw declarativeWriteError(
-            `refusing to write into reserved declarative schema path: ${file.name}`,
-          );
-        }
-        return { name, sql: file.sql };
-      },
-      catch: (error) =>
-        error instanceof DeclarativeWriteError ? error : declarativeWriteError(String(error)),
-    }),
+    safeDeclarativeExportName(path, file.name).pipe(
+      Effect.flatMap((name) =>
+        isCustomDeclarativePath(name)
+          ? Effect.fail(
+              declarativeWriteError(
+                `refusing to write into reserved declarative schema path: ${file.name}`,
+              ),
+            )
+          : Effect.succeed({ name, sql: file.sql }),
+      ),
+    ),
   );
 
   const exists = yield* fs
@@ -270,18 +275,41 @@ export const updateDeclarativeSchemaPathsConfig = Effect.fn(
   const relative = normalized.startsWith("supabase/")
     ? normalized.slice("supabase/".length)
     : normalized;
+  const jsonConfig = yield* parseCliConfigDocumentFile(workdir, { search: false }).pipe(
+    Effect.option,
+  );
+  if (Option.isSome(jsonConfig) && jsonConfig.value?.format === "json") {
+    const document = jsonConfig.value;
+    const outcome = applyConfigEdits(document.rawText, "json", [
+      { path: ["db", "migrations", "schema_paths"], value: [relative] },
+    ]);
+    if (outcome.kind === "refused") {
+      return yield* new DeclarativeWriteError({
+        message: `failed to update config: ${outcome.refusal.detail}`,
+      });
+    }
+    yield* writeCliConfigDocumentText(document.path, outcome.text).pipe(
+      Effect.mapError(
+        (error) =>
+          new DeclarativeWriteError({ message: `failed to save config: ${error.message}` }),
+      ),
+    );
+    return;
+  }
   const block = `\nschema_paths = [\n  "${relative}",\n]\n`;
   const configPath = path.join(workdir, "supabase", "config.toml");
   const existing = yield* fs.readFileString(configPath).pipe(
-    Effect.catchTag("PlatformError", (error) =>
-      // A missing config file is tolerated; other read errors abort.
-      error.reason._tag === "NotFound"
-        ? Effect.succeed("")
-        : Effect.fail(
-            new DeclarativeWriteError({
-              message: `failed to read config: ${error.message}`,
-            }),
-          ),
+    // A missing config file is tolerated; other read errors abort.
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed(""),
+      (_, error) =>
+        Effect.fail(
+          new DeclarativeWriteError({
+            message: `failed to read config: ${error.message}`,
+          }),
+        ),
     ),
   );
   // A replacer function, not a string, so a literal "$" in the path/value can't be

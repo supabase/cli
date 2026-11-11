@@ -1,11 +1,14 @@
 import { describe, expect, it, test } from "@effect/vitest";
+import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Redacted } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vitest";
 import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
+import { assertBlockDrift } from "../../../tests/helpers/permission-drift.ts";
 import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
   fetchLinkedServiceVersions,
+  linkedServiceVersions,
   listLocalServiceVersions,
   localServiceImagesFromDockerfile,
   mergeRemoteServiceVersions,
@@ -54,9 +57,44 @@ const ACCESS_TOKEN = Redacted.make(`sbp_${"a".repeat(40)}`);
 const PROJECT_REF = "abcdefghijklmnopqrst";
 
 // `fetchLinkedServiceVersions` reads the ambient HttpClient from context instead
-// of self-provisioning one, so each invocation needs a concrete transport.
+// of self-provisioning one, so each invocation needs a concrete transport. The API client
+// skips retries so the 500 fixtures fail at once instead of backing off in real time.
 const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0]) =>
-  fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer));
+  Effect.gen(function* () {
+    const api = yield* makeApiClient(
+      {
+        baseUrl: input.apiUrl,
+        accessToken: input.accessToken,
+        userAgent: input.userAgent,
+        headers: input.headers,
+      },
+      { retry: { maxRetries: 0 } },
+    );
+    return yield* fetchLinkedServiceVersions({ ...input, api });
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+
+// Tenant probes share the test server's origin, so only Management API paths are recorded.
+const recordManagementRequests = () => {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  return {
+    requests,
+    routes: () => [...new Set(requests.map((r) => `${r.method} ${new URL(r.url).pathname}`))],
+    record: (request: Request) => {
+      if (new URL(request.url).pathname.startsWith("/v1/")) {
+        requests.push({ method: request.method, url: request.url });
+      }
+    },
+  };
+};
+
+const assertLinkedServiceVersionsDrift = (
+  requests: ReadonlyArray<{ readonly method: string; readonly url: string }>,
+  apiUrl: string,
+) =>
+  assertBlockDrift(linkedServiceVersions, {
+    requests,
+    apiUrl,
+  });
 
 const serve = (options: Parameters<typeof Bun.serve>[0]) =>
   Effect.acquireRelease(
@@ -298,9 +336,11 @@ describe("services shared", () => {
 
   it.live("returns postgres only when no service-role key is available", () =>
     Effect.gen(function* () {
+      const managementApi = recordManagementRequests();
       const server = yield* serve({
         port: 0,
         fetch(request) {
+          managementApi.record(request);
           const url = new URL(request.url);
           if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
             return Response.json({
@@ -357,17 +397,24 @@ describe("services shared", () => {
       });
 
       expect(result).toEqual({ postgres: "17.6.1.200" });
+      expect(managementApi.routes()).toEqual([
+        `GET /v1/projects/${PROJECT_REF}/api-keys`,
+        `GET /v1/projects/${PROJECT_REF}`,
+      ]);
+      assertLinkedServiceVersionsDrift(managementApi.requests, server.url.origin);
     }),
   );
 
   it.live("returns no linked versions when project api keys cannot be loaded", () =>
     Effect.gen(function* () {
+      const managementApi = recordManagementRequests();
       const server = yield* serve({
         port: 0,
         fetch(request) {
+          managementApi.record(request);
           const url = new URL(request.url);
           if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
-            return new Response("boom", { status: 500 });
+            return Response.json({ message: "Forbidden" }, { status: 403 });
           }
 
           if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
@@ -403,17 +450,21 @@ describe("services shared", () => {
       });
 
       expect(result).toEqual({});
+      expect(managementApi.routes()).toEqual([`GET /v1/projects/${PROJECT_REF}/api-keys`]);
+      assertLinkedServiceVersionsDrift(managementApi.requests, server.url.origin);
     }),
   );
 
   it.live("still returns tenant service versions when project version lookup fails", () =>
     Effect.gen(function* () {
+      const managementApi = recordManagementRequests();
       const server = yield* serve({
         port: 0,
         fetch(request) {
+          managementApi.record(request);
           const url = new URL(request.url);
           if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
-            return new Response("boom", { status: 500 });
+            return Response.json({ message: "Forbidden" }, { status: 403 });
           }
 
           if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
@@ -459,6 +510,11 @@ describe("services shared", () => {
         postgrest: "v14.13",
         storage: "v1.61.0",
       });
+      expect(managementApi.routes()).toEqual([
+        `GET /v1/projects/${PROJECT_REF}/api-keys`,
+        `GET /v1/projects/${PROJECT_REF}`,
+      ]);
+      assertLinkedServiceVersionsDrift(managementApi.requests, server.url.origin);
     }),
   );
 
@@ -587,9 +643,11 @@ describe("services shared", () => {
 
   it.live("skips remote lookups for a malformed project ref", () =>
     Effect.gen(function* () {
+      const requests: Array<string> = [];
       const server = yield* serve({
         port: 0,
-        fetch() {
+        fetch(request) {
+          requests.push(request.url);
           throw new Error("no request should be made for a malformed project ref");
         },
       });
@@ -603,6 +661,7 @@ describe("services shared", () => {
       });
 
       expect(result).toEqual({});
+      expect(requests).toEqual([]);
     }),
   );
 

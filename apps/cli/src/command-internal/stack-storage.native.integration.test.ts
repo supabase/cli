@@ -1,7 +1,8 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { SecureRandom } from "effect/crypto";
+import { FetchHttpClient } from "effect/http";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
@@ -12,11 +13,7 @@ import {
   stackStorageEndpointFor,
 } from "./stack-storage.ts";
 import { makeStorageGateway } from "./storage-gateway.ts";
-import {
-  StackApi,
-  stackApiLayer,
-  stackTargetResolverLayer,
-} from "../commands/experimental/stack/stack.shared.ts";
+import { StackApi, stackApiLayer, stackTargetResolverLayer } from "./stack-target.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -25,9 +22,10 @@ import { mockOutput, mockTty } from "../../tests/helpers/mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { stdinLayer } from "../shared/runtime/stdin.layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
-import { ExperimentalFlag, YesFlag } from "./global-flags.ts";
+import { DebugFlag, ExperimentalFlag, YesFlag } from "./global-flags.ts";
 import { stackStart } from "../commands/experimental/stack/start/start.handler.ts";
 import { destroyTestStacks } from "../../tests/helpers/stack-cleanup.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
 const projectConfig = `
 project_id = "stack-storage-native-integration"
@@ -66,6 +64,7 @@ const startFlags = () => ({
   stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "on-demand" as const,
+  frozen: false,
   eager: false,
 });
 
@@ -79,7 +78,7 @@ const makeLayers = (root: string) => {
   const telemetry = mockTelemetryStateTracked();
   const tty = mockTty({ stdinIsTty: false, stdoutIsTty: false });
   return Layer.mergeAll(
-    BunServices.layer,
+    cliConfigValuesTestLayer,
     FetchHttpClient.layer,
     runtimeInfoLayer,
     settings,
@@ -90,12 +89,13 @@ const makeLayers = (root: string) => {
     stackCatalogSetupLayer,
     dbConnectionLayer,
     Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(DebugFlag, false),
     Layer.succeed(YesFlag, false),
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
     stdinLayer.pipe(Layer.provide(tty)),
     tty,
-  );
+  ).pipe(Layer.provideMerge(BunServices.layer));
 };
 
 describe("native stack Storage gateway", () => {
@@ -132,7 +132,8 @@ describe("native stack Storage gateway", () => {
               apiKey: credentials.apiKey,
               userAgent: "stack-storage-native-integration",
             });
-            const bucket = `native-${crypto.randomUUID().slice(0, 8)}`;
+            const crypto = yield* SecureRandom.SecureRandom;
+            const bucket = `native-${(yield* crypto.uuidV4()).slice(0, 8)}`;
             const local = path.join(root, "payload.txt");
             yield* fs.writeFileString(local, "native storage payload");
 
@@ -141,7 +142,7 @@ describe("native stack Storage gateway", () => {
               fileSizeLimit: 0,
               allowedMimeTypes: [],
             });
-            expect((yield* gateway.listBuckets()).some(({ name }) => name === bucket)).toBe(true);
+            expect((yield* gateway.listBuckets).some(({ name }) => name === bucket)).toBe(true);
 
             yield* gateway.uploadObject(`${bucket}/source.txt`, local, {
               contentType: "text/plain",
@@ -178,7 +179,7 @@ describe("native stack Storage gateway", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(layers));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 });

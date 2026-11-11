@@ -2,6 +2,10 @@
  * Untrusted `mirror-slim-image` dispatch fields. Source and destination URLs
  * are derived here; payload strings are only accepted when they match.
  */
+import {
+  NATIVE_TARGETS,
+  parseSha256Sums,
+} from "../../packages/stack/src/preparation/SlimRelease.ts";
 
 const SERVICE_PATTERN = /^[a-z][a-z0-9-]*$/;
 const VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -9,7 +13,6 @@ export const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export const SOURCE_REGISTRY = "ghcr.io/supabase/cli";
 export const DEST_REGISTRY = "public.ecr.aws/supabase/cli";
-const NATIVE_TARGETS = ["linux-arm64", "linux-amd64", "darwin-arm64"] as const;
 
 export class InvalidPayloadError extends Error {}
 
@@ -209,12 +212,12 @@ export const nativeTripletDigests = (rawManifest: string): NativeFiles | undefin
   };
 };
 
-export const checksumFor = (contents: string, archiveName: string): string | undefined =>
-  contents
-    .split(/\r?\n/u)
-    .map((line) => line.trim().match(/^([a-f0-9]{64})\s+[* ]?(.+)$/iu))
-    .find((match) => match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`))?.[1]
-    ?.toLowerCase();
+/** The lowercase digest `archiveName` has in a `SHA256SUMS` body; throws on a malformed body. */
+export const checksumFor = (contents: string, archiveName: string): string | undefined => {
+  const parsed = parseSha256Sums(contents);
+  if (parsed.kind === "malformed") throw new InvalidPayloadError(parsed.message);
+  return parsed.sums.get(archiveName);
+};
 
 export const manifestMatches = (
   manifestJson: string,

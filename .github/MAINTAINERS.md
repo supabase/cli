@@ -83,20 +83,48 @@ the preview. This is independent of `run-ci` and `run-live-e2e-ci`.
 The `run-preview-packages` label must exist as a repository label; create it
 from **Issues → Labels** if it is missing.
 
+## `run-flaky-check`: repeat the suites to find flaky tests
+
+[`flaky-check.yml`](./workflows/flaky-check.yml) runs one commit on many fresh
+runners with retries off. A test that passes in some runs and fails in others is
+reported as flaky; one that fails in every run is reported separately.
+
+| Trigger                  | Commit          | Suites                                        |
+| ------------------------ | --------------- | --------------------------------------------- |
+| Nightly, 03:17 UTC       | `develop`       | unit, integration ×10                         |
+| Weekly, Sunday 03:47 UTC | `develop`       | CLI e2e, stack e2e ×3                         |
+| `run-flaky-check` label  | PR merge commit | unit, integration ×10, plus `focused`         |
+| Manual dispatch          | any ref         | chosen suites, runs, repeats, and file filter |
+
+`focused` runs the tests affected by the PR (`vitest --changed` against the merge
+base) five times per job, each in a fresh Vitest process, to show a flaky-test fix
+holds; a changed `package.json` or Vitest config selects every test. Dispatch with
+`suites=focused` and a `filter` to target specific files.
+
+The label is removed when the run starts, so re-add it to run again (by hand on
+fork PRs, which also get no comment). The report goes to the job summary, the
+`flaky-check-report` artifact, and one PR comment, and fails the run when any test
+failed or any run produced no results.
+
+The `run-flaky-check` label must exist as a repository label; create it from
+**Issues → Labels** if it is missing.
+
 ## Live e2e coverage and stable releases
 
 [`Live E2E`](./workflows/live-e2e.yml) exercises managed staging after every push
-to `develop`, daily at 06:23 UTC, and on manual dispatch. New `develop` pushes
-cancel superseded push runs; nightly and manual runs execute independently.
+to `develop`, daily at 06:23 UTC, and on manual dispatch. The nightly run also
+dispatches `main` and `next` (when it exists), so each branch has its own runs. New `develop` pushes
+replace only a queued push run; nightly and manual runs execute independently.
 Nightly runs do not depend on a new beta version: they also detect staging
 changes between CLI releases.
 
-Stable publishing requires a passing live suite for the exact release commit.
-The release workflow reuses a verified successful staging run on `develop` for
-that commit when available; otherwise it runs the suite before publishing.
-Normal promotion fast-forwards that commit from `develop` to `main`. The gate
-deliberately queries `develop` runs of `live-e2e.yml`; renaming the workflow
-requires updating that selector. Actions API lookup errors and live-test
+Stable and maintenance publishing requires a passing live suite for the exact
+release commit. The release workflow reuses a verified successful staging run
+for that commit when available; otherwise it runs the suite before publishing.
+Normal promotion fast-forwards that commit from `develop` to `main`, so stable
+reuses the `develop` run. The gate queries runs of `live-e2e.yml` for the
+branch passed in its `branch` input (`develop` by default, the `v<N>.x` ref for
+maintenance releases); renaming the workflow requires updating that selector. Actions API lookup errors and live-test
 failures block publication. This also applies to
 manual stable releases. Beta publication keeps its existing build and smoke-test
 gates.
@@ -122,6 +150,87 @@ or attempt. Recovery requires a known prior failure. History lookup errors
 produce warnings; a confirmed current failure can still be reported if its
 prior outcome is unknown. Release failures use the existing release notification
 to avoid a second failure alert from the live notifier.
+
+## Branches and releases
+
+Full procedures live in the
+[release process runbook](../apps/cli/docs/release-process.md); the decision is
+[ADR 0028](../docs/adr/0028-release-branches-and-maintenance-lines.md).
+
+**Resolving a sync PR.** When `Sync branches` cannot merge cleanly it opens
+`sync/<source>-into-<target>` (for example `sync/develop-into-next`); CODEOWNERS
+requests the CLI team, and for `main-into-develop` the release Slack channel is
+also told. Further syncs for that pair skip while it is open. For
+`develop-into-next`, Claude resolves the merge on the branch and repairs CI
+failures and AI review findings; check its comments, answer any decision it
+lists, and approve
+([runbook](../apps/cli/docs/release-process.md#claude-resolved-develop-into-next)).
+Otherwise merge the target into the sync branch, resolve, and push; then
+**approve** the PR. Approval fast-forwards the
+target and deletes the branch. Never use the merge button. A moved source does
+not block landing; the next sync run brings its newer commits in. If the target
+moved, the bot merges the latest target into the approved head and lands it
+directly if the merge is clean, as for a clean sync (the merge commit is
+untested); only a new conflict, or a target that keeps moving, sends the PR
+back for a new approval. Only two sync pairs
+exist (`sync/main-into-develop` into `develop`, `sync/develop-into-next` into
+`next`), and only the release bot's PRs from those branches qualify; approving
+a hand-made PR from one of them is refused with a comment (close it and run
+`gh workflow run sync-branches.yml -f pair=<pair>`). One
+maintainer may both resolve and approve a sync PR: that is an accepted
+decision, since resolvers are trusted maintainers and the resolution is not
+independently reviewed.
+
+**Approving a fast-forward.** The approver needs write access, and the approved
+commit must still be the PR head with the four required checks green.
+Fast-forward PRs are the deploy PR (`develop` → `main`), the major cut
+(`next` → `develop`), and the two sync PRs.
+
+**Dispatch guards.** `release.yml` refuses `channel=next` off `next`,
+`channel=next` while `next` has no commits beyond `develop`,
+`channel=maintenance` off `v<N>.x`, `beta`/`stable` on `next` or `v<N>.x`, a
+non-dry-run `stable` outside `main`, and a `version` that is not
+`X.Y.Z[-prerelease]`.
+
+**`release-major` label.** The deploy fast-forward refuses a major version bump
+unless the deploy PR carries `release-major`. Add it only when shipping a major
+on purpose.
+
+**Cutting a major.** Pause the `develop` merge queue, make sure `next` contains
+`develop` (no open `sync/develop-into-next` PR), open a PR `next` → `develop`
+and approve it, then resume the queue. See
+[Cutting a major](../apps/cli/docs/release-process.md#cutting-a-major-v3-runbook).
+
+**Maintenance releases.** After a fix merges into `v<N>.x`, dry-run first, then
+publish; leave `version` empty:
+
+```sh
+gh workflow run release.yml --ref v2.x -f channel=maintenance -f dry_run=true
+gh workflow run release.yml --ref v2.x -f channel=maintenance -f dry_run=false
+```
+
+Only security fixes and fixes for fundamentally broken behaviour go into
+`v<N>.x`, through `hotfix/*` or `backport/*` PRs. Release-infrastructure changes
+must be cherry-picked to every active `v*.x` (see
+[Release infra and maintenance lines](../apps/cli/docs/release-process.md#release-infra-and-maintenance-lines)).
+
+**Hotfixes.** A stable fix that cannot wait for the weekly deploy is a
+`hotfix/*` PR into `main` titled `fix`, `perf`, or `revert`. Its checks,
+including the dry-run release rehearsal, run on every push. After it publishes,
+`Sync branches` merges `main` into `develop`; a conflict is announced in Slack.
+There is no rollback: ship a `revert:` hotfix instead. See
+[Hotfix release flow](../apps/cli/docs/release-process.md#hotfix-release-flow).
+
+**Manual setup (rulesets and labels).**
+
+- Create the `next` branch from `develop`, and the `release-major` label.
+- Add `Require fast-forward` (from `branch-policy.yml`, which runs on `pull_request_target`) as a required check on
+  `develop` and `next`. `next` also needs the merge queue, the four checks
+  required on `develop` (`Check code quality`, `Run unit and integration tests`,
+  `Run end-to-end tests`, `Lint Pull Request`), and release App bypass.
+- Add a `v*.x` ruleset with release App bypass and `Check maintenance source` as
+  a required check.
+- Confirm the npm trusted publisher for `supabase` still points at `release.yml`.
 
 ## Deferred: automatic Linear → GitHub label sync
 

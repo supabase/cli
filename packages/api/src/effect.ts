@@ -14,6 +14,8 @@ import {
 export type {
   SupabaseApiError,
   SupabaseApiInputErrorSource,
+  SupabaseApiRawRequestOptions,
+  SupabaseApiRequestOptions,
   SupabaseApiRetryOptions,
 } from "./internal/client.ts";
 export {
@@ -33,7 +35,6 @@ export {
   operationDefinitions,
 } from "./generated/contracts.ts";
 export * from "./generated/contracts.ts";
-export { executeApiClientOperation } from "./generated/effect-client.ts";
 
 export const makeApiClient = (config: SupabaseApiConfig = {}, options?: SupabaseApiClientOptions) =>
   Effect.map(makeSupabaseApiClient(config, options), (client) => ({

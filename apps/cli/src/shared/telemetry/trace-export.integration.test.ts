@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ConfigProvider,
@@ -74,7 +74,7 @@ const spansOf = (
 
 const traceFilePath = Effect.map(Path.Path, (path) => path.join(tempRoot.current, "trace.jsonl"));
 
-const runtime = Layer.mergeAll(mockRuntimeInfo(), BunServices.layer);
+const runtime = Layer.mergeAll(mockRuntimeInfo(), BunServices.layer, BunCrypto.layer);
 
 describe("withTraceExport with a trace file", () => {
   it.live("creates the file with owner-only permissions and writes one line per batch", () =>
@@ -354,7 +354,7 @@ describe("withTraceExport around a command handler", () => {
 
       expect(roots.map((span) => span.name)).toEqual(["cli.run"]);
       expect(spans.filter((span) => !ids.has(span.parentSpanId ?? span.spanId))).toEqual([]);
-      expect(spans.some((span) => span.name.startsWith("http.client"))).toBe(true);
+      expect(spans.some((span) => span.name === "GET")).toBe(true);
       expect(spans.length).toBeLessThanOrEqual(2000);
       expect(Math.max(...counts.values())).toBeLessThanOrEqual(200);
       expect(raw).not.toContain(VALID_TOKEN);

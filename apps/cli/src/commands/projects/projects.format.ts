@@ -8,9 +8,8 @@ import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 type ApiKey = typeof ApiKeyResponse_Output.Type;
 
 /**
- * Lenient project record. `projects list`/`create` parse the `/v1/projects` response via the raw
- * HTTP client because the typed schema's `ref` pattern (20+ lowercase letters) rejects placeholder
- * refs in test fixtures, so projects flow through as plain JSON objects.
+ * Lenient project record. `projects list`/`create` read the `/v1/projects` response without
+ * schema decoding, so projects flow through as plain JSON objects exactly as the API returned them.
  */
 export type LinkedProject = Readonly<Record<string, unknown>> & { readonly linked: boolean };
 
@@ -24,14 +23,16 @@ export function readProjectField(project: unknown, key: string): string {
 // Dashboard URL per profile. Defaults to the production dashboard for
 // unknown / file-based profiles.
 
+const PRODUCTION_DASHBOARD_URL = "https://supabase.com/dashboard";
+
 const DASHBOARD_URLS: Readonly<Record<string, string>> = {
-  supabase: "https://supabase.com/dashboard",
+  supabase: PRODUCTION_DASHBOARD_URL,
   "supabase-staging": "https://supabase.green/dashboard",
   "supabase-local": "http://localhost:8082",
 };
 
 export function dashboardUrlForProfile(profile: string): string {
-  return DASHBOARD_URLS[profile] ?? DASHBOARD_URLS.supabase!;
+  return DASHBOARD_URLS[profile] ?? PRODUCTION_DASHBOARD_URL;
 }
 
 // `renderGlamourTable` lays out cells directly, so a literal `|` in a project name passes

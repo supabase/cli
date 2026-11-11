@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { dbSchemaDeclarativeCommand } from "./declarative/declarative.command.ts";
 
 export const dbSchemaCommand = Command.make("schema").pipe(

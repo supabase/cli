@@ -1,4 +1,5 @@
-import { Effect, Encoding, Schema } from "effect";
+import { Effect, Schema } from "effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import { SignJWT } from "jose";
 import { ServiceError } from "../Service.ts";
 import {
@@ -7,7 +8,7 @@ import {
   DEFAULT_LOCAL_SECRET_KEY,
   DEFAULT_SIGNING_KEY,
 } from "../Defaults.ts";
-import type { StackCredentials, StackKeysInput } from "../State.ts";
+import type { StackCredentials, StackKeysInput } from "../StackNamespace.ts";
 
 const serviceError = (operation: string, cause: unknown): ServiceError =>
   cause instanceof ServiceError
@@ -100,9 +101,7 @@ export const resolveStackKeys = Effect.fn("ServiceConfig.resolveStackKeys")(
         keys: [
           ...remoteKeys,
           ...localKeys,
-          ...(hasConfiguredSigningKeys
-            ? []
-            : [{ kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) }]),
+          ...(hasConfiguredSigningKeys ? [] : [{ kty: "oct", k: Base64Url.encode(jwtSecret) }]),
         ],
       });
       const normalizedRemoteJwks = yield* stringify(remoteKeys);

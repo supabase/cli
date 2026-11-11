@@ -1,8 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import type { DbTomlValues } from "../../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../../command-internal/db-config.read.ts";
 import {
   PgDeltaEngine,
   type PgDeltaDeclarativePlanInput,
@@ -30,19 +30,18 @@ const ctx = (cwd: string, declarativeDir: string): DeclarativeRunContext => ({
   dnsResolver: "native",
 });
 
-// A minimal, valid `DbTomlValues` — matches `db-config.toml-read.ts`'s
+// A minimal, valid `DbConfigValues` — matches `db-config.read.ts`'s
 // own unconfigured defaults so this fixture doesn't silently drift from what
-// `readDbToml` would resolve for these tests' bare temp dirs (none of them
+// `readDbConfig` would resolve for these tests' bare temp dirs (none of them
 // write a `config.toml`).
-const toml: DbTomlValues = {
+const toml: DbConfigValues = {
   projectEnv: {},
-  envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
+  exposedSchemas: ["public", "graphql_public"],
   port: 54322,
   shadowPort: 54320,
   password: "postgres",
-  poolerConnectionString: Option.none(),
-  projectId: Option.none(),
+  projectId: "test",
   majorVersion: 17,
   orioledbVersion: Option.none(),
   denoVersion: 2,
@@ -65,7 +64,7 @@ const toml: DbTomlValues = {
   seed: { enabled: true, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-  remoteOverrideKeys: new Set(),
+  configFile: { format: "toml", path: "supabase/config.toml" },
 };
 
 function jsonParseErrorMessage(raw: string): string {
@@ -184,14 +183,10 @@ describe("diffDeclarativeToMigrations", () => {
         "create table public.accounts();",
       );
       yield* fs.writeFileString(path.join(declDir, ".pgdelta-export.json"), "{ not json at all");
-      const exit = yield* diffDeclarativeToMigrations(ctx(dir, declDir), toml).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
-        expect(String((error as { message?: string } | undefined)?.message)).toBe(
-          `malformed export manifest ${path.join(declDir, ".pgdelta-export.json")}: ${jsonParseErrorMessage("{ not json at all")}`,
-        );
-      }
+      const error = yield* diffDeclarativeToMigrations(ctx(dir, declDir), toml).pipe(Effect.flip);
+      expect(error.message).toBe(
+        `malformed export manifest ${path.join(declDir, ".pgdelta-export.json")}: ${jsonParseErrorMessage("{ not json at all")}`,
+      );
       expect(calls).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(stubEngine(calls), BunServices.layer)));
   });
@@ -202,17 +197,11 @@ describe("diffDeclarativeToMigrations", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "decl-orch-" });
-      const exit = yield* diffDeclarativeToMigrations(
+      const error = yield* diffDeclarativeToMigrations(
         ctx(dir, path.join(dir, "missing")),
         toml,
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
-        expect((error as { message: string }).message).toContain(
-          "No declarative schema directory found",
-        );
-      }
+      ).pipe(Effect.flip);
+      expect(error.message).toContain("No declarative schema directory found");
       expect(calls).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(stubEngine(calls), BunServices.layer)));
   });

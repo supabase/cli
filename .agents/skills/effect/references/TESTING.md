@@ -4,6 +4,15 @@ Use this when writing Effect tests, tests involving time, retry, schedules, conc
 
 ## Defaults
 
+```ts
+import { expect, it } from "@effect/vitest";
+import { Effect, Fiber } from "effect";
+import { TestClock } from "effect/testing";
+```
+
+Use a v4-compatible `@effect/vitest` version. `TestClock` is under
+`effect/testing`, not the root `effect` barrel or the old `effect/TestClock` path.
+
 - Use `it.effect` by default.
 - Use `it.live` only when real time or live runtime services are the behavior under test.
 - Use test layers and `ConfigProvider` rather than global mutation.
@@ -11,6 +20,16 @@ Use this when writing Effect tests, tests involving time, retry, schedules, conc
 - Fork sleeping effects before advancing `TestClock`.
 - Avoid arbitrary `Effect.sleep(...)` in tests; it usually makes tests slow and flaky.
 - Assert typed failures, rollback, interruption, finalization, retry bounds, idempotency, concurrency laws, and malformed persistence where relevant.
+
+```ts
+it.effect("advances virtual time", () =>
+  Effect.gen(function* () {
+    const fiber = yield* Effect.sleep("1 second").pipe(Effect.as("done"), Effect.forkScoped);
+    yield* TestClock.adjust("1 second");
+    expect(yield* Fiber.join(fiber)).toBe("done");
+  }),
+);
+```
 
 ```ts
 it.effect("finds a user", () =>

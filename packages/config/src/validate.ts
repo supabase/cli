@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { CliConfigSchema, RemotesSchema } from "./base.ts";
 import { isObject } from "./config-document.ts";
+import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
 
 const decodeCliConfig = Schema.decodeUnknownEffect(CliConfigSchema);
 const decodeRemotesWithoutChecks = Schema.decodeUnknownEffect(RemotesSchema, {
@@ -14,8 +15,9 @@ const decodeRemotesWithoutChecks = Schema.decodeUnknownEffect(RemotesSchema, {
  * selected and merged into the effective config.
  */
 export const validateCliConfig = Effect.fn("CliConfig.validate")(function* (value: unknown) {
-  const document = isObject(value) ? { ...value, remotes: {} } : value;
+  const folded = normalizeDeprecatedProviderSignupKeys(value).document;
+  const document = isObject(folded) ? { ...folded, remotes: {} } : folded;
   const config = yield* decodeCliConfig(document);
-  const remotes = isObject(value) ? value.remotes : undefined;
+  const remotes = isObject(folded) ? folded.remotes : undefined;
   return { ...config, remotes: yield* decodeRemotesWithoutChecks(remotes ?? {}) };
 });

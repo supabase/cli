@@ -77,7 +77,8 @@ export interface AttachedInstance {
   readonly service: string;
   readonly instanceId: string;
   readonly logs: CatalogLogs;
-  readonly observation: Stream.Stream<{ readonly launchId: number | undefined }>;
+  /** The launch the instance is in, or `undefined` once that launch has ended. */
+  readonly launches: Stream.Stream<number | undefined>;
 }
 
 export interface Interface {
@@ -97,7 +98,7 @@ export interface Interface {
   }) => Effect.Effect<void, LogStoreError>;
   /** Deletes log directories of instances that are not attached; failures are logged. */
   readonly removeOrphans: Effect.Effect<void, LogStoreError>;
-  /** The highest launch id at the end of an instance's newest segment, if one is readable. */
+  /** The highest launch id at the end of the newest segment that holds a record, if readable. */
   readonly latestLaunchId: (instance: {
     readonly service: string;
     readonly instanceId: string;
@@ -246,11 +247,17 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       Effect.map((listed) => listed.flat()),
     );
 
-  const readChunk = (file: string, offset: number) =>
+  const readChunk = (file: string, offset: number, end?: number) =>
     Effect.scoped(
       fs.open(file, { flag: "r" }).pipe(
-        Effect.tap((handle) => handle.seek(offset, "start")),
-        Effect.flatMap((handle) => handle.readAlloc(readChunkBytes)),
+        Effect.tap((handle) => handle.seek(BigInt(offset), "start")),
+        Effect.flatMap((handle) =>
+          handle.readAlloc(
+            end === undefined
+              ? readChunkBytes
+              : Math.min(readChunkBytes, Math.max(0, end - offset)),
+          ),
+        ),
         Effect.map(Option.getOrElse(() => new Uint8Array(0))),
         Effect.map(Option.some),
       ),
@@ -259,51 +266,52 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       Effect.mapError(storeError("read")),
     );
 
-  /** Reads only the last chunk of the newest segment, skipping its first, possibly cut, line. */
-  const latestLaunchId = (directory: string) =>
-    generations(directory).pipe(
-      Effect.flatMap((listed) => {
-        const newest = listed.at(-1);
-        if (newest === undefined) return Effect.succeed(Option.none<number>());
-        const file = path.join(directory, segmentName(newest));
-        return fs.stat(file).pipe(
-          Effect.mapError(storeError("read")),
-          Effect.flatMap((info) => {
-            const offset = Math.max(0, Number(info.size) - readChunkBytes);
-            return readChunk(file, offset).pipe(
-              Effect.map(
-                Option.match({
-                  onNone: () => Option.none<number>(),
-                  onSome: (bytes) => {
-                    let latest: number | undefined;
-                    for (const line of decoder
-                      .decode(bytes)
-                      .split("\n")
-                      .slice(offset > 0 ? 1 : 0, -1)) {
-                      const launchId = parseRecord(line, {
-                        generation: newest,
-                        byteOffset: 0,
-                      })?.launchId;
-                      if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
-                    }
-                    return Option.fromNullishOr(latest);
-                  },
-                }),
-              ),
-            );
-          }),
+  /** Highest launch id in the last chunk of one segment, skipping its first, possibly cut, line. */
+  const segmentLaunchId = (directory: string, generation: number) => {
+    const file = path.join(directory, segmentName(generation));
+    return fs.stat(file).pipe(
+      Effect.mapError(storeError("read")),
+      Effect.flatMap((info) => {
+        const offset = Math.max(0, Number(info.size) - readChunkBytes);
+        return readChunk(file, offset).pipe(
+          Effect.map(
+            Option.match({
+              onNone: () => Option.none<number>(),
+              onSome: (bytes) => {
+                let latest: number | undefined;
+                for (const line of decoder
+                  .decode(bytes)
+                  .split("\n")
+                  .slice(offset > 0 ? 1 : 0, -1)) {
+                  const launchId = parseRecord(line, { generation, byteOffset: 0 })?.launchId;
+                  if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
+                }
+                return Option.fromNullishOr(latest);
+              },
+            }),
+          ),
         );
       }),
     );
+  };
+
+  /** Newest launch id on disk; a crash can leave the newest segment empty, so older ones are walked. */
+  const latestLaunchId = Effect.fnUntraced(function* (directory: string) {
+    for (const generation of (yield* generations(directory)).toReversed()) {
+      const launchId = yield* segmentLaunchId(directory, generation);
+      if (Option.isSome(launchId)) return launchId;
+    }
+    return Option.none<number>();
+  });
 
   const guarded = <A, E>(live: Live | undefined, effect: Effect.Effect<A, E>) =>
     live === undefined ? effect : live.passes.withPermits(1)(effect);
 
   /** Reads the complete records of one chunk at `position`; `none` when the segment is gone. */
-  const readAt = (directory: string, position: LogPosition, live: Live | undefined) =>
+  const readAt = (directory: string, position: LogPosition, live: Live | undefined, end?: number) =>
     guarded(
       live,
-      readChunk(path.join(directory, segmentName(position.generation)), position.byteOffset),
+      readChunk(path.join(directory, segmentName(position.generation)), position.byteOffset, end),
     ).pipe(
       Effect.map(
         Option.map((bytes): Chunk => {
@@ -352,9 +360,14 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     cursor: LogPosition,
     cached: ReadonlyArray<number> | undefined,
     live: Live | undefined,
+    ends?: ReadonlyMap<number, number>,
   ) {
     const fresh = cached === undefined;
-    const listed = cached ?? (yield* generations(directory));
+    const listed =
+      cached ??
+      (yield* generations(directory)).filter(
+        (generation) => ends === undefined || ends.has(generation),
+      );
     const relist = (partial: boolean): Step => ({
       records: [],
       cursor,
@@ -383,7 +396,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
           atEnd: false,
           partial: false,
         } satisfies Step;
-      const next = yield* readAt(directory, resumeAt, live).pipe(
+      const next = yield* readAt(directory, resumeAt, live, ends?.get(generation)).pipe(
         Effect.map((chunk) => Option.getOrUndefined(chunk)?.records[0]?.timestamp),
         Effect.orElseSucceed(() => undefined),
       );
@@ -405,7 +418,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     });
     if (!listed.includes(cursor.generation))
       return newer !== undefined ? yield* gap(newer) : fresh ? atEnd(false) : relist(false);
-    const chunk = yield* readAt(directory, cursor, live);
+    const chunk = yield* readAt(directory, cursor, live, ends?.get(cursor.generation));
     if (Option.isNone(chunk)) return relist(false);
     if (chunk.value.progressed)
       return {
@@ -493,10 +506,11 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     options: Pick<ReadOptions, "since" | "follow">,
     live: Live | undefined,
     wake: PubSub.Subscription<void> | undefined,
+    ends?: ReadonlyMap<number, number>,
   ): Stream.Stream<LogRecord, LogStoreError> =>
     Stream.paginate(start, (current) =>
       Effect.gen(function* () {
-        const next: Step = yield* step(directory, current.cursor, current.listed, live);
+        const next: Step = yield* step(directory, current.cursor, current.listed, live, ends);
         const resume = Option.some({ cursor: next.cursor, listed: next.listed });
         if (!next.atEnd) return page(next.records, resume);
         if (!options.follow || live === undefined || wake === undefined)
@@ -552,14 +566,19 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     );
   });
 
-  /** Streams a directory's records in file order without an owner. */
-  const records = (directory: string, options: Pick<ReadOptions, "since">) =>
+  const records = (
+    directory: string,
+    options: Pick<ReadOptions, "since">,
+    ends: ReadonlyMap<number, number>,
+    from?: LogPosition,
+  ) =>
     follow(
       directory,
-      { cursor: { generation: 0, byteOffset: 0 }, listed: undefined },
+      { cursor: from ?? { generation: 0, byteOffset: 0 }, listed: undefined },
       { ...options, follow: false },
       undefined,
       undefined,
+      ends,
     );
 
   return { read, history, records, segments, generations, latestLaunchId };
@@ -968,8 +987,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
 
     const flushLaunches = Effect.gen(function* () {
       const previous = yield* Ref.make<number | undefined>(undefined);
-      yield* instance.observation.pipe(
-        Stream.map(({ launchId }) => launchId),
+      yield* instance.launches.pipe(
         Stream.changes,
         Stream.runForEach((launchId) =>
           Ref.getAndSet(previous, launchId).pipe(
@@ -1128,6 +1146,7 @@ export const streamStackLogs = (options: {
   readonly root: string;
   readonly instances?: ReadonlyArray<string>;
   readonly since?: number;
+  readonly from?: ReadonlyMap<string, LogPosition>;
 }): Stream.Stream<StackLogRecord, LogStoreError, FileSystem.FileSystem | Path.Path> =>
   Stream.unwrap(
     Effect.gen(function* () {
@@ -1135,10 +1154,22 @@ export const streamStackLogs = (options: {
       const path = yield* Path.Path;
       const reader = makeReader(fs, path);
       const selected = yield* persistedInstances(fs, path, options.root, options.instances);
-      return Stream.fromIterable(selected).pipe(
-        Stream.flatMap(({ service, instanceId }) =>
+      const captured = yield* Effect.forEach(selected, ({ service, instanceId }) =>
+        Effect.gen(function* () {
+          const directory = path.join(options.root, service, instanceId);
+          const segments = yield* reader.segments(directory);
+          return { service, instanceId, directory, segments };
+        }),
+      );
+      return Stream.fromIterable(captured).pipe(
+        Stream.flatMap(({ service, instanceId, directory, segments }) =>
           reader
-            .records(path.join(options.root, service, instanceId), options)
+            .records(
+              directory,
+              options,
+              new Map(segments.map(({ generation, size }) => [generation, size])),
+              options.from?.get(instanceId),
+            )
             .pipe(Stream.map((record): StackLogRecord => ({ ...record, service, instanceId }))),
         ),
       );

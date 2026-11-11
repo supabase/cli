@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { domainsActivateCommand } from "./activate/activate.command.ts";
 import { domainsCreateCommand } from "./create/create.command.ts";
 import { domainsDeleteCommand } from "./delete/delete.command.ts";

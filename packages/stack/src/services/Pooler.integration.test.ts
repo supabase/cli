@@ -1,25 +1,30 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-pooler",
   instanceId: "instance",
   root,
-  cacheRoot: "/tmp/supabase-stack-artifacts",
+  cacheRoot: testArtifactCacheRoot,
   runtime: "native" as const,
+  claimNativePort: () => Effect.succeed(true),
 });
 
 const dockerOptions = (root: string) => ({
   ...options(root),
   cacheRoot: `${root}/cache`,
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
 describe("service catalog", () => {
@@ -33,17 +38,16 @@ describe("service catalog", () => {
           const databaseRecipe = yield* makeServiceRecipe(
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(secret),
                 jwtExpiry: 3600,
               },
             },
             dockerOptions(root),
-            Effect.succeed([]),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -55,12 +59,13 @@ describe("service catalog", () => {
           const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
           const dockerDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/_supabase`;
           const nativeDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseEndpoint.host}:${databaseEndpoint.port}/_supabase`;
-          for (const runtime of ["native", "docker"] as const) {
+          for (const runtime of ["native", testEngine] as const) {
             for (const poolMode of ["transaction", "session"] as const) {
               const tenant = `catalog-${runtime}-${poolMode}`;
               const poolerRecipe = yield* makeServiceRecipe(
                 {
                   service: "pooler",
+                  pin: selection.pooler,
                   config: {
                     databaseUrl: runtime === "native" ? nativeDatabaseUrl : dockerDatabaseUrl,
                     jwtSecret: secret,
@@ -71,9 +76,8 @@ describe("service catalog", () => {
                   },
                 },
                 runtime === "native" ? options(root) : dockerOptions(root),
-                Effect.succeed([]),
               );
-              const pooler = yield* makeService(poolerRecipe.definition, {
+              const pooler = yield* makeStandaloneService(poolerRecipe.definition, {
                 id: `pooler-${runtime}-${poolMode}`,
                 config: poolerRecipe.creation,
               });
@@ -104,7 +108,11 @@ describe("service catalog", () => {
           }
           yield* database.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 });

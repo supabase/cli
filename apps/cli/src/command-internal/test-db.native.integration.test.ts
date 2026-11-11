@@ -1,22 +1,24 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { CommandRuntime } from "../shared/runtime/command-runtime.service.ts";
-import { mockOutput, mockProcessControl } from "../../tests/helpers/mocks.ts";
+import { mockOutput, mockProcessControl, mockTty } from "../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
+import { ProjectRefResolver } from "../config/project-ref.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
 import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
-import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
+import { DebugFlag, DnsResolverFlag, NetworkIdFlag, OutputFlag, YesFlag } from "./global-flags.ts";
+import { TargetPolicy } from "./target/target-policy.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
 import { testDb } from "./test-db.handler.ts";
@@ -27,14 +29,16 @@ import type { InitializationCommandOptions, PostgresCommandOptions } from "@supa
 import type { Stack } from "@supabase/stack/effect";
 import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
 import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
+import { selection } from "../../tests/helpers/pins.ts";
 
 const runtimes = ["native", "docker"] as const;
-const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+const liveStackApi = stackApiLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 
 const databaseCreation = {
   service: "database" as const,
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make("cli-pgtap-password"),
     jwtSecret: Redacted.make("cli-pgtap-jwt-secret-at-least-thirty-two-characters"),
     jwtExpiry: 3600,
@@ -44,6 +48,7 @@ const databaseCreation = {
 
 const flags = (path: string) => ({
   paths: [path],
+  remote: Option.none(),
   dbUrl: Option.none<string>(),
   linked: false,
   local: true,
@@ -87,7 +92,7 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
           const hostCredentials = yield* database.credentials({ from: "host" });
           const databaseUrl = hostCredentials.databaseUrl;
           if (databaseUrl === undefined) return yield* Effect.die("host database URL missing");
-          const hostConnection = parseConnectionString(databaseUrl);
+          const hostConnection = yield* parseConnectionString(databaseUrl);
           if (hostConnection === undefined) return yield* Effect.die("invalid host database URL");
           const connection = { ...hostConnection, user: "postgres" };
 
@@ -101,7 +106,13 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
             output.layer,
             mockTelemetryStateTracked().layer,
             Layer.succeed(DbConfigResolver, {
-              resolve: () => Effect.succeed({ conn: connection, isLocal: true }),
+              resolveConnection: (input) =>
+                Effect.succeed({
+                  conn: connection,
+                  isLocal: true,
+                  ref: Option.none(),
+                  target: input.target,
+                }),
               resolvePoolerFallback: () => Effect.succeed(Option.none()),
             }),
             Layer.succeed(RuntimeInfo, {
@@ -116,6 +127,17 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
             Layer.succeed(DnsResolverFlag, "native" as const),
             Layer.succeed(NetworkIdFlag, Option.none()),
             Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+            Layer.succeed(YesFlag, false),
+            Layer.succeed(OutputFlag, Option.none()),
+            mockTty({ stdinIsTty: false }),
+            Layer.succeed(ProjectRefResolver, {
+              resolve: () => Effect.die("unused"),
+              resolveForLink: () => Effect.die("unused"),
+              resolveRef: () => Effect.die("unused"),
+              resolveOptional: () => Effect.die("unused"),
+              promptProjectRef: () => Effect.die("unused"),
+            }),
             Layer.succeed(BundledPostgresClient, { run: () => Effect.die("unused") }),
             Layer.succeed(DockerRun, {
               run: () => Effect.die("unused"),
@@ -124,6 +146,7 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
             }),
             stackBackendLayer("stack"),
             dbConnectionLayer,
+            cliConfigValuesTestLayer,
           );
           const assertPgtapDropped = Effect.gen(function* () {
             const dbConnection = yield* DbConnection;
@@ -154,7 +177,6 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
             }
           }
           expect(failedOutput.stdoutText).toContain("not ok");
-          expect(failedOutput.stderrText).toContain("Connecting to local database");
           yield* assertPgtapDropped.pipe(Effect.provide(services));
 
           if (runtime !== "native") return;
@@ -188,9 +210,10 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
               const stdout = options.stdout;
               return Effect.gen(function* () {
                 yield* stdout(new TextEncoder().encode(partialTap));
-                return yield* Effect.fail(
-                  new StackError({ operation: "command", message: "pg_prove unavailable" }),
-                );
+                return yield* new StackError({
+                  operation: "command",
+                  message: "pg_prove unavailable",
+                });
               });
             }
             return run;

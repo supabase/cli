@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Ref } from "effect";
 
@@ -11,6 +11,7 @@ import { dockerRunLayer } from "./docker-run.layer.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { selection } from "../../tests/helpers/pins.ts";
 import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 
 const processControl = Layer.succeed(ProcessControl, {
@@ -19,10 +20,10 @@ const processControl = Layer.succeed(ProcessControl, {
   holdSignals: () => Effect.void,
   exit: () => Effect.die("unused"),
   setExitCode: () => Effect.void,
-  getExitCode: Effect.succeed(undefined),
+  getExitCode: Effect.undefined,
 });
 
-const base = Layer.mergeAll(BunServices.layer, processControl);
+const base = Layer.mergeAll(BunServices.layer, BunCrypto.layer, processControl);
 const docker = dockerRunLayer.pipe(Layer.provide(base));
 const client = bundledPostgresClientLayer.pipe(
   Layer.provide(Layer.mergeAll(base, docker, mockOutput().layer)),
@@ -55,7 +56,7 @@ describe("BundledPostgresClient", { timeout: 180_000 }, () => {
         const result = yield* Effect.gen(function* () {
           const client = yield* BundledPostgresClient;
           return yield* client.run({
-            version: "17",
+            pin: selection.database,
             runtime,
             argv:
               runtime.kind === "native"
@@ -82,7 +83,7 @@ describe("BundledPostgresClient", { timeout: 180_000 }, () => {
         const chunks = yield* Ref.make<ReadonlyArray<Uint8Array>>([]);
         const client = yield* BundledPostgresClient;
         const result = yield* client.run({
-          version: "17",
+          pin: selection.database,
           runtime: { kind: "container", engine: "docker" },
           argv: ["pg_dump", "--version"],
           env: {},

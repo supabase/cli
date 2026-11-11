@@ -3,6 +3,7 @@ import { styleText } from "node:util";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -13,6 +14,15 @@ import {
   BranchesListNetworkError,
   BranchesListUnexpectedStatusError,
 } from "./branches.errors.ts";
+
+/** `promptBranchId`'s branch listing, shown when no branch is given on a TTY. */
+export const branchPrompt = block("branch-prompt", [
+  {
+    operationId: "v1-list-all-branches",
+    kind: "required",
+    context: "the branch argument is omitted or empty and stdin is a TTY",
+  },
+]);
 
 const mapListError = mapHttpError({
   networkError: BranchesListNetworkError,
@@ -64,7 +74,8 @@ export const promptBranchId = Effect.fnUntraced(function* (
   const branches = yield* api.v1
     .listAllBranches({ ref: projectRef })
     .pipe(Effect.catch(mapListError));
-  if (branches.length === 0) {
+  const [firstBranch] = branches;
+  if (firstBranch === undefined) {
     return yield* new BranchesBranchingDisabledError({
       message: "branching is disabled",
       // Cyan matches the established color for the suggested command.
@@ -80,7 +91,7 @@ export const promptBranchId = Effect.fnUntraced(function* (
 
   const choice = yield* output
     .promptSelect("Select a branch:", options)
-    .pipe(Effect.orElseSucceed(() => options[0]!.value));
+    .pipe(Effect.orElseSucceed(() => firstBranch.project_ref));
 
   if (output.format === "text") {
     yield* output.raw(`Selected branch ID: ${choice}\n`, "stderr");

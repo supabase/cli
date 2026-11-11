@@ -1,5 +1,5 @@
 import { Layer } from "effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
@@ -7,7 +7,7 @@ import { CommandSettings } from "../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../command-internal/db-connection.service.ts";
-import { DebugLogger } from "../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
 import { DockerRun } from "../../command-internal/docker-run.service.ts";
 import { IdentityStitch, identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";

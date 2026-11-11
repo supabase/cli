@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, requiredInput, localJwtSecret } from "./ServiceConfig.ts";
 import {
+  DEFAULT_ERL_MAX_PORTS,
   DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
   DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
 } from "../Defaults.ts";
@@ -33,6 +34,18 @@ export const initializationCommand = {
   containerEntrypoint: "/app/bin/prepare",
 } satisfies StartupCommand & { readonly containerEntrypoint: string };
 
+const nativeReadinessOutput: NonNullable<ProcessRecipeSpec<Creation>["nativeReadinessOutput"]> = (
+  line,
+  endpoints,
+) => {
+  const http = endpoints.get("http");
+  if (http === undefined || /\bfailed\b/i.test(line)) return false;
+  return (
+    line.includes("Running RealtimeWeb.Endpoint") &&
+    new RegExp(`:${http.port}\\s+\\(http\\)(?:\\s|$)`).test(line)
+  );
+};
+
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "realtime",
   executable: "bin/server",
@@ -52,6 +65,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       return {
         DATABASE_URL: databaseUrl,
         ...(http === undefined ? {} : { PORT: String(http.port) }),
+        ...(container ? {} : { PHX_HTTP_IP: "127.0.0.1" }),
         DB_URL: databaseUrl,
         DB_HOST: db.host,
         DB_PORT: db.port,
@@ -70,6 +84,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         MAX_HEADER_LENGTH: String(creation.config.maxHeaderLength ?? 4096),
         ERL_AFLAGS:
           creation.config.ipVersion === "IPv6" ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
+        ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
         // The stack database listens on IPv4 only. This covers Realtime's own repo; tenant
         // connections probe IPv6 first and rely on the runtime host alias having no AAAA record.
         DB_IP_VERSION: "ipv4",
@@ -87,5 +102,6 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
     Effect.succeed(context.container ? ["-s", "-g", "--", "/app/bin/server"] : []),
   mounts: () => Effect.succeed([]),
   startupCommands: [initializationCommand],
+  nativeReadinessOutput,
   containerEntrypoint: () => "/usr/bin/tini",
 });

@@ -1,0 +1,395 @@
+name: Sync branches
+
+on:
+  # Starts when the Release workflow finishes. Every script runs from the default-branch
+  # checkout, never from the merged tree.
+  # jactionlint ignore=dangerous-triggers
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+    branches:
+      - main
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      pair:
+        description: Source and target branch to sync
+        required: true
+        type: choice
+        default: main-into-develop
+        options:
+          - main-into-develop
+          - develop-into-next
+      resync_pr:
+        description: Open develop-into-next pull request whose approved head conflicts with a moved next; Claude resolves the merge again on it
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# A resync has its own group, so a push to develop, which skips while the pull request is open, never replaces it while
+# it waits.
+concurrency:
+  group: sync-${{ github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair }}${{ inputs.resync_pr && '-resync' || '' }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync ${{ github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair }}
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      PAIR: ${{ github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair }}
+    outputs:
+      conflict_pr: ${{ steps.sync.outputs.conflict_pr }}
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - id: sync
+        name: Sync
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          RESYNC_PR: ${{ inputs.resync_pr }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bun .github/scripts/sync-branches.ts "$PAIR"
+
+  # A main-into-develop conflict blocks the next production deploy, so the
+  # people who just shipped the hotfix hear about it where the release landed.
+  notify-conflict:
+    name: Announce back-merge conflict
+    needs: sync
+    if: |
+      needs.sync.outputs.conflict_pr != '' &&
+      (github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair) == 'main-into-develop'
+    uses: ./.github/workflows/slack-notify.yml
+    with:
+      package: Supabase CLI
+      status: sync-conflict
+      pull_request: ${{ needs.sync.outputs.conflict_pr }}
+    secrets:
+      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+
+  # Claude resolves, the merged tree's quick checks run, and Claude fixes what fails, in three jobs, so the jobs holding the
+  # Anthropic key never execute the merged tree and none of them holds a GitHub write token. The tree passes between them
+  # as a git bundle; the publish job pushes it from a fresh checkout. See
+  # apps/cli/docs/release-process.md#claude-resolved-develop-into-next.
+  resolve:
+    name: Resolve conflicts with Claude
+    needs: sync
+    if: |
+      needs.sync.outputs.conflict_pr != '' &&
+      (github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair) == 'develop-into-next'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    outputs:
+      resolved: ${{ steps.resolve.outputs.resolved }}
+    env:
+      OUTPUT_DIR: ${{ github.workspace }}/sync-agent
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - name: Load Claude model
+        id: model
+        run: echo "model=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: work
+          ref: sync/develop-into-next
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: trusted/.bun-version
+
+      # Same pinned release and isolated npm config as the AI review workflow.
+      # jactionlint ignore=adhoc-packages
+      - name: Install Claude Code CLI
+        run: |
+          npm install -g \
+            --userconfig "${RUNNER_TEMP}/sync-npmrc-user" \
+            --globalconfig "${RUNNER_TEMP}/sync-npmrc-global" \
+            --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.280
+
+      - name: Resolve
+        id: resolve
+        working-directory: trusted
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ steps.model.outputs.model }}
+          WORK_DIR: ${{ github.workspace }}/work
+        run: |
+          git -C "$WORK_DIR" config user.name "github-actions[bot]"
+          git -C "$WORK_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bun .github/scripts/sync-agent.ts resolve
+
+      - name: Bundle the resolution
+        if: steps.resolve.outputs.resolved == 'true'
+        run: git -C work bundle create "$OUTPUT_DIR/sync.bundle" HEAD --not origin/sync/develop-into-next origin/next
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: sync-resolution
+          path: |
+            ${{ github.workspace }}/sync-agent/comment.md
+            ${{ github.workspace }}/sync-agent/github.diff
+            ${{ github.workspace }}/sync-agent/sync.bundle
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Runs the merged tree with no secrets in the job.
+  check:
+    name: Run quick checks on the resolution
+    needs: resolve
+    if: needs.resolve.outputs.resolved == 'true'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 110
+    permissions:
+      contents: read
+    outputs:
+      failed: ${{ steps.check.outputs.failed }}
+    env:
+      OUTPUT_DIR: ${{ github.workspace }}/sync-agent
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: work
+          ref: sync/develop-into-next
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: trusted/.bun-version
+
+      # Installs mise only; the script installs the merged tree's own toolchain.
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install: false
+          working_directory: work
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sync-resolution
+          path: ${{ github.workspace }}/sync-agent
+
+      - name: Check
+        id: check
+        working-directory: trusted
+        env:
+          WORK_DIR: ${{ github.workspace }}/work
+        run: |
+          git -C "$WORK_DIR" fetch --no-tags "$OUTPUT_DIR/sync.bundle" HEAD
+          git -C "$WORK_DIR" checkout --detach FETCH_HEAD
+          git -C "$WORK_DIR" config user.name "github-actions[bot]"
+          git -C "$WORK_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bun .github/scripts/sync-agent.ts check
+          git -C "$WORK_DIR" bundle create "$OUTPUT_DIR/sync.bundle" HEAD --not origin/sync/develop-into-next origin/next
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-checked
+          path: ${{ github.workspace }}/sync-agent
+          retention-days: 7
+
+  # Holds the Anthropic key and executes nothing from the merged tree.
+  fix:
+    name: Fix the quick checks with Claude
+    needs: check
+    if: needs.check.outputs.failed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    env:
+      OUTPUT_DIR: ${{ github.workspace }}/sync-agent
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - name: Load Claude model
+        id: model
+        run: echo "model=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: work
+          ref: sync/develop-into-next
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: trusted/.bun-version
+
+      # Same pinned release and isolated npm config as the AI review workflow.
+      # jactionlint ignore=adhoc-packages
+      - name: Install Claude Code CLI
+        run: |
+          npm install -g \
+            --userconfig "${RUNNER_TEMP}/sync-npmrc-user" \
+            --globalconfig "${RUNNER_TEMP}/sync-npmrc-global" \
+            --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.280
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sync-checked
+          path: ${{ github.workspace }}/sync-agent
+
+      - name: Fix
+        working-directory: trusted
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ steps.model.outputs.model }}
+          WORK_DIR: ${{ github.workspace }}/work
+        run: |
+          git -C "$WORK_DIR" fetch --no-tags "$OUTPUT_DIR/sync.bundle" HEAD
+          git -C "$WORK_DIR" checkout --detach FETCH_HEAD
+          git -C "$WORK_DIR" config user.name "github-actions[bot]"
+          git -C "$WORK_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bun .github/scripts/sync-agent.ts fix
+          git -C "$WORK_DIR" bundle create "$OUTPUT_DIR/sync.bundle" HEAD --not origin/sync/develop-into-next origin/next
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sync-fixed
+          path: |
+            ${{ github.workspace }}/sync-agent/comment.md
+            ${{ github.workspace }}/sync-agent/github.diff
+            ${{ github.workspace }}/sync-agent/sync.bundle
+          retention-days: 7
+
+  # Runs after a failed resolve too, so the pull request always says what happened. It publishes the latest stage that
+  # finished.
+  publish:
+    name: Publish the resolution
+    needs:
+      - sync
+      - resolve
+      - check
+      - fix
+    if: ${{ !cancelled() && needs.sync.outputs.conflict_pr != '' && needs.resolve.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The AI review skips bot pull requests, so the job's own token dispatches it (`actions: write`).
+    permissions:
+      contents: read
+      actions: write
+    env:
+      ARTIFACTS: ${{ github.workspace }}/sync-artifacts
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          pattern: sync-*
+          path: ${{ github.workspace }}/sync-artifacts
+
+      # Pushes only a `.github/` that reviewed code gives, then proposes Claude's workflow edits as review suggestions. A
+      # plain push fails if the sync branch moved since the resolve job checked it out.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          JOB_TOKEN: ${{ github.token }}
+          PR: ${{ needs.sync.outputs.conflict_pr }}
+          RESOLVED: ${{ needs.resolve.outputs.resolved }}
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+        run: |
+          stage=""
+          for name in sync-fixed sync-checked sync-resolution; do
+            if [ -f "$ARTIFACTS/$name/comment.md" ]; then
+              stage="$ARTIFACTS/$name"
+              break
+            fi
+          done
+          # download-artifact extracts a lone matching artifact into the path itself, not a subdirectory.
+          if [ -z "$stage" ] && [ -f "$ARTIFACTS/comment.md" ]; then
+            stage="$ARTIFACTS"
+          fi
+          if [ "$RESOLVED" = true ]; then
+            export REPO_DIR="$GITHUB_WORKSPACE" OUTPUT_DIR="$stage" HEAD_SHA
+            if ! {
+              git fetch --no-tags "$stage/sync.bundle" HEAD:refs/sync/resolution &&
+                HEAD_SHA="$(git rev-parse refs/sync/resolution)" &&
+                BASE_REF=refs/remotes/origin/sync/develop-into-next bun .github/scripts/sync-agent.ts verify &&
+                git -c core.hooksPath=/dev/null push \
+                  "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/sync/resolution:refs/heads/sync/develop-into-next
+            }; then
+              gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+                --body "@supabase/cli Publishing Claude's resolution failed; resolve this merge by hand as described above ([workflow run](${RUN_URL}))."
+              exit 1
+            fi
+            printf "Approve to fast-forward \`next\` once checks pass ([workflow run](%s)).\n" "$RUN_URL" >> "$stage/comment.md"
+          fi
+          if [ -n "$stage" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$stage/comment.md"
+          elif [ "$RESOLVE_RESULT" != success ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+              --body "@supabase/cli The resolve job failed; resolve this merge by hand as described above ([workflow run](${RUN_URL}))."
+          fi
+          if [ "$RESOLVED" = true ]; then
+            bun .github/scripts/sync-agent.ts suggest
+            GH_TOKEN="$JOB_TOKEN" gh workflow run ai-review.yml --repo "$GITHUB_REPOSITORY" -f pr="$PR"
+          fi

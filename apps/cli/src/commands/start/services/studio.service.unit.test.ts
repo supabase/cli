@@ -7,6 +7,7 @@ import {
   buildStudioContainerSpec,
   buildStudioEnv,
   type BuildStudioEnvInput,
+  type StudioContainerInput,
 } from "./studio.service.ts";
 
 const baseEnvInput: BuildStudioEnvInput = {
@@ -34,7 +35,7 @@ const baseEnvInput: BuildStudioEnvInput = {
 };
 
 describe("buildStudioEnv", () => {
-  it.effect("mirrors Go's TestBuildStudioEnv fixture", () => {
+  it.effect("builds the studio env fixture", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const env = buildStudioEnv(baseEnvInput, path);
@@ -67,7 +68,7 @@ describe("buildStudioEnv", () => {
         PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
         PGRST_DB_MAX_ROWS: "1000",
         LOGFLARE_URL: "http://test-logflare:4000",
-        NEXT_PUBLIC_ENABLE_LOGS: "true",
+        ENABLED_FEATURES_LOGS_ALL: "true",
         NEXT_ANALYTICS_BACKEND_PROVIDER: "postgres",
         EDGE_FUNCTIONS_MANAGEMENT_FOLDER: "/project/supabase/functions",
         SNIPPETS_MANAGEMENT_FOLDER: "/project/supabase/.temp/snippets",
@@ -78,7 +79,7 @@ describe("buildStudioEnv", () => {
   });
 
   it.effect(
-    "LOGFLARE_PRIVATE_ACCESS_TOKEN is always Go's hardcoded 'api-key', regardless of input",
+    "LOGFLARE_PRIVATE_ACCESS_TOKEN is always the hardcoded 'api-key', regardless of input",
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -104,24 +105,21 @@ describe("buildStudioEnv", () => {
     }).pipe(Effect.provide(BunPath.layer));
   });
 
-  it.effect(
-    'reflects analyticsEnabled/analyticsBackend verbatim (Go\'s fmt.Sprintf("%v", ...))',
-    () => {
-      return Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const env = buildStudioEnv(
-          {
-            ...baseEnvInput,
-            analyticsEnabled: false,
-            analyticsBackend: "bigquery",
-          },
-          path,
-        );
-        expect(env["NEXT_PUBLIC_ENABLE_LOGS"]).toBe("false");
-        expect(env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
-      }).pipe(Effect.provide(BunPath.layer));
-    },
-  );
+  it.effect("reflects analyticsEnabled/analyticsBackend verbatim", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const env = buildStudioEnv(
+        {
+          ...baseEnvInput,
+          analyticsEnabled: false,
+          analyticsBackend: "bigquery",
+        },
+        path,
+      );
+      expect(env["ENABLED_FEATURES_LOGS_ALL"]).toBe("false");
+      expect(env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
+    }).pipe(Effect.provide(BunPath.layer));
+  });
 
   it.effect(
     "EDGE_FUNCTIONS_MANAGEMENT_FOLDER is workdir/supabase/functions in Docker-path form",
@@ -144,12 +142,12 @@ describe("buildStudioEnv", () => {
 });
 
 describe("buildStudioContainerSpec", () => {
-  const baseSpecInput = {
+  const baseSpecInput: StudioContainerInput = {
     image: "supabase/studio:2026.07.07-sha-a6a04f2",
     containerName: "supabase_studio_proj",
     networkId: "supabase_network_proj",
     port: 54323,
-    functionBinds: [] as ReadonlyArray<string>,
+    functionBinds: [],
     env: baseEnvInput,
   };
 
@@ -204,23 +202,20 @@ describe("buildStudioContainerSpec", () => {
     },
   );
 
-  it.effect(
-    "dedupes the snippets bind against an identical functionBinds entry (Go's utils.RemoveDuplicates)",
-    () => {
-      return Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const spec = buildStudioContainerSpec(
-          {
-            ...baseSpecInput,
-            functionBinds: ["/project/supabase/snippets:/project/supabase/snippets:rw"],
-          },
-          path,
-        );
+  it.effect("dedupes the snippets bind against an identical functionBinds entry", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const spec = buildStudioContainerSpec(
+        {
+          ...baseSpecInput,
+          functionBinds: ["/project/supabase/snippets:/project/supabase/snippets:rw"],
+        },
+        path,
+      );
 
-        expect(spec.binds).toEqual(["/project/supabase/snippets:/project/supabase/snippets:rw"]);
-      }).pipe(Effect.provide(BunPath.layer));
-    },
-  );
+      expect(spec.binds).toEqual(["/project/supabase/snippets:/project/supabase/snippets:rw"]);
+    }).pipe(Effect.provide(BunPath.layer));
+  });
   it.effect("translates Windows function and snippet mounts for the container", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

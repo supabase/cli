@@ -1,7 +1,7 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import * as net from "node:net";
 import type { Stack } from "@supabase/stack/effect";
 import {
@@ -14,14 +14,19 @@ import { dbConnectionLayer } from "../../../../command-internal/db-connection.sq
 import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
 import { parseConnectionString } from "../../../../command-internal/db-config.parse.ts";
 import { stackCatalogSetupLayer } from "../../../../command-internal/stack-catalog-setup.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
-import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
+import { DebugFlag, ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { stackStart } from "./start.handler.ts";
-import { stackPrepare } from "../prepare/prepare.handler.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const excluded = [
   "rest",
@@ -40,14 +45,8 @@ const flags = (exclude: ReadonlyArray<string>) => ({
   stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "on-demand" as const,
+  frozen: false,
   eager: false,
-});
-
-const prepareFlags = () => ({
-  stack: Option.none<string>(),
-  stackId: Option.none<string>(),
-  runtime: "native" as const,
-  capability: [],
 });
 
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -103,16 +102,14 @@ const captureOwnerPid = (capture: (pid: number) => void) =>
   );
 
 const ownerHasExited = (pid: number) =>
-  Effect.sync(() => {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (cause) {
-      if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ESRCH")
-        return true;
-      throw cause;
-    }
-  });
+  Effect.try(() => process.kill(pid, 0)).pipe(
+    Effect.as(false),
+    Effect.catchIf(
+      ({ cause }) =>
+        typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ESRCH",
+      () => Effect.succeed(true),
+    ),
+  );
 
 const projectConfig = `
 project_id = "stack-start-native-integration"
@@ -145,6 +142,45 @@ enabled = false
 enabled = false
 `;
 
+/** REST and Auth share the API listener; an absent \`[api] port\` requests an automatic one. */
+const n2ProjectConfig = (apiPort: number | undefined) => `
+project_id = "stack-start-n2-replan"
+${apiPort === undefined ? "" : `\n[api]\nport = ${apiPort}\n`}
+[auth]
+enabled = true
+
+[realtime]
+enabled = false
+
+[storage]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[analytics]
+enabled = false
+
+[db.pooler]
+enabled = false
+
+[local_smtp]
+enabled = false
+`;
+const onlyRestAndAuth = [
+  "realtime",
+  "storage",
+  "functions",
+  "studio",
+  "mail",
+  "analytics",
+  "pooler",
+];
+const onlyRest = [...onlyRestAndAuth, "auth"];
+
 const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
   const settings = mockCommandSettings({ workdir, supabaseHome: root });
   const resolver = stackTargetResolverLayer.pipe(
@@ -157,7 +193,7 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
     output,
     telemetry,
     layer: Layer.mergeAll(
-      BunServices.layer,
+      cliConfigValuesTestLayer,
       FetchHttpClient.layer,
       runtimeInfoLayer,
       settings,
@@ -168,12 +204,13 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
       stackCatalogSetupLayer,
       dbConnectionLayer,
       Layer.succeed(ExperimentalFlag, false),
+      Layer.succeed(DebugFlag, false),
       Layer.succeed(YesFlag, false),
       Layer.succeed(CliArgs, { args: ["stack", "start"] }),
       Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
       stdinLayer.pipe(Layer.provide(tty)),
       tty,
-    ),
+    ).pipe(Layer.provideMerge(BunServices.layer)),
   };
 };
 
@@ -194,8 +231,16 @@ describe("experimental stack start native lifecycle", () => {
         const fixture = makeLayers(root);
         yield* Effect.ensuring(
           Effect.gen(function* () {
-            yield* Effect.scoped(stackPrepare(prepareFlags()));
             const api = yield* StackApi;
+            yield* Effect.scoped(
+              api.create({
+                projectRoot: root,
+                stateRoot: path.join(root, "stacks"),
+                cacheRoot: path.join(root, "cache"),
+                runtime: "native",
+                startOwner: true,
+              }),
+            );
             const preparedDefinitions = yield* api.discover({
               stateRoot: path.join(root, "stacks"),
             });
@@ -237,7 +282,7 @@ describe("experimental stack start native lifecycle", () => {
             const firstCredentials = yield* firstDatabase.credentials({ from: "host" });
             const firstDatabaseUrl = firstCredentials.databaseUrl;
             if (firstDatabaseUrl === undefined) return yield* Effect.die("database URL missing");
-            const firstConnection = parseConnectionString(firstDatabaseUrl);
+            const firstConnection = yield* parseConnectionString(firstDatabaseUrl);
             if (firstConnection === undefined) return yield* Effect.die("database URL invalid");
             const db = yield* DbConnection;
             yield* Effect.scoped(
@@ -270,7 +315,9 @@ describe("experimental stack start native lifecycle", () => {
             expect(secondDatabase.id).toBe(firstDatabase.id);
             const secondCredentials = yield* secondDatabase.credentials({ from: "host" });
             expect(secondCredentials.databaseUrl).toBe(firstDatabaseUrl);
-            const secondConnection = parseConnectionString(secondCredentials.databaseUrl ?? "");
+            const secondConnection = yield* parseConnectionString(
+              secondCredentials.databaseUrl ?? "",
+            );
             if (secondConnection === undefined) return yield* Effect.die("reopened URL invalid");
             const rows = yield* Effect.scoped(
               Effect.gen(function* () {
@@ -300,7 +347,7 @@ describe("experimental stack start native lifecycle", () => {
             expect(restartedDatabase.id).toBe(firstDatabase.id);
             const restartedCredentials = yield* restartedDatabase.credentials({ from: "host" });
             expect(restartedCredentials.databaseUrl).toBe(firstDatabaseUrl);
-            const restartedConnection = parseConnectionString(
+            const restartedConnection = yield* parseConnectionString(
               restartedCredentials.databaseUrl ?? "",
             );
             if (restartedConnection === undefined)
@@ -321,12 +368,75 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 
   it.live(
-    "stops owners after bind and pre-compose config failures across retries",
+    "names the pinned Studio port setting when another process holds that port",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-native-studio-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        const server = net.createServer();
+        const ownedServer = yield* Effect.acquireRelease(
+          Effect.callback<net.Server, Error>((resume) => {
+            const onError = (cause: Error) => resume(Effect.fail(cause));
+            server.once("error", onError);
+            server.listen(0, "127.0.0.1", () => {
+              server.removeListener("error", onError);
+              resume(Effect.succeed(server));
+            });
+            return Effect.sync(() => {
+              server.removeListener("error", onError);
+              if (server.listening) server.close();
+            });
+          }),
+          (listeningServer) =>
+            Effect.callback<void>((resume) => {
+              listeningServer.close(() => resume(Effect.void));
+            }),
+        );
+        const address = ownedServer.address();
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("Unable to reserve a native test port");
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          projectConfig.replace(
+            "[studio]\nenabled = false",
+            `[studio]\nenabled = true\nport = ${address.port}`,
+          ),
+        );
+        const fixture = makeLayers(root);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* Effect.addFinalizer(() =>
+              destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache")),
+            );
+            const failedStart = yield* Effect.scoped(
+              Effect.exit(
+                stackStart(flags(excluded.filter((name) => name !== "studio" && name !== "rest"))),
+              ),
+            );
+            expect(Exit.isFailure(failedStart)).toBe(true);
+            if (!Exit.isFailure(failedStart)) return;
+            expect(Cause.findErrorOption(failedStart.cause)).toMatchObject(
+              Option.some({
+                suggestion:
+                  "Set `studio.port` in supabase/config.toml (or SUPABASE_STUDIO_PORT) to a free port.",
+              }),
+            );
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "stops owners after bind failures across retries, and rejects an invalid config before spawning one",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -381,8 +491,14 @@ describe("experimental stack start native lifecycle", () => {
               // Linux rejects the bind; platforms that allow overlapping binds reject the probe.
               expect(Cause.pretty(failedStart.cause)).toMatch(
                 new RegExp(
-                  `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is already in use)`,
+                  `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is in use by another process)`,
                 ),
+              );
+              expect(Cause.findErrorOption(failedStart.cause)).toMatchObject(
+                Option.some({
+                  suggestion:
+                    "Set `db.port` in supabase/config.toml (or SUPABASE_DB_PORT) to a free port.",
+                }),
               );
               const ownerPid = ownerPids[attempt];
               expect(ownerPid).toBeDefined();
@@ -403,20 +519,21 @@ describe("experimental stack start native lifecycle", () => {
               expect(yield* stack.services.list).toHaveLength(0);
               expect((yield* stack.composition.describe).members).toHaveLength(0);
             }
+            // A stopped stack reads its project config before reopening, so an invalid config
+            // rejects without spawning another owner (`ownerPids[2]` stays unset). The resolved
+            // config is memoised per runtime, so the rewritten file needs a fresh service.
             yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "project_id = [");
             activeAttempt = 2;
-            const invalidConfigStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
+            const invalidConfigStart = yield* Effect.scoped(
+              Effect.exit(stackStart(flags([]))),
+            ).pipe(Effect.provide(cliConfigValuesTestLayer));
             expect(Exit.isFailure(invalidConfigStart)).toBe(true);
             if (!Exit.isFailure(invalidConfigStart)) return;
             const configError = Cause.findErrorOption(invalidConfigStart.cause);
             expect(Option.isSome(configError)).toBe(true);
             if (Option.isSome(configError))
               expect(configError.value).toMatchObject({ reason: "invalid-config" });
-            const configFailureOwnerPid = ownerPids[2];
-            expect(configFailureOwnerPid).toBeDefined();
-            if (configFailureOwnerPid === undefined)
-              return yield* Effect.die("owner PID missing after config failure");
-            expect(yield* ownerHasExited(configFailureOwnerPid)).toBe(true);
+            expect(ownerPids[2]).toBeUndefined();
             const definitions = yield* api.discover({ stateRoot: path.join(root, "stacks") });
             expect(definitions).toHaveLength(1);
             const definition = definitions[0];
@@ -430,10 +547,10 @@ describe("experimental stack start native lifecycle", () => {
             });
             expect(yield* stack.services.list).toHaveLength(0);
             expect((yield* stack.composition.describe).members).toHaveLength(0);
-            expect(ownerPids.filter((pid) => pid !== undefined)).toHaveLength(3);
+            expect(ownerPids.filter((pid) => pid !== undefined)).toHaveLength(2);
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 60_000 },
   );
 
@@ -494,7 +611,140 @@ describe("experimental stack start native lifecycle", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(fixture.layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "re-plans the shared API port after excluding a sibling that previously shared it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-n2-replan-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        // Below the native backend range (10000-19999), the automatic public range (20000-32767)
+        // and every OS ephemeral range, so no concurrent stack claim or outbound socket holds it.
+        const fixedPort = 8_915;
+        const locations = (r: string) => ({
+          stateRoot: path.join(r, "stacks"),
+          cacheRoot: path.join(r, "cache"),
+        });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          n2ProjectConfig(fixedPort),
+        );
+        const fixture = makeLayers(root);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            const stackId = yield* stackStart(flags(onlyRestAndAuth));
+            const stack = yield* api.open({ id: stackId, ...locations(root) });
+            const restBefore = (yield* stack.services.list).find(
+              (instance) => instance.service === "rest",
+            );
+            if (restBefore === undefined) return yield* Effect.die("REST missing");
+            const statusBefore = yield* restBefore.status;
+            const portBefore = statusBefore.endpoints.find(({ name }) => name === "http")?.port;
+            expect(portBefore).toBe(fixedPort);
+
+            yield* stack.stop;
+            // The config drops the fixed API port and now excludes Auth too: REST alone remains,
+            // so Auth's still-saved fixed port must not anchor REST's shared port back to it.
+            // The resolved config is memoised per runtime, so the rewritten file needs a fresh service.
+            yield* fs.writeFileString(
+              path.join(root, "supabase", "config.toml"),
+              n2ProjectConfig(undefined),
+            );
+            const restartedId = yield* stackStart(flags(onlyRest)).pipe(
+              Effect.provide(cliConfigValuesTestLayer),
+            );
+            expect(restartedId).toBe(stackId);
+            const restarted = yield* api.open({ id: restartedId, ...locations(root) });
+            const restAfter = (yield* restarted.services.list).find(
+              (instance) => instance.service === "rest",
+            );
+            if (restAfter === undefined) return yield* Effect.die("REST missing after restart");
+            expect(restAfter.id).toBe(restBefore.id);
+            const statusAfter = yield* restAfter.status;
+            const portAfter = statusAfter.endpoints.find(({ name }) => name === "http")?.port;
+            expect(portAfter).toBeDefined();
+            // The fixed port is outside the automatic range, so the replan to automatic claims a
+            // different number and that claim agrees with the live bind.
+            const changes = yield* restarted.startupEndpointChanges;
+            const restChange = changes.find((change) => change.service === "rest");
+            expect(restChange?.from).toBe(fixedPort);
+            expect(restChange?.to).toBe(portAfter);
+            expect(restChange?.to).not.toBe(fixedPort);
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "refuses an Auth older than the one that migrated the data, and accepts a newer one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-downgrade-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          n2ProjectConfig(undefined),
+        );
+        const locations = {
+          stateRoot: path.join(root, "stacks"),
+          cacheRoot: path.join(root, "cache"),
+        };
+        const fixture = makeLayers(root);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            const stackId = yield* stackStart(flags(onlyRestAndAuth));
+            const stack = yield* api.open({ id: stackId, ...locations });
+            const database = (yield* stack.services.list).find(
+              (instance) => instance.service === "database",
+            );
+            if (database === undefined) return yield* Effect.die("database missing");
+            const record = path.join(
+              locations.stateRoot,
+              stackId,
+              "data",
+              database.id,
+              "schema-writers.json",
+            );
+            expect(yield* fs.readFileString(record)).toContain(selection.auth.upstreamVersion);
+            yield* stack.stop;
+
+            yield* fs.writeFileString(record, '{"auth":"v999.0.0"}');
+            const refused = yield* Effect.scoped(Effect.exit(stackStart(flags(onlyRestAndAuth))));
+            expect(Exit.isFailure(refused)).toBe(true);
+            if (!Exit.isFailure(refused)) return;
+            const message = Cause.pretty(refused.cause);
+            expect(message).toContain(
+              `auth ${selection.auth.upstreamVersion} is older than v999.0.0`,
+            );
+            expect(message).toContain(`supabase stack destroy --stack-id ${stackId}`);
+            expect(yield* fs.readFileString(record)).toContain("v999.0.0");
+
+            yield* fs.writeFileString(record, '{"auth":"v0.0.1"}');
+            expect(yield* stackStart({ ...flags(onlyRestAndAuth), eager: true })).toBe(stackId);
+            const raised = yield* fs.readFileString(record);
+            expect(raised).toContain(selection.auth.upstreamVersion);
+            expect(raised).not.toContain("v0.0.1");
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, locations.stateRoot, locations.cacheRoot);
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     { timeout: 180_000 },
   );
 });

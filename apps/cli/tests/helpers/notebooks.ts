@@ -1,22 +1,28 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, FileSystem, Layer, Option, Path, Predicate, Stdio } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import type * as HttpClientError from "effect/unstable/http/HttpClientError";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as UrlParams from "effect/unstable/http/UrlParams";
+import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as UrlParams from "effect/http/UrlParams";
+import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
+import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
-import { OutputFlag } from "../../src/command-internal/global-flags.ts";
+import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
+import { TargetPolicy } from "../../src/command-internal/target/target-policy.ts";
+import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import {
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
   mockCommandSettings,
   transportFailure,
 } from "./command-mocks.ts";
-import { mockOutput, mockContextualAnalytics, mockProcessControl } from "./mocks.ts";
+import { mockOutput, mockContextualAnalytics, mockProcessControl, mockTty } from "./mocks.ts";
+import { realLinkedProjectCache } from "./permission-real-layers.ts";
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 
 /**
@@ -124,9 +130,18 @@ function mockNotebooksHttp(routes: NotebooksHttpRoutes) {
 
   return {
     layer: Layer.mergeAll(apiLayer, httpClientLayer),
+    httpClientLayer,
     requests,
     get routeKeys(): Array<string> {
       return requests.map((request) => `${request.method} ${new URL(request.url).pathname}`);
+    },
+    /** The requests in the shape the permission drift helpers take. */
+    get driftRequests() {
+      return requests.map(({ method, url, query }) => ({
+        method,
+        url,
+        urlParams: query.toString(),
+      }));
     },
   };
 }
@@ -147,6 +162,7 @@ function notebookMetadata(options: { readonly id: string; readonly name: string 
       updated_at: "2026-01-01T00:00:00Z",
       owner: null,
       updated_by: null,
+      url: `https://supabase.com/dashboard/project/${NOTEBOOKS_PROJECT_REF}/notebooks/${options.id}`,
     },
   };
 }
@@ -222,7 +238,7 @@ export function notebooksProject(dir: string) {
 function testProjectRefLayer(linked: boolean) {
   const optional = (flag: Option.Option<string>) =>
     Option.orElse(flag, () => (linked ? Option.some(NOTEBOOKS_PROJECT_REF) : Option.none()));
-  const resolve = (flag: Option.Option<string>) =>
+  const resolve = (flag: Option.Option<string>): Effect.Effect<string, ProjectRefNotLinkedError> =>
     Option.match(optional(flag), {
       onSome: Effect.succeed,
       onNone: () =>
@@ -234,9 +250,12 @@ function testProjectRefLayer(linked: boolean) {
     });
   return Layer.succeed(ProjectRefResolver, {
     resolve,
+    resolveRef: (flag) =>
+      resolve(flag).pipe(
+        Effect.map((ref) => ({ ref, source: "file" as const, matchesLinkedRef: true })),
+      ),
     resolveForLink: resolve,
     resolveOptional: (flag) => Effect.succeed(optional(flag)),
-    loadProjectRef: resolve,
     promptProjectRef: () => resolve(Option.none()),
   });
 }
@@ -245,28 +264,66 @@ export interface NotebooksSetupOptions {
   readonly workdir: string;
   readonly format?: "text" | "json" | "stream-json";
   readonly interactive?: boolean;
+  /** Picks the mock resolver's linkage; ignored with `realLayers`, where the workdir's ref file decides. */
   readonly linked?: boolean;
   /** Answers the reconciliation prompt: `"keep"`, `"copy"` or `"delete"`. */
   readonly promptSelectResponses?: ReadonlyArray<string>;
+  /** Answers the hosted-mutation confirmation. */
+  readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly routes?: NotebooksHttpRoutes;
-  /** The Go `-o`/`--output` flag, which every command family here honours. */
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  /** The `-o`/`--output` flag, which every command family here honours. */
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly command?: "pull" | "push";
   readonly args?: ReadonlyArray<string>;
+  /** `--yes`; on by default so hosted-mutation consent does not block push tests. */
+  readonly yes?: boolean;
+  /**
+   * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real
+   * linked-project cache, so their `GET /v1/projects` and `GET /v1/projects/{ref}` calls go
+   * through `routes`. Linkage then comes from the workdir's `.temp/project-ref`, not `linked`.
+   */
+  readonly realLayers?: boolean;
 }
 
 export function setupNotebooks(options: NotebooksSetupOptions) {
+  const interactive = options.interactive ?? (options.format ?? "text") === "text";
   const out = mockOutput({
     format: options.format ?? "text",
-    interactive: options.interactive ?? (options.format ?? "text") === "text",
+    interactive,
     ...(options.promptSelectResponses === undefined
       ? {}
       : { promptSelectResponses: options.promptSelectResponses }),
+    ...(options.promptConfirmResponses === undefined
+      ? {}
+      : { promptConfirmResponses: options.promptConfirmResponses }),
   });
   const http = mockNotebooksHttp(options.routes ?? {});
 
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
+  const cliSettings =
+    options.realLayers === true
+      ? mockCommandSettings({ workdir: options.workdir, projectId: Option.none() })
+      : mockCommandSettings({ workdir: options.workdir });
+  const projectRef =
+    options.realLayers === true
+      ? projectRefLayer.pipe(
+          Layer.provide(
+            Layer.succeed(CommandPlatformApiFactory, {
+              make: CommandPlatformApi.pipe(Effect.provide(http.layer)),
+            }),
+          ),
+          Layer.provide(cliSettings),
+          Layer.provide(mockTty({ stdinIsTty: true })),
+          Layer.provide(commandTargetLayer.pipe(Layer.provide(out.layer))),
+          Layer.provide(out.layer),
+          Layer.provide(BunServices.layer),
+        )
+      : testProjectRefLayer(options.linked !== false);
+  const linkedProjectCache =
+    options.realLayers === true
+      ? realLinkedProjectCache({ httpClient: http.httpClientLayer, cliSettings })
+      : cache.layer;
   const analytics = mockContextualAnalytics();
   const process = mockProcessControl();
   const command = options.command ?? "pull";
@@ -280,19 +337,25 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
     layer: Layer.mergeAll(
       out.layer,
       http.layer,
-      mockCommandSettings({ workdir: options.workdir }),
-      testProjectRefLayer(options.linked !== false),
+      cliSettings,
+      projectRef,
       telemetry.layer,
-      cache.layer,
+      linkedProjectCache,
       analytics.layer,
       process.layer,
-      commandRuntimeLayer(["notebooks", command]).pipe(Layer.provide(BunServices.layer)),
+      commandRuntimeLayer(["notebooks", command]).pipe(
+        Layer.provide([BunServices.layer, BunCrypto.layer]),
+      ),
       Layer.succeed(
         OutputFlag,
-        options.goOutput === undefined ? Option.none() : Option.some(options.goOutput),
+        options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
       ),
       BunServices.layer,
       Stdio.layerTest({ args: Effect.succeed(options.args ?? ["notebooks", command]) }),
+      Layer.succeed(YesFlag, options.yes ?? true),
+      Layer.succeed(CliArgs, { args: [] }),
+      mockTty({ stdinIsTty: interactive, stdoutIsTty: interactive }),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: command === "push" ? "no" : "none" }),
     ),
   };
 }

@@ -1,17 +1,31 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withContext,
+} from "../../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
+import { computeRead } from "../../../../shared/compute/compute-api.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { COMPUTE_EXPOSURES } from "../../../../shared/compute/compute-runtimes.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computePush } from "./push.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 
 const config = {
-  names: Argument.string("name").pipe(
+  names: Argument.String("name").pipe(
     Argument.withDescription("Compute to deploy. Deploys every compute in the project if omitted."),
     Argument.variadic(),
   ),
-  instances: Flag.integer("instances").pipe(
+  instances: Flag.Int("instances").pipe(
     // Bounded at the parser: left unchecked, a negative value reached the deploy
     // endpoint after the build context was already packaged and uploaded.
     Flag.filter(
@@ -19,22 +33,22 @@ const config = {
       (instances) => `--instances ${instances} is negative; pass zero or more.`,
     ),
     Flag.withDescription(
-      "Number of instances to run, overriding `instances` in supabase/config.toml for this deploy. Falls back to the recorded value, then 1.",
+      "Number of instances to run, overriding `instances` in the project config file for this deploy. Falls back to the recorded value, then 1.",
     ),
     Flag.optional,
   ),
-  exposure: Flag.choice("exposure", COMPUTE_EXPOSURES).pipe(
+  exposure: Flag.Literals("exposure", COMPUTE_EXPOSURES).pipe(
     // A closed set at the parser, the way `new --runtime` and `new --size` are:
     // the accepted values get listed in the refusal, and nothing unrecognized
     // reaches the deploy endpoint after a build context has been uploaded.
     // `[compute.<name>] exposure` stays a plain string, so a value the API
     // grows before this CLI does can still be recorded there.
     Flag.withDescription(
-      "Whether the compute is reachable from the internet, overriding `exposure` in supabase/config.toml for this deploy. Falls back to the recorded value, then public.",
+      "Whether the compute is reachable from the internet, overriding `exposure` in the project config file for this deploy. Falls back to the recorded value, then public.",
     ),
     Flag.optional,
   ),
-  noWait: Flag.boolean("no-wait").pipe(
+  noWait: Flag.Boolean("no-wait").pipe(
     // The deploy POST returns once the platform accepts the spec and context; the
     // server-side build that follows can run for minutes. Waiting stays the
     // default so a plain push reports the build's verdict; `--no-wait` opts out
@@ -44,10 +58,7 @@ const config = {
     ),
     Flag.withDefault(false),
   ),
-  projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 } as const;
 
 export type ComputePushFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -55,7 +66,7 @@ export type ComputePushFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const computePushCommand = Command.make("push", config).pipe(
   Command.withAlias("deploy"),
   Command.withDescription(
-    "Build and deploy compute into the linked Supabase project. Reads each compute's runtime, size, exposure and source directory from supabase/config.toml.",
+    "Build and deploy compute into the linked Supabase project. Reads each compute's runtime, size, exposure and source directory from the project config file.",
   ),
   Command.withShortDescription("Build and deploy compute"),
   Command.withExamples([
@@ -80,8 +91,29 @@ export const computePushCommand = Command.make("push", config).pipe(
       description: "Deploy without blocking on the build",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          { operationId: "v2-create-compute-instance-upload", kind: "required" },
+          { operationId: "v2-deploy-a-compute-instance", kind: "required" },
+        ],
+        noApiEffectFlags: ["instances", "exposure"],
+      },
+      withContext(
+        withCondition(computeRead, { flag: "no-wait", is: false }),
+        "the deploy response reports the build as still building",
+      ),
+      projectRefPicker,
+      linkedProjectCache,
+      branchResolution,
+    ),
+  ),
   Command.withHandler((flags) =>
     computePush(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["compute", "push"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

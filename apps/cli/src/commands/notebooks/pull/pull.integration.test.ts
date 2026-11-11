@@ -1,14 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schema } from "effect";
+import { Effect, FileSystem, Option, Schema } from "effect";
 import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import {
+  NOTEBOOKS_PROJECT_REF,
   notebookListPage,
   notebookResource,
   notebooksProject,
   notebooksRoute,
   setupNotebooks,
 } from "../../../../tests/helpers/notebooks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../tests/helpers/permission-real-layers.ts";
 import { NotebookIdError, NotebookNameConflictError } from "../notebooks.errors.ts";
+import { notebooksList } from "../notebooks.shared.ts";
 import { notebooksPullHandler as notebooksPull } from "./pull.command.ts";
 import type { NotebooksPullFlags } from "./pull.command.ts";
 
@@ -16,7 +23,12 @@ const SALES_ID = "44444444-4444-4444-8444-444444444444";
 const ERRORS_ID = "55555555-5555-4555-8555-555555555555";
 
 function flags(overrides: Partial<NotebooksPullFlags> = {}): NotebooksPullFlags {
-  return { notebookId: Option.none(), projectRef: Option.none(), ...overrides };
+  return {
+    notebookId: Option.none(),
+    remote: Option.none(),
+    projectRef: Option.none(),
+    ...overrides,
+  };
 }
 
 const temp = useTempWorkdir("supabase-notebooks-pull-");
@@ -28,7 +40,7 @@ function project() {
 }
 
 describe("notebooks pull", () => {
-  it.live("writes missing project notebooks without replacing local notebooks", () => {
+  it.effect("writes missing project notebooks without replacing local notebooks", () => {
     const localSales = '{"content":{"cells":[{"type":"markdown","text":"# Local"}]}}';
     const repo = project();
     const { layer, http, out } = setupNotebooks({
@@ -72,10 +84,11 @@ describe("notebooks pull", () => {
       ]);
       expect(out.stdoutText).toContain("Pulled 1 notebook(s)");
       expect(out.stdoutText).toContain("Kept 1 existing local notebook(s) unchanged.");
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("replaces a single local notebook by id without listing or reconciling", () => {
+  it.effect("replaces a single local notebook by id without listing or reconciling", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
@@ -101,10 +114,11 @@ describe("notebooks pull", () => {
       });
       expect(yield* repo.exists("leftover")).toBe(true);
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute(`/${SALES_ID}`)}`]);
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a non-UUID notebook id before calling the API", () => {
+  it.effect("rejects a non-UUID notebook id before calling the API", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({ workdir: repo.dir });
 
@@ -118,7 +132,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("deletes the local notebooks the project does not have when asked to", () => {
+  it.effect("deletes the local notebooks the project does not have when asked to", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
@@ -141,7 +155,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("creates the local notebooks in the project instead when asked to", () => {
+  it.effect("creates the local notebooks in the project instead when asked to", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
@@ -171,14 +185,16 @@ describe("notebooks pull", () => {
           },
         },
       });
+      expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`, `POST ${notebooksRoute()}`]);
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
     }).pipe(Effect.provide(layer));
   });
 
   // Both other answers delete something, so an unattended run reports the
   // divergence and resolves nothing.
-  it.live("leaves both sides alone when there is nobody to ask", () => {
+  it.effect("leaves both sides alone when there is nobody to ask", () => {
     const repo = project();
-    const { layer, out } = setupNotebooks({
+    const { layer, out, http } = setupNotebooks({
       workdir: repo.dir,
       format: "json",
       routes: {
@@ -191,6 +207,8 @@ describe("notebooks pull", () => {
       yield* notebooksPull(flags());
 
       expect(yield* repo.exists("gone")).toBe(true);
+      expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
       expect(out.promptSelectCalls).toHaveLength(0);
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -203,7 +221,7 @@ describe("notebooks pull", () => {
 
   // `page[after]` has to reach the wire as its own query parameter, or the
   // second page is the first one again and the walk never ends.
-  it.live("follows the cursor the list route hands back", () => {
+  it.effect("follows the cursor the list route hands back", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
@@ -243,13 +261,59 @@ describe("notebooks pull", () => {
       expect(listCalls).toHaveLength(2);
       // `page` is a `style: deepObject` parameter, so it has to arrive expanded
       // rather than as one JSON blob.
-      expect(listCalls[0]!.query.get("page[size]")).toBe("100");
-      expect(listCalls[0]!.query.get("page[after]")).toBeNull();
-      expect(listCalls[1]!.query.get("page[after]")).toBe("cursor-1");
+      expect(listCalls[0]?.query.get("page[size]")).toBe("100");
+      expect(listCalls[0]?.query.get("page[after]")).toBeNull();
+      expect(listCalls[1]?.query.get("page[after]")).toBe("cursor-1");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips a notebook whose name cannot be a file name", () => {
+  it.effect("picks the project, pulls its notebooks and records the linked project", () => {
+    const repo = project();
+    const { layer, http, out } = setupNotebooks({
+      workdir: repo.dir,
+      realLayers: true,
+      promptSelectResponses: [NOTEBOOKS_PROJECT_REF],
+      routes: {
+        "GET /v1/projects": { status: 200, body: [projectResponse(NOTEBOOKS_PROJECT_REF)] },
+        [`GET /v1/projects/${NOTEBOOKS_PROJECT_REF}`]: {
+          status: 200,
+          body: projectResponse(NOTEBOOKS_PROJECT_REF),
+        },
+        [`GET ${notebooksRoute()}`]: {
+          status: 200,
+          body: notebookListPage({ notebooks: [{ id: SALES_ID, name: "sales-dashboard" }] }),
+        },
+        [`GET ${notebooksRoute(`/${SALES_ID}`)}`]: {
+          status: 200,
+          body: { data: notebookResource({ id: SALES_ID, name: "sales-dashboard" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* notebooksPull(flags());
+
+      expect(http.routeKeys).toEqual([
+        "GET /v1/projects",
+        `GET ${notebooksRoute()}`,
+        `GET ${notebooksRoute(`/${SALES_ID}`)}`,
+        `GET /v1/projects/${NOTEBOOKS_PROJECT_REF}`,
+      ]);
+      expect(out.promptSelectCalls).toHaveLength(1);
+      expect(yield* repo.exists("sales-dashboard")).toBe(true);
+      expect(out.stdoutText).toContain("Pulled 1 notebook(s)");
+      expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
+      assertBlockDrift(notebooksList, {
+        requests: http.driftRequests.filter(
+          (request) => new URL(request.url).pathname === notebooksRoute(),
+        ),
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("skips a notebook whose name cannot be a file name", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
@@ -270,7 +334,7 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("refuses duplicate remote names before writing either notebook", () => {
+  it.effect("refuses duplicate remote names before writing either notebook", () => {
     const repo = project();
     const { layer, http } = setupNotebooks({
       workdir: repo.dir,
@@ -296,11 +360,11 @@ describe("notebooks pull", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the machine payload without text output", () => {
+  it.effect("emits the machine payload without text output", () => {
     const repo = project();
     const { layer, out } = setupNotebooks({
       workdir: repo.dir,
-      goOutput: "json",
+      outputFlag: "json",
       routes: {
         [`GET ${notebooksRoute()}`]: { status: 200, body: notebookListPage({ notebooks: [] }) },
       },

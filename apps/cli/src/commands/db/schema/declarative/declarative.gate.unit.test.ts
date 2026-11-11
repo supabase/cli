@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit } from "effect";
+import { Effect, Exit } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
@@ -6,7 +6,7 @@ import { DeclarativeNotEnabledError } from "./declarative.errors.ts";
 import { isPgDeltaEnabled, pgDeltaSuggestion, requirePgDelta } from "./declarative.gate.ts";
 
 const EXPECTED_SUGGESTION =
-  "Either pass --experimental or add [experimental.pgdelta] with enabled = true to supabase/config.toml";
+  "Pass --experimental to run declarative commands while [experimental.pgdelta] enabled = false is set in supabase/config.toml";
 
 describe("isPgDeltaEnabled", () => {
   it("opens the gate when --experimental is passed even if config disables it", () => {
@@ -23,7 +23,7 @@ describe("isPgDeltaEnabled", () => {
 });
 
 describe("pgDeltaSuggestion", () => {
-  it("byte-matches Go's CmdSuggestion text (ANSI stripped)", () => {
+  it("emits the suggestion text byte-for-byte (ANSI stripped)", () => {
     expect(stripAnsi(pgDeltaSuggestion("supabase/config.toml"))).toBe(EXPECTED_SUGGESTION);
   });
 });
@@ -42,22 +42,16 @@ describe("requirePgDelta", () => {
 
   it.effect("fails with DeclarativeNotEnabledError when the gate is closed", () =>
     Effect.gen(function* () {
-      const exit = yield* requirePgDelta({
+      const error = yield* requirePgDelta({
         experimental: false,
         pgDeltaEnabled: false,
         configPath: "supabase/config.toml",
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
-        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
-        expect(error?.message).toBe(
-          "declarative commands require --experimental flag or pg-delta enabled in config",
-        );
-        expect(stripAnsi((error as DeclarativeNotEnabledError).suggestion)).toBe(
-          EXPECTED_SUGGESTION,
-        );
-      }
+      }).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
+      expect(error.message).toBe(
+        "declarative commands require --experimental flag or pg-delta enabled in config",
+      );
+      expect(stripAnsi(error.suggestion)).toBe(EXPECTED_SUGGESTION);
     }),
   );
 });

@@ -1,25 +1,27 @@
+import type { ConfigFormat } from "@supabase/config/effect";
 import { Effect } from "effect";
 
 import { aqua, bold } from "../../../../command-internal/colors.ts";
+import { configSetting } from "../../../../command-internal/config-advice.ts";
 import { DeclarativeNotEnabledError } from "./declarative.errors.ts";
 
 /**
  * Whether the declarative (pg-delta) code paths are enabled: the gate is open when either the
- * global `--experimental` flag is set or `[experimental.pgdelta] enabled = true` is present in
- * `config.toml`.
+ * global `--experimental` flag is set or `[experimental.pgdelta] enabled` resolves true (the
+ * default), so it closes only on an explicit `enabled = false`.
  */
 export function isPgDeltaEnabled(experimental: boolean, pgDeltaEnabled: boolean): boolean {
   return experimental || pgDeltaEnabled;
 }
 
 /**
- * The suggestion shown when the gate is closed. `configPath` is `supabase/config.toml`;
+ * The suggestion shown when the gate is closed. `configPath` is the project config file;
  * `aqua`/`bold` render plain when stderr is not a TTY.
  */
-export function pgDeltaSuggestion(configPath: string): string {
-  return `Either pass ${aqua("--experimental")} or add ${aqua(
-    "[experimental.pgdelta]",
-  )} with ${aqua("enabled = true")} to ${bold(configPath)}`;
+export function pgDeltaSuggestion(configPath: string, configFormat: ConfigFormat = "toml"): string {
+  return `Pass ${aqua("--experimental")} to run declarative commands while ${aqua(
+    configSetting(configFormat, "experimental.pgdelta", "enabled", "false"),
+  )} is set in ${bold(configPath)}`;
 }
 
 /**
@@ -31,10 +33,11 @@ export const requirePgDelta = Effect.fnUntraced(function* (opts: {
   readonly experimental: boolean;
   readonly pgDeltaEnabled: boolean;
   readonly configPath: string;
+  readonly configFormat?: ConfigFormat;
 }) {
   if (isPgDeltaEnabled(opts.experimental, opts.pgDeltaEnabled)) return;
   return yield* new DeclarativeNotEnabledError({
     message: "declarative commands require --experimental flag or pg-delta enabled in config",
-    suggestion: pgDeltaSuggestion(opts.configPath),
+    suggestion: pgDeltaSuggestion(opts.configPath, opts.configFormat),
   });
 });

@@ -1,19 +1,19 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goBool,
-  goStruct,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeBool,
+  shapeStruct,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   DesiredSubdomainRequiredError,
@@ -23,7 +23,7 @@ import {
 import type { VanitySubdomainsCheckAvailabilityFlags } from "./check-availability.command.ts";
 
 /** Struct shape for encoding the availability response as YAML/TOML. */
-const GO_AVAILABILITY_RESPONSE = goStruct([["available", goBool]]);
+const AVAILABILITY_RESPONSE_SHAPE = shapeStruct([["available", shapeBool]]);
 
 const mapCheckError = mapHttpError({
   networkError: VanitySubdomainsCheckNetworkError,
@@ -37,12 +37,11 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
     const output = yield* Output;
     const outputFlag = yield* OutputFlag;
     const api = yield* CommandPlatformApi;
-    const resolver = yield* ProjectRefResolver;
     const linkedProjectCache = yield* LinkedProjectCache;
     const telemetryState = yield* TelemetryState;
 
     yield* Effect.gen(function* () {
-      const ref = yield* resolver.resolve(flags.projectRef);
+      const ref = yield* resolveProjectTarget(flags);
 
       yield* Effect.gen(function* () {
         // This check sits inside both `Effect.ensuring` wrappers so telemetry and the
@@ -66,48 +65,46 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
           .pipe(
             Effect.tapError(() => checking?.fail() ?? Effect.void),
             Effect.catch((cause) =>
-              Effect.gen(function* () {
-                // Flip the always-failing mapper into a success so we can inspect the
-                // tagged error before deciding whether to suggest an upgrade, then re-fail.
-                const mapped = yield* Effect.flip(mapCheckError(cause));
-                if (mapped._tag === "VanitySubdomainsCheckUnexpectedStatusError") {
-                  // Unlike `activate`, this command suppresses the upgrade-suggestion
-                  // analytics event.
-                  const upgradeSuggested = yield* suggestUpgrade({
-                    projectRef: ref,
-                    featureKey: "vanity_subdomain",
-                    statusCode: mapped.status,
-                    response: gateResponse(cause),
-                    trackAnalytics: false,
-                  });
-                  return yield* new VanitySubdomainsCheckUnexpectedStatusError({
-                    status: mapped.status,
-                    body: mapped.body,
-                    message: mapped.message,
-                    upgradeSuggested,
-                  });
-                }
-                return yield* Effect.fail(mapped);
-              }),
+              mapCheckError(cause).pipe(
+                Effect.catchTag("VanitySubdomainsCheckUnexpectedStatusError", (mapped) =>
+                  Effect.gen(function* () {
+                    // Unlike `activate`, this command suppresses the upgrade-suggestion
+                    // analytics event.
+                    const upgradeSuggested = yield* suggestUpgrade({
+                      projectRef: ref,
+                      statusCode: mapped.status,
+                      response: gateResponse(cause),
+                      trackAnalytics: false,
+                    });
+                    return yield* new VanitySubdomainsCheckUnexpectedStatusError({
+                      status: mapped.status,
+                      body: mapped.body,
+                      message: mapped.message,
+                      upgradeSuggested,
+                      entitlement: mapped.entitlement,
+                    });
+                  }),
+                ),
+              ),
             ),
           );
         yield* checking?.clear ?? Effect.void;
 
-        const goOutput = Option.getOrUndefined(outputFlag);
+        const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-        if (goOutput === "json") {
-          yield* output.raw(encodeGoJson(response));
+        if (outputFlagFormat === "json") {
+          yield* output.raw(encodeSortedJson(response));
           return;
         }
-        if (goOutput === "yaml") {
-          yield* output.raw(encodeGoYaml(response, GO_AVAILABILITY_RESPONSE));
+        if (outputFlagFormat === "yaml") {
+          yield* output.raw(encodeStructYaml(response, AVAILABILITY_RESPONSE_SHAPE));
           return;
         }
-        if (goOutput === "toml") {
-          yield* output.raw(encodeGoToml(response, GO_AVAILABILITY_RESPONSE));
+        if (outputFlagFormat === "toml") {
+          yield* output.raw(encodeStructToml(response, AVAILABILITY_RESPONSE_SHAPE));
           return;
         }
-        if (goOutput === "env") {
+        if (outputFlagFormat === "env") {
           yield* output.raw(encodeEnv(response) + "\n");
           return;
         }

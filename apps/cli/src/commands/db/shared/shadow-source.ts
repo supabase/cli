@@ -7,8 +7,8 @@
  */
 
 import { Effect, Result, type FileSystem, type Path } from "effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type * as HttpClient from "effect/http/HttpClient";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -16,9 +16,9 @@ import { bold } from "../../../command-internal/colors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import {
   resolveDeclarativeDir,
-  resolveSeedSqlPath,
-  type PgDeltaTomlConfig,
-} from "../../../command-internal/db-config.toml-read.ts";
+  type PgDeltaConfig,
+} from "../../../command-internal/db-config.read.ts";
+import { resolveSeedSqlPath } from "../../../shared/config/seed-path.ts";
 import {
   resolveUnderWorkdir,
   globPattern,
@@ -28,7 +28,7 @@ import {
 import type { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import type { ImagePrepullError } from "../../../command-internal/db-bootstrap/image-prepull.ts";
 import type { HealthCheckTimeoutError } from "../../../command-internal/db-bootstrap/health-check.ts";
-import { waitForShadowReady } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { seedGlobals } from "../../../command-internal/migration-apply.ts";
 import { BAD_PATTERN_MESSAGE, pathMatch } from "../../../command-internal/path-match.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
@@ -54,7 +54,7 @@ export interface PrepareShadowSourceInput<E> extends ShadowSetupInput<E> {
   readonly migrationMode?: "legacy" | "pgdelta-next";
   /** `db.migrations.schema_paths`, unresolved (raw config value). */
   readonly schemaPaths: ReadonlyArray<string>;
-  readonly pgDelta: PgDeltaTomlConfig;
+  readonly pgDelta: PgDeltaConfig;
 }
 
 /** Every failure {@link prepareShadowSource} can produce, beyond its own `E` (JWKS resolution). */
@@ -72,79 +72,78 @@ export type PrepareShadowSourceError =
  * `acquireUseRelease` runs `acquire` under an uninterruptible mask, so nesting them there
  * would swallow a SIGINT until the whole sequence finished.
  */
-export const prepareShadowSource = <E>(
+export const prepareShadowSource = Effect.fn("ShadowSource.prepare")(function* <E>(
   spawner: Spawner,
   handle: ShadowAcquiredHandle,
   input: PrepareShadowSourceInput<E>,
-): Effect.Effect<
+): Effect.fn.Return<
   ShadowSourceResult,
   PrepareShadowSourceError | E,
   Output | DockerRun | RuntimeInfo | HttpClient.HttpClient | DbConnection
-> =>
-  Effect.gen(function* () {
-    const { containerId } = handle;
-    yield* Effect.annotateCurrentSpan({
-      "shadow.migration_mode": input.migrationMode ?? "legacy",
-      "shadow.target_local": input.targetLocal,
-    });
+> {
+  const { containerId } = handle;
+  yield* Effect.annotateCurrentSpan({
+    "shadow.migration_mode": input.migrationMode ?? "legacy",
+    "shadow.target_local": input.targetLocal,
+  });
 
-    const connConfig: PgConnInput = {
-      host: input.hostname,
-      port: input.shadowPort,
-      user: "postgres",
-      password: input.password,
-      database: "postgres",
-    };
+  const connConfig: PgConnInput = {
+    host: input.hostname,
+    port: input.shadowPort,
+    user: "postgres",
+    password: input.password,
+    database: "postgres",
+  };
 
-    yield* waitForShadowReady(spawner, containerId, connConfig, {
-      timeoutSeconds: input.healthTimeoutSeconds,
-      image: input.image,
-    });
+  yield* waitForPostgresReady(spawner, containerId, connConfig, {
+    timeoutSeconds: input.healthTimeoutSeconds,
+    image: input.image,
+  });
 
-    // `handle` is the baseline state. A warm hit already has the platform baseline. A
-    // cache-enabled cold provision snapshots after that baseline. The legacy engine then
-    // creates `contrib_regression`; pg-delta does not. An uncached acquire is always-cold.
-    const migrateShadow =
-      input.migrationMode === "pgdelta-next" ? migrateNextShadowDatabase : migrateShadowDatabase;
-    yield* migrateShadow(
-      spawner,
-      {
-        fs: input.fs,
-        path: input.path,
-        workdir: input.workdir,
-        projectId: input.projectId,
-        container: containerId,
-        networkId: input.networkId,
-        connConfig,
-        setup: input.setup,
-      },
-      handle,
-    );
-
-    const sourceUrl = toPostgresURL(connConfig);
-
-    let targetUrlOverride: string | undefined;
-    if (input.targetLocal && input.migrationMode !== "pgdelta-next") {
-      const declared = yield* loadDeclaredSchemas(
-        input.fs,
-        input.path,
-        input.workdir,
-        input.schemaPaths,
-        input.pgDelta,
-      );
-      if (declared.length > 0) {
-        const overrideConn: PgConnInput = { ...connConfig, database: "contrib_regression" };
-        yield* migrateBaseDatabase(input.fs, input.path, input.workdir, overrideConn, declared);
-        targetUrlOverride = toPostgresURL(overrideConn);
-      }
-    }
-
-    return {
+  // `handle` is the baseline state. A warm hit already has the platform baseline. A
+  // cache-enabled cold provision snapshots after that baseline. The legacy engine then
+  // creates `contrib_regression`; pg-delta does not. An uncached acquire is always-cold.
+  const migrateShadow =
+    input.migrationMode === "pgdelta-next" ? migrateNextShadowDatabase : migrateShadowDatabase;
+  yield* migrateShadow(
+    spawner,
+    {
+      fs: input.fs,
+      path: input.path,
+      workdir: input.workdir,
+      projectId: input.projectId,
       container: containerId,
-      sourceUrl,
-      targetUrlOverride,
-    } satisfies ShadowSourceResult;
-  }).pipe(Effect.withSpan("ShadowSource.prepare"));
+      networkId: input.networkId,
+      connConfig,
+      setup: input.setup,
+    },
+    handle,
+  );
+
+  const sourceUrl = toPostgresURL(connConfig);
+
+  let targetUrlOverride: string | undefined;
+  if (input.targetLocal && input.migrationMode !== "pgdelta-next") {
+    const declared = yield* loadDeclaredSchemas(
+      input.fs,
+      input.path,
+      input.workdir,
+      input.schemaPaths,
+      input.pgDelta,
+    );
+    if (declared.length > 0) {
+      const overrideConn: PgConnInput = { ...connConfig, database: "contrib_regression" };
+      yield* migrateBaseDatabase(input.fs, input.path, input.workdir, overrideConn, declared);
+      targetUrlOverride = toPostgresURL(overrideConn);
+    }
+  }
+
+  return {
+    container: containerId,
+    sourceUrl,
+    targetUrlOverride,
+  } satisfies ShadowSourceResult;
+});
 
 /** Glob metacharacters recognized here: `*?[` only — not `\`. */
 function hasConfigGlobMeta(pattern: string): boolean {
@@ -286,57 +285,56 @@ function walkSqlFilesSorted(
  * pg-delta's declarative dir (when `[experimental.pgdelta] enabled` and the dir exists), then
  * `supabase/schemas` (when it exists), then `[]`. Each source is byte-sorted.
  */
-export function loadDeclaredSchemas(
+export const loadDeclaredSchemas = Effect.fn("ShadowSource.loadDeclaredSchemas")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   schemaPaths: ReadonlyArray<string>,
-  pgDelta: PgDeltaTomlConfig,
-): Effect.Effect<ReadonlyArray<string>, DeclarativeShadowDbError> {
-  return Effect.gen(function* () {
-    if (schemaPaths.length > 0) {
-      return yield* globDeclaredSchemaPaths(fs, path, workdir, schemaPaths);
-    }
-    if (pgDelta.enabled) {
-      const declDirRel = resolveDeclarativeDir(path, pgDelta);
-      const declDirAbs = resolveUnderWorkdir(path, workdir, declDirRel);
-      // A path that exists but is a regular file is treated as "not a directory," not an
-      // error, so it falls through to the `supabase/schemas` source below.
-      const isDeclDir = yield* fs.stat(declDirAbs).pipe(
-        Effect.map((info) => info.type === "Directory"),
-        Effect.orElseSucceed(() => false),
-      );
-      if (isDeclDir) {
-        return yield* walkSqlFilesSorted(
-          fs,
-          path,
-          workdir,
-          declDirRel,
-          "failed to walk declarative dir",
-        );
-      }
-    }
-    const schemasDirRel = "supabase/schemas";
-    const schemasDirAbs = resolveUnderWorkdir(path, workdir, schemasDirRel);
-    // A missing path or a non-directory path both resolve to "no declared schemas" (`[]`),
-    // not an error — only a genuine stat failure propagates.
-    const isSchemasDir = yield* fs.stat(schemasDirAbs).pipe(
-      Effect.matchEffect({
-        onFailure: (cause) =>
-          cause.reason._tag === "NotFound"
-            ? Effect.succeed(false)
-            : Effect.fail(
-                new DeclarativeShadowDbError({
-                  message: `failed to check schemas: ${cause.message}`,
-                }),
-              ),
-        onSuccess: (info) => Effect.succeed(info.type === "Directory"),
-      }),
+  pgDelta: PgDeltaConfig,
+): Effect.fn.Return<ReadonlyArray<string>, DeclarativeShadowDbError> {
+  if (schemaPaths.length > 0) {
+    return yield* globDeclaredSchemaPaths(fs, path, workdir, schemaPaths);
+  }
+  if (pgDelta.enabled) {
+    const declDirRel = resolveDeclarativeDir(path, pgDelta);
+    const declDirAbs = resolveUnderWorkdir(path, workdir, declDirRel);
+    // A path that exists but is a regular file is treated as "not a directory," not an
+    // error, so it falls through to the `supabase/schemas` source below.
+    const isDeclDir = yield* fs.stat(declDirAbs).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
     );
-    if (!isSchemasDir) return [];
-    return yield* walkSqlFilesSorted(fs, path, workdir, schemasDirRel, "failed to walk dir");
-  }).pipe(Effect.withSpan("ShadowSource.loadDeclaredSchemas"));
-}
+    if (isDeclDir) {
+      return yield* walkSqlFilesSorted(
+        fs,
+        path,
+        workdir,
+        declDirRel,
+        "failed to walk declarative dir",
+      );
+    }
+  }
+  const schemasDirRel = "supabase/schemas";
+  const schemasDirAbs = resolveUnderWorkdir(path, workdir, schemasDirRel);
+  // A missing path or a non-directory path both resolve to "no declared schemas" (`[]`),
+  // not an error — only a genuine stat failure propagates.
+  const isSchemasDir = yield* fs.stat(schemasDirAbs).pipe(
+    Effect.map((info) => info.type === "Directory"),
+    Effect.catchReason(
+      "PlatformError",
+      "NotFound",
+      () => Effect.succeed(false),
+      (_, cause) =>
+        Effect.fail(
+          new DeclarativeShadowDbError({
+            message: `failed to check schemas: ${cause.message}`,
+          }),
+        ),
+    ),
+  );
+  if (!isSchemasDir) return [];
+  return yield* walkSqlFilesSorted(fs, path, workdir, schemasDirRel, "failed to walk dir");
+});
 
 /**
  * Windows-only sibling of {@link cleanSchemaPath}'s segment cleaner: the length of the leading

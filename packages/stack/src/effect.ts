@@ -1,8 +1,6 @@
 import {
   Cause,
   Context,
-  Crypto,
-  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -13,13 +11,16 @@ import {
   Path,
   Predicate,
   Ref,
+  Result,
   Scope,
   Schema,
   Semaphore,
   Stream,
 } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { Digest, SecureRandom } from "effect/crypto";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
+import { RpcClientError } from "effect/rpc/RpcClientError";
 import {
   connectHost,
   hasReason,
@@ -36,20 +37,32 @@ import {
 import {
   planSupabaseComposition,
   type PlannedInstance,
+  type PlanOptions,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
-import { removeStackContainersCommand } from "./runtime/Container.ts";
-import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
+import { failureKind, isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
+import type { ArtifactSelection } from "./Artifacts.ts";
+import { collectDataConflicts } from "./internal/data-conflicts.ts";
+import { initializedDatabaseIds } from "./internal/database-reuse.ts";
 import { failureMessage } from "./internal/failure-message.ts";
-import * as State from "./State.ts";
-import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
-import { StackError, type Definition, type Observation } from "./Rpc.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
+import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
+import {
+  findConflict,
+  StackError,
+  type Definition,
+  type EndpointPortChange,
+  type Observation,
+} from "./Rpc.ts";
 import { sinceMillis, streamStackLogs as streamPersistedLogs } from "./host/LogStore.ts";
+import { gatewayLog } from "./host/GatewayLog.ts";
 import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
-import { reclaimStack } from "./Sweep.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
+  ServiceRestartInput as ServiceRestartInputSchema,
   type ServiceCreation,
   type ServiceCreationInput as CatalogServiceCreationInput,
 } from "./services/Catalog.ts";
@@ -64,8 +77,32 @@ import type {
 
 export { initialization, postgres } from "./Commands.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
-export { apiRoute } from "./host/Endpoints.ts";
+export { apiRoute, sharesApiEndpoint } from "./host/Endpoints.ts";
+export { gatewayLog };
 export { StackError } from "./Rpc.ts";
+/** Atomically writes a file so readers only ever see the prior or the complete new content. */
+export { NamespaceError, publish } from "./StackNamespace.ts";
+/** Holds an exclusive cross-process lock on a file for the enclosing scope, waiting up to a budget. */
+export { holdLock } from "./StackNamespace.ts";
+/** Holds a cross-process lock shared with other shared holders, excluding `holdExclusiveLock`. */
+export { holdSharedLock } from "./StackNamespace.ts";
+/** Holds a cross-process lock that excludes every `holdSharedLock` holder. */
+export { holdExclusiveLock } from "./StackNamespace.ts";
+/** Whether a lock acquisition failure means another holder kept the lock for the whole budget. */
+export { isLockBusy } from "./StackNamespace.ts";
+export {
+  HOSTED_LOCK_SCHEMA_URL,
+  Lock,
+  LOCK_SCHEMA_URL,
+  LockInvalidError,
+  LockIoError,
+  LockUnsupportedVersionError,
+  lockSelection,
+  readLock,
+  writeLock,
+} from "./Lock.ts";
+export type { StackFailureKind } from "./FailureKind.ts";
+export type { DataConflict } from "./internal/data-conflicts.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 /** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
 export type ServiceCreationInput = CatalogServiceCreationInput;
@@ -73,12 +110,13 @@ export type { CompositionConfig } from "./Orchestrator.ts";
 export type {
   CreationChange,
   PlannedInstance,
+  PlanOptions,
   SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
 export { StackIdSchema as StackId } from "./identity/StackId.ts";
-export type { SavedStack } from "./State.ts";
+export type { SavedStack } from "./StackNamespace.ts";
 export type { StackCredentials, StackKeysInput };
-export type { Observation } from "./Rpc.ts";
+export type { EndpointPortChange, Observation } from "./Rpc.ts";
 export type { LogPosition, LogRecord, StackLogRecord };
 export type {
   Command,
@@ -87,7 +125,8 @@ export type {
   PostgresCommand,
 } from "./Commands.ts";
 
-const stateFor = (root: string) => State.Service.pipe(Effect.provide(State.layer({ root })));
+const stateFor = (root: string) =>
+  StackNamespace.Service.pipe(Effect.provide(StackNamespace.layer({ root })));
 
 /** Storage locations shared by clients and the detached stack owner. */
 export interface StackLocations {
@@ -103,7 +142,7 @@ export interface CreateOptions extends StackLocations {
    * A `session` stack starts its owner at creation and is destroyed when the creating handle's
    * scope closes or its process exits; a `detached` stack (the default) outlives its creator.
    */
-  readonly lifetime?: State.StackLifetime;
+  readonly lifetime?: StackNamespace.StackLifetime;
   /**
    * Starts the owner at creation and lets it register the stack under its lease, so a failed or
    * interrupted launch leaves no registration behind. Session stacks always do this.
@@ -114,6 +153,12 @@ export interface CreateOptions extends StackLocations {
 export interface OpenOptions extends StackLocations {
   readonly id: string;
   readonly startOwner?: boolean;
+  /**
+   * Endpoint intents a spawned owner re-plans against the saved state before it binds the saved
+   * endpoints, applying a changed endpoint's port instead of keeping the saved one. Only a freshly
+   * spawned owner acts on this; an already-running owner is unaffected.
+   */
+  readonly requestedCreations?: ReadonlyArray<CatalogServiceCreationInput>;
 }
 
 /** No owner serves the stack: nothing holds its lease, or a sweeper is cleaning it up. */
@@ -121,27 +166,37 @@ const ownerAbsent = hasReason("not-running", "sweeping");
 /** The stack is no longer registered: it was destroyed or swept. */
 const stackGone = hasReason("unregistered");
 
-const failure = (operation: string, cause: unknown): StackError =>
-  Schema.is(StackError)(cause)
-    ? cause
-    : new StackError({
-        operation,
-        message: Schema.is(RpcClientError)(cause)
-          ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
-          : failureMessage(cause),
-        ...(ownerAbsent(cause) || stackGone(cause)
-          ? { reason: "owner-unavailable" as const }
-          : hasReason("release-mismatch")(cause)
-            ? { reason: "release-mismatch" as const }
-            : hasReason("runtime-unavailable")(cause)
-              ? { reason: "runtime-unavailable" as const }
-              : {}),
-      });
+/** Drops an outcome kind this release does not know, so it never re-emits one. */
+const knownOutcomeKind = <O extends { readonly kind?: string }>({ kind, ...outcome }: O) =>
+  isStackFailureKind(kind) ? { ...outcome, kind } : outcome;
+
+/** An explicit `kind` wins; otherwise the cause's typed chain is classified. */
+const failure = (operation: string, cause: unknown, kind?: StackFailureKind): StackError => {
+  if (Schema.is(StackError)(cause)) return cause;
+  const conflict = findConflict(cause);
+  const classified = kind ?? failureKind(cause);
+  return new StackError({
+    operation,
+    message: Schema.is(RpcClientError)(cause)
+      ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
+      : failureMessage(cause),
+    ...(ownerAbsent(cause) || stackGone(cause)
+      ? { reason: "owner-unavailable" as const }
+      : hasReason("release-mismatch")(cause)
+        ? { reason: "release-mismatch" as const }
+        : hasReason("runtime-unavailable")(cause)
+          ? { reason: "runtime-unavailable" as const }
+          : {}),
+    ...(conflict === undefined ? {} : { conflict }),
+    ...(classified === undefined ? {} : { kind: classified }),
+  });
+};
 
 type Kind = ServiceCreation["service"];
-type ServiceCreationRestartInput<K extends Kind> =
-  | Pick<Extract<ServiceCreationInput, { service: K }>, "config">
-  | Extract<ServiceCreationInput, { service: K }>;
+type ServiceCreationRestartInput<K extends Kind> = Omit<
+  Extract<ServiceCreationInput, { service: K }>,
+  "service" | "pin"
+>;
 /** An individually identified service controlled through the owner. */
 export interface ServiceInstance<K extends Kind = Kind> {
   readonly id: string;
@@ -198,19 +253,6 @@ export type ServiceInstances = {
   [K in Kind]: K extends "database" ? DatabaseInstance : ServiceInstance<K>;
 };
 type AnyInstance = ServiceInstances[Kind];
-/**
- * The outcome of {@link Stack.destroy}. `skipped` means the stack's registration and host data
- * were removed without its container engine, because the engine was unreachable; its containers
- * and any database data in engine volumes remain, and `cleanupCommands` remove them once the
- * engine is running.
- */
-export type DestroyResult =
-  | { readonly runtimeCleanup: "complete" }
-  | {
-      readonly runtimeCleanup: "skipped";
-      readonly engine: "docker" | "podman";
-      readonly cleanupCommands: ReadonlyArray<string>;
-    };
 /** Options for streaming PostgreSQL command input and output. */
 export interface PostgresCommandOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
@@ -264,10 +306,15 @@ export interface Stack {
     ) => Effect.Effect<ReadonlyArray<AnyInstance>, StackError>;
     /**
      * Compares the requested creations with every saved instance of the same kinds, ignoring
-     * inputs the composition supplies, without changing state or contacting the owner.
+     * inputs the composition supplies, without changing state or contacting the owner. A
+     * `complete` request (the caller's whole desired composition) never falls back to a saved
+     * sibling's port for a shared endpoint kind the request leaves out; a `partial` request
+     * (comparing only the kinds it names) does. A database line or major change is `incompatible`
+     * only while its data is initialized.
      */
     readonly plan: (
       services: ReadonlyArray<ServiceCreationInput>,
+      options?: PlanOptions,
     ) => Effect.Effect<ReadonlyArray<PlannedInstance>, StackError>;
     readonly configure: (config: Orchestrator.CompositionConfig) => Effect.Effect<void, StackError>;
     readonly describe: Effect.Effect<Orchestrator.CompositionConfig, StackError>;
@@ -275,8 +322,23 @@ export interface Stack {
     readonly stop: Effect.Effect<ReadonlyArray<Observation>, StackError>;
     readonly restart: Effect.Effect<ReadonlyArray<Observation>, StackError>;
   };
+  /** The shared API listener's access log, read through the live owner like an instance's. */
+  readonly gateway: {
+    readonly readLogs: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, StackError>;
+  };
+  /**
+   * The endpoint port changes the owner this handle reaches applied at its own last startup,
+   * re-planned from `OpenOptions.requestedCreations`. An owner that was already running reports
+   * whatever its own last startup applied (possibly none).
+   */
+  readonly startupEndpointChanges: Effect.Effect<ReadonlyArray<EndpointPortChange>, StackError>;
   readonly stop: Effect.Effect<void, StackError>;
-  readonly destroy: Effect.Effect<DestroyResult, StackError>;
+  /**
+   * Removes the stack. When its container engine is unreachable, fails with reason
+   * `runtime-unavailable` and leaves the registration, data and claimed resources in place;
+   * calling it again once the engine is reachable finishes the cleanup.
+   */
+  readonly destroy: Effect.Effect<void, StackError>;
   readonly commands: {
     readonly run: CommandRunner;
   };
@@ -313,89 +375,11 @@ interface Connection {
   /** Replaced by a newer connection; closes once its last user finishes. */
   retired: boolean;
 }
-/** Finds a directory below `directory` that the current user cannot empty and delete. */
-const firstUnremovableDirectory = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  directory: string,
-): Effect.Effect<string | undefined> =>
-  Effect.gen(function* () {
-    const entries = yield* fs.readDirectory(directory).pipe(Effect.option);
-    const writable = yield* fs.access(directory, { writable: true }).pipe(Effect.isSuccess);
-    if (Option.isNone(entries) || !writable) return directory;
-    for (const entry of entries.value) {
-      const child = path.join(directory, entry);
-      const info = yield* fs.stat(child).pipe(Effect.option);
-      if (Option.isNone(info) || info.value.type !== "Directory") continue;
-      if (yield* fs.readLink(child).pipe(Effect.isSuccess)) continue;
-      const blocked = yield* firstUnremovableDirectory(fs, path, child);
-      if (blocked !== undefined) return blocked;
-    }
-    return undefined;
-  });
-
-/**
- * Destroys a stack whose owner cannot start because its container engine is unreachable: under
- * the stack's lease it removes the registration and host data, and returns the commands that
- * remove the containers and engine-volume data left behind.
- */
-const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
-  state: State.Interface,
-  saved: SavedStack,
-  locations: StackLocations,
-  engine: "docker" | "podman",
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const id = saved.id;
-  const dataRoot = path.join(locations.stateRoot, id, "data");
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      if (!(yield* state.lease(id)))
-        return yield* failure(
-          "destroy",
-          "An owner for this stack started during destroy; run destroy again",
-        );
-      yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
-      yield* state.publishHolder(id, {
-        role: "sweeper",
-        pid: process.pid,
-        startedAt: DateTime.formatIso(yield* DateTime.now),
-      });
-      const current = yield* state.read(id);
-      // Container-written host data, such as database files below Docker 26, can belong to the
-      // container user; only the engine can delete it, so refuse before deleting anything.
-      const blocked =
-        current !== undefined && (yield* fs.exists(dataRoot))
-          ? yield* firstUnremovableDirectory(fs, path, dataRoot)
-          : undefined;
-      if (blocked !== undefined) {
-        const engineName = engine === "docker" ? "Docker" : "Podman";
-        return yield* failure(
-          "destroy",
-          `Stack data at ${blocked} can only be removed by ${engineName}; start ${engineName} and run destroy again`,
-        );
-      }
-      // Containers are labelled with the resolved data root the owner ran with.
-      const root = yield* fs.realPath(dataRoot).pipe(Effect.orElseSucceed(() => dataRoot));
-      const cleanupCommands = [
-        removeStackContainersCommand({ engine, stackId: id, root }),
-        ...(yield* volumeDataCleanupCommands({ engine, root, fs, path })),
-      ];
-      if (current !== undefined) {
-        yield* fs.remove(dataRoot, { recursive: true, force: true });
-        yield* state.withLock(state.remove(id));
-      }
-      return { runtimeCleanup: "skipped", engine, cleanupCommands } as const;
-    }),
-  ).pipe(Effect.mapError((cause) => failure("destroy", cause)));
-});
-
 /** `launch` starts an owner when none is live; `attach` requires a live one. */
 type Reach = "launch" | "attach";
 
 const makeHandle = Effect.fn("Stack.makeHandle")(function* (
-  state: State.Interface,
+  state: StackNamespace.Interface,
   saved: SavedStack,
   locations: StackLocations,
   seed: { readonly access?: HostAccess; readonly creator?: boolean } = {},
@@ -403,11 +387,18 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   // Calls and streams release what they borrow in their own scope, not in the handle's.
   const services = Context.omit(Scope.Scope)(
     yield* Effect.context<
-      HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto | Scope.Scope
+      | HttpClient.HttpClient
+      | FileSystem.FileSystem
+      | Path.Path
+      | SecureRandom.SecureRandom
+      | Digest.Digest
+      | ChildProcessSpawner.ChildProcessSpawner
+      | Scope.Scope
     >(),
   );
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const handleScope = yield* Scope.Scope;
   const session = saved.lifetime === "session";
   const launchOptions = { ...locations, stackId: saved.id, lifeline: session };
@@ -550,29 +541,42 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         Effect.provideContext(services),
       ),
     ).pipe(Stream.mapError((cause) => failure(operation, cause)));
+  /** Stop with no owner: the leftovers of a failed or killed owner are reclaimed under the lease. */
+  const reclaimWithoutOwner = reclaimStack({
+    state,
+    stateRoot: locations.stateRoot,
+    cacheRoot: locations.cacheRoot,
+    id: saved.id,
+  }).pipe(
+    Effect.flatMap((reclaimed) =>
+      reclaimed
+        ? Effect.void
+        : Effect.fail(
+            new StackError({
+              operation: "shutdown",
+              message: "Another process holds the stack lease; run stop again",
+            }),
+          ),
+    ),
+  );
   const shutdown = Effect.fn("Stack.shutdown")(function* (destroy: boolean) {
     const operation = destroy ? "destroy" : "shutdown";
     yield* invalidate();
-    const engine = saved.runtime === "native" ? undefined : saved.runtime;
     // Shutdown uses the release-stable endpoint, so it reaches owners of any release.
-    const { endpoint, refusal, engineUnavailable } = yield* Effect.scoped(
+    const { endpoint, refusal } = yield* Effect.scoped(
       Effect.gen(function* () {
-        const idle = { endpoint: undefined, refusal: Exit.void, engineUnavailable: false };
+        const idle = { endpoint: undefined, refusal: Exit.void };
         const live = yield* connectHost(state, saved.id, { anyRelease: true }).pipe(
           Effect.map(Option.some),
           Effect.catchIf(ownerAbsent, () =>
-            destroy
-              ? launchHost(state, launchOptions).pipe(Effect.map(Option.some))
-              : Effect.succeed(Option.none<HostAccess>()),
+            Effect.gen(function* () {
+              if (destroy) return Option.some(yield* launchHost(state, launchOptions));
+              yield* reclaimWithoutOwner;
+              return Option.none<HostAccess>();
+            }),
           ),
           Effect.catchIf(stackGone, () => Effect.succeed(Option.none<HostAccess>())),
-          // The owner's startup sweep reports an unreachable engine before any owner serves.
-          Effect.catchIf(
-            (cause) => engine !== undefined && hasReason("runtime-unavailable")(cause),
-            () => Effect.succeed("engine-unavailable" as const),
-          ),
         );
-        if (live === "engine-unavailable") return { ...idle, engineUnavailable: true };
         if (Option.isNone(live)) return idle;
         const access = live.value;
         const endpoint = access.endpoint;
@@ -585,57 +589,47 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
                   new StackError({
                     operation: "shutdown",
                     message: rejected.message,
-                    ...(rejected.outcomes === undefined ? {} : { outcomes: rejected.outcomes }),
+                    ...(rejected.outcomes === undefined
+                      ? {}
+                      : { outcomes: rejected.outcomes.map(knownOutcomeKind) }),
+                    ...(isStackFailureKind(rejected.kind) ? { kind: rejected.kind } : {}),
                   }),
                 ),
             }),
           ),
           Effect.exit,
         );
-        return { endpoint, refusal, engineUnavailable: false };
+        return { endpoint, refusal };
       }),
     ).pipe(
       Effect.provideContext(services),
       Effect.mapError((cause) => failure(operation, cause)),
     );
-    if (engineUnavailable && engine !== undefined)
-      return yield* destroyWithoutEngine(state, saved, locations, engine).pipe(
-        Effect.provideContext(services),
-      );
-    if (endpoint === undefined) return { runtimeCleanup: "complete" } as const;
-    if (Exit.isFailure(refusal)) {
-      const shutdownFailure = Option.match(Cause.findErrorOption(refusal.cause), {
+    if (endpoint === undefined) return;
+    if (Exit.isFailure(refusal))
+      return yield* Option.match(Cause.findErrorOption(refusal.cause), {
         onNone: () => failure(operation, Cause.pretty(refusal.cause)),
         onSome: (cause) => failure(operation, cause),
       });
-      if (!destroy) return yield* shutdownFailure;
-      const exitResult = yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
-        Effect.mapError((cause) => failure("shutdown-exit", cause)),
-        Effect.exit,
-      );
-      if (Exit.isFailure(exitResult)) {
-        const exitFailure = Option.match(Cause.findErrorOption(exitResult.cause), {
-          onNone: () => failure("shutdown-exit", Cause.pretty(exitResult.cause)),
-          onSome: (cause) => failure("shutdown-exit", cause),
-        });
-        const exitStatus = exitFailure.message.includes("still running")
-          ? "Owner is still running after failed destroy"
-          : "Owner exit was not confirmed after failed destroy";
-        return yield* new StackError({
-          ...shutdownFailure,
-          message: `${shutdownFailure.message}; ${exitStatus}; exit probe: ${exitFailure.message}`,
-        });
-      }
-      return yield* shutdownFailure;
-    }
     yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );
-    return { runtimeCleanup: "complete" } as const;
   });
 
   const snapshotScope = (options: DatabaseSnapshotOptions | undefined) =>
     options?.scope === undefined ? {} : { scope: options.scope };
+  const readLogs =
+    (id: string) =>
+    (options?: ReadLogsOptions): Stream.Stream<LogRecord, StackError> =>
+      stream("readLogs", (rpc) =>
+        rpc.readLogs({
+          id,
+          follow: options?.follow ?? false,
+          ...(options?.from === undefined ? {} : { from: options.from }),
+          ...(options?.since === undefined ? {} : { since: options.since }),
+          ...(options?.tail === undefined ? {} : { tail: options.tail }),
+        }),
+      );
   const common = <K extends Kind>(id: string, service: K): ServiceInstance<K> => ({
     id,
     service,
@@ -645,9 +639,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     restart: (input) =>
       input === undefined
         ? call("restart", (rpc) => rpc.restartService({ id }))
-        : Schema.decodeUnknownEffect(ServiceCreationInputSchema)(
-            "service" in input ? input : { service, config: input.config },
-          ).pipe(
+        : Schema.decodeUnknownEffect(ServiceRestartInputSchema)({ service, ...input }).pipe(
             Effect.mapError((cause) => failure("restart", cause)),
             Effect.flatMap((creation) =>
               call("restart", (rpc) => rpc.restartService({ id, config: creation })),
@@ -657,16 +649,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     prepare: call("prepare", (rpc) => rpc.prepareService({ id })),
     status: call("status", (rpc) => rpc.status({ id }), "attach"),
     followStatus: stream("followStatus", (rpc) => rpc.followStatus({ id })),
-    readLogs: (options) =>
-      stream("readLogs", (rpc) =>
-        rpc.readLogs({
-          id,
-          follow: options?.follow ?? false,
-          ...(options?.from === undefined ? {} : { from: options.from }),
-          ...(options?.since === undefined ? {} : { since: options.since }),
-          ...(options?.tail === undefined ? {} : { tail: options.tail }),
-        }),
-      ),
+    readLogs: readLogs(id),
     credentials: (options) =>
       call("credentials", (rpc) => rpc.credentials({ id, from: options?.from ?? "host" })),
   });
@@ -735,9 +718,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           Effect.mapError((cause) => failure("command", cause)),
         );
         const { rpc } = current;
-        const attachmentId = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => failure("command", cause)),
-        );
+        const attachmentId = yield* crypto.uuidV4();
         const scope = yield* Scope.Scope;
         const inputFailure = yield* Deferred.make<never, E | StackError>();
         const result = yield* Ref.make<{ jobId: string; exitCode: number } | undefined>(undefined);
@@ -855,7 +836,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   }
   const savedDefinition = Effect.gen(function* () {
     const current = yield* state.read(saved.id);
-    if (current === undefined) return yield* failure("definition", "Stack does not exist");
+    if (current === undefined) return yield* failure("definition", "Stack does not exist", "state");
     return current;
   }).pipe(Effect.mapError((cause) => failure("definition", cause)));
   const definitions = savedDefinition.pipe(Effect.map((current) => current.instances));
@@ -891,19 +872,27 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
             ...(options?.keys === undefined ? {} : { keys: options.keys }),
             ...(options?.eager === undefined ? {} : { eager: options.eager }),
+            ...(options?.retainMembers === undefined
+              ? {}
+              : { retainMembers: options.retainMembers }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
-      plan: (services: ReadonlyArray<ServiceCreationInput>) =>
-        Effect.forEach(services, (service) =>
+      plan: Effect.fn("Stack.plan")(function* (
+        services: ReadonlyArray<ServiceCreationInput>,
+        options?: PlanOptions,
+      ) {
+        const requested = yield* Effect.forEach(services, (service) =>
           Schema.decodeEffect(ServiceCreationInputSchema)(service),
-        ).pipe(
-          Effect.mapError((cause) => failure("plan", cause)),
-          Effect.flatMap((requested) =>
-            savedDefinition.pipe(
-              Effect.map((current) => planSupabaseComposition(current, requested)),
-            ),
-          ),
-        ),
+        ).pipe(Effect.mapError((cause) => failure("plan", cause)));
+        const current = yield* savedDefinition;
+        const initializedDatabases = yield* initializedDatabaseIds(
+          fs,
+          path,
+          path.join(locations.stateRoot, saved.id, "data"),
+          current.instances,
+        ).pipe(Effect.mapError((cause) => failure("plan", cause)));
+        return planSupabaseComposition(current, requested, { ...options, initializedDatabases });
+      }),
       configure: (config: Orchestrator.CompositionConfig) =>
         call("configureComposition", (rpc) => rpc.configureComposition(config)),
       describe: savedDefinition.pipe(Effect.map((current) => current.composition)),
@@ -911,6 +900,12 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       stop: whileRunning("stopComposition", (rpc) => rpc.stopComposition(), []),
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),
     },
+    gateway: { readLogs: readLogs(gatewayLog.instanceId) },
+    startupEndpointChanges: call(
+      "startupEndpointChanges",
+      (rpc) => rpc.startupEndpointChanges(),
+      "attach",
+    ),
     stop: shutdown(false).pipe(Effect.asVoid),
     destroy: shutdown(true),
     commands: { run },
@@ -933,7 +928,6 @@ export const create = Effect.fn("Stack.create")(
       runtime: options.runtime,
       instances: [],
       composition: { members: [], dependencies: [] },
-      ports: [],
     };
     const locations = { stateRoot: options.stateRoot, cacheRoot: options.cacheRoot };
     const existing = yield* state.read(id);
@@ -948,7 +942,7 @@ export const create = Effect.fn("Stack.create")(
     const session = saved.lifetime === "session";
     if (session || options.startOwner === true) {
       if ((yield* state.read(id)) !== undefined)
-        return yield* failure("create", "Stack already exists; use open");
+        return yield* failure("create", "Stack already exists; use open", "already-exists");
       // The owner registers the stack under its lease and removes it if its startup fails, so no
       // sweep sees a session stack unowned and a failed launch leaves no registration behind.
       const access = yield* launchHost(state, {
@@ -962,7 +956,7 @@ export const create = Effect.fn("Stack.create")(
     yield* state.withLock(
       Effect.gen(function* () {
         if ((yield* state.read(id)) !== undefined)
-          return yield* failure("create", "Stack already exists; use open");
+          return yield* failure("create", "Stack already exists; use open", "already-exists");
         yield* state.save(saved);
       }),
     );
@@ -976,13 +970,19 @@ export const open = Effect.fn("Stack.open")(
   function* (options: OpenOptions) {
     const state = yield* stateFor(options.stateRoot);
     const saved = yield* state.read(options.id);
-    if (saved === undefined) return yield* failure("open", "Stack does not exist");
+    if (saved === undefined) return yield* failure("open", "Stack does not exist", "state");
     const locations = { stateRoot: options.stateRoot, cacheRoot: options.cacheRoot };
     const access = !options.startOwner
       ? undefined
       : saved.lifetime === "session"
         ? yield* connectHost(state, saved.id)
-        : yield* launchHost(state, { ...locations, stackId: saved.id });
+        : yield* launchHost(state, {
+            ...locations,
+            stackId: saved.id,
+            ...(options.requestedCreations === undefined
+              ? {}
+              : { requestedCreations: options.requestedCreations }),
+          });
     return yield* makeHandle(state, saved, locations, { access });
   },
   Effect.mapError((cause) => failure("open", cause)),
@@ -996,15 +996,18 @@ export const discover = Effect.fn("Stack.discover")(
   function* (
     options: Pick<StackLocations, "stateRoot"> & {
       readonly idPrefix?: string;
-      readonly onInvalidState?: (id: string, error: State.StateError) => Effect.Effect<void>;
+      readonly onInvalidState?: (
+        id: string,
+        error: StackNamespace.NamespaceError,
+      ) => Effect.Effect<void>;
     },
   ) {
     const selected = (id: string) =>
       options.idPrefix === undefined || id.startsWith(options.idPrefix);
     const onInvalidState = options.onInvalidState;
-    const state = yield* State.Service.pipe(
+    const state = yield* StackNamespace.Service.pipe(
       Effect.provide(
-        State.layer({
+        StackNamespace.layer({
           root: options.stateRoot,
           onInvalidState:
             onInvalidState === undefined
@@ -1024,6 +1027,37 @@ export const discover = Effect.fn("Stack.discover")(
   Effect.mapError((cause) => failure("discover", cause)),
 );
 
+/**
+ * Lists the saved data of the stacks of `projectRoot` that a start at the `requested` pins would
+ * refuse. It reads their files without taking a lease or probing an owner, and creates nothing.
+ */
+export const findDataConflicts = Effect.fn("Stack.findDataConflicts")(
+  function* (
+    options: Pick<StackLocations, "stateRoot"> & {
+      readonly projectRoot: string;
+      readonly requested: Partial<ArtifactSelection>;
+    },
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    if (!(yield* fs.exists(options.stateRoot))) return [];
+    const projectRoot = yield* fs.realPath(options.projectRoot);
+    const stacks = (yield* (yield* stateFor(options.stateRoot)).list).filter(
+      ({ identity }) => identity.projectRoot === projectRoot,
+    );
+    const conflicts = yield* Effect.forEach(stacks, (saved) =>
+      collectDataConflicts(fs, path, {
+        saved,
+        dataRoot: path.join(options.stateRoot, saved.id, "data"),
+        requested: options.requested,
+      }),
+    );
+    yield* Effect.annotateCurrentSpan({ "data_conflicts.stack_count": stacks.length });
+    return conflicts.flat();
+  },
+  Effect.mapError((cause) => failure("findDataConflicts", cause)),
+);
+
 /** Selects a saved stack by id, or by the identity a project root and stack name derive. */
 export type FindOptions = Pick<StackLocations, "stateRoot"> &
   ({ readonly id: string } | { readonly projectRoot: string; readonly name?: string });
@@ -1040,15 +1074,117 @@ export const find = Effect.fn("Stack.find")(
     const state = yield* stateFor(options.stateRoot);
     const id =
       "id" in options ? options.id : yield* deriveStackId(yield* resolveStackIdentity(options));
-    const definition = yield* state.read(id);
+    const path = yield* Path.Path;
+    const definition = yield* state.read(id).pipe(
+      Effect.catchIf(
+        (error) => error.operation === "decode",
+        (error) =>
+          failure(
+            "find",
+            `Stack ${id} could not be read: ${error.message}. Remove its directory ${path.join(options.stateRoot, id)} to discard it. Containers it left behind are removed when a container stack next starts under this state root or when the stack is destroyed by id, and its port reservations are released when another stack needs them; its data in the shared database volume is not removed.`,
+          ),
+      ),
+    );
     if (definition === undefined) return Option.none<FoundStack>();
     return Option.some({ definition, host: yield* observeHost(state, definition) });
   },
   Effect.mapError((cause) => failure("find", cause)),
 );
 
+/** A stack with no registration that left containers behind; destroying it removes them. */
+export type DeletedStack = Pick<Stack, "id" | "destroy">;
+
+const engineLabel = (engine: "docker" | "podman") => (engine === "docker" ? "Docker" : "Podman");
+
+/**
+ * Selects a stack that is no longer registered while containers labelled with its data root in
+ * `stateRoot` remain on Docker or Podman. Destroying it removes only those containers, never the
+ * stack's data in the shared database volume.
+ */
+export const findDeleted = Effect.fn("Stack.findDeleted")(
+  function* (options: StackLocations & { readonly id: string }) {
+    const services = yield* Effect.context<
+      FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+    >();
+    const spawner = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
+    const state = yield* stateFor(options.stateRoot);
+    if ((yield* state.read(options.id)) !== undefined) return Option.none<DeletedStack>();
+    const probes = yield* Effect.forEach(
+      ["docker", "podman"] as const,
+      (engine) =>
+        resolveEngineTarget(spawner, engine).pipe(
+          Effect.flatMap((target) =>
+            leftBehindStackIds(options.stateRoot, target).pipe(
+              Effect.map((ids) => Option.some({ target, found: ids.has(options.id) })),
+            ),
+          ),
+          Effect.catchIf(engineUnreachable, () => Effect.succeedNone),
+          Effect.result,
+          Effect.map((outcome) => ({ engine, outcome })),
+        ),
+      { concurrency: "unbounded" },
+    );
+    const matched = probes.flatMap(({ engine, outcome }) =>
+      Result.isSuccess(outcome) && Option.isSome(outcome.success) && outcome.success.value.found
+        ? [{ engine, target: outcome.success.value.target }]
+        : [],
+    );
+    const [unlisted] = probes.flatMap(({ engine, outcome }) =>
+      Result.isFailure(outcome)
+        ? [
+            {
+              message: `Unable to list ${engineLabel(engine)} containers while looking for stack ${options.id}'s leftovers: ${failureMessage(outcome.failure)}`,
+              kind: failureKind(outcome.failure),
+            },
+          ]
+        : [],
+    );
+    if (matched.length === 0) {
+      if (unlisted === undefined) return Option.none<DeletedStack>();
+      return yield* failure("find", unlisted.message, unlisted.kind);
+    }
+    const destroy = Effect.gen(function* () {
+      for (const { target } of matched) {
+        const refusal = Match.value(
+          yield* reclaimDeletedStack({
+            state,
+            stateRoot: options.stateRoot,
+            id: options.id,
+            engineTarget: target,
+          }),
+        ).pipe(
+          Match.when("reclaimed", () => undefined),
+          Match.when("held", () => ({
+            message: "Another process holds this stack's lease; run destroy again",
+            kind: "lease-held" as const,
+          })),
+          Match.when("registered", () => ({
+            message: `Stack ${options.id} was registered again during destroy`,
+            kind: "state" as const,
+          })),
+          Match.exhaustive,
+        );
+        if (refusal !== undefined) return yield* failure("destroy", refusal.message, refusal.kind);
+      }
+      if (unlisted !== undefined)
+        return yield* failure(
+          "destroy",
+          `Removed the ${matched.map(({ target }) => engineLabel(target.engine)).join(" and ")} containers stack ${options.id} left behind. ${unlisted.message}`,
+          unlisted.kind,
+        );
+    }).pipe(
+      Effect.mapError((cause) => failure("destroy", cause)),
+      Effect.provideContext(services),
+    );
+    return Option.some<DeletedStack>({ id: options.id, destroy });
+  },
+  Effect.mapError((cause) => failure("find", cause)),
+);
+
 /** Selects the persisted logs of a stack; its owner does not need to run. */
 export interface StreamStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
+  /** Inclusive record positions by instance id; missing generations emit lost before retained records. */
+  readonly from?: ReadonlyMap<string, LogPosition>;
   readonly stackId: string;
   /** Instance ids to read; every instance with persisted logs by default. */
   readonly instances?: ReadonlyArray<string>;
@@ -1063,9 +1199,15 @@ export const streamStackLogs = (
   Stream.unwrap(
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const root = yield* State.stackLogsRoot(path, options.stateRoot, options.stackId);
+      if (!Schema.is(StackNamespace.SavedStack.fields.id)(options.stackId))
+        return yield* new StackNamespace.NamespaceError({
+          operation: "identity",
+          message: `Invalid state id: ${options.stackId}`,
+        });
+      const root = StackNamespace.stackLogsRoot(path, options.stateRoot, options.stackId);
       return streamPersistedLogs({
         root,
+        ...(options.from === undefined ? {} : { from: options.from }),
         ...(options.instances === undefined ? {} : { instances: options.instances }),
         ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
       });

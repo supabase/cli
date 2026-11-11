@@ -9,6 +9,7 @@
  * mount for the GCP service-account JSON.
  */
 
+import { DEFAULT_ERL_MAX_PORTS } from "@supabase/stack/defaults";
 import type { Path } from "effect";
 
 import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
@@ -110,6 +111,7 @@ export function buildLogflareContainerSpec(
     // env, not through a shell, so they are never stripped.
     LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
     RELEASE_COOKIE: "cookie",
+    ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
   };
 
   const binds: Array<string> = [];

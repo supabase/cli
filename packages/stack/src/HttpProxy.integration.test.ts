@@ -1,14 +1,15 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { Data, Deferred, Effect, Fiber, Layer, Queue } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
 import { captureLogs } from "../tests/logs.ts";
 import { ProxyError } from "./Proxy.ts";
-import { makeHttpProxy, type HttpRoute } from "./HttpProxy.ts";
+import { makeHttpProxy, type HttpAccess, type HttpRoute } from "./HttpProxy.ts";
+import { sharedRoutes } from "./host/Endpoints.ts";
 
 const listen = (server: Server | NetServer, options?: { readonly beforeClose?: () => void }) =>
   Effect.acquireRelease(
@@ -56,7 +57,7 @@ const request = (
   path: string,
   body: Uint8Array,
   headers: Readonly<Record<string, string>> = {},
-  method: "GET" | "POST" = "POST",
+  method: "GET" | "HEAD" | "POST" = "POST",
 ) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
@@ -74,8 +75,18 @@ it.live("routes streamed HTTP bodies and releases target activity after the resp
   Effect.scoped(
     Effect.gen(function* () {
       const body = new Uint8Array(2 * 1024 * 1024).fill(71);
-      const backend = createServer((_incoming, outgoing) => {
-        _incoming.resume();
+      const uploaded = yield* Deferred.make<void, HttpProxyTestError>();
+      const backend = createServer((incoming, outgoing) => {
+        incoming.once("end", () => Deferred.doneUnsafe(uploaded, Effect.void));
+        incoming.once("close", () => {
+          if (!incoming.complete) {
+            Deferred.doneUnsafe(
+              uploaded,
+              Effect.fail(new HttpProxyTestError({ message: "Upload aborted" })),
+            );
+          }
+        });
+        incoming.resume();
         outgoing.writeHead(200);
         outgoing.write(body);
       });
@@ -99,13 +110,14 @@ it.live("routes streamed HTTP bodies and releases target activity after the resp
           backend.once("request", onRequest);
           return Effect.sync(() => backend.off("request", onRequest));
         },
-      ).pipe(Effect.forkScoped);
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
       const responseFiber = yield* request(proxy.port, "/api/echo", body).pipe(
         Effect.provide(NodeHttpClient.layerNodeHttp),
         Effect.forkScoped,
       );
       yield* Deferred.await(acquired);
       const heldResponse = yield* Fiber.join(heldResponseFiber);
+      yield* Deferred.await(uploaded);
       expect(yield* Deferred.isDone(released)).toBe(false);
       heldResponse?.end(body);
       const response = yield* Fiber.join(responseFiber);
@@ -534,6 +546,298 @@ it.live("rewrites only the apikey query value on opted-in WebSocket routes", () 
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live("tells upstreams the client address", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((incoming, response) => {
+        response.end(
+          JSON.stringify({
+            forwardedFor: incoming.headers["x-forwarded-for"],
+            realIp: incoming.headers["x-real-ip"],
+          }),
+        );
+      });
+      const sockets = new WebSocketServer({ server: backend });
+      const upgraded = yield* Deferred.make<
+        { forwardedFor?: string; realIp?: string },
+        HttpProxyTestError
+      >();
+      sockets.on("connection", (socket, incoming) => {
+        Deferred.doneUnsafe(
+          upgraded,
+          Effect.succeed({
+            forwardedFor: headerOf(incoming.headers["x-forwarded-for"]),
+            realIp: headerOf(incoming.headers["x-real-ip"]),
+          }),
+        );
+        socket.close();
+      });
+      const backendAddress = yield* listen(backend, { beforeClose: () => sockets.close() });
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        { id: "functions", prefix: "/functions", target: Effect.succeed(backendAddress) },
+      ]);
+      const send = (headers: Readonly<Record<string, string>>) =>
+        request(proxy.port, "/functions/v1/hello", new Uint8Array(), headers, "GET").pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => JSON.parse(new TextDecoder().decode(body))),
+        );
+
+      expect(yield* send({})).toEqual({ forwardedFor: "127.0.0.1", realIp: "127.0.0.1" });
+      expect(yield* send({ "x-forwarded-for": "203.0.113.7", "x-real-ip": "203.0.113.7" })).toEqual(
+        { forwardedFor: "203.0.113.7, 127.0.0.1", realIp: "127.0.0.1" },
+      );
+
+      const client = new WebSocket(`ws://127.0.0.1:${proxy.port}/functions/v1/socket`, {
+        headers: { "x-forwarded-for": "203.0.113.7", "x-real-ip": "203.0.113.7" },
+      });
+      client.on("error", (cause) =>
+        Deferred.doneUnsafe(
+          upgraded,
+          Effect.fail(new HttpProxyTestError({ message: cause.message, cause })),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => client.terminate()));
+      expect(yield* Deferred.await(upgraded).pipe(Effect.timeout("10 seconds"))).toEqual({
+        forwardedFor: "203.0.113.7, 127.0.0.1",
+        realIp: "127.0.0.1",
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const headerOf = (value: string | ReadonlyArray<string> | undefined) =>
+  value === undefined || typeof value === "string" ? value : value.join(", ");
+
+it.live("tells upstreams the scheme, host, port, path and stripped prefix the client reached", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const forwarded = (
+        headers: Readonly<Record<string, string | ReadonlyArray<string> | undefined>>,
+      ) => ({
+        proto: headerOf(headers["x-forwarded-proto"]),
+        host: headerOf(headers["x-forwarded-host"]),
+        port: headerOf(headers["x-forwarded-port"]),
+        path: headerOf(headers["x-forwarded-path"]),
+        prefix: headerOf(headers["x-forwarded-prefix"]),
+      });
+      const backend = createServer((incoming, response) => {
+        response.end(JSON.stringify(forwarded(incoming.headers)));
+      });
+      const sockets = new WebSocketServer({ server: backend });
+      const upgraded = yield* Deferred.make<ReturnType<typeof forwarded>, HttpProxyTestError>();
+      sockets.on("connection", (socket, incoming) => {
+        Deferred.doneUnsafe(upgraded, Effect.succeed(forwarded(incoming.headers)));
+        socket.close();
+      });
+      const backendAddress = yield* listen(backend, { beforeClose: () => sockets.close() });
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const target = Effect.succeed(backendAddress);
+      yield* proxy.setRoutes([
+        { id: "functions", prefix: "/functions/v1", upstreamPrefix: "/", gateway: true, target },
+        {
+          id: "graphql",
+          prefix: "/graphql/v1",
+          upstreamPrefix: "/rpc/graphql",
+          forwardedPrefix: "/graphql/v1",
+          gateway: true,
+          target,
+        },
+        { id: "studio", prefix: "/", target },
+      ]);
+      const spoofed = {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "spoofed.example",
+        "x-forwarded-port": "443",
+        "x-forwarded-path": "/spoofed",
+        "x-forwarded-prefix": "/spoofed",
+      };
+      const send = (path: string, headers: Readonly<Record<string, string>>) =>
+        request(proxy.port, path, new Uint8Array(), headers, "GET").pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => JSON.parse(new TextDecoder().decode(body))),
+        );
+      const port = String(proxy.port);
+
+      expect(yield* send("/functions/v1/hello?name=x", spoofed)).toEqual({
+        proto: "http",
+        host: "127.0.0.1",
+        port,
+        path: "/functions/v1/hello",
+        prefix: "/functions/v1/",
+      });
+      expect(yield* send("/functions/v1/hello", { host: "LOCALHOST.:54321" })).toEqual(
+        expect.objectContaining({ host: "localhost" }),
+      );
+      expect(yield* send("/graphql/v1", {})).toEqual(
+        expect.objectContaining({ path: "/graphql/v1", prefix: "/graphql/v1" }),
+      );
+      /* A dedicated listener's route is not Kong's, so it adds none of them. */
+      expect(yield* send("/project/default", { host: "Studio.Example.test:9999" })).toEqual({
+        proto: undefined,
+        host: undefined,
+        port: undefined,
+        path: undefined,
+        prefix: undefined,
+      });
+
+      const client = new WebSocket(`ws://127.0.0.1:${proxy.port}/functions/v1/socket`, {
+        headers: spoofed,
+      });
+      client.on("error", (cause) =>
+        Deferred.doneUnsafe(
+          upgraded,
+          Effect.fail(new HttpProxyTestError({ message: cause.message, cause })),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => client.terminate()));
+      expect(yield* Deferred.await(upgraded).pipe(Effect.timeout("10 seconds"))).toEqual({
+        proto: "http",
+        host: "127.0.0.1",
+        port,
+        path: "/functions/v1/socket",
+        prefix: "/functions/v1/",
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("adds a route's default headers only when the client sent none", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((incoming, response) => {
+        response.end(
+          JSON.stringify({ url: incoming.url, profile: incoming.headers["content-profile"] }),
+        );
+      });
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        {
+          id: "graphql",
+          prefix: "/graphql/v1",
+          upstreamPrefix: "/rpc/graphql",
+          addHeaders: { "content-profile": "graphql_public" },
+          target: Effect.succeed(backendAddress),
+        },
+        {
+          id: "mixed",
+          prefix: "/mixed",
+          upstreamPrefix: "/rpc/graphql",
+          addHeaders: { "Content-Profile": "graphql_public" },
+          target: Effect.succeed(backendAddress),
+        },
+      ]);
+      const send = (headers: Readonly<Record<string, string>>, path = "/graphql/v1") =>
+        request(proxy.port, path, new Uint8Array(), headers).pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => JSON.parse(new TextDecoder().decode(body))),
+        );
+
+      expect(yield* send({})).toEqual({ url: "/rpc/graphql", profile: "graphql_public" });
+      expect(yield* send({ "Content-Profile": "private" })).toEqual({
+        url: "/rpc/graphql",
+        profile: "private",
+      });
+      expect(yield* send({ "content-profile": "private" }, "/mixed")).toEqual({
+        url: "/rpc/graphql",
+        profile: "private",
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "leaves CORS on the functions route to the function while other routes keep the gateway's",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const backend = createServer((incoming, response) => {
+          if (incoming.headers.origin === "https://app.example.com")
+            response.setHeader("access-control-allow-origin", "https://app.example.com");
+          const vary = incoming.headers["x-backend-vary"];
+          if (typeof vary === "string") response.setHeader("vary", vary);
+          response.statusCode = incoming.method === "OPTIONS" ? 403 : 200;
+          response.end(incoming.method);
+        });
+        const backendAddress = yield* listen(backend);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        const keys = {
+          publishableKey: "sb_publishable_example",
+          secretKey: "sb_secret_example",
+          anonKey: "anon.jwt.value",
+          serviceRoleKey: "service.role.jwt",
+        };
+        yield* proxy.setRoutes([
+          ...(
+            sharedRoutes(
+              { service: "functions" },
+              "http",
+              keys,
+              () => Effect.die("unused"),
+              () => Effect.undefined,
+            ) ?? []
+          ).map((route) => ({ ...route, id: "functions", target: Effect.succeed(backendAddress) })),
+          { id: "rest", prefix: "/rest/v1", target: Effect.succeed(backendAddress) },
+        ]);
+        const client = yield* HttpClient.HttpClient;
+        const send = (
+          method: "OPTIONS" | "POST",
+          path: string,
+          origin: string,
+          headers: Record<string, string> = {},
+        ) =>
+          client.execute(
+            HttpClientRequest.make(method)(`http://127.0.0.1:${proxy.port}${path}`).pipe(
+              HttpClientRequest.setHeaders({ ...headers, origin }),
+            ),
+          );
+
+        const preflight = yield* send("OPTIONS", "/functions/v1/fn", "https://other.example.com");
+        expect(preflight.status).toBe(403);
+        expect(preflight.headers["access-control-allow-origin"]).toBeUndefined();
+        const denied = yield* send("POST", "/functions/v1/fn", "https://other.example.com");
+        expect(yield* denied.text).toBe("POST");
+        expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
+        const allowed = yield* send("POST", "/functions/v1/fn", "https://app.example.com");
+        expect(allowed.headers["access-control-allow-origin"]).toBe("https://app.example.com");
+        const rest = yield* send("OPTIONS", "/rest/v1/todos", "https://other.example.com");
+        expect(rest.status).toBe(200);
+        expect(rest.headers["access-control-allow-origin"]).toBe("*");
+        expect(rest.headers["access-control-allow-methods"]).toBe(
+          "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS,TRACE,CONNECT",
+        );
+        expect(rest.headers["access-control-allow-headers"]).toBe(
+          "accept-profile,apikey,authorization,x-client-info",
+        );
+        const requested = yield* send("OPTIONS", "/rest/v1/todos", "https://other.example.com", {
+          "access-control-request-headers": "authorization, x-custom-header",
+        });
+        expect(requested.headers["access-control-allow-headers"]).toBe(
+          "authorization, x-custom-header",
+        );
+        const proxied = yield* send("POST", "/rest/v1/todos", "https://other.example.com");
+        expect(yield* proxied.text).toBe("POST");
+        expect(proxied.headers["access-control-allow-origin"]).toBe("https://other.example.com");
+        expect(proxied.headers["access-control-allow-methods"]).toBeUndefined();
+        expect(proxied.headers["vary"]).toBe("Origin");
+        const originless = yield* client.execute(
+          HttpClientRequest.post(`http://127.0.0.1:${proxy.port}/rest/v1/todos`),
+        );
+        expect(originless.headers["access-control-allow-origin"]).toBe("*");
+        expect(originless.headers["vary"]).toBe("Origin");
+        const merged = yield* send("POST", "/rest/v1/todos", "https://other.example.com", {
+          "x-backend-vary": "accept-encoding",
+        });
+        expect(merged.headers["vary"]).toBe("accept-encoding, Origin");
+        const wildcard = yield* send("POST", "/rest/v1/todos", "https://other.example.com", {
+          "x-backend-vary": "*",
+        });
+        expect(wildcard.headers["vary"]).toBe("*");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer))),
+);
+
 it.live("returns a gateway error naming the route and cause when a target cannot wake", () => {
   const logs: Array<string> = [];
   return Effect.scoped(
@@ -545,15 +849,25 @@ it.live("returns a gateway error naming the route and cause when a target cannot
           prefix: "/",
           target: Effect.fail(new ProxyError({ message: "readiness failed" })),
         },
+        {
+          id: "functions",
+          prefix: "/functions/v1",
+          upstreamCors: true,
+          target: Effect.fail(new ProxyError({ message: "readiness failed" })),
+        },
       ]);
       const client = yield* HttpClient.HttpClient;
       const response = yield* client.get(`http://127.0.0.1:${proxy.port}/`);
       expect(response.status).toBe(502);
       expect(response.headers["access-control-allow-origin"]).toBe("*");
       expect(yield* response.text).toBe("Bad Gateway");
-      expect(logs).toHaveLength(1);
+      const functions = yield* client.get(`http://127.0.0.1:${proxy.port}/functions/v1/fn`);
+      expect(functions.status).toBe(502);
+      expect(functions.headers["access-control-allow-origin"]).toBe("*");
+      expect(logs).toHaveLength(2);
       expect(logs[0]).toContain("Route rest request failed");
       expect(logs[0]).toContain("readiness failed");
+      expect(logs[1]).toContain("Route functions request failed");
     }),
   ).pipe(
     Effect.provide(
@@ -665,14 +979,16 @@ const oneRequestPerConnectionBackend = (answered = Number.POSITIVE_INFINITY) => 
 };
 
 it.live(
-  "succeeds a second POST when a keep-alive backend only answers the first request per connection",
+  "succeeds a second POST on a fresh-writes route when a keep-alive backend only answers the first request per connection",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const backend = oneRequestPerConnectionBackend();
         const address = yield* backend.listen;
         const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-        yield* proxy.setRoutes([{ id: "mcp", prefix: "/", target: Effect.succeed(address) }]);
+        yield* proxy.setRoutes([
+          { id: "mcp", prefix: "/", target: Effect.succeed(address), freshWrites: true },
+        ]);
         const first = yield* request(proxy.port, "/mcp", new TextEncoder().encode("first-body"));
         expect(first.status).toBe(200);
         expect(new TextDecoder().decode(first.body)).toBe("ok");
@@ -735,7 +1051,7 @@ it.live("returns a gateway error when the fresh retry after a pooled reset also 
   );
 });
 
-it.live("delivers a keyed POST once when the upstream resets after reading its body", () => {
+it.live("delivers a pooled keyed POST once when the upstream resets after reading its body", () => {
   const logs: Array<string> = [];
   return Effect.scoped(
     Effect.gen(function* () {
@@ -775,7 +1091,7 @@ it.live("delivers a keyed POST once when the upstream resets after reading its b
       });
       expect(post.status).toBe(502);
       expect(bodies).toEqual(["insert"]);
-      expect(connections).toBe(2);
+      expect(connections).toBe(1);
       expect(logs).toHaveLength(1);
       expect(logs[0]).toContain("Route rest request failed");
     }),
@@ -785,6 +1101,136 @@ it.live("delivers a keyed POST once when the upstream resets after reading its b
     ),
   );
 });
+
+it.live("reuses one pooled upstream connection for sequential writes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const bodies: Array<string> = [];
+      let connections = 0;
+      const backend = createServer((incoming, outgoing) => {
+        let body = "";
+        incoming.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        incoming.once("end", () => {
+          bodies.push(body);
+          outgoing.end("ok");
+        });
+      });
+      backend.on("connection", () => {
+        connections += 1;
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
+      for (const body of ["one", "two", "three"]) {
+        const response = yield* request(
+          proxy.port,
+          "/rest/v1/rpc/f",
+          new TextEncoder().encode(body),
+        );
+        expect(response.status).toBe(200);
+      }
+      expect(bodies).toEqual(["one", "two", "three"]);
+      expect(connections).toBe(1);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("closes a pooled upstream connection whose write the client abandons mid-body", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const bodyStarted = yield* Deferred.make<void>();
+      const pooledClosed = yield* Deferred.make<void>();
+      const seen: Array<string> = [];
+      let connections = 0;
+      const backend = createServer((incoming, outgoing) => {
+        let body = "";
+        incoming.on("error", () => undefined);
+        incoming.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+          if (incoming.url === "/upload") Deferred.doneUnsafe(bodyStarted, Effect.void);
+        });
+        incoming.once("end", () => {
+          seen.push(`${incoming.url} ${body}`);
+          outgoing.end("ok");
+        });
+      });
+      backend.on("connection", (socket) => {
+        connections += 1;
+        if (connections === 1)
+          socket.once("close", () => Deferred.doneUnsafe(pooledClosed, Effect.void));
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
+      const warm = yield* request(proxy.port, "/warm", new TextEncoder().encode("warm"));
+      expect(warm.status).toBe(200);
+      const client = yield* rawClient(
+        proxy.port,
+        "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 100000\r\n\r\npartial",
+      );
+      yield* Deferred.await(bodyStarted);
+      yield* Effect.sync(() => client.resetAndDestroy());
+      yield* Deferred.await(pooledClosed);
+      for (const body of ["alpha", "beta"]) {
+        const response = yield* request(proxy.port, "/next", new TextEncoder().encode(body));
+        expect(response.status).toBe(200);
+      }
+      expect(seen).toEqual(["/warm warm", "/next alpha", "/next beta"]);
+      expect(connections).toBe(2);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("keeps a chunked DELETE body framed on its pooled upstream connection", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen: Array<string> = [];
+      let connections = 0;
+      const backend = createServer((incoming, outgoing) => {
+        let body = "";
+        incoming.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        incoming.once("end", () => {
+          seen.push(`${incoming.method} ${incoming.url} ${body}`);
+          outgoing.end("ok");
+        });
+      });
+      backend.on("connection", () => {
+        connections += 1;
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
+      const body = '{"id":1}';
+      const deleted = yield* Effect.callback<string, HttpProxyTestError>((resume) => {
+        const socket = new Socket();
+        let text = "";
+        socket.on("data", (chunk: Buffer) => {
+          text += chunk.toString("latin1");
+        });
+        socket.once("close", () => resume(Effect.succeed(text)));
+        socket.once("error", (cause) =>
+          resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+        );
+        socket.connect(proxy.port, "127.0.0.1", () =>
+          socket.write(
+            "DELETE /items HTTP/1.1\r\nHost: x\r\nConnection: close\r\n" +
+              `Transfer-Encoding: chunked\r\n\r\n${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`,
+          ),
+        );
+        return Effect.sync(() => socket.destroy());
+      });
+      expect(deleted).toMatch(/^HTTP\/1\.1 200 /u);
+      const next = yield* request(proxy.port, "/next", new Uint8Array(), {}, "GET");
+      expect(next.status).toBe(200);
+      expect(seen).toEqual(['DELETE /items {"id":1}', "GET /next "]);
+      expect(connections).toBe(1);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
 
 it.live("reuses pooled upstream connections across thousands of concurrent requests", () =>
   Effect.scoped(
@@ -869,6 +1315,71 @@ it.live("gives up after a single retry when the upstream keeps dropping connecti
   );
 });
 
+it.live(
+  "re-resolves the backend on retry instead of reaching a listener that reused the invalidated address",
+  () => {
+    const logs: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const recovered = createServer((_request, response) => response.end("recovered"));
+        const recoveredAddress = yield* listen(recovered);
+
+        let foreignConnections = 0;
+        let resolveInvalidated: (() => void) | undefined;
+        // One address plays the real backend for the connection that is retried, then the
+        // address's next owner for any later one, without an OS-level close/rebind race.
+        let role: "backend" | "foreign" = "backend";
+        const shared = createTcpServer((socket) => {
+          if (role === "backend") {
+            role = "foreign";
+            socket.destroy();
+            resolveInvalidated?.();
+          } else {
+            foreignConnections += 1;
+            socket.destroy();
+          }
+        });
+        const sharedAddress = yield* listen(shared);
+
+        const invalidated = yield* Deferred.make<void>();
+        yield* Effect.callback<void, never>((resume) => {
+          resolveInvalidated = () => resume(Effect.void);
+          return Effect.void;
+        }).pipe(Effect.andThen(Deferred.succeed(invalidated, undefined)), Effect.forkScoped);
+
+        let attempts = 0;
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([
+          {
+            id: "retry-target",
+            prefix: "/",
+            target: Effect.gen(function* () {
+              attempts += 1;
+              if (attempts === 1) return sharedAddress;
+              yield* Deferred.await(invalidated);
+              return recoveredAddress;
+            }),
+          },
+        ]);
+
+        const client = yield* HttpClient.HttpClient;
+        const response = yield* client.get(`http://127.0.0.1:${proxy.port}/hello`);
+        expect(response.status).toBe(200);
+        expect(yield* response.text).toBe("recovered");
+        expect(foreignConnections).toBe(0);
+        expect(logs).toHaveLength(1);
+        expect(logs[0]).toContain(
+          "Route retry-target GET upstream failed before responding, retrying",
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureWarnings(logs)),
+      ),
+    );
+  },
+);
+
 it.live("closes an upgrade naming the route and cause when a target cannot wake", () => {
   const logs: Array<string> = [];
   return Effect.scoped(
@@ -942,6 +1453,98 @@ it.live("disconnects a pending upstream response quietly when its client closes"
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
 });
+
+it.live("sends an early upstream rejection while the client is still uploading its body", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((_request, response) => {
+        response.writeHead(413, { "content-length": "0" });
+        response.end();
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const released = yield* Deferred.make<void>();
+      yield* proxy.setRoutes([
+        {
+          id: "upload",
+          prefix: "/",
+          target: Effect.acquireRelease(Effect.succeed(address), () =>
+            Deferred.succeed(released, undefined),
+          ),
+        },
+      ]);
+      const client = yield* Effect.acquireRelease(
+        Effect.sync(() => new Socket()),
+        (socket) => Effect.sync(() => socket.destroy()),
+      );
+      const head = yield* Effect.callback<string, HttpProxyTestError>((resume) => {
+        let received = "";
+        client.on("error", (cause) =>
+          resume(Effect.fail(new HttpProxyTestError({ message: cause.message }))),
+        );
+        client.on("data", (chunk: Buffer) => {
+          received += chunk.toString();
+          if (received.includes("\r\n\r\n")) resume(Effect.succeed(received));
+        });
+        client.connect(proxy.port, "127.0.0.1", () =>
+          client.write(
+            "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nhalf-",
+          ),
+        );
+      }).pipe(Effect.timeout("5 seconds"));
+      expect(head).toMatch(/^HTTP\/1\.1 413 /);
+      expect(yield* Deferred.isDone(released)).toBe(false);
+      client.write("body!");
+      yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("completes an early chunked rejection when the client stops uploading its body", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((_request, response) => {
+        response.writeHead(413);
+        response.write("rejected");
+        response.end();
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const released = yield* Deferred.make<void>();
+      yield* proxy.setRoutes([
+        {
+          id: "upload",
+          prefix: "/",
+          target: Effect.acquireRelease(Effect.succeed(address), () =>
+            Deferred.succeed(released, undefined),
+          ),
+        },
+      ]);
+      const client = yield* Effect.acquireRelease(
+        Effect.sync(() => new Socket()),
+        (socket) => Effect.sync(() => socket.destroy()),
+      );
+      const received = yield* Effect.callback<string, HttpProxyTestError>((resume) => {
+        let received = "";
+        client.on("error", (cause) =>
+          resume(Effect.fail(new HttpProxyTestError({ message: cause.message }))),
+        );
+        client.on("data", (chunk: Buffer) => {
+          received += chunk.toString();
+          if (received.endsWith("0\r\n\r\n")) resume(Effect.succeed(received));
+        });
+        client.connect(proxy.port, "127.0.0.1", () =>
+          client.write(
+            "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nhalf-",
+          ),
+        );
+      }).pipe(Effect.timeout("10 seconds"));
+      expect(received).toMatch(/^HTTP\/1\.1 413 /);
+      expect(received).toContain("rejected");
+      yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.live("stays quiet when a client closes after receiving part of the response", () => {
   const logs: Array<string> = [];
@@ -1027,3 +1630,440 @@ it.live("releases a waiting WebSocket target quietly when its client resets", ()
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
 });
+
+/** Opens a raw client connection that has written `text`. */
+const rawClient = (port: number, text: string) =>
+  Effect.acquireRelease(
+    Effect.callback<Socket, HttpProxyTestError>((resume) => {
+      const socket = new Socket();
+      const onConnectError = (cause: Error) => {
+        socket.destroy();
+        resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause })));
+      };
+      socket.once("error", onConnectError);
+      socket.connect(port, "127.0.0.1", () => {
+        socket.off("error", onConnectError);
+        // Tests reset these connections on purpose.
+        socket.on("error", () => undefined);
+        socket.write(text);
+        resume(Effect.succeed(socket));
+      });
+      return Effect.sync(() => socket.destroy());
+    }),
+    (socket) => Effect.sync(() => socket.destroy()),
+  );
+
+const upgradeRequest = (path: string) =>
+  `GET ${path} HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`;
+
+/** Sends a raw upgrade request and waits until the proxy closes the connection. */
+const rawUpgrade = (port: number, path: string) =>
+  rawClient(port, upgradeRequest(path)).pipe(
+    Effect.flatMap((socket) =>
+      Effect.callback<void>((resume) => {
+        socket.once("close", () => resume(Effect.void));
+        // Drains any answer so an upstream's graceful end reaches the client as a close.
+        socket.resume();
+        if (socket.destroyed) resume(Effect.void);
+      }),
+    ),
+    Effect.timeout("5 seconds"),
+  );
+
+/** Writes `text`, if any, on a raw client connection and waits for the next response head. */
+const responseHead = (socket: Socket, text?: string) =>
+  Effect.callback<string, HttpProxyTestError>((resume) => {
+    let received = "";
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("close", onClose);
+    };
+    const onData = (chunk: Buffer) => {
+      received += chunk.toString();
+      if (!received.includes("\r\n\r\n")) return;
+      cleanup();
+      resume(Effect.succeed(received));
+    };
+    const onClose = () => {
+      cleanup();
+      resume(Effect.fail(new HttpProxyTestError({ message: "Gateway closed the connection" })));
+    };
+    socket.on("data", onData);
+    socket.once("close", onClose);
+    if (socket.destroyed) onClose();
+    else if (text !== undefined) socket.write(text);
+    return Effect.sync(cleanup);
+  }).pipe(Effect.timeout("5 seconds"));
+
+it.live(
+  "answers a client that reuses its connection after stalling past the advertised keep-alive",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        const get = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        const socket = yield* rawClient(proxy.port, get);
+        expect(yield* responseHead(socket)).toMatch(/keep-alive: timeout=5\r\n/iu);
+        /* Real time: the idle gap must outlast the runtime's default 6 s close. */
+        yield* Effect.sleep("7 seconds");
+        expect(yield* responseHead(socket, get)).toMatch(/^HTTP\/1\.1 404 /u);
+      }),
+    ),
+);
+
+it.live(
+  "records each request once with its sent status, body bytes and redacted credentials",
+  () => {
+    const logs: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const backend = createServer((request, response) => {
+          request.resume();
+          if (request.url?.startsWith("/ok")) response.end("hello");
+          else {
+            response.statusCode = 404;
+            response.end("nope");
+          }
+        });
+        const backendAddress = yield* listen(backend);
+        const accesses = yield* Queue.unbounded<HttpAccess>();
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          onAccess: (access) => Queue.offer(accesses, access),
+        });
+        yield* proxy.setRoutes([
+          {
+            id: "api",
+            prefix: "/api",
+            upstreamPrefix: "/",
+            target: Effect.succeed(backendAddress),
+          },
+          {
+            id: "down",
+            prefix: "/down",
+            target: Effect.fail(new ProxyError({ message: "wake failed" })),
+          },
+        ]);
+        const get = (path: string, headers: Readonly<Record<string, string>> = {}) =>
+          request(proxy.port, path, new Uint8Array(), headers, "GET").pipe(
+            Effect.map(({ status }) => status),
+          );
+
+        const statuses = [
+          yield* get("/api/ok?select=*&apikey=sb_secret_x", {
+            "user-agent": "proxy-test/1",
+            referer: "http://127.0.0.1:54321/x?token=t1&select=*",
+          }),
+          yield* get("/api/missing"),
+          yield* get("/elsewhere"),
+          yield* get("/down/thing"),
+        ];
+        const recorded = yield* Queue.takeN(accesses, 4);
+
+        expect(statuses).toEqual([200, 404, 404, 502]);
+        expect(recorded.toSorted((left, right) => left.time - right.time)).toEqual([
+          {
+            time: expect.any(Number),
+            client: "127.0.0.1",
+            method: "GET",
+            target: "/api/ok?select=*&apikey=redacted",
+            protocol: "HTTP/1.1",
+            status: 200,
+            bytes: 5,
+            referer: "http://127.0.0.1:54321/x?token=redacted&select=*",
+            userAgent: "proxy-test/1",
+            durationMillis: expect.any(Number),
+          },
+          expect.objectContaining({ target: "/api/missing", status: 404, bytes: 4 }),
+          expect.objectContaining({ target: "/elsewhere", status: 404, bytes: 9 }),
+          expect.objectContaining({ target: "/down/thing", status: 502, bytes: 11 }),
+        ]);
+
+        // A later sentinel request proves none of the four requests above recorded twice.
+        const sentinelStatus = yield* get("/api/ok?select=sentinel");
+        const sentinel = yield* Queue.take(accesses);
+        expect(sentinelStatus).toBe(200);
+        expect(sentinel).toMatchObject({ target: "/api/ok?select=sentinel" });
+        expect(yield* Queue.size(accesses)).toBe(0);
+
+        yield* request(proxy.port, "/elsewhere", new Uint8Array(), {}, "HEAD");
+        const unroutedHead = yield* Queue.take(accesses);
+        yield* request(proxy.port, "/down/thing", new Uint8Array(), {}, "HEAD");
+        const failedHead = yield* Queue.take(accesses);
+        expect(unroutedHead).toMatchObject({ method: "HEAD", status: 404, bytes: 0 });
+        expect(failedHead).toMatchObject({ method: "HEAD", status: 502, bytes: 0 });
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(logs)),
+      ),
+    );
+  },
+);
+
+it.live("records WebSocket upgrades at the handshake with the status sent to the client", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer();
+      const sockets = new WebSocketServer({ server: backend });
+      const backendAddress = yield* listen(backend, { beforeClose: () => sockets.close() });
+      const upgradeReceived = yield* Deferred.make<void>();
+      const silent = createTcpServer((connection) => {
+        connection.on("error", () => undefined);
+        connection.once("data", () => Deferred.doneUnsafe(upgradeReceived, Effect.void));
+      });
+      const silentAddress = yield* listen(silent);
+      // Answers with an interim 1xx before the final handshake status, in separate writes.
+      const interim = createTcpServer((connection) => {
+        connection.on("error", () => undefined);
+        connection.once("data", (chunk: Buffer) => {
+          const upgrading = chunk.toString("latin1").startsWith("GET /interim/upgrade ");
+          connection.write(
+            upgrading
+              ? "HTTP/1.1 103 Early Hints\r\nLink: </app.css>; rel=preload\r\n\r\n"
+              : "HTTP/1.1 100 Continue\r\n\r\n",
+          );
+          connection.end(
+            upgrading
+              ? "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+              : "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+          );
+        });
+      });
+      const interimAddress = yield* listen(interim);
+      // Accepts the upgrade with headers past the proxy's status-reading limit and stays open.
+      const padded = createTcpServer((connection) => {
+        connection.on("error", () => undefined);
+        connection.once("data", () =>
+          connection.write(
+            `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nX-Padding: ${"a".repeat(9 * 1024)}\r\n\r\n`,
+          ),
+        );
+      });
+      const paddedAddress = yield* listen(padded);
+      // Answers with something that is not HTTP and stays open.
+      const garbled = createTcpServer((connection) => {
+        connection.on("error", () => undefined);
+        connection.once("data", () => connection.write("SSH-2.0-OpenSSH_9.9\r\n"));
+      });
+      const garbledAddress = yield* listen(garbled);
+      const accesses = yield* Queue.unbounded<HttpAccess>();
+      const proxy = yield* makeHttpProxy({
+        host: "127.0.0.1",
+        port: 0,
+        onAccess: (access) => Queue.offer(accesses, access),
+      });
+      yield* proxy.setRoutes([
+        { id: "ws", prefix: "/socket", target: Effect.succeed(backendAddress) },
+        { id: "silent", prefix: "/silent", target: Effect.succeed(silentAddress) },
+        { id: "interim", prefix: "/interim", target: Effect.succeed(interimAddress) },
+        { id: "padded", prefix: "/padded", target: Effect.succeed(paddedAddress) },
+        { id: "garbled", prefix: "/garbled", target: Effect.succeed(garbledAddress) },
+        {
+          id: "down",
+          prefix: "/down",
+          target: Effect.fail(new ProxyError({ message: "wake failed" })),
+        },
+      ]);
+      const client = yield* Effect.acquireRelease(
+        Effect.callback<WebSocket, HttpProxyTestError>((resume) => {
+          const socket = new WebSocket(
+            `ws://127.0.0.1:${proxy.port}/socket?apikey=sb_publishable_x&vsn=2.0.0`,
+          );
+          socket.once("open", () => resume(Effect.succeed(socket)));
+          socket.once("error", (cause) =>
+            resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+          );
+        }),
+        (socket) => Effect.sync(() => socket.terminate()),
+      ).pipe(Effect.timeout("5 seconds"));
+
+      const opened = yield* Queue.take(accesses);
+
+      expect(client.readyState).toBe(WebSocket.OPEN);
+      expect(opened).toMatchObject({
+        method: "GET",
+        target: "/socket?apikey=redacted&vsn=2.0.0",
+        status: 101,
+      });
+      expect(opened.bytes).toBeUndefined();
+
+      yield* rawUpgrade(proxy.port, "/elsewhere");
+      expect(yield* Queue.take(accesses)).toMatchObject({ target: "/elsewhere", status: 404 });
+      yield* rawUpgrade(proxy.port, "/down");
+      expect(yield* Queue.take(accesses)).toMatchObject({ target: "/down", status: 502 });
+      yield* rawUpgrade(proxy.port, "/interim/forbidden");
+      expect(yield* Queue.take(accesses)).toMatchObject({
+        target: "/interim/forbidden",
+        status: 403,
+      });
+      yield* rawUpgrade(proxy.port, "/interim/upgrade");
+      expect(yield* Queue.take(accesses)).toMatchObject({
+        target: "/interim/upgrade",
+        status: 101,
+      });
+
+      const open = yield* rawClient(proxy.port, upgradeRequest("/padded"));
+      expect(yield* Queue.take(accesses)).toMatchObject({ target: "/padded", status: 101 });
+      open.destroy();
+
+      const relaying = yield* rawClient(proxy.port, upgradeRequest("/garbled"));
+      expect(yield* Queue.take(accesses)).toMatchObject({ target: "/garbled", status: 502 });
+      relaying.destroy();
+
+      const leaving = yield* rawClient(proxy.port, upgradeRequest("/silent"));
+      yield* Deferred.await(upgradeReceived);
+      leaving.destroy();
+      expect(yield* Queue.take(accesses)).toMatchObject({ target: "/silent", status: 499 });
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
+});
+
+it.live("records no body bytes for a client that left before its response completed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((request, response) => {
+        request.resume();
+        response.writeHead(200);
+        response.write("first chunk");
+      });
+      const backendAddress = yield* listen(backend, {
+        beforeClose: () => backend.closeAllConnections(),
+      });
+      const acquiring = yield* Deferred.make<void>();
+      const accesses = yield* Queue.unbounded<HttpAccess>();
+      const proxy = yield* makeHttpProxy({
+        host: "127.0.0.1",
+        port: 0,
+        onAccess: (access) => Queue.offer(accesses, access),
+      });
+      yield* proxy.setRoutes([
+        {
+          id: "waking",
+          prefix: "/waking",
+          target: Deferred.succeed(acquiring, undefined).pipe(Effect.andThen(Effect.never)),
+        },
+        { id: "streaming", prefix: "/streaming", target: Effect.succeed(backendAddress) },
+      ]);
+
+      const waiting = yield* rawClient(
+        proxy.port,
+        "GET /waking HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      );
+      yield* Deferred.await(acquiring);
+      waiting.destroy();
+      const beforeHeaders = yield* Queue.take(accesses).pipe(Effect.timeout("5 seconds"));
+      const reading = yield* rawClient(
+        proxy.port,
+        "GET /streaming HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      );
+      yield* Effect.callback<void>((resume) => {
+        reading.once("data", () => resume(Effect.void));
+      });
+      reading.destroy();
+      const midBody = yield* Queue.take(accesses).pipe(Effect.timeout("5 seconds"));
+
+      expect(beforeHeaders).toMatchObject({ target: "/waking", status: 499 });
+      expect(beforeHeaders.bytes).toBeUndefined();
+      expect(midBody).toMatchObject({ target: "/streaming", status: 200 });
+      expect(midBody.bytes).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("answers and releases targets while the access sink is stalled", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((request, response) => {
+        request.resume();
+        response.end("ok");
+      });
+      const backendAddress = yield* listen(backend);
+      const released = yield* Queue.unbounded<void>();
+      const proxy = yield* makeHttpProxy({
+        host: "127.0.0.1",
+        port: 0,
+        onAccess: () => Effect.never,
+      });
+      yield* proxy.setRoutes([
+        {
+          id: "api",
+          prefix: "/api",
+          target: Effect.acquireRelease(Effect.succeed(backendAddress), () =>
+            Queue.offer(released, undefined),
+          ),
+        },
+      ]);
+
+      const statuses = yield* Effect.forEach(
+        Array.from({ length: 20 }, (_, index) => `/api/${index}`),
+        (path) =>
+          request(proxy.port, path, new Uint8Array(), {}, "GET").pipe(
+            Effect.map(({ status }) => status),
+          ),
+        { concurrency: 5 },
+      ).pipe(Effect.timeout("10 seconds"));
+
+      expect(statuses).toEqual(Array.from({ length: 20 }, () => 200));
+      expect(yield* Queue.takeN(released, 20).pipe(Effect.timeout("5 seconds"))).toHaveLength(20);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeHttpClient.layerNodeHttp, NodeServices.layer))),
+);
+
+it.live("records and releases a request whose client resets after the full body was sent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const bodySent = yield* Deferred.make<void>();
+      const body = new Uint8Array(256 * 1024).fill(65);
+      const backend = createServer((request, response) => {
+        request.resume();
+        response.once("finish", () => Deferred.doneUnsafe(bodySent, Effect.void));
+        response.end(body);
+      });
+      const backendAddress = yield* listen(backend, {
+        beforeClose: () => backend.closeAllConnections(),
+      });
+      const released = yield* Deferred.make<void>();
+      const accesses = yield* Queue.unbounded<HttpAccess>();
+      const proxy = yield* makeHttpProxy({
+        host: "127.0.0.1",
+        port: 0,
+        onAccess: (access) => Queue.offer(accesses, access),
+      });
+      yield* proxy.setRoutes([
+        {
+          id: "api",
+          prefix: "/api",
+          target: Effect.acquireRelease(Effect.succeed(backendAddress), () =>
+            Deferred.succeed(released, undefined),
+          ),
+        },
+      ]);
+
+      // The client stops reading after its first bytes; socket buffers decide how much of the
+      // body the proxy flushed before the reset, so the record holds the whole body or no count.
+      const client = yield* rawClient(
+        proxy.port,
+        "GET /api/full HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      );
+      const firstBytes = Effect.callback<void>((resume) => {
+        client.once("data", () => {
+          client.pause();
+          resume(Effect.void);
+        });
+      });
+      yield* Effect.all([firstBytes, Deferred.await(bodySent)], { concurrency: "unbounded" }).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      client.resetAndDestroy();
+      const recorded = yield* Queue.take(accesses).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));
+
+      expect(recorded).toMatchObject({ target: "/api/full", status: 200 });
+      expect([undefined, body.length]).toContain(recorded.bytes);
+      expect(yield* Queue.size(accesses)).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);

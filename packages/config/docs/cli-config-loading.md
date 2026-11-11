@@ -5,7 +5,7 @@ This document explains how the CLI's on-disk config document loading works, acro
 
 ## Vocabulary
 
-- `CliConfig`: the persisted config-file document (`supabase/config.toml` / `supabase/config.json`)
+- `CliConfig`: the persisted config-file document (`supabase/config.toml`, `supabase/config.json`, or `supabase/config.jsonc`)
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
 - `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
@@ -47,7 +47,7 @@ The `Cli*` prefix names the local checkout side — what the CLI reads, writes, 
 itself on disk. A bare `Project*` name is reserved for the hosted Supabase project side. (Deliberate
 exceptions live in apps/cli: services that describe the hosted project itself or the CLI's link to
 it — `ProjectLinkRemote`, `ProjectLinkState` (both in `shared/config`), and
-`ProjectRefResolver` (in `apps/cli/src/config`) — keep the bare `Project*` root under this same
+`RemoteTarget` (in `apps/cli/src/config`) — keep the bare `Project*` root under this same
 rule.)
 
 ## The `/io` facade
@@ -75,10 +75,11 @@ an unrelated verb. CLI-2234 renamed all four to match.
 
 ## Overview
 
-There is no global, fully-resolved config snapshot. Most `env(NAME)` references inside `CliConfig`
-are substituted automatically when the file is loaded (see "Raw Config Loading" below). A narrow
-set of fields are deliberately left as literal `env(NAME)` strings through decode, and are resolved
-by a caller later, on demand (see "Lazy `env(NAME)` Resolution" below).
+The package itself has no global, fully-resolved resolved config. Most `env(NAME)` references
+inside `CliConfig` are substituted automatically when the file is loaded (see "Raw Config Loading"
+below). A narrow set of fields are deliberately left as literal `env(NAME)` strings through decode,
+and are resolved by a caller later, on demand (see "Lazy `env(NAME)` Resolution" below). The CLI
+builds its own per-command resolved config on top of the package stages (see "CLI value precedence").
 
 ## Project Discovery
 
@@ -88,13 +89,15 @@ upward until it finds the nearest ancestor containing one of:
 
 - `supabase/config.toml`
 - `supabase/config.json`
+- `supabase/config.jsonc`
 
 The first match wins. A caller that already holds an authoritative, pre-resolved root — for
 example one derived from an explicit `--workdir`/`SUPABASE_WORKDIR` — can pass `{ search: false }`
 to check only that exact directory, with no ancestor climb.
 
-Within one discovered `supabase/` directory, `config.json` takes precedence over `config.toml`
-when both files exist.
+Within one discovered `supabase/` directory, `config.json` or `config.jsonc` takes precedence over
+`config.toml` when both exist. Discovery never fails on a `config.json` + `config.jsonc` pair; loading
+and saving do.
 
 This produces a `CliProjectPaths` (the type is exported from `@supabase/config`):
 
@@ -115,13 +118,13 @@ and env files under `supabase/`.
 
 The project-scoped files are:
 
-- `supabase/config.toml` or `supabase/config.json`
+- `supabase/config.toml`, `supabase/config.json`, or `supabase/config.jsonc`
 - `supabase/.env`
 - `supabase/.env.local`
 
 Their intended roles are:
 
-- `config.toml` or `config.json`: the shared, committed `CliConfig` document
+- `config.toml`, `config.json`, or `config.jsonc`: the shared, committed `CliConfig` document
 - `.env`: managed or shared project env values
 - `.env.local`: user-editable local overrides
 
@@ -137,8 +140,13 @@ defines the full config/env scope for that invocation.
 these rules:
 
 - `loadCliConfig(cwd)` discovers the project, then:
-  - if both `supabase/config.json` and `supabase/config.toml` exist, JSON wins
-  - the returned `LoadedCliConfig.ignoredPaths` reports the shadowed config file path
+  - `config.json` and `config.jsonc` are both parsed as JSONC (comments and trailing commas
+    allowed); parse errors report the line and column
+  - if both `supabase/config.json` and `supabase/config.jsonc` exist, loading fails with
+    `CliConfigFileConflictError` naming both files
+  - if a JSON file and `supabase/config.toml` both exist, JSON wins, and the returned
+    `LoadedCliConfig.ignoredPaths` reports the shadowed `config.toml`; the CLI warns that it is
+    ignored
   - if only one config file exists, that file is loaded
   - if no config file exists in the discovered project, loading returns `null`
 - `loadCliConfigFile(path)` loads one explicit file path directly instead of discovering or
@@ -146,21 +154,30 @@ these rules:
 
 `saveCliConfig()` uses these rules:
 
-- if the discovered project already has `config.json`, save back to JSON
+- if the discovered project already has `config.jsonc`, save back to it; otherwise, if it has
+  `config.json`, save back to that
 - otherwise if it already has `config.toml`, save back to TOML
 - otherwise default new writes to `supabase/config.json`
+- if both `config.json` and `config.jsonc` exist, saving fails with `CliConfigFileConflictError`
 - callers can still force a format explicitly via `SaveCliConfigOptions.format`
-- after writing, it removes the sibling config file in the other format, if one exists, so a
-  project never ends up with both after a save
+- when the target is an existing JSON/JSONC file, the save applies minimal `jsonc-parser` edits towards
+  the regenerated document so comments and key order survive, and falls back to the regenerated text
+  if the edited text does not re-parse to exactly that document; new files and format switches
+  always write the regenerated text
+- a TOML save keeps the existing file's first-line `#:schema <url>` directive
+- after writing, it removes every other config file among `config.json`, `config.jsonc` and
+  `config.toml`, so a project never ends up with more than one after a save
 
 The saved file may also preserve a top-level `"$schema"` key as editor metadata: when a caller
 doesn't pass an explicit `schemaRef`, saving reuses whatever `$schema` the project's existing
-config file already had. That key does not participate in runtime config semantics.
+config file already had. Beyond the schema version it declares (see [Schema version](#schema-version)),
+the key has no runtime meaning.
 
 ## Env Loading and Precedence
 
-`loadCliProjectEnvironment()` (exported from `@supabase/config/effect`) loads project env in this
-order:
+`loadCliProjectEnvironment()` (exported from `@supabase/config/effect`) is the package's public env
+loader. The CLI does not call it; it uses its own loader, described under "CLI value precedence".
+The public loader loads project env in this order:
 
 1. `supabase/.env`
 2. `supabase/.env.local`
@@ -184,13 +201,13 @@ The `ambient` source label just means the value came from `process.env`.
 
 ## Raw Config Loading
 
-`CliConfig` is loaded by parsing the TOML/JSON file and decoding it against `CliConfigSchema`.
+`CliConfig` is loaded by parsing the TOML/JSON(C) file and decoding it against `CliConfigSchema`.
 
 Before decoding, most string values matching `env(NAME)` are substituted automatically using the
 resolved `CliProjectEnvironment` — this is required so numeric and boolean fields don't crash the
 strict decoder when their TOML/JSON value is still a string. Substitution also coerces the
 resulting string to the field's declared type: a numeric field is parsed as a number, a boolean
-field accepts Go's `TRUE`/`FALSE`/`1`/`0`/`t`/`f`/… spellings, and a string-array field is split on
+field accepts `1`/`t`/`T`/`TRUE`/`true`/`True` and `0`/`f`/`F`/`FALSE`/`false`/`False`, and a string-array field is split on
 `,`. A missing or empty-string env var leaves the literal `env(NAME)` untouched rather than
 substituting an empty value.
 
@@ -203,6 +220,13 @@ Schema defaults still provide true runtime defaults, and Effect schema filters s
 cross-field feature contracts such as `enabled => required sibling fields`. Raw config loading
 fails when a feature block is structurally invalid, but not just because a field still contains a
 literal, unresolved `env(NAME)`.
+
+`auth.email.enabled` and `auth.sms.enabled` are the preferred spelling of the provider switch;
+the decoded name stays `enable_signup` until v4. The loader folds the alias per section and per
+layer (top level and each `[remotes.*]` block), before the `[remotes.*]` merge, and `enabled` wins
+when both are set. Every legacy `enable_signup` present is reported in the load result's
+`deprecatedPaths`, e.g. `remotes.staging.auth.sms.enable_signup`; the package prints nothing, and
+the CLI prints a `WARN:` line on stderr. Saving a config writes `enabled`.
 
 ### In-memory effective config validation
 
@@ -260,13 +284,13 @@ These helpers do two things at once:
 `resolveCliConfigSubtree` walks recursively through objects, arrays, and records, so it also
 resolves and redacts leaves nested inside `[remotes.*]` blocks.
 
-An optional `goViperCompat` flag switches the `env(NAME)` matcher from the default, strict
-`SCREAMING_SNAKE_CASE`-only pattern to Go/viper's case-agnostic `^env\((.*)\)$` form; only the
-Go-parity CLI sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
-`.`/`./effect` take no options parameter at all (CLI-2234) — `goViperCompat` is internal-only,
+An optional `cliCompat` flag switches the `env(NAME)` matcher from the default, strict
+`SCREAMING_SNAKE_CASE`-only pattern to the Supabase CLI's case-agnostic `^env\((.*)\)$` form; only
+`apps/cli` sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
+`.`/`./effect` take no options parameter at all (CLI-2234) — `cliCompat` is internal-only,
 typed on `InternalResolveCliConfigOptions`, a package-internal type that is not itself exported.
 `@supabase/config/internal` re-exports these same runtime functions re-typed to additionally
-accept it; `apps/cli`'s Go-parity call sites import from there instead.
+accept it; `apps/cli` imports from there instead.
 
 Callers such as `functions serve`/`functions dev`, `secrets set`, and `start` call these resolvers
 on the subtrees they actually need (e.g. `auth`, `edge_runtime`, `functions`), so dormant
@@ -329,11 +353,12 @@ The CLI builds runtime state in two layers:
 `CliProjectContext` is the CLI's discovered-project runtime bundle. It contains:
 
 - `paths`: the discovered `CliProjectPaths`, when a project was found
-- `projectEnv`: the merged `CliProjectEnvironment`, when a project was found
+- `projectEnv`: `{ values }`, the project env files merged into one map (shell values excluded),
+  when a project was found
 
-It is built by calling `loadCliProjectEnvironment` for the nearest discovered project from `cwd`.
-If no `supabase/config.*` exists, both fields stay absent — `CliProjectContext` does not invent a
-project from `.supabase/` alone.
+It is built by `loadCliProjectEnvFiles` (see "CLI value precedence") for the nearest discovered
+project from `cwd`. If no `supabase/config.*` exists, both fields stay absent — `CliProjectContext`
+does not invent a project from `.supabase/` alone.
 
 ### `CliSettings`
 
@@ -349,10 +374,166 @@ project from `.supabase/` alone.
 Its values are derived from:
 
 - `CliProjectContext.projectEnv.values`, when a project exists
-- otherwise `process.env`
+- then the ambient shell environment
+
+`projectEnv.values` never contains a key the shell sets, so the shell still wins.
 
 This allows project-scoped env files to influence CLI behavior while keeping CLI runtime settings
 distinct from the `CliConfig` document.
+
+## CLI value precedence
+
+The CLI resolves every config value, whether from `CliConfig` or from a `SUPABASE_*` variable, with
+one order (ADR 0032):
+
+1. an explicit flag
+2. shell environment
+3. project `.env*` files
+4. config: `config.json` or `config.jsonc` when present, else `config.toml`, with the matched `[remotes.*]` block
+   over the base document
+5. the default
+
+Tiers are named `flag`, `shell`, `projectEnv`, `config` and `default`. `pickCliConfigKey`
+(`apps/cli/src/config/cli-config-key.ts`) is the single implementation; commands read through the
+`CliConfigValues` service rather than calling it.
+
+### `env()` references and `SUPABASE_*` overrides
+
+These are different mechanisms and both apply:
+
+- `env(NAME)` inside a config value is substituted from the merged environment (shell over project
+  files) when the document is decoded. An empty variable leaves the literal untouched.
+- A `SUPABASE_<UPPER_SNAKE_PATH>` variable overrides the key at the env tier. An empty variable is
+  ignored and falls through to config. A value of the form `env(NAME)` in the variable expands once.
+  A shell variable, even an empty one, shadows the same name in a project `.env` file.
+  `SUPABASE_AUTH_EMAIL_ENABLED` and `SUPABASE_AUTH_SMS_ENABLED` are the exception: they set
+  `enable_signup` in their section and beat `..._ENABLE_SIGNUP` at the same tier.
+
+An override is parsed with a codec derived from the schema type, so an unparsable value fails the
+command that loads config instead of falling back to the file.
+
+### `envRequiresSection`
+
+An env override for a key inside an optional section applies only when that section exists in the
+merged document: webhooks, `storage.image_transformation`, `db.ssl_enforcement`, `auth.captcha`,
+`auth.email.smtp`, hooks, SMS providers, passkey, WebAuthn and external providers other than
+Apple. `auth.sessions`, `db.settings` and `experimental.pgdelta` are exempt; `pgdelta.enabled`
+defaults to true, so its env rollback applies while the section is absent.
+
+### Remotes
+
+`[remotes.<name>]` is selected when its effective `project_id` equals the target project ref. The
+effective value is `SUPABASE_REMOTES_<UPPER(NAME)>_PROJECT_ID` when set and non-empty, else the
+TOML value. Duplicate effective ids and invalid ids fail every load, whether or not a remote
+matches. A matched block that does not declare `db.seed.enabled` seeds nothing; a flag or env value
+still wins.
+
+### Project env files
+
+The CLI's own loader (`shared/config/cli-config-env.ts`) reads `SUPABASE_ENV` (default
+`development`) and then, in each of `<workdir>/supabase` and `<workdir>`, `.env.<env>.local`,
+`.env.local` (skipped when the environment is `test`), `.env.<env>` and `.env`. The first writer
+of a key wins, and a key the shell sets is never taken from a file. This differs from the public
+`loadCliProjectEnvironment` described above.
+
+### The resolved config
+
+`CliConfigValues.load({ workdir, projectRef })` returns a resolved config memoised per workdir, project
+ref and flag set; `writeThrough` drops the memo around a write. The resolved config exposes:
+
+- `get(key)`: the value and its origin tier.
+- `loaded`: the document with every flag, env and secret winner written in, before defaults.
+- `fileDeclared`: what the config file alone declares, with `env()` resolved and no flag or
+  `SUPABASE_*` overlay. `config pull` compares against it.
+- `materialized`: `loaded` plus defaults and normalizers, with `originAt(path)`.
+- `origins`, `appliedRemote`, `hasConfigFile`, `declares(path)`, `familyNames(family)`,
+  `withheldEnv`, `dotenvPrivateKeys`.
+- `invalid`: values left out under the `tolerateInvalid` load option; empty otherwise.
+- `envValues(names)`: the non-empty value of each name, shell before project `.env*`, for
+  resolving `env(NAME)` references.
+- `projectEnvValues`: the raw project `.env*` record, for variables outside the registry such as
+  Docker, registry mirrors and `SUPABASE_NETWORK_ID`.
+
+Load-time warnings print once per runtime. Outside the foundation files the CLI never calls
+`loadCliConfig`, `resolveCliConfigSubtree` or `loadCliProjectEnvironment`; a guard test enforces it.
+
+### Local SMTP
+
+`auth.email.smtp.enabled` defaults to off in the schema. The CLI treats a present
+`[auth.email.smtp]` table that omits `enabled` as on, so a partial table, for example one holding
+only `pass = "env(SMTP_PASS)"`, still loads.
+
+### Removed keys
+
+A config that declares a removed key fails to load with `CliConfigRemovedKeyError`, which names
+every removed key in the file, `[remotes.*]` blocks included, with its replacement:
+
+| Removed                                             | Replacement                                                   |
+| --------------------------------------------------- | ------------------------------------------------------------- |
+| `[inbucket]`                                        | `[local_smtp]`                                                |
+| `[auth.external.linkedin]`, `[auth.external.slack]` | `[auth.external.linkedin_oidc]`, `[auth.external.slack_oidc]` |
+| `experimental.orioledb_version` with a value        | `db.orioledb_version`                                         |
+
+A remote's keys are reported with their `remotes.<name>.` prefix. An empty
+`experimental.orioledb_version = ""`, which older `supabase init` templates wrote, is ignored: it is
+dropped from `rawDocument` before decoding, so it never appears as a value, origin or difference.
+The published JSON Schema accepts only that empty value, so editors agree with the loader.
+The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` environment variable; use
+`SUPABASE_DB_ORIOLEDB_VERSION`.
+
+### Pipeline stages from `./internal`
+
+`@supabase/config/internal` exposes the stages the CLI composes in place of `loadCliConfig`:
+
+1. `parseCliConfigDocumentFile` reads `config.json`, `config.jsonc` or `config.toml` without decoding, and
+   fails with `CliConfigRemovedKeyError` when the document uses a removed key, or
+   `CliConfigFileConflictError` when both JSON files exist, or `CliConfigSchemaVersionError` when
+   the file declares a newer schema version.
+2. `mergeParsedCliConfig` applies the remote chosen by the `selectRemote` callback.
+3. The CLI overlays flag, env and default values onto the merged document.
+4. `decodeMergedCliConfig` expands `env()` references, then decodes and validates the overlaid
+   document.
+
+The result is the `materialized` config on the resolved config; `get(key)` also reports the tier a value
+came from.
+
+## Schema version
+
+A config file declares its schema version with `$schema` in `config.json`/`config.jsonc`, or with a
+leading `#:schema <url>` directive in `config.toml` (a top-level `"$schema"` key is the fallback;
+the directive wins). The directive must come before any other content; blank lines and comments
+may precede it, and surrounding spaces or tabs are ignored. A file with no declaration is v1.
+
+- `https://supabase.com/schemas/config/v<N>.json` declares version `N`.
+- The legacy `https://supabase.com/docs/cli/config.schema.json` and paths ending in
+  `node_modules/@supabase/config/schema.json` or `node_modules/@supabase/config/dist/schema.json`
+  read as v1.
+- Any other reference is unrecognized: the file is read as v1 and the CLI warns on stderr, naming
+  the current schema URL.
+- A file declaring a version newer than the package supports fails with
+  `CliConfigSchemaVersionError` and an upgrade message, in `loadCliConfig`, `loadCliConfigFile`,
+  `parseCliConfigDocumentFile` and `saveCliConfig` alike. A save also fails when the `$schema` it
+  would write, explicit or carried over, is newer than the package supports, and checks every
+  existing config file, including a
+  shadowed sibling it would remove. With an explicit `schemaRef`, a save overwrites an existing
+  file that does not parse unless that file declares a newer version; without one, the save reads
+  the existing `$schema` and fails with `CliConfigParseError` on a file that does not parse. For TOML the directive is checked before
+  parsing, so a newer file this version cannot parse still reports the upgrade error.
+
+## Unknown keys
+
+`findUnknownCliConfigKeys(document)` (`@supabase/config/internal`) returns the sorted key paths
+(segment arrays) of keys in a raw config document that `CliConfigSchema` does not accept, derived from the schema
+itself: the document is decoded with excess-property errors enabled and the unexpected-key issues
+are collected. A key a union member accepts is not reported. The top-level `$schema` key is
+ignored, and `[remotes.<name>]` blocks report under `["remotes", <name>, ...]`. An unknown table
+reports as the table, not its leaves. Pass the document after
+deprecated spellings are folded, as `parseCliConfigDocumentFile` exposes it in `rawDocument`.
+
+The loader still ignores unknown keys. The CLI prints one `WARN:` line on stderr per file listing
+them, so they can be checked for typos, removed, or read by a newer CLI. Key names and schema refs
+are printed with control characters escaped. The CLI's document-only keys (`db.password`,
+`db.root_key`, `auth.external_url`, `[auth.passkey]`, `[auth.webauthn]`) are never listed.
 
 ## CLI-owned Repo State
 
@@ -370,8 +551,8 @@ Neither is part of `@supabase/config`'s input.
 
 Important distinction:
 
-- `@supabase/config` discovers committed config only from `supabase/config.toml` or
-  `supabase/config.json`
+- `@supabase/config` discovers committed config only from `supabase/config.toml`,
+  `supabase/config.json` or `supabase/config.jsonc`
 - the CLI may still resolve a project root from the nearest `.supabase/project.json` when it needs
   to find local machine state for commands like `link`, `unlink`, `start`, `stop`, `status`,
   `stack list`, or `logs`

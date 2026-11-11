@@ -3,7 +3,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { homedir } from "node:os";
 
 import { makeTempHome, runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
@@ -76,8 +76,7 @@ describe("functions new (stack e2e)", () => {
               : {}),
             prefix: `functions-new-stack-${runtime}-`,
           });
-          const home = makeTempHome();
-          yield* Effect.addFinalizer(() => Effect.sync(() => home[Symbol.dispose]()));
+          const home = yield* makeTempHome;
           yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
           yield* fs.writeFileString(
             path.join(projectDir, "supabase", "config.toml"),

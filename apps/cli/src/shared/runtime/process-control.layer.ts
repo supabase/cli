@@ -17,23 +17,21 @@ export const processControlLayer = Layer.sync(ProcessControl, () =>
     awaitSignal: (signals = defaultSignals) =>
       Effect.callback<CliProcessSignal>((resume) => {
         const cleanup = () => {
-          for (const signal of signals) {
-            process.off(signal, listeners[signal]);
+          for (const { signal, listener } of listeners) {
+            process.off(signal, listener);
           }
         };
 
-        const listeners = Object.fromEntries(
-          signals.map((signal) => [
-            signal,
-            () => {
-              cleanup();
-              resume(Effect.succeed(signal));
-            },
-          ]),
-        ) as Record<CliProcessSignal, () => void>;
+        const listeners = signals.map((signal) => ({
+          signal,
+          listener: () => {
+            cleanup();
+            resume(Effect.succeed(signal));
+          },
+        }));
 
-        for (const signal of signals) {
-          process.once(signal, listeners[signal]);
+        for (const { signal, listener } of listeners) {
+          process.once(signal, listener);
         }
 
         return Effect.sync(cleanup);

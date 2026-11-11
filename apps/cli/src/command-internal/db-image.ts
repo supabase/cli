@@ -1,7 +1,13 @@
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
+import { usesStackState } from "./stack-backend.ts";
 import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
-import { slimImageForCurrentPin, slimImagesEnabled } from "../shared/services/slim-images.ts";
+import {
+  slimImageForAlias,
+  slimImageForCurrentPin,
+  slimImagesEnabled,
+} from "../shared/services/slim-images.ts";
 import { PropOrioleDb } from "../shared/telemetry/event-catalog.ts";
 import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 
@@ -68,15 +74,17 @@ export const recordOrioleDbTelemetry = (
 /**
  * Resolves the Postgres image for `majorVersion`, honoring the pinned version written by
  * `supabase start` to `supabase/.temp/postgres-version`. The tag is only replaced when the
- * configured image is at/above 15.1.0.55.
+ * configured image is at/above 15.1.0.55. Stack state mode has no `.temp` pin: the bundled
+ * image applies, and callers that run it take the stack's selection instead.
  */
-export const resolveDbImage = Effect.fnUntraced(function* (
+export const resolveDbImage = Effect.fn("DbImage.resolve")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   majorVersion: number,
   orioledbVersion?: string,
 ) {
+  const slim = yield* slimImagesEnabled;
   yield* recordOrioleDbTelemetry(orioledbVersion, majorVersion);
   // The OrioleDB tag takes precedence over the default/pinned image.
   if (selectsOrioleDb(orioledbVersion, majorVersion)) {
@@ -84,17 +92,17 @@ export const resolveDbImage = Effect.fnUntraced(function* (
       versionCompare(orioledbVersion, "15.1.1.13") > 0
         ? `supabase/postgres:${orioledbVersion}-orioledb`
         : `supabase/postgres:orioledb-${orioledbVersion}`;
-    return { image, configImage: image };
+    return { image: slimImageForAlias("pg", image, slim), configImage: image };
   }
-  const slim = yield* slimImagesEnabled;
   const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? pgImageRaw();
   let appliedPin: string | undefined;
-  if (majorVersion > 14) {
-    const versionPath = path.join(workdir, "supabase", ".temp", "postgres-version");
-    const pinned = yield* fs.readFileString(versionPath).pipe(
-      Effect.map((s) => s.trim()),
-      Effect.orElseSucceed(() => ""),
-    );
+  if (majorVersion > 14 && !(yield* usesStackState)) {
+    const pinned = yield* fs
+      .readFileString(legacyProjectStatePaths(path, workdir).postgresVersion)
+      .pipe(
+        Effect.map((s) => s.trim()),
+        Effect.orElseSucceed(() => ""),
+      );
     if (pinned.length > 0) {
       const colon = currentRaw.indexOf(":");
       const currentTag = colon >= 0 ? currentRaw.slice(colon + 1) : currentRaw;

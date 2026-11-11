@@ -55,11 +55,9 @@ Emits the same success payload as a final NDJSON `result` event.
 
 ## Notes
 
-- Creates a new pgTAP test file scaffold from the embedded template (109 bytes,
-  byte-identical to the original Go template).
+- Creates a new pgTAP test file scaffold from the embedded template (109 bytes).
 - `--template` / `-t` selects the template framework (only `pgtap` is supported; default `pgtap`).
-- Native TypeScript port (Phase 1+); no Go proxy.
-- **Path-traversal hardening (TS-only):** the name is rejected before any write if
+- **Path-traversal hardening :** the name is rejected before any write if
   `<workdir>/supabase/tests/<name>_test.sql` lands outside the tests directory once
   `..` segments are collapsed. Nothing is created — no file and no parent directory.
   Existing symlinks under `supabase/tests` are followed on purpose (shared test

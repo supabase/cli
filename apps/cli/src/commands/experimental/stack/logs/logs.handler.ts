@@ -1,5 +1,10 @@
-import { Clock, Effect, Option, Path, Stream } from "effect";
-import { streamStackLogs, type SavedStack, type StackLogRecord } from "@supabase/stack/effect";
+import { Clock, Effect, Option, Path, Schema, Stream } from "effect";
+import {
+  gatewayLog,
+  streamStackLogs,
+  type SavedStack,
+  type StackLogRecord,
+} from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { dim } from "../../../../command-internal/colors.ts";
@@ -7,52 +12,62 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
   StackApi,
-  StackTargetError,
+  mapTargetError,
   StackTargetResolver,
-  rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
+  rejectStackOutput,
+} from "../../../../command-internal/stack-target.ts";
 import { StackCommandLogsError } from "./logs.errors.ts";
-import type { StackLogsFlags } from "./logs.command.ts";
+import { makeTextFormatter, truncationFooter } from "./logs.format.ts";
 import {
   isAfter,
   isFromLaunch,
   makeHistoryCollector,
-  makeTextFormatter,
-  parseSince,
-  truncationFooter,
-} from "./logs.format.ts";
+} from "../../../../command-internal/logs/local-history.ts";
+import { parseSince } from "../../../../command-internal/logs/since.ts";
+import { hasGatewayLogs } from "../../../../command-internal/logs/local-sources.ts";
 import { logEvent, type LogSource } from "../../../../command-internal/stack-log-events.ts";
 
-const targetError = (cause: StackTargetError) =>
+export interface StackLogsFlags {
+  readonly stack: Option.Option<string>;
+  readonly stackId: Option.Option<string>;
+  readonly service: ReadonlyArray<string>;
+  readonly follow: boolean;
+  readonly tail: number;
+  readonly since: Option.Option<string>;
+}
+
+const targetError = mapTargetError((props) => new StackCommandLogsError(props));
+const logsError = (cause: { readonly message: string }) =>
   new StackCommandLogsError({
-    reason: cause.reason,
+    reason: "stack",
     message: cause.message,
-    ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
     cause,
   });
-const logsError = (cause: { readonly message: string }) =>
-  new StackCommandLogsError({ reason: "unknown", message: cause.message, cause });
 
 type SavedInstance = SavedStack["instances"][number];
 interface Selected {
   readonly id: string;
   readonly service: string;
-  readonly launchId: number | undefined;
 }
 
 const select = (
   definition: SavedStack,
   requested: ReadonlyArray<string>,
 ): Effect.Effect<ReadonlyArray<Selected>, StackCommandLogsError> => {
-  const subject = ({ id, creation, launchId }: SavedInstance): Selected => ({
+  const subject = ({ id, creation }: SavedInstance): Selected => ({
     id,
     service: creation.service,
-    launchId,
   });
+  const members = new Set(definition.composition.members.map(({ id }) => id));
+  const gateway: ReadonlyArray<Selected> = hasGatewayLogs(definition)
+    ? [{ id: gatewayLog.instanceId, service: gatewayLog.service }]
+    : [];
   if (requested.length === 0) {
-    const members = new Set(definition.composition.members.map(({ id }) => id));
-    const selected = definition.instances.filter(({ id }) => members.has(id)).map(subject);
+    const selected = [
+      ...definition.instances.filter(({ id }) => members.has(id)).map(subject),
+      ...gateway,
+    ];
     return selected.length === 0
       ? Effect.fail(
           new StackCommandLogsError({
@@ -65,17 +80,20 @@ const select = (
   }
   const unmatched = requested.find(
     (value) =>
-      !definition.instances.some(({ id, creation }) => id === value || creation.service === value),
+      !definition.instances.some(
+        ({ id, creation }) => id === value || creation.service === value,
+      ) && !gateway.some(({ service }) => service === value),
   );
   if (unmatched !== undefined)
     return Effect.fail(
       new StackCommandLogsError({ reason: "flags", message: `No service matches ${unmatched}.` }),
     );
-  return Effect.succeed(
-    definition.instances
+  return Effect.succeed([
+    ...definition.instances
       .filter(({ id, creation }) => requested.includes(id) || requested.includes(creation.service))
       .map(subject),
-  );
+    ...gateway.filter(({ service }) => requested.includes(service)),
+  ]);
 };
 
 export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: StackLogsFlags) {
@@ -136,16 +154,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     };
     const sinceTime = since?.kind === "time" ? { since: since.iso } : {};
-    const collector = makeHistoryCollector(
-      flags.tail,
-      since?.kind === "start"
-        ? new Map(
-            selected.flatMap(({ id, launchId }) =>
-              launchId === undefined ? [] : [[id, launchId] as const],
-            ),
-          )
-        : undefined,
-    );
+    const collector = makeHistoryCollector(flags.tail, since?.kind === "start");
     if (flags.tail > 0)
       yield* streamStackLogs({
         stateRoot: locations.stateRoot,
@@ -160,12 +169,14 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
 
     if (output.format === "json")
       return yield* output.result(window.records.map((record) => logEvent(record, "history")));
-    // Colour follows the terminal only when stdout is one, so piped logs stay plain.
     const terminal = output.interactive;
     const text = makeTextFormatter(selected, terminal ? process.stdout : {});
     const emit = (record: StackLogRecord, source: LogSource) =>
       output.format === "stream-json"
-        ? output.event(logEvent(record, source))
+        ? Effect.gen(function* () {
+            const data = yield* Schema.decodeEffect(Schema.JsonObject)(record);
+            yield* output.event({ ...logEvent(record, source), data });
+          })
         : output.raw(text(record));
     yield* Effect.forEach(window.records, (record) => emit(record, "history"), { discard: true });
     if (output.format === "text" && flags.tail > 0) {
@@ -189,7 +200,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
           ]),
         );
         const missing = selected
-          .filter(({ id }) => !handles.has(id))
+          .filter(({ id }) => id !== gatewayLog.instanceId && !handles.has(id))
           .map(({ id, service }) => `${service} (${id})`);
         if (missing.length === selected.length)
           return yield* new StackCommandLogsError({
@@ -203,13 +214,13 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
             `Not following ${missing.join(", ")}, which the running stack does not serve.`,
           );
         const streams = selected.flatMap(({ id, service }) => {
-          const handle = handles.get(id);
-          if (handle === undefined) return [];
+          const readLogs =
+            id === gatewayLog.instanceId ? stack.gateway.readLogs : handles.get(id)?.readLogs;
+          if (readLogs === undefined) return [];
           const from = printed.get(id);
-          // Without history, the owner pins the start at its end under the writer's lock.
           const start = flags.tail === 0 ? { tail: 0 } : from === undefined ? {} : { from };
           return [
-            handle.readLogs({ follow: true, ...start, ...sinceTime }).pipe(
+            readLogs({ follow: true, ...start, ...sinceTime }).pipe(
               Stream.filter(
                 (record) => isAfter(record, from) && isFromLaunch(record, launches.get(id)),
               ),

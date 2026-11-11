@@ -1,34 +1,37 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Effect } from "effect";
+import { Output } from "../../../../shared/output/output.service.ts";
+import { Command, Flag } from "effect/cli";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackLogs } from "./logs.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(
+  stack: Flag.String("stack").pipe(
     Flag.withDescription(
       "Select an existing stack by name (defaults to the current project stack).",
     ),
     Flag.optional,
   ),
-  stackId: Flag.string("stack-id").pipe(
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription("Read logs from an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
-  service: Flag.string("service").pipe(
+  service: Flag.String("service").pipe(
     Flag.withDescription(
-      "Read one service kind or instance ID; repeat to select several. Defaults to composition members.",
+      "Read one service kind, instance ID, or gateway (shared API requests); repeat to select several. Defaults to composition members and gateway.",
     ),
     Flag.atLeast(0),
   ),
-  follow: Flag.boolean("follow").pipe(
+  follow: Flag.Boolean("follow").pipe(
     Flag.withAlias("f"),
     Flag.withDescription(
       "After the history, keep streaming new lines until interrupted; requires a running stack.",
     ),
     Flag.withDefault(false),
   ),
-  tail: Flag.integer("tail").pipe(
+  tail: Flag.Int("tail").pipe(
     Flag.filter(
       (tail) => tail >= 0,
       (tail) => `Expected --tail to be 0 or more, got ${tail}`,
@@ -38,7 +41,7 @@ const config = {
     ),
     Flag.withDefault(200),
   ),
-  since: Flag.string("since").pipe(
+  since: Flag.String("since").pipe(
     Flag.withDescription(
       "Only print lines since a duration ago (10m, 1h30m), an ISO-8601 time, or start for each service's latest launch.",
     ),
@@ -46,11 +49,9 @@ const config = {
   ),
 } as const;
 
-export type StackLogsFlags = CliCommand.Command.Config.Infer<typeof config>;
-
 export const stackLogsCommand = Command.make("logs", config).pipe(
   Command.withDescription(
-    "Print retained service logs and exit; with --follow, keep streaming new lines. History is readable while the stack is stopped.",
+    "Deprecated; removed in v4. Use supabase logs instead. Print retained service logs and exit; with --follow, keep streaming new lines. History is readable while the stack is stopped.",
   ),
   Command.withShortDescription("Show managed local stack logs"),
   Command.withExamples([
@@ -67,10 +68,21 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
       description: "Stream history and new lines as structured events",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["stack", "stack-id", "service", "follow", "tail", "since"],
+  }),
   Command.withHandler((flags) =>
-    stackLogs(flags).pipe(
+    Effect.gen(function* () {
+      yield* (yield* Output).raw(
+        "Warning: stack logs is deprecated and will be removed in v4. Use supabase logs instead.\n",
+        "stderr",
+      );
+      yield* stackLogs(flags);
+    }).pipe(
       withCommandTelemetry({ flags, config, aliases: { f: "follow" } }),
       withJsonErrorHandling,
     ),
   ),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

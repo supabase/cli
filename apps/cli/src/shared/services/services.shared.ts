@@ -1,8 +1,8 @@
 import { styleText } from "node:util";
 import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import {
   actionability,
@@ -22,6 +22,21 @@ import {
   slimImageForAlias,
   slimImageForCurrentPin,
 } from "./slim-images.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
+
+/** `fetchLinkedServiceVersions`, behind `services`. */
+export const linkedServiceVersions = block("linked-service-versions", [
+  {
+    operationId: "v1-get-project-api-keys",
+    kind: "best-effort",
+    request: { query: { reveal: "true" } },
+  },
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context: "the api-keys lookup returned a usable key",
+  },
+]);
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
@@ -204,7 +219,7 @@ const TABLE_HEADERS = ["SERVICE IMAGE", "LOCAL", "LINKED"] as const;
 
 type ProjectApiKey = {
   readonly name: string;
-  readonly type?: "legacy" | "publishable" | "secret" | null;
+  readonly type?: string | null;
   readonly api_key?: string | null;
   readonly secret_jwt_template?: Record<string, unknown> | null;
 };
@@ -252,6 +267,7 @@ export interface ServiceFetchConfig {
   readonly headers?: Readonly<Record<string, string | undefined>>;
   readonly api?: ApiClient;
   readonly tenantBaseUrlOverride?: string;
+  readonly maxRetries?: number;
 }
 
 /** @public */
@@ -430,12 +446,15 @@ const makeConfiguredApiClient = Effect.fn("Services.buildApiClient")(function* (
 ) {
   return (
     input.api ??
-    (yield* makeApiClient({
-      baseUrl: input.apiUrl,
-      accessToken: input.accessToken,
-      userAgent: input.userAgent,
-      headers: input.headers,
-    }))
+    (yield* makeApiClient(
+      {
+        baseUrl: input.apiUrl,
+        accessToken: input.accessToken,
+        userAgent: input.userAgent,
+        headers: input.headers,
+      },
+      { retry: { maxRetries: input.maxRetries } },
+    ))
   );
 });
 
@@ -494,6 +513,7 @@ export function formatServicesWarning(message: string, textMode: boolean): strin
 
 export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
   return Effect.gen(function* () {
+    const noLinkedVersions: Partial<Record<RemoteServiceName, string>> = {};
     const exit = yield* Effect.gen(function* () {
       // Malformed refs are rejected before reaching the management API path param or the
       // tenant gateway hostname; the test-only override bypasses this check.
@@ -501,7 +521,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
         input.tenantBaseUrlOverride === undefined &&
         !PROJECT_REF_PATTERN.test(input.projectRef)
       ) {
-        return {} as Partial<Record<RemoteServiceName, string>>;
+        return noLinkedVersions;
       }
 
       const client = yield* makeConfiguredApiClient(input);
@@ -511,7 +531,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
         .getProjectApiKeys({ ref: input.projectRef, reveal: true })
         .pipe(Effect.exit);
       if (!Exit.isSuccess(apiKeysExit) || !hasProjectAccessKey(apiKeysExit.value)) {
-        return {} as Partial<Record<RemoteServiceName, string>>;
+        return noLinkedVersions;
       }
 
       let versions: Partial<Record<RemoteServiceName, string>> = {};
@@ -562,7 +582,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
 
       return versions;
     }).pipe(Effect.exit);
-    return Exit.isSuccess(exit) ? exit.value : ({} as Partial<Record<RemoteServiceName, string>>);
+    return Exit.isSuccess(exit) ? exit.value : noLinkedVersions;
   }).pipe(
     Effect.withSpan("Services.fetchLinkedVersions", {
       attributes: { "project.ref": input.projectRef },

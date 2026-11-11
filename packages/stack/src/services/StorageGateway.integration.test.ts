@@ -1,19 +1,22 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { tmpdir } from "node:os";
+import { Context, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { SecureRandom } from "effect/crypto";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
   DEFAULT_LOCAL_S3_REGION,
   DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
 } from "../Defaults.ts";
-import * as State from "../State.ts";
-import type { SavedStack } from "../State.ts";
+import * as StackNamespace from "../StackNamespace.ts";
+import type { SavedStack } from "../StackNamespace.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 const jwtSecret = "storage-gateway-secret-with-at-least-32-chars";
 const s3Credentials = {
   accessKeyId: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
@@ -31,18 +34,23 @@ const layout = Effect.fnUntraced(function* (runtime: SavedStack["runtime"], stac
   const dataRoot = yield* makeDockerDatabaseRoot("storage-gateway-docker-", stackId).pipe(
     Effect.flatMap(fs.realPath),
   );
+  // Ownership is by location: Storage's filePath is a caller path and must live outside the
+  // stack's data root, not merely outside the service's own instance root.
+  const storageRoot = yield* fs.makeTempDirectoryScoped({
+    prefix: "storage-gateway-docker-caller-",
+  });
   return {
     stateRoot: path.dirname(path.dirname(dataRoot)),
     dataRoot,
-    storageRoot: `${dataRoot}/storage`,
+    storageRoot,
   };
 });
 
 /** Starts Database and Storage in an owned stack and returns Storage's gateway URL. */
 const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]) {
   const fs = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
-  const stackId = `storage-gateway-${runtime}-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const stackId = `storage-gateway-${runtime}-${(yield* crypto.uuidV4()).slice(0, 8)}`;
   const { stateRoot, dataRoot, storageRoot } = yield* layout(runtime, stackId);
   yield* fs.makeDirectory(storageRoot, { recursive: true });
   const saved: SavedStack = {
@@ -52,18 +60,26 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
     instances: [],
     lifetime: "detached",
     composition: { members: [], dependencies: [] },
-    ports: [],
   };
-  const state = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
+  const state = Context.get(
+    yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+    StackNamespace.Service,
+  );
   yield* state.save(saved);
-  const owner = yield* ownerFor({ saved, state, root: dataRoot, cacheRoot });
+  const owner = yield* ownerFor({
+    saved,
+    state,
+    root: dataRoot,
+    cacheRoot,
+    ...(runtime !== "native" ? { engineTarget } : {}),
+  });
   yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
   const created = yield* owner.rpc.supabaseComposition({
     services: [
       {
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("postgres"),
           jwtSecret: Redacted.make(jwtSecret),
           jwtExpiry: 3600,
@@ -72,6 +88,7 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
       },
       {
         service: "storage",
+        pin: selection.storage,
         config: { filePath: storageRoot, jwtSecret, s3ProtocolEnabled: true },
         endpoints: { http: { port: "auto" } },
       },
@@ -83,17 +100,17 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
   const { url } = yield* owner.rpc.credentials({ id: storage.id, from: "host" });
   if (url === undefined) return yield* Effect.die("Storage gateway URL missing");
   const { serviceRoleKey } = yield* owner.getStackCredentials;
-  return { url, serviceRoleKey };
+  return { url, serviceRoleKey, storageRoot };
 });
 
-for (const runtime of ["native", "docker"] as const)
+for (const runtime of ["native", testEngine] as const)
   it.live(
     `accepts S3 requests signed over the gateway path and resumes TUS uploads there (${runtime})`,
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const client = yield* HttpClient.HttpClient;
-          const { url, serviceRoleKey } = yield* serveStorage(runtime);
+          const { url, serviceRoleKey, storageRoot } = yield* serveStorage(runtime);
           const bucket = "gateway";
 
           const createBucket = yield* client.execute(
@@ -147,7 +164,27 @@ for (const runtime of ["native", "docker"] as const)
           );
           expect(patch.status, yield* patch.text).toBe(204);
           expect(patch.headers["upload-offset"]).toBe("5");
+
+          if (runtime !== "native") {
+            // The container writes into storageRoot, a borrowed host directory; the host user
+            // must still own what it created there, not the engine's own root (see Container's
+            // `user` field).
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const entries = yield* fs.readDirectory(storageRoot, { recursive: true });
+            const stats = yield* Effect.forEach(entries, (entry) =>
+              fs.stat(path.join(storageRoot, entry)),
+            );
+            const files = stats.filter((info) => info.type === "File");
+            expect(files.length).toBeGreaterThan(0);
+            for (const info of files)
+              expect(Option.getOrUndefined(info.uid)).toBe(process.getuid?.());
+          }
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 180_000 },
   );

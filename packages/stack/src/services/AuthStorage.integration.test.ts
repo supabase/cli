@@ -1,12 +1,16 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { PgClient } from "@effect/sql-pg";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { Context, Effect, FileSystem, Layer, Redacted, Schema } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { SignJWT } from "jose";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { selection } from "../../tests/pins.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-auth-storage",
@@ -14,11 +18,13 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
+  claimNativePort: () => Effect.succeed(true),
 });
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
 describe("service catalog", () => {
@@ -30,21 +36,25 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* makeDockerDatabaseRoot("catalog-auth-storage-");
+          // Ownership is by location: Storage's filePath is a caller path and must live outside
+          // the stack's data root, not merely outside the service's own instance root.
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-auth-storage-caller-",
+          });
           const secret = "catalog-auth-storage-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(secret),
                 jwtExpiry: 3600,
               },
             },
             dockerOptions(root),
-            Effect.succeed([]),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -55,12 +65,12 @@ describe("service catalog", () => {
           const authRecipe = yield* makeServiceRecipe(
             {
               service: "auth",
+              pin: selection.auth,
               config: { databaseUrl, jwtSecret: secret, jwtExpiry: 3600 },
             },
             dockerOptions(root),
-            Effect.succeed([]),
           );
-          const auth = yield* makeService(authRecipe.definition, {
+          const auth = yield* makeStandaloneService(authRecipe.definition, {
             id: "auth",
             config: authRecipe.creation,
           });
@@ -70,7 +80,7 @@ describe("service catalog", () => {
           const email = "catalog@example.test";
           const password = "catalog-password-123";
           const signupRequest = yield* HttpClientRequest.bodyJson({ email, password })(
-            HttpClientRequest.post(`http://${authEndpoint.host}:${authEndpoint.port}/signup`),
+            HttpClientRequest.post(`http://${httpHost(authEndpoint)}:${authEndpoint.port}/signup`),
           );
           const signup = yield* client.execute(signupRequest);
           expect(signup.status).toBe(200);
@@ -84,7 +94,7 @@ describe("service catalog", () => {
             password,
           })(
             HttpClientRequest.post(
-              `http://${authEndpoint.host}:${authEndpoint.port}/token?grant_type=password`,
+              `http://${httpHost(authEndpoint)}:${authEndpoint.port}/token?grant_type=password`,
             ),
           );
           const login = yield* client.execute(loginRequest);
@@ -95,14 +105,13 @@ describe("service catalog", () => {
           )(loginBody);
           expect(loginToken.access_token.length).toBeGreaterThan(0);
 
-          const storageRoot = `${root}/storage`;
+          const storageRoot = `${callerRoot}/storage`;
           yield* fs.makeDirectory(storageRoot, { recursive: true });
           const imgproxyRecipe = yield* makeServiceRecipe(
-            { service: "imgproxy", config: { filePath: storageRoot } },
+            { service: "imgproxy", pin: selection.imgproxy, config: { filePath: storageRoot } },
             dockerOptions(root),
-            Effect.succeed([]),
           );
-          const imgproxy = yield* makeService(imgproxyRecipe.definition, {
+          const imgproxy = yield* makeStandaloneService(imgproxyRecipe.definition, {
             id: "imgproxy",
             config: imgproxyRecipe.creation,
           });
@@ -112,6 +121,7 @@ describe("service catalog", () => {
           const storageRecipe = yield* makeServiceRecipe(
             {
               service: "storage",
+              pin: selection.storage,
               config: {
                 databaseUrl,
                 filePath: storageRoot,
@@ -120,9 +130,8 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
-            Effect.succeed([]),
           );
-          const storage = yield* makeService(storageRecipe.definition, {
+          const storage = yield* makeStandaloneService(storageRecipe.definition, {
             id: "storage",
             config: storageRecipe.creation,
           });
@@ -139,7 +148,7 @@ describe("service catalog", () => {
           );
           const bucketRequest = yield* HttpClientRequest.bodyJson({ name: "catalog" })(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/bucket`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/bucket`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -149,7 +158,7 @@ describe("service catalog", () => {
           expect(bucket.status).toBe(200);
           const uploadRequest = HttpClientRequest.bodyText(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/object/catalog/hello.txt`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/object/catalog/hello.txt`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -167,7 +176,7 @@ describe("service catalog", () => {
           );
           const imageRequest = HttpClientRequest.bodyUint8Array(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/object/catalog/source.png`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/object/catalog/source.png`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -179,20 +188,120 @@ describe("service catalog", () => {
           expect(imageUpload.status).toBe(200);
           const transformedImage = yield* client.execute(
             HttpClientRequest.get(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/render/image/authenticated/catalog/source.png?width=1&height=1`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/render/image/authenticated/catalog/source.png?width=1&height=1`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
+              HttpClientRequest.setHeader("accept", "image/webp,*/*"),
             ),
           );
           expect(transformedImage.status).toBe(200);
-          expect(transformedImage.headers["content-type"]).toContain("image/");
+          expect(transformedImage.headers["content-type"]).toBe("image/webp");
           yield* imgproxy.stop;
           yield* storage.stop;
           yield* auth.stop;
           yield* database.stop;
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "keeps Auth database connections idle and reuses them across requests",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* HttpClient.HttpClient;
+          const root = yield* makeDockerDatabaseRoot("catalog-auth-pool-");
+          const secret = "catalog-auth-pool-secret-with-at-least-32-chars";
+          const databaseRecipe = yield* makeServiceRecipe(
+            {
+              service: "database",
+              pin: selection.database,
+              config: {
+                databasePassword: Redacted.make("postgres"),
+                jwtSecret: Redacted.make(secret),
+                jwtExpiry: 3600,
+              },
+            },
+            dockerOptions(root),
+          );
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
+            id: "database",
+            config: databaseRecipe.creation,
+          });
+          yield* database.start;
+          yield* database.ready;
+          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
+          const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
+          const authRecipe = yield* makeServiceRecipe(
+            {
+              service: "auth",
+              pin: selection.auth,
+              config: { databaseUrl, jwtSecret: secret, jwtExpiry: 3600 },
+            },
+            dockerOptions(root),
+          );
+          const auth = yield* makeStandaloneService(authRecipe.definition, {
+            id: "auth",
+            config: authRecipe.creation,
+          });
+          yield* auth.start;
+          yield* auth.ready;
+          const authEndpoint = yield* authRecipe.endpoint("http");
+          const authUrl = `http://${httpHost(authEndpoint)}:${authEndpoint.port}`;
+          const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
+          const services = yield* Layer.build(
+            PgClient.layer({
+              host: httpHost(databaseEndpoint),
+              port: databaseEndpoint.port,
+              database: "postgres",
+              username: "supabase_admin",
+              password: Redacted.make("postgres"),
+            }),
+          );
+          const pg = Context.get(services, PgClient.PgClient);
+          // Auth is the only client of the database as supabase_admin in this test.
+          const authBackends = pg.unsafe<{ pid: number; state: string }>(
+            "select pid, state from pg_stat_activity where usename = 'supabase_admin' and backend_type = 'client backend' and pid <> pg_backend_pid()",
+          );
+          const signupBatch = (label: string) =>
+            Effect.forEach(
+              Array.from({ length: 5 }, (_, index) => index),
+              (index) =>
+                Effect.gen(function* () {
+                  const request = yield* HttpClientRequest.bodyJson({
+                    email: `${label}-${index}@example.test`,
+                    password: "catalog-password-123",
+                  })(HttpClientRequest.post(`${authUrl}/signup`));
+                  const response = yield* client.execute(request);
+                  expect(response.status).toBe(200);
+                }),
+              { concurrency: "unbounded", discard: true },
+            );
+
+          yield* signupBatch("first");
+          const afterFirst = yield* authBackends;
+          expect(afterFirst.some((backend) => backend.state === "idle")).toBe(true);
+
+          yield* signupBatch("second");
+          const afterSecond = yield* authBackends;
+          const secondPids = new Set(afterSecond.map((backend) => backend.pid));
+          const idleAfterFirst = afterFirst.filter((backend) => backend.state === "idle");
+          expect(idleAfterFirst.filter((backend) => !secondPids.has(backend.pid))).toEqual([]);
+
+          yield* auth.stop;
+          yield* database.stop;
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     { timeout: 120_000 },
   );
 });

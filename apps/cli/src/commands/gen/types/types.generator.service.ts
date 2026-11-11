@@ -18,6 +18,8 @@ export interface GenTypesGenerateInput {
   /** A `--lang` value: the name of one of the registry's `languages`. */
   readonly lang: string;
   readonly includedSchemas: ReadonlyArray<string>;
+  /** PostgREST's `db-extra-search-path`, whose views lead from a generated view to its tables. */
+  readonly extraSearchPath: ReadonlyArray<string>;
   /** Registry option values by name; ones the language does not declare are dropped. */
   readonly options: OptionValues;
 }

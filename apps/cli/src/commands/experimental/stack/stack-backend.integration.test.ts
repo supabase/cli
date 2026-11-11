@@ -1,16 +1,28 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { ExperimentalFeatureFlagError } from "../../../shared/config/experimental-feature.ts";
+import { readLinkSnapshot } from "../../../shared/config/link-snapshot.ts";
+import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
 import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
 import {
   type StackBackend,
   StackRoutingError,
-  resolveStackBackend,
+  resolveProjectStateSelection,
 } from "../../../command-internal/stack-backend.ts";
+import { withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 
-const resolve = (input: Parameters<typeof resolveStackBackend>[0]) =>
-  resolveStackBackend(input).pipe(Effect.provide(BunServices.layer));
+const select = ({
+  env,
+  ...input
+}: Parameters<typeof resolveProjectStateSelection>[0] & {
+  readonly env: Readonly<Record<string, string>>;
+}) =>
+  withConfigEnv(env, resolveProjectStateSelection(input)).pipe(Effect.provide(BunServices.layer));
+
+const resolve = (input: Parameters<typeof select>[0]) =>
+  select(input).pipe(Effect.map(({ stackBackend }) => stackBackend));
 
 const project = (config: string, format: "toml" | "json" = "toml") =>
   Effect.gen(function* () {
@@ -32,14 +44,14 @@ const completionFlags = (backend: StackBackend | undefined, command: string) =>
     "--",
   ])?.candidates.map(({ name }) => name);
 
-describe("resolveStackBackend", () => {
+describe("resolveProjectStateSelection", () => {
   it.effect("keeps the explicit stack namespace disabled without the feature flag", () =>
     Effect.gen(function* () {
       expect(yield* resolve({ args: ["stack", "start"], cwd: "/missing", env: {} })).toBe("legacy");
     }),
   );
 
-  it.effect("selects the configured backend for top-level start, stop, and status", () => {
+  it.effect("selects the configured backend for managed local commands", () => {
     return withServices(
       Effect.gen(function* () {
         const root = yield* project(`project_id = "stack-routing-test"
@@ -70,9 +82,30 @@ stack = true
         expect(yield* resolve({ args: ["storage", "ls"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["seed", "buckets"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["services"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["logs"], cwd: root, env: {} })).toBeUndefined();
+        expect(yield* resolve({ args: ["logs", "sources"], cwd: root, env: {} })).toBeUndefined();
       }),
     );
   });
+
+  it.effect.each([
+    ["logs", "--service", "--sql"],
+    ["logs", "--search=--file"],
+    ["logs", "--remote"],
+    ["logs", "sources"],
+    ["help", "logs"],
+    ["__complete", "logs", "--"],
+  ])("defers local logs feature validation until after parsing %j", (args) =>
+    Effect.gen(function* () {
+      const selection = yield* select({
+        args,
+        cwd: "/missing",
+        env: { SUPABASE_EXPERIMENTAL_STACK: "invalid" },
+      });
+      expect(selection.stackBackend).toBeUndefined();
+      expect(selection.projectState?._tag).toBe("Failure");
+    }),
+  );
 
   it.effect("keeps storage on legacy when the feature flag is disabled", () => {
     return withServices(
@@ -85,6 +118,15 @@ stack = true
             env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
           }),
         ).toBe("legacy");
+        for (const args of [["logs"], ["logs", "sources"]]) {
+          expect(
+            yield* resolve({
+              args,
+              cwd: root,
+              env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
+            }),
+          ).toBeUndefined();
+        }
       }),
     );
   });
@@ -94,6 +136,9 @@ stack = true
       Effect.gen(function* () {
         const root = yield* project("[experimental]\nstack = true\n");
         expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBeUndefined();
+        expect(
+          yield* resolve({ args: ["logs", "--remote", "--sql", "select 1"], cwd: root, env: {} }),
+        ).toBeUndefined();
       }),
     );
   });
@@ -181,6 +226,21 @@ stack = true
     );
   });
 
+  it.effect("reads experimental.stack from a commented config.jsonc", () => {
+    return withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = false\n");
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.jsonc"),
+          '{\n  // opt in\n  "experimental": { "stack": true, },\n}\n',
+        );
+        expect(yield* resolve({ args: ["start"], cwd: root, env: {} })).toBe("stack");
+      }),
+    );
+  });
+
   it.effect("rejects invalid overrides and bypasses malformed config", () => {
     return withServices(
       Effect.gen(function* () {
@@ -196,7 +256,7 @@ stack = true
           expect(Option.isSome(error)).toBe(true);
           if (Option.isSome(error)) {
             expect(error.value).toBeInstanceOf(StackRoutingError);
-            expect(String(error.value)).toContain("0 or 1");
+            expect(String(error.value)).toContain("expected true or false");
           }
         }
         expect(
@@ -215,6 +275,44 @@ stack = true
       }),
     );
   });
+
+  it.effect("keeps an invalid environment value from failing an unrouted command", () =>
+    withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = true\n");
+        const selection = yield* select({
+          args: ["login"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "garbage" },
+        });
+        expect(selection.stackBackend).toBeUndefined();
+        expect(selection.projectState).toBeDefined();
+      }),
+    ),
+  );
+
+  it.effect("fails a link-state read with the typed error once the mode is invalid", () =>
+    withServices(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* project("[experimental]\nstack = true\n");
+        const selection = yield* select({
+          args: ["link"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "garbage" },
+        });
+        if (selection.projectState === undefined) return yield* Effect.die("no selection");
+
+        const read = yield* readLinkSnapshot(fs, path, root).pipe(
+          Effect.map((snapshot) => snapshot.ref),
+          Effect.provide(projectStateModeLayer(selection.projectState)),
+          Effect.flip,
+        );
+        expect(read).toBeInstanceOf(ExperimentalFeatureFlagError);
+      }),
+    ),
+  );
 
   it.effect("honors explicit workdir and separated global boolean values", () => {
     return withServices(
@@ -360,7 +458,18 @@ stack = true
       ])?.candidates.map(({ name }) => name);
       expect(stackCommands).toEqual(
         backend === "stack"
-          ? ["destroy", "list", "logs", "prepare", "restart", "start", "status", "stop"]
+          ? [
+              "destroy",
+              "install",
+              "list",
+              "logs",
+              "outdated",
+              "restart",
+              "start",
+              "status",
+              "stop",
+              "update",
+            ]
           : [],
       );
     }

@@ -1,6 +1,6 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import type {
   Observation,
@@ -19,14 +19,16 @@ import {
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
 import { mockTelemetryStateTracked } from "../../../../../tests/helpers/command-mocks.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { GLOBAL_FLAGS, WorkdirFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
-import { StackApi, StackTargetResolver } from "../stack.shared.ts";
+import { StackApi, StackTargetResolver } from "../../../../command-internal/stack-target.ts";
 import { stackStatusCommand } from "../status/status.command.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
 /** Distinguishable credentials, keyed by a short tag, for one fake target stack. */
 const credentialsFor = (tag: string): StackCredentials => ({
@@ -46,8 +48,8 @@ const credentialsFor = (tag: string): StackCredentials => ({
 
 const databaseCreation = (sqlPort: number, credentials: StackCredentials): ServiceCreation => ({
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make(credentials.databasePassword),
     jwtSecret: Redacted.make(credentials.jwtSecret),
     jwtExpiry: 3600,
@@ -65,13 +67,9 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     lifecycle: "running",
     health: "healthy",
     error: undefined,
-    cleanupError: undefined,
     exit: undefined,
     currentOperation: undefined,
-    launchId: undefined,
-    intentRevision: 1,
     wakeEnabled: false,
-    registered: true,
   };
   const databaseInstance = {
     id: "database-id",
@@ -110,8 +108,10 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
       stop: Effect.die("unused"),
       restart: Effect.die("unused"),
     },
+    startupEndpointChanges: Effect.die("unused"),
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("unused") },
   } satisfies Stack;
 }
@@ -123,7 +123,6 @@ const definitionFor = (id: string, projectRoot: string, creation: ServiceCreatio
   runtime: "native",
   instances: [{ id: "database-id", creation }],
   composition: { members: [{ id: "database-id", activation: "eager" }], dependencies: [] },
-  ports: [],
 });
 
 interface TargetSpec {
@@ -184,6 +183,7 @@ const runStatusEnv = (input: {
       },
       discover: () => Effect.die("unused"),
       find: () => Effect.die("unused"),
+      findDeleted: () => Effect.die("unused"),
     });
     // Only `--workdir` selects the project here; an absent flag falls back to the ambient cwd,
     // which is registered under its own distinguishable stack so a dropped `--workdir` fails
@@ -202,13 +202,13 @@ const runStatusEnv = (input: {
           poolerHost: "supabase.com",
           dashboardUrl: "https://supabase.com/dashboard",
           accessToken: Option.none(),
-          dbPassword: Option.none(),
           githubToken: Option.none(),
           projectId: Option.none(),
           workdir,
           explicitWorkdir: Option.isSome(workdirFlag),
           workdirEnvValue: Option.none(),
           userAgent: "SupabaseCLI/pointer-test",
+          apiMaxRetries: Option.none(),
         });
       }),
     );
@@ -232,6 +232,7 @@ const runStatusEnv = (input: {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          BunCrypto.layer,
           CliOutput.layer(textCliOutputFormatter()),
           output.layer,
           analytics.layer,
@@ -248,10 +249,10 @@ const runStatusEnv = (input: {
     return yield* Schema.decodeEffect(
       Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
     )(output.rawChunks.map(({ text }) => text).join(""));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 describe("stack start export pointer", () => {
-  it.live(
+  it.effect(
     "the printed pointer's argv resolves --workdir and the named --stack to that stack, not the caller's cwd or the project's default stack",
     () =>
       Effect.gen(function* () {
@@ -279,7 +280,7 @@ describe("stack start export pointer", () => {
       }),
   );
 
-  it.live(
+  it.effect(
     "quotes a workdir and stack name that need it, and the same raw values still resolve that stack",
     () =>
       Effect.gen(function* () {

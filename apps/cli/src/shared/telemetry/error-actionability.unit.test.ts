@@ -1,5 +1,5 @@
-import { Cause, Data } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { Cause, Data, PlatformError } from "effect";
+import { CliError } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { SupabaseApiInputError, markSupabaseApiInputErrorAsUserInput } from "@supabase/api/effect";
 import { BootstrapHealthError } from "../../commands/bootstrap/bootstrap.errors.ts";
@@ -37,6 +37,12 @@ class PlainDeclaredError extends Data.Error<{ readonly message: string }> {
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
+  }
+}
+
+class CancelledDefect extends Data.TaggedError("CancelledDefect") {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
   }
 }
 
@@ -295,6 +301,87 @@ describe("classifyCliCauseActionability", () => {
       error_category: "panic",
       error_fingerprint: "error:TypeError",
     });
+  });
+
+  it("classifies the typed failure when a cancellation defect accompanies it", () => {
+    const cause = Cause.combine(
+      Cause.fail(new DeclaredError({ message: "recoverable" })),
+      Cause.die(new CancelledDefect()),
+    );
+    expect(classifyCliCauseActionability(cause).error_category).toBe("auth");
+    expect(classifyCliCauseActionability(Cause.die(new CancelledDefect())).error_category).toBe(
+      "cancelled",
+    );
+  });
+
+  const platformDefectWith = (field: "_tag" | "module" | "method", value: string) => {
+    const reason = new PlatformError.SystemError({
+      _tag: "Busy",
+      module: "FileSystem",
+      method: "readFile",
+    });
+    Object.defineProperty(reason, field, { value });
+    return new PlatformError.PlatformError(reason);
+  };
+
+  it("names an unclassified defect by its source-owned tag, errno code, or platform operation, never instance data", () => {
+    const secret = "privateToken";
+    class NamespaceDefect extends Data.TaggedError("Namespace.NamespaceError")<{
+      readonly message: string;
+    }> {}
+    const cases: ReadonlyArray<readonly [unknown, string]> = [
+      [new UndeclaredError({ message: secret }), "error:Defect:UndeclaredError"],
+      [new NamespaceDefect({ message: secret }), "error:Defect:Namespace.NamespaceError"],
+      [Object.assign(new Error(secret), { code: "ENOENT" }), "error:Defect:Error:ENOENT"],
+      [Object.assign(new Error(secret), { code: "EAI_AGAIN" }), "error:Defect:Error:EAI_AGAIN"],
+      [new Error(secret), "error:Defect:Error"],
+      [Object.assign(new Error(secret), { name: secret, _tag: secret }), "error:Defect:Error"],
+      [
+        Object.assign(new Error(secret), { code: `E${secret.toUpperCase()}` }),
+        "error:Defect:Error",
+      ],
+      [{ _tag: secret }, "error:Defect:object"],
+      [
+        Object.defineProperty(new Error(secret), "code", {
+          get: () => {
+            throw new Error(secret);
+          },
+        }),
+        "error:Defect:Error",
+      ],
+      [secret, "error:Defect:string"],
+      [
+        new PlatformError.PlatformError(
+          new PlatformError.SystemError({
+            _tag: "Busy",
+            module: "FileSystem",
+            method: "readFile",
+            pathOrDescriptor: secret,
+            description: secret,
+          }),
+        ),
+        "error:Defect:PlatformError:Busy:FileSystem.readFile",
+      ],
+      [
+        new PlatformError.PlatformError(
+          new PlatformError.SystemError({ _tag: "WouldBlock", module: "Stdin", method: "read" }),
+        ),
+        "error:Defect:PlatformError:WouldBlock:Stdin.read",
+      ],
+      [platformDefectWith("_tag", secret), "error:Defect:PlatformError"],
+      [platformDefectWith("module", secret), "error:Defect:PlatformError"],
+      [platformDefectWith("method", "a b"), "error:Defect:PlatformError"],
+    ];
+
+    for (const [defect, fingerprint] of cases) {
+      const result = classifyCliCauseActionability(Cause.die(defect));
+      expect(result).toMatchObject({
+        error_kind: "internal_bug",
+        error_category: "panic",
+        error_fingerprint: fingerprint,
+      });
+      expect(JSON.stringify(result)).not.toContain(secret);
+    }
   });
 
   it("does not leak details from cause chains", () => {

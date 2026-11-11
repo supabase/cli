@@ -1,12 +1,27 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Console, Effect, Exit, Layer } from "effect";
-import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
+import { Cause, Console, Effect, Exit, Layer, Schema, Stdio } from "effect";
+import { Argument, CliOutput, Command, Flag } from "effect/cli";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
+import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
-import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
+import { useTempWorkdir, withEnvVar } from "../../../tests/helpers/command-mocks.ts";
+import { emptyEnv, fakeConsole, mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
+import { targetFlags } from "../../command-internal/target/target-flags.ts";
+import { CliProjectHome } from "../config/cli-project-home.service.ts";
+import { commandTargetLayer } from "../output/command-target.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
-import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
+import {
+  cliProgramFor,
+  exitCodeForFailure,
+  prepareCliArgs,
+  withoutParseErrorHelpDump,
+} from "./run.ts";
+
+const textOutputLayer = () => {
+  const out = mockOutput({ format: "text" });
+  return Layer.mergeAll(out.layer, commandTargetLayer.pipe(Layer.provide(out.layer)));
+};
 
 const testBranchesCommand = branchesCommand.pipe(
   Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
@@ -23,7 +38,7 @@ describe("group command exit codes (CLI-1906)", () => {
     Layer.mergeAll(
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
-      mockOutput({ format: "text" }).layer,
+      textOutputLayer(),
       emptyEnv(),
     );
 
@@ -71,7 +86,7 @@ describe("group command exit codes (CLI-1906)", () => {
  * service `withoutParseErrorHelpDump` overrides and replays through.
  *
  * `branchesCommand` covers the `UnrecognizedOption` shape end to end. `MissingOption`/
- * `InvalidValue` need a genuinely required flag or `Flag.choice`, which every shipped command
+ * `InvalidValue` need a genuinely required flag or `Flag.Literals`, which every shipped command
  * with one also wraps in its own management-API runtime layer — a minimal synthetic
  * `Command.make` runs through the same `Command.runWith`/`showHelp()` machinery without that
  * overhead. A real subprocess run against `sso add` is covered end to end by `sso.e2e.test.ts`.
@@ -82,7 +97,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
       Layer.succeed(Console.Console, console),
-      mockOutput({ format: "text" }).layer,
+      textOutputLayer(),
       emptyEnv(),
     );
 
@@ -95,7 +110,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   // `type`'s `-t` alias mirrors the real `sso add --type`/`-t` flag, so the short-alias case
   // below exercises the same shape without pulling in a management-API runtime layer.
   const requiredFlagCommand = Command.make("test-required-flag", {
-    type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
+    type: Flag.Literals("type", ["saml"] as const).pipe(Flag.withAlias("t")),
   });
 
   const runRequiredFlagCommand = (args: ReadonlyArray<string>, console: Console.Console) =>
@@ -180,7 +195,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   );
 
   it.effect(
-    "an invalid Flag.choice value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause",
+    "an invalid Flag.Literals value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause",
     () =>
       Effect.gen(function* () {
         const { console, calls } = fakeConsole();
@@ -192,6 +207,24 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
         if (!Exit.isFailure(exit)) return;
         expect(exitCodeForFailure(exit.cause)).toBe(1);
       }),
+  );
+
+  it.effect("an invalid global flag value fails without any help dump", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      const exit = yield* runBranches(["--output-format", "xml"], console).pipe(Effect.exit);
+
+      expect(calls).toEqual([]);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      expect(exitCodeForFailure(exit.cause)).toBe(1);
+      expect(Cause.hasDies(exit.cause)).toBe(false);
+      expect(Cause.squash(exit.cause)).toMatchObject({
+        _tag: "InvalidValue",
+        option: "output-format",
+        value: "xml",
+      });
+    }),
   );
 
   it.effect(
@@ -227,12 +260,51 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   );
 });
 
+describe("subcommand help doc", () => {
+  it.effect("lists a parent's shared flags among the subcommand's own flags in JSON help", () =>
+    Effect.gen(function* () {
+      const generate = Command.make("generate", { force: Flag.Boolean("force") });
+      const declarative = Command.make("declarative").pipe(
+        Command.withSharedFlags({ noCache: Flag.Boolean("no-cache") }),
+        Command.withSubcommands([generate]),
+      );
+      const root = Command.make("supabase").pipe(Command.withSubcommands([declarative]));
+      const args = ["declarative", "generate", "--help"];
+      const { console, calls } = fakeConsole();
+
+      yield* Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CliOutput.layer(jsonCliOutputFormatter()),
+            Layer.succeed(CliArgs, { args }),
+            Layer.succeed(Console.Console, console),
+            textOutputLayer(),
+            emptyEnv(),
+          ),
+        ),
+      );
+
+      expect(calls).toHaveLength(1);
+      const { doc } = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Struct({ doc: Schema.Record(Schema.String, Schema.Unknown) })),
+      )(calls[0]?.replace(/^log:/, ""));
+      expect(doc["flags"]).toEqual([
+        expect.objectContaining({ name: "no-cache" }),
+        expect.objectContaining({ name: "force" }),
+      ]);
+      expect(Object.keys(doc)).not.toContain("inheritedFlags");
+      expect(Object.keys(doc)).not.toContain("globalFlagsScope");
+      expect(Object.keys(doc)).not.toContain("commandPath");
+    }),
+  );
+});
+
 describe("nested command parsing", () => {
   it.effect("forwards operands after -- to a nested variadic argument", () =>
     Effect.gen(function* () {
       let receivedPaths: ReadonlyArray<string> = [];
       const db = Command.make("db", {
-        paths: Argument.string("path").pipe(Argument.variadic()),
+        paths: Argument.String("path").pipe(Argument.variadic()),
       }).pipe(
         Command.withHandler(({ paths }) =>
           Effect.sync(() => {
@@ -249,7 +321,7 @@ describe("nested command parsing", () => {
           Layer.mergeAll(
             CliOutput.layer(textCliOutputFormatter()),
             Layer.succeed(CliArgs, { args }),
-            mockOutput({ format: "text" }).layer,
+            textOutputLayer(),
             emptyEnv(),
           ),
         ),
@@ -258,6 +330,56 @@ describe("nested command parsing", () => {
 
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(receivedPaths).toEqual(["-foo.sql", "--literal"]);
+    }),
+  );
+});
+
+describe("argv rewrite reaches handlers", () => {
+  const tempHome = useTempWorkdir("supabase-run-argv-");
+
+  it.live("a handler reads the rewritten argv from Stdio.args, as it does from CliArgs", () =>
+    Effect.gen(function* () {
+      const REF = "abcdefghijklmnopqrst";
+      let seenByHandler: ReadonlyArray<string> = [];
+      const types = Command.make("types", targetFlags({ subject: "database", dbUrl: true }), () =>
+        Effect.gen(function* () {
+          seenByHandler = yield* (yield* Stdio.Stdio).args;
+        }),
+      );
+      const gen = Command.make("gen").pipe(Command.withSubcommands([types]));
+      const root = Command.make("supabase").pipe(Command.withSubcommands([gen]));
+      const cliArgs = prepareCliArgs(root, ["gen", "types", "--remote", REF]);
+
+      const projectHomeDir = `${tempHome.current}/.supabase`;
+      const projectHome = Layer.succeed(
+        CliProjectHome,
+        CliProjectHome.of({
+          projectRoot: tempHome.current,
+          supabaseDir: `${tempHome.current}/supabase`,
+          projectHomeDir,
+          projectLinkPath: `${projectHomeDir}/project.json`,
+          projectLocalVersionsPath: `${projectHomeDir}/local-versions.json`,
+          ensureCliProjectHomeDir: Effect.void,
+        }),
+      );
+
+      yield* withEnvVar(
+        "SUPABASE_HOME",
+        tempHome.current,
+        cliProgramFor(
+          root,
+          cliArgs,
+          {
+            beforeParse: Effect.void,
+            agentDefaultOutputFormat: "text",
+            analyticsLayer: mockAnalytics().layer,
+          },
+          "text",
+        ),
+      ).pipe(Effect.provide(projectHome));
+
+      expect(cliArgs.args).toEqual(["gen", "types", `--remote=${REF}`]);
+      expect(seenByHandler).toEqual(cliArgs.args);
     }),
   );
 });

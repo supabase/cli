@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { resolveArtifact } from "../Artifacts.ts";
 import type { InitializationCommand, ResolvedCommand } from "../Commands.ts";
 import { ServiceError } from "../Service.ts";
-import type { StackCredentials } from "../State.ts";
+import type { StackCredentials } from "../StackNamespace.ts";
 import * as Auth from "./Auth.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Storage from "./Storage.ts";
@@ -22,7 +22,7 @@ const resolve = <C extends RecipeCreation<"auth" | "storage" | "realtime", unkno
   runtime: CatalogOptions["runtime"],
 ): Effect.Effect<ResolvedCommand, ServiceError> =>
   Effect.gen(function* () {
-    const artifact = yield* resolveArtifact({ service, version: creation.version });
+    const artifact = yield* resolveArtifact({ service, pin: creation.pin });
     const startup = yield* resolveStartupCommand(
       creation,
       spec,
@@ -32,7 +32,7 @@ const resolve = <C extends RecipeCreation<"auth" | "storage" | "realtime", unkno
     );
     return {
       service,
-      version: artifact.version,
+      pin: creation.pin,
       image: artifact.image,
       nativeExecutable: startup.executable,
       containerEntrypoint: command.containerEntrypoint,
@@ -66,7 +66,7 @@ export const resolveInitializationCommand = (
         "auth",
         {
           service: "auth",
-          ...(input.version === undefined ? {} : { version: input.version }),
+          pin: input.pin,
           config: {
             databaseUrl: input.databaseUrl,
             jwtSecret: options.credentials.jwtSecret,
@@ -82,7 +82,7 @@ export const resolveInitializationCommand = (
         "storage",
         {
           service: "storage",
-          ...(input.version === undefined ? {} : { version: input.version }),
+          pin: input.pin,
           config: {
             databaseUrl: input.databaseUrl,
             filePath: input.filePath,
@@ -101,7 +101,7 @@ export const resolveInitializationCommand = (
         "realtime",
         {
           service: "realtime",
-          ...(input.version === undefined ? {} : { version: input.version }),
+          pin: input.pin,
           config: {
             databaseUrl: input.databaseUrl,
             jwtSecret: options.credentials.jwtSecret,

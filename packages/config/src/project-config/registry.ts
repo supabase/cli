@@ -51,8 +51,9 @@ function clampDocumentUint(value: unknown): unknown {
  * Omits (rather than clamps) `api.max_rows` when the document value is non-positive
  * (including `0` and `NaN`): push only ever sends `max_rows` when it is strictly positive,
  * so any other value never round-trips and asserting it would be drift. Uses `!(value > 0)`
- * rather than `value <= 0` specifically because `NaN <= 0` is `false` — a TOML `nan` value
- * would otherwise ride through and poison every downstream comparison.
+ * rather than `value <= 0` specifically because `NaN <= 0` is `false` — a `NaN` in a caller-built
+ * `EffectiveConfig` (config decode already rejects TOML `nan`) would otherwise ride through and
+ * poison every downstream comparison.
  */
 function normalizeDocumentMaxRows(value: unknown): unknown {
   return typeof value === "number" && !(value > 0) ? undefined : value;
@@ -106,7 +107,8 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     },
     normalizeDocument: normalizeDocumentMaxRows,
   },
-  // Unmapped (no config counterpart): api.db_pool, api.db_pool_acquisition_timeout.
+  // Unmapped (no config counterpart): api.db_pool, api.db_pool_acquisition_timeout,
+  // api.db_pool_max_lifetime, api.db_pool_max_idletime.
 ];
 
 /** Settings fields whose remote value is a signed int, clamped to uint. */
@@ -268,7 +270,7 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     unit: "type-tagged {address,type}[] → filtered string[] (v6)",
   },
   // Unmapped (no faithful counterpart): database.network_restrictions.{entitlement,status,
-  // updated_at,applied_at}. `db.network_restrictions.enabled` has no API-side counterpart at
+  // pending_allowed_cidrs,pending_requested_at,updated_at,applied_at}. `db.network_restrictions.enabled` has no API-side counterpart at
   // all — it's a purely local management switch, not an unmapped API field.
   {
     configPath: ["db", "pooler", "pool_mode"],

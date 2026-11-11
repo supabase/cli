@@ -1,6 +1,6 @@
 import { languages, type OptionSpec, type OptionValue, type OptionValues } from "@supabase/typegen";
 import { Option } from "effect";
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
 /** A user-facing registry option as one CLI flag, merged across the languages that declare it. */
 export interface LanguageFlagSpec {
@@ -58,14 +58,14 @@ const languageFlag = (spec: LanguageFlagSpec): Flag.Flag<GenTypesLanguageFlagVal
     spec.default === undefined ? spec.help : `${spec.help} (default ${String(spec.default)})`;
   switch (spec.kind) {
     case "boolean":
-      return Flag.boolean(spec.name).pipe(Flag.withDescription(help), Flag.optional);
+      return Flag.Boolean(spec.name).pipe(Flag.withDescription(help), Flag.optional);
     case "choice":
-      return Flag.choice(spec.name, spec.choices ?? []).pipe(
+      return Flag.Literals(spec.name, spec.choices ?? []).pipe(
         Flag.withDescription(help),
         Flag.optional,
       );
     case "string":
-      return Flag.string(spec.name).pipe(Flag.withDescription(help), Flag.optional);
+      return Flag.String(spec.name).pipe(Flag.withDescription(help), Flag.optional);
   }
 };
 
@@ -122,7 +122,7 @@ export const GEN_TYPES_LANGUAGE_FLAG_NAMES: ReadonlyArray<string> = GEN_TYPES_LA
   (option) => option.name,
 );
 
-/** Language flags that consume the next argv token, for the pflag-style scans in the handler. */
+/** Language flags that consume the next argv token, for the argv scans in the handler. */
 export const GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES: ReadonlyArray<string> =
   GEN_TYPES_LANGUAGE_OPTIONS.filter((option) => option.kind !== "boolean").map(
     (option) => option.name,

@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { missingProjectConfigMessage } from "./workdir-project.ts";
+import { describeConfigParseError, missingProjectConfigMessage } from "./workdir-project.ts";
 
 describe("missingProjectConfigMessage", () => {
   it("points at `supabase init` for a defaulted workdir", () => {
     // Pinned byte-for-byte: `diff.e2e.test.ts`/`pull.e2e.test.ts` assert this
     // exact string when run with no `--workdir`.
     expect(missingProjectConfigMessage({ workdir: "/repo/sub", explicitWorkdir: false })).toBe(
-      "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
+      "failed to read supabase/config.toml, config.json or config.jsonc: file not found. Run `supabase init` to create one.",
     );
   });
 
@@ -27,5 +27,22 @@ describe("missingProjectConfigMessage", () => {
       explicitWorkdir: true,
     });
     expect(message).not.toContain("");
+  });
+});
+
+describe("describeConfigParseError", () => {
+  it("names the failed file relative to the workdir", () => {
+    expect(
+      describeConfigParseError("/repo", {
+        path: "/repo/supabase/config.toml",
+        cause: new Error("unexpected end of input"),
+      }),
+    ).toBe("failed to parse supabase/config.toml: unexpected end of input");
+  });
+
+  it("keeps a path outside the workdir as given", () => {
+    expect(
+      describeConfigParseError("/repo", { path: "/elsewhere/config.json", cause: "bad json" }),
+    ).toBe("failed to parse /elsewhere/config.json: bad json");
   });
 });

@@ -1,18 +1,20 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option } from "effect";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { DebugFlag, NetworkIdFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
 import { edgeRuntimeScriptLayer } from "./edge-runtime-script.layer.ts";
 import { EdgeRuntimeScript } from "./edge-runtime-script.service.ts";
+import { projectStateModeLayer } from "../shared/config/project-state-mode.ts";
+import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
+import { seedLegacyStateDecoys } from "../../tests/helpers/legacy-state-guard.ts";
+import { seedLock } from "../../tests/helpers/stack-lock.ts";
 
 // Fakes a `docker run --rm` capture. A real diff always exits non-zero with "main worker has
 // been destroyed" in stderr; the crash path only differs by the added sentinel line.
@@ -42,7 +44,6 @@ function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string
 // falls back to the default tag.
 function makeCliSettings(workdir = "/nonexistent-workdir") {
   return Layer.succeed(CommandSettings, {
-    dbPassword: Option.none(),
     githubToken: Option.none(),
     workdirEnvValue: Option.none(),
     profile: "supabase",
@@ -57,6 +58,7 @@ function makeCliSettings(workdir = "/nonexistent-workdir") {
     workdir,
     explicitWorkdir: false,
     userAgent: "test",
+    apiMaxRetries: Option.none(),
   });
 }
 
@@ -81,11 +83,22 @@ function setup(
         Layer.succeed(DebugFlag, false),
         Layer.succeed(NetworkIdFlag, Option.none<string>()),
         BunServices.layer,
+        cliConfigValuesTestLayer,
       ),
     ),
   );
   return { layer, docker };
 }
+
+const pinnedWorkdir = Effect.fnUntraced(function* (prefix: string, pin: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const workdir = yield* fs.makeTempDirectoryScoped({ prefix });
+  const tempDir = path.join(workdir, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  yield* fs.writeFileString(path.join(tempDir, "edge-runtime-version"), pin);
+  return workdir;
+});
 
 const runScript = Effect.fnUntraced(function* () {
   const edge = yield* EdgeRuntimeScript;
@@ -143,47 +156,125 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
 
   it.effect(
     "resolves the image pin from `opts.workdir`, overriding the layer's own `cliSettings.workdir`",
-    () => {
-      const configWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-config-"));
-      const callerWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-caller-"));
-      mkdirSync(join(configWorkdir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(
-        join(configWorkdir, "supabase", ".temp", "edge-runtime-version"),
-        "v-from-config\n",
-      );
-      mkdirSync(join(callerWorkdir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(
-        join(callerWorkdir, "supabase", ".temp", "edge-runtime-version"),
-        "v-from-caller\n",
-      );
+    () =>
+      Effect.gen(function* () {
+        const configWorkdir = yield* pinnedWorkdir("edge-runtime-config-", "v-from-config\n");
+        const callerWorkdir = yield* pinnedWorkdir("edge-runtime-caller-", "v-from-caller\n");
 
-      const { layer, docker } = setup(
-        { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
-        { cliSettingsWorkdir: configWorkdir },
-      );
+        const { layer, docker } = setup(
+          { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
+          { cliSettingsWorkdir: configWorkdir },
+        );
 
-      return Effect.gen(function* () {
-        const edge = yield* EdgeRuntimeScript;
-        yield* edge.run({
-          script: "console.log('x')",
-          env: {},
-          binds: [],
-          errPrefix: "error diffing schema",
-          denoVersion: 2,
-          workdir: callerWorkdir,
-        });
+        yield* Effect.gen(function* () {
+          const edge = yield* EdgeRuntimeScript;
+          yield* edge.run({
+            script: "console.log('x')",
+            env: {},
+            binds: [],
+            errPrefix: "error diffing schema",
+            denoVersion: 2,
+            workdir: callerWorkdir,
+          });
+        }).pipe(Effect.provide(layer));
         expect(docker.lastOpts?.image).toContain("edge-runtime:v-from-caller");
         expect(docker.lastOpts?.image).not.toContain("v-from-config");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "runs on the Functions release locked in supabase.lock in stack state mode, ignoring the legacy pin",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "edge-runtime-locked-" });
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", "config.toml"),
+          'project_id = "test-project"\n',
+        );
+        // A stale lock fails the local stack commands; the tool container only reads the pin.
+        yield* seedLock(workdir, (services) => ({
+          ...services,
+          rest: { ...services.rest, specifier: "v99.0.0" },
+          functions: {
+            ...services.functions,
+            resolved: {
+              ...services.functions.resolved,
+              upstreamVersion: "v1.99.0",
+              revision: 1,
+              image: `ghcr.io/supabase/cli/edge-runtime:v1.99.0-r1@sha256:${"a".repeat(64)}`,
+              upstreamImage: "supabase/edge-runtime:v1.99.0",
+            },
+          },
+        })).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              runtimeInfoLayer,
+              mockCommandSettings({ workdir, supabaseHome: workdir }),
+            ),
+          ),
+        );
+        yield* seedLegacyStateDecoys(workdir);
+
+        const { layer, docker } = setup(
+          { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
+          { cliSettingsWorkdir: workdir },
+        );
+        yield* runScript().pipe(Effect.provide(Layer.merge(layer, projectStateModeLayer("stack"))));
+
+        expect(docker.lastOpts?.image).toContain("edge-runtime:v1.99.0");
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "runs on the locked slim image revision in stack state mode with the slim-images flag on",
+    () =>
+      Effect.gen(function* () {
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "edge-runtime-locked-slim-" });
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", "config.toml"),
+          'project_id = "test-project"\n',
+        );
+        const lockedImage = `ghcr.io/supabase/cli/edge-runtime:v1.99.0-r1@sha256:${"a".repeat(64)}`;
+        yield* seedLock(workdir, (services) => ({
+          ...services,
+          functions: {
+            ...services.functions,
+            resolved: {
+              ...services.functions.resolved,
+              upstreamVersion: "v1.99.0",
+              revision: 1,
+              image: lockedImage,
+              upstreamImage: "supabase/edge-runtime:v1.99.0",
+            },
+          },
+        })).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              runtimeInfoLayer,
+              mockCommandSettings({ workdir, supabaseHome: workdir }),
+            ),
+          ),
+        );
+
+        const { layer, docker } = setup(
+          { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
+          { cliSettingsWorkdir: workdir },
+        );
+        yield* runScript().pipe(Effect.provide(Layer.merge(layer, projectStateModeLayer("stack"))));
+
+        expect(docker.lastOpts?.image).toBe(lockedImage);
       }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            rmSync(configWorkdir, { recursive: true, force: true });
-            rmSync(callerWorkdir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
+        Effect.scoped,
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
+        Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      ),
   );
 
   it.effect("rewrites the runner onto the slim image with the slim-images flag on", () => {

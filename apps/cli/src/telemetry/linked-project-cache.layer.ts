@@ -1,36 +1,57 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { makeApiClient } from "@supabase/api/effect";
+import { Effect, FileSystem, Layer, Option, Path, type Redacted, Schema } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import { publish } from "@supabase/stack/effect";
 
 import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
-import { GroupOrganization, GroupProject } from "../shared/telemetry/event-catalog.ts";
-import { readProjectRefFile, tempPaths } from "../command-internal/temp-paths.ts";
+import { identifyProjectGroups } from "../shared/telemetry/identify-project-groups.ts";
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
+import { readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
+import { currentProjectStateMode } from "../shared/config/project-state-mode.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
+import { block } from "../command-internal/command-permissions/model.ts";
 
-function readString(obj: unknown, key: string): string {
-  if (typeof obj === "object" && obj !== null && key in obj) {
-    const value = (obj as Record<string, unknown>)[key];
-    return typeof value === "string" ? value : "";
-  }
-  return "";
-}
+/** `LinkedProjectCache`'s post-run fill. */
+export const linkedProjectCache = block("linked-project-cache", [
+  {
+    operationId: "v1-get-project",
+    kind: "best-effort",
+    context:
+      "an access token, no cached project metadata (supabase/.temp/linked-project.json, or $SUPABASE_HOME/project-cache/<ref>.json in stack mode), and no linked ref naming a different project",
+  },
+]);
+
+const encodeLinkedProjectCache = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ref: Schema.String,
+      name: Schema.String,
+      organization_id: Schema.String,
+      organization_slug: Schema.String,
+    }),
+  ),
+);
 
 /**
- * Writes `<workdir>/supabase/.temp/linked-project.json` after a `--project-ref` has been
- * resolved. No write if the cache already exists (`supabase link` is authoritative), and any
- * API/filesystem/parse error is swallowed.
+ * Writes the project's metadata after a `--project-ref` has been resolved: `<workdir>/supabase/.temp/linked-project.json`
+ * in legacy mode, or `$SUPABASE_HOME/project-cache/<ref>.json` in stack mode, so a stack-mode
+ * checkout never gains a `.temp`. No write if the cache already exists (`supabase link` is
+ * authoritative in legacy mode), and any API/filesystem/parse error is swallowed.
  *
- * Bypasses `CommandPlatformApi`'s strict schema decode by calling the API directly with
- * `HttpClient`. The generated `V1ProjectWithDatabaseResponse` schema enforces a 20-char
- * project-ref length that the cli-e2e replay fixtures (which store `__PROJECT_REF__`
- * placeholders) cannot satisfy; the cache only needs four string fields and doesn't validate them.
+ * Builds its own typed client per fill rather than consuming `CommandPlatformApi`, which
+ * requires a stored token at construction; this layer skips quietly when there is none.
  *
- * Also skips the write when `<workdir>/supabase/.temp/project-ref` exists, is non-empty, and
- * names a different ref than `ref` — see the inline comment at the check itself for the failure
- * mode this closes. This cache feeds `resolveLinkedParentRef`'s parent chain.
+ * The per-ref stack file is a "group-identify once per ref" marker: its presence skips the
+ * `v1-get-project` call and the `groupIdentify` on later runs, and nothing else reads it. It is
+ * published atomically so a concurrent run never sees a partial file.
+ *
+ * In legacy mode it also skips the write when the linked ref names a different project than
+ * `ref` — see the inline comment at the check itself for the failure mode this closes. That
+ * cache feeds the linked parent resolution.
  */
 export const linkedProjectCacheLayer = Layer.effect(
   LinkedProjectCache,
@@ -55,27 +76,29 @@ export const linkedProjectCacheLayer = Layer.effect(
         accessToken?: Option.Option<Redacted.Redacted<string>>,
       ) =>
         Effect.gen(function* () {
+          const stackMode = (yield* currentProjectStateMode) === "stack";
+          // The ref names the cache file, so only a well-formed one may reach the path.
+          if (stackMode && !PROJECT_REF_PATTERN.test(ref)) return;
           const resolvedWorkdir = workdir ?? cliSettings.workdir;
-          const cachePath = tempPaths(path, resolvedWorkdir).linkedProjectCache;
+          const cachePath = stackMode
+            ? path.join(cliSettings.supabaseHome, "project-cache", `${ref}.json`)
+            : legacyProjectStatePaths(path, resolvedWorkdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
           yield* Effect.annotateCurrentSpan({ "cache.hit": exists });
           if (exists) return;
 
-          // The cache must describe the linked workdir's own state, not whatever ref the calling
-          // command happens to have resolved: a mid-flight `link --project-ref B` failure still
-          // reaches this fill via `Effect.ensuring`, and if `getProject(B)` returns 200 (e.g. B
-          // is merely paused, not gone/forbidden), this would otherwise cache B as the linked
-          // project even though `project-ref` itself was never updated to B — `link`'s own
-          // mandatory write happens before this fill can ever fire, so a `project-ref` naming
-          // something else here means the workdir is still actually linked to that something
-          // else. Skip the write entirely when the file names a different ref. A file that's
-          // absent entirely falls through to the write below — the read side
-          // (`resolveLinkedParentRef`) already refuses to trust a cache with no `project-ref`
-          // file at all, so there is nothing to protect there yet.
-          const fileRef = yield* readProjectRefFile(fs, path, resolvedWorkdir).pipe(
-            Effect.orElseSucceed(() => Option.none<string>()),
-          );
-          if (Option.isSome(fileRef) && fileRef.value !== ref) return;
+          // The legacy cache must describe the linked workdir's own state, not whatever ref the
+          // calling command happens to have resolved: a mid-flight `link --project-ref B` failure
+          // still reaches this fill via `Effect.ensuring`, and if `getProject(B)` returns 200
+          // (e.g. B is merely paused, not gone/forbidden), this would otherwise cache B as the
+          // linked project even though the linked ref itself was never updated to B. Skip the
+          // write when the link names a different ref. An absent link falls through to the write
+          // below, since the linked parent resolution already refuses to trust a cache with no linked
+          // ref. The per-ref stack cache is keyed by `ref`, so it cannot describe another project.
+          if (!stackMode) {
+            const linkedRef = (yield* readLinkSnapshotSoft(fs, path, resolvedWorkdir)).ref;
+            if (Option.isSome(linkedRef) && linkedRef.value !== ref) return;
+          }
 
           // An explicit reconciled-profile token wins outright (`Some` → use, `None` → the
           // reconciled profile has no token, so skip rather than fall back to a stale profile's
@@ -86,46 +109,38 @@ export const linkedProjectCacheLayer = Layer.effect(
               ? cliSettings.accessToken
               : yield* credentials.getAccessToken);
           if (Option.isNone(tokenOpt)) return;
-          const token = Redacted.value(tokenOpt.value);
 
-          const request = HttpClientRequest.get(
-            `${apiUrl ?? cliSettings.apiUrl}/v1/projects/${ref}`,
-          ).pipe(
-            HttpClientRequest.setHeader("Authorization", `Bearer ${token}`),
-            HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-          );
-          const response = yield* httpClient.execute(request);
-          // Stitch identity from the response before the status gate, regardless of status.
-          yield* stitch(response);
-          yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
-          if (response.status !== 200) return;
-
-          const body = yield* response.json;
+          const api = yield* makeApiClient(
+            {
+              baseUrl: apiUrl ?? cliSettings.apiUrl,
+              accessToken: tokenOpt.value,
+              userAgent: cliSettings.userAgent,
+            },
+            {
+              transformClient: (client) =>
+                Effect.succeed(
+                  HttpClient.transform(client, (requestEffect) =>
+                    requestEffect.pipe(Effect.tap(stitch)),
+                  ),
+                ),
+            },
+          ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+          const project = yield* api.v1.getProject({ ref }, { retry: { maxRetries: 0 } });
 
           const linked = {
-            ref: readString(body, "ref"),
-            name: readString(body, "name"),
-            organization_id: readString(body, "organization_id"),
-            organization_slug: readString(body, "organization_slug"),
+            ref: project.ref,
+            name: project.name,
+            organization_id: project.organization_id,
+            organization_slug: project.organization_slug,
           };
 
           yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
-          yield* fs.writeFileString(cachePath, JSON.stringify(linked));
+          yield* publish(fs, path, {
+            target: cachePath,
+            content: yield* encodeLinkedProjectCache(linked),
+          });
 
-          // On the same cache miss, also publish the org/project group metadata via
-          // `groupIdentify` (same payload shape as the link handler) before the post-run
-          // `cli_command_executed` capture. Best-effort, wrapped in `Effect.ignore` below.
-          if (linked.organization_id.length > 0) {
-            yield* analytics.groupIdentify(GroupOrganization, linked.organization_id, {
-              organization_slug: linked.organization_slug,
-            });
-          }
-          if (linked.ref.length > 0) {
-            yield* analytics.groupIdentify(GroupProject, linked.ref, {
-              name: linked.name,
-              organization_slug: linked.organization_slug,
-            });
-          }
+          yield* identifyProjectGroups(analytics, linked);
         }).pipe(Effect.withSpan("LinkedProjectCache.cache"), Effect.ignore),
     });
   }),

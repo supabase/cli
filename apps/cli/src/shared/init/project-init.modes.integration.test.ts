@@ -38,8 +38,8 @@ const fileMode = Effect.fnUntraced(function* (pathname: string) {
   return (yield* fs.stat(pathname)).mode & 0o777;
 });
 
-describe("initProject file modes (Go parity: 0755 dirs, 0644 files)", () => {
-  it.live("pins the supabase dir and config.toml to Go's exact modes", () =>
+describe("initProject file modes (0755 dirs, 0644 files)", () => {
+  it.effect("pins the supabase dir and config.toml to the exact modes", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const cwd = yield* makeTempProjectDir;
@@ -53,8 +53,8 @@ describe("initProject file modes (Go parity: 0755 dirs, 0644 files)", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
-    "pins a freshly created supabase/.gitignore to Go's exact file mode inside a git repo",
+  it.effect(
+    "pins a freshly created supabase/.gitignore to the exact file mode inside a git repo",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

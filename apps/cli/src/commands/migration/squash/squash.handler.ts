@@ -1,19 +1,15 @@
 import { Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/process/ChildProcessSpawner";
 
-import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
   NetworkIdFlag,
-  resolveYesWithProjectEnv,
 } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { aqua, bold } from "../../../command-internal/colors.ts";
 import {
   buildLocalDbContainerInputs,
@@ -23,7 +19,7 @@ import {
   resolveDbSetupPrelude,
   setupDatabase,
 } from "../../../command-internal/db-bootstrap/db-setup.ts";
-import { waitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import {
   buildShadowSetupDatabaseInput,
   connectShadowDatabase,
@@ -32,15 +28,14 @@ import {
   shadowRunInputFromLocalContainerInputs,
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import {
-  loadProjectEnv,
-  readDbToml,
-  type DbTomlValues,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { readDbConfig, type DbConfigValues } from "../../../command-internal/db-config.read.ts";
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import {
+  hostedMutationPreapproval,
+  requireTargetMutationConsent,
+} from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
@@ -57,15 +52,10 @@ import {
   resolveMigrationFile,
 } from "../../../command-internal/migration-history.ts";
 import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import {
-  MigrationFileNotFoundError,
-  MigrationInvalidVersionError,
-  MigrationPasswordFlagsError,
-  MigrationTargetFlagsError,
-} from "../migration.errors.ts";
-import { migrationConfirm } from "../migration.prompt.ts";
+import { MigrationFileNotFoundError, MigrationInvalidVersionError } from "../migration.errors.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
 import { SQUASH_SEPARATOR_COMMENT, squashLineByLineDiff } from "./squash.diff.ts";
 import { squashDumpSchema, squashDumpSchemaToString } from "./squash.dump.ts";
@@ -90,8 +80,9 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
   path: Path.Path,
   workdir: string,
   migrations: ReadonlyArray<string>,
+  targetPath: string,
   localInputs: LocalDbContainerInputs,
-  toml: DbTomlValues,
+  toml: DbConfigValues,
 ) {
   const stackBackend = (yield* currentStackBackend).kind === "stack";
   const resolvedShadowImage = stackBackend
@@ -127,7 +118,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             database: "postgres",
           };
           const credentials = yield* handle.database.credentials({ from: "runtime" });
-          const dumpConn = parseConnectionString(credentials.databaseUrl ?? "");
+          const dumpConn = yield* parseConnectionString(credentials.databaseUrl ?? "");
           if (dumpConn === undefined)
             return yield* new MigrationSquashDumpError({
               message: "Shadow database tool URL is unavailable",
@@ -136,7 +127,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             kind: "stack" as const,
             stack: handle.stack,
             command: "pg_dump" as const,
-            major: toml.majorVersion === 15 ? (15 as const) : (17 as const),
+            pin: handle.databasePin,
           };
           const session = yield* connectShadowDatabase(stackConn);
           const before = yield* squashDumpSchemaToString({
@@ -160,7 +151,6 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             projectEnvValues: localInputs.context.projectEnvValues,
             client: dumpClient,
           });
-          const targetPath = migrations[migrations.length - 1]!;
           const targetRel = path.relative(workdir, targetPath);
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -209,7 +199,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
     (handle) =>
       Effect.scoped(
         Effect.gen(function* () {
-          yield* waitForHealthyServices(spawner, [handle.containerId], {
+          yield* waitForPostgresReady(spawner, handle.containerId, connConfig, {
             timeoutSeconds: shadowInput.healthTimeoutSeconds,
           });
           const session = yield* connectShadowDatabase(connConfig);
@@ -252,7 +242,6 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             projectEnvValues: localInputs.context.projectEnvValues,
           });
 
-          const targetPath = migrations[migrations.length - 1]!;
           const targetRel = path.relative(workdir, targetPath);
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -315,28 +304,20 @@ interface SquashToVersionResult {
 }
 
 /**
- * Loads the local migrations up to `version` (all when empty), squashes every one but
- * the last into the shadow-produced dump, then removes the merged files. A removal
- * failure is non-fatal: only printed to stderr, then continues.
+ * Squashes every migration but the last into the shadow-produced dump, then removes the merged
+ * files. A removal failure is non-fatal: only printed to stderr, then continues.
  */
 const squashToVersion = Effect.fn("MigrationSquash.squashToVersion")(function* (
   spawner: Spawner,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
-  migrationsDir: string,
-  version: string,
+  migrations: ReadonlyArray<string>,
+  local: string,
   localInputs: LocalDbContainerInputs,
-  toml: DbTomlValues,
+  toml: DbConfigValues,
 ) {
   const output = yield* Output;
-  const migrations = yield* loadPartialMigrations(fs, path, migrationsDir, version);
-  yield* Effect.annotateCurrentSpan({ "migration.count": migrations.length });
-  if (migrations.length === 0) {
-    return yield* new MigrationSquashMissingVersionError({ message: "version not found" });
-  }
-
-  const local = migrations[migrations.length - 1]!;
   const rel = path.relative(workdir, local);
   if (migrations.length === 1) {
     yield* output.raw(`${bold(rel)} is already the earliest migration.\n`, "stderr");
@@ -348,7 +329,7 @@ const squashToVersion = Effect.fn("MigrationSquash.squashToVersion")(function* (
     } satisfies SquashToVersionResult;
   }
 
-  yield* squashMigrations(spawner, fs, path, workdir, migrations, localInputs, toml);
+  yield* squashMigrations(spawner, fs, path, workdir, migrations, local, localInputs, toml);
   yield* output.raw(`Squashed local migrations to ${bold(rel)}\n`, "stderr");
 
   const removed: Array<string> = [];
@@ -405,7 +386,7 @@ const baselineMigrations = Effect.fn("MigrationSquash.baselineMigrations")(funct
         debugLogger.debug(cause.message).pipe(Effect.as<ReadonlyArray<string>>([])),
       ),
     );
-    if (local.length > 0) resolvedVersion = local[0]!;
+    resolvedVersion = local[0] ?? resolvedVersion;
   }
 
   // Printed before connecting, the opposite order from every other prompting migration
@@ -414,9 +395,6 @@ const baselineMigrations = Effect.fn("MigrationSquash.baselineMigrations")(funct
 
   yield* Effect.scoped(
     Effect.gen(function* () {
-      // Always remote: runSquash already returns early on a local target, so
-      // cfg.isLocal is always false when this function runs.
-      yield* output.raw("Connecting to remote database...\n", "stderr");
       const session = yield* connection.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       yield* createMigrationTable(session);
 
@@ -451,14 +429,10 @@ const baselineMigrations = Effect.fn("MigrationSquash.baselineMigrations")(funct
   return resolvedVersion;
 });
 
-const runSquash = Effect.fnUntraced(function* (
-  flags: MigrationSquashFlags,
-  target: ReturnType<typeof resolveDbTargetFlags>,
-) {
+const runSquash = Effect.fnUntraced(function* (flags: MigrationSquashFlags) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const cliSettings = yield* CommandSettings;
-  const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
@@ -467,50 +441,20 @@ const runSquash = Effect.fnUntraced(function* (
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* NetworkIdFlag;
 
-  // Resolved linked ref, captured so the post-run finalizer caches the project
-  // (GET /v1/projects/{ref}).
-  let linkedRefForCache: string | undefined;
+  const target = yield* resolveTarget(flags);
+  const linkedRef = target.kind === "linked" ? target.ref : undefined;
 
-  yield* Effect.gen(function* () {
-    // Checked here, ahead of the root pre-run.
-    if (target.setFlags.length > 1) {
-      return yield* new MigrationTargetFlagsError({
-        message: cobraMutuallyExclusiveErrorMessage(["db-url", "linked", "local"], target.setFlags),
-      });
-    }
-    if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-      return yield* new MigrationPasswordFlagsError({
-        message: cobraMutuallyExclusiveErrorMessage(["db-url", "password"], ["db-url", "password"]),
-      });
-    }
-
+  const squashFlow = Effect.gen(function* () {
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
-    const connType = target.connType ?? "local";
 
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on a non-linked target; see push.handler.ts's identical guard.
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* new MigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      });
-    }
-
-    // Resolves and caches the project ref, then reads the remote-merged config before
-    // resolver.resolve() below (like db diff --linked); read unconditionally since the
-    // shadow is provisioned locally either way.
-    let linkedRef: string | undefined;
-    if (connType === "linked") {
-      const projectRefResolver = yield* ProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
-      linkedRefForCache = linkedRef;
-    }
-    const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
+    // Reads the remote-merged config before resolving the connection (like `db diff --remote`);
+    // read unconditionally since the shadow is provisioned locally either way.
+    const toml = yield* readDbConfig(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
 
-    // The shadow's container spec is always built before resolver.resolve() below, so
+    // The shadow's container spec is always built before the connection resolves, so
     // all config load/validation happens ahead of the actual connection resolution.
     const localInputs = yield* buildLocalDbContainerInputs(
       spawner,
@@ -518,32 +462,21 @@ const runSquash = Effect.fnUntraced(function* (
       networkIdFlag,
       runtimeInfo.platform,
       debug,
-      connType === "linked" ? linkedRef : undefined,
-      toml.remoteOverrideKeys,
+      linkedRef,
     );
 
-    // The resolver owns --password/DB_PASSWORD/temp-login-role/IPv6 handling for
-    // --linked, so squash needs no bespoke password prompt.
-    const cfg = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType,
+    // The resolver owns --password/DB_PASSWORD/temp-login-role/IPv6 handling for a
+    // remote target, so squash needs no bespoke password prompt.
+    const cfg = yield* resolver.resolveConnection({
+      target,
       dnsResolver,
       password: flags.password,
-      linkedProjectRef: flags.projectRef,
+      hasPasswordFlag: true,
+      networkBanRemoval: yield* hostedMutationPreapproval,
     });
-    if (linkedRef === undefined) {
-      linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
-    }
-    if (linkedRef !== undefined) linkedRefForCache = linkedRef;
-    yield* Effect.annotateCurrentSpan({ "db.conn_type": connType, "db.is_local": cfg.isLocal });
+    yield* Effect.annotateCurrentSpan({ "db.conn_type": target.kind, "db.is_local": cfg.isLocal });
 
-    // Loads after the flag-group check above, so a flag conflict surfaces before any
-    // .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms the
-    // remote-baseline prompt.
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    const yes = yield* resolveYesWithProjectEnv(projectEnv);
-
-    // Runs after DB-config resolution, so an invalid target surfaces first.
+    // Runs after connection resolution, so an invalid target surfaces first.
     const version = Option.getOrElse(flags.version, () => "");
     if (version.length > 0) {
       if (parseMigrationVersion(version) === undefined) {
@@ -558,13 +491,31 @@ const runSquash = Effect.fnUntraced(function* (
       }
     }
 
+    const migrations = yield* loadPartialMigrations(fs, path, migrationsDir, version);
+    yield* Effect.annotateCurrentSpan({ "migration.count": migrations.length });
+    const squashInto = migrations.at(-1);
+    if (squashInto === undefined) {
+      return yield* new MigrationSquashMissingVersionError({ message: "version not found" });
+    }
+
+    // The checkout rewrite precedes the remote history update, so both sit behind one consent.
+    yield* requireTargetMutationConsent(cfg, {
+      action: "Squash local migrations and update the remote migration history table",
+      details: [
+        migrations.length > 1
+          ? `Squash ${migrations.length} local migrations into ${path.relative(cliSettings.workdir, squashInto)} and remove the ${migrations.length - 1} merged ${migrations.length === 2 ? "file" : "files"}`
+          : `${path.relative(cliSettings.workdir, squashInto)} is already the earliest migration`,
+        "Reset the remote migration history table to the squashed migration",
+      ],
+    });
+
     const squashResult = yield* squashToVersion(
       spawner,
       fs,
       path,
       cliSettings.workdir,
-      migrationsDir,
-      version,
+      migrations,
+      squashInto,
       localInputs,
       toml,
     );
@@ -574,7 +525,7 @@ const runSquash = Effect.fnUntraced(function* (
       if (output.format === "text") {
         yield* output.raw(`Finished ${aqua("supabase migration squash")}.\n`);
         yield* output.raw(
-          `Run ${aqua("supabase migration repair --status applied")} to update your remote migration history table.\n`,
+          `Run ${aqua("supabase migration repair --status applied --remote")} to update your remote migration history table.\n`,
           "stderr",
         );
       } else {
@@ -590,23 +541,14 @@ const runSquash = Effect.fnUntraced(function* (
       return;
     }
 
-    // A declined prompt is still a success path here (returns cleanly, not a
-    // cancellation), unlike repair/fetch/down.
-    const confirmed = yield* migrationConfirm("Update remote migration history table?", {
-      defaultValue: true,
-      yes,
-    });
-    let baselinedVersion: string | null = null;
-    if (confirmed) {
-      baselinedVersion = yield* baselineMigrations(
-        fs,
-        path,
-        migrationsDir,
-        cfg,
-        dnsResolver,
-        version,
-      );
-    }
+    const baselinedVersion = yield* baselineMigrations(
+      fs,
+      path,
+      migrationsDir,
+      cfg,
+      dnsResolver,
+      version,
+    );
 
     if (output.format === "text") {
       yield* output.raw(`Finished ${aqua("supabase migration squash")}.\n`);
@@ -620,20 +562,18 @@ const runSquash = Effect.fnUntraced(function* (
         baselinedVersion,
       });
     }
-  }).pipe(
-    Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
-      ),
-    ),
-  );
+  });
+
+  if (target.kind === "linked") {
+    const linkedProjectCache = yield* LinkedProjectCache;
+    return yield* squashFlow.pipe(Effect.ensuring(linkedProjectCache.cache(target.ref)));
+  }
+  return yield* squashFlow;
 });
 
 export const migrationSquash = Effect.fn("migration.squash")(function* (
   flags: MigrationSquashFlags,
 ) {
   const telemetryState = yield* TelemetryState;
-  const cliArgs = yield* CliArgs;
-  const target = resolveDbTargetFlags(cliArgs.args);
-  yield* runSquash(flags, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* runSquash(flags).pipe(Effect.ensuring(telemetryState.flush));
 });

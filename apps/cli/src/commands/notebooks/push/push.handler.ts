@@ -1,16 +1,14 @@
 import { Effect, Option } from "effect";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { NotebookNotFoundError } from "../notebooks.errors.ts";
-import {
-  emitNotebooksMachineOutput,
-  notebooksMachineOutputRequested,
-  rejectNotebooksEnvOutput,
-} from "../notebooks.output.ts";
+import { emitNotebooksMachineOutput, rejectNotebooksEnvOutput } from "../notebooks.output.ts";
 import {
   deleteRemoteNotebook,
   downloadNotebook,
@@ -43,7 +41,6 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -56,9 +53,8 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
     // Refused before the project is resolved: failing at emit time would mean
     // failing after the project has already changed.
     yield* rejectNotebooksEnvOutput();
-    const machineOutput = yield* notebooksMachineOutputRequested();
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const local = yield* listLocalNotebooks(workdir);
@@ -97,7 +93,6 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
           names: remoteOnly.map((notebook) => notebook.name),
           copyLabel: `Write them into ${dir}`,
           deleteLabel: "Delete them from the project",
-          machineOutput,
         });
       }
       // Resolve and validate the selected plan before the first upload.
@@ -114,9 +109,24 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
             )
           : [];
 
+      const remoteByName = new Map(remote.map((notebook) => [notebook.name, notebook]));
+      if (files.length > 0 || choice === "delete") {
+        yield* requireHostedMutationConsent({
+          action: `Push ${files.length} notebook(s)${choice === "delete" ? ` and delete ${remoteOnly.length} from the project` : ""}`,
+          details: [
+            ...files.map(
+              ({ name }) =>
+                `${remoteByName.has(name) ? "Update" : "Create"} ${sanitizeInlineName(name)}`,
+            ),
+            ...(choice === "delete"
+              ? remoteOnly.map((notebook) => `Delete ${sanitizeInlineName(notebook.name)}`)
+              : []),
+          ],
+        });
+      }
+
       const created: Array<string> = [];
       const updated: Array<string> = [];
-      const remoteByName = new Map(remote.map((notebook) => [notebook.name, notebook]));
       for (const { name, file } of files) {
         const result = yield* uploadNotebook({
           api,

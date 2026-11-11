@@ -1,9 +1,11 @@
+import { cliConfigFormatForPath } from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { aqua, bold } from "../../../../command-internal/colors.ts";
 import { validateWorkdirIsDirectory } from "../../../../command-internal/workdir-validation.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
+import { CliConfigValues } from "../../../../config/cli-config-values.service.ts";
 import { renderComputeDetails } from "../compute.format.ts";
 import { emitComputeMachineOutput, computeMachineOutputRequested } from "../compute.output.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
@@ -44,11 +46,7 @@ import {
   MissingComputeNameError,
   ComputeDirectoryExistsError,
 } from "../../../../shared/compute/compute.errors.ts";
-import {
-  loadComputeProjectForEntryWrite,
-  validateComputeName,
-  type ComputeProject,
-} from "../compute.shared.ts";
+import { loadComputeProject, validateComputeName, type ComputeProject } from "../compute.shared.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
 
@@ -239,6 +237,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
 
   // The telemetry state file is written on every invocation, success or failure.
   yield* Effect.gen(function* () {
@@ -246,7 +245,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       Effect.mapError((error) => new ComputeNewWorkdirError({ message: error.message })),
     );
 
-    const project = yield* loadComputeProjectForEntryWrite();
+    const project = yield* loadComputeProject;
 
     // Decided once, before the first prompt rather than beside the last, since
     // the name is now asked for too — every prompt below shares the answer.
@@ -257,14 +256,18 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     yield* validateComputeName(name);
 
     // Refused before anything is asked or written. `new` creates a compute;
-    // changing one that already exists is a `config.toml` edit, and the file is
+    // changing one that already exists is a config-file edit, and the file is
     // the user's. Checking here rather than only in `planComputeEntry` means the
     // runtime and size prompts never run for a name that was going to be
     // refused anyway; the name prompt rejects it up front for the same reason.
     if (project.section.compute[name] !== undefined) {
+      const entryRef =
+        cliConfigFormatForPath(project.configPath) === "toml"
+          ? `[compute.${name}]`
+          : `compute.${name}`;
       return yield* new ComputeAlreadyConfiguredError({
         detail: `"${name}" is already configured in ${project.configPath}.`,
-        suggestion: `Edit [compute.${name}] in ${project.configPath} yourself, or pick a different compute name.`,
+        suggestion: `Edit ${entryRef} in ${project.configPath} yourself, or pick a different compute name.`,
       });
     }
 
@@ -364,7 +367,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         yield* fs.writeFileString(path.join(destination, filename), contents);
       }
 
-      yield* commitComputeEntry(configWrite);
+      yield* configValues.writeThrough(commitComputeEntry(configWrite));
     }).pipe(Effect.onError(() => removeScaffold));
 
     // Relative to the project root when the workdir was defaulted, since it also

@@ -5,8 +5,9 @@ import { Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
 import { stackShadowCacheEntry } from "./stack-shadow-cache.ts";
+import { database15, orioledb, selection } from "../../tests/helpers/pins.ts";
 
-const defaultConfig = Schema.decodeUnknownSync(CliConfigSchema)({});
+const defaultConfig = Schema.decodeSync(CliConfigSchema)({});
 
 const input = (
   fs: FileSystem.FileSystem,
@@ -66,19 +67,34 @@ describe("stack shadow cache entry", () => {
       yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
 
       const base = input(fs, path, root);
-      const first = yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config");
+      const first = yield* stackShadowCacheEntry(
+        base,
+        selection,
+        "native",
+        "darwin",
+        "arm64",
+        "config",
+      );
       if (first === undefined) return yield* Effect.die("cache entry unexpectedly disabled");
 
       yield* fs.writeFileString(
         path.join(root, "supabase", "roles.sql"),
         "CREATE ROLE cache_probe;\n",
       );
-      const withRoles = yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config");
+      const withRoles = yield* stackShadowCacheEntry(
+        base,
+        selection,
+        "native",
+        "darwin",
+        "arm64",
+        "config",
+      );
       if (withRoles === undefined) return yield* Effect.die("roles entry unexpectedly disabled");
       expect(withRoles.key).not.toBe(first.key);
 
       const withWebhooks = yield* stackShadowCacheEntry(
         input(fs, path, root, { webhooksEnabled: true }),
+        selection,
         "native",
         "darwin",
         "arm64",
@@ -90,6 +106,7 @@ describe("stack shadow cache entry", () => {
 
       const withPassword = yield* stackShadowCacheEntry(
         input(fs, path, root, {}, { password: "rotated-password" }),
+        selection,
         "native",
         "darwin",
         "arm64",
@@ -100,17 +117,50 @@ describe("stack shadow cache entry", () => {
       expect(withPassword.key).not.toBe(withRoles.key);
 
       expect(
-        yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config", true),
+        yield* stackShadowCacheEntry(base, selection, "native", "darwin", "arm64", "config", true),
       ).toBeUndefined();
       expect(
         yield* stackShadowCacheEntry(
           input(fs, path, root, { projectEnvValues: { SUPABASE_SHADOW_CACHE: "0" } }),
+          selection,
           "native",
           "darwin",
           "arm64",
           "config",
         ),
       ).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keys shadows of different database or service pins apart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-cache-version-" });
+      const base = input(fs, path, root, {
+        authEnabledForSetup: true,
+      });
+      const key = (chosen: typeof selection) =>
+        stackShadowCacheEntry(base, chosen, "native", "darwin", "arm64", "config").pipe(
+          Effect.map((entry) => entry?.key),
+        );
+
+      const stock = yield* key(selection);
+      const keys = [
+        yield* key({ ...selection, database: database15 }),
+        yield* key({ ...selection, database: orioledb }),
+        yield* key({
+          ...selection,
+          database: { ...selection.database, revision: selection.database.revision + 1 },
+        }),
+        yield* key({
+          ...selection,
+          auth: { ...selection.auth, image: `${selection.auth.image}-other` },
+        }),
+      ];
+      expect(stock).toBeDefined();
+      for (const other of keys) expect(other).toBeDefined();
+      expect(new Set([stock, ...keys]).size).toBe(keys.length + 1);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

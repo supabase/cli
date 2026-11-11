@@ -49,6 +49,12 @@ installs the command span plus the per-invocation analytics context:
 That same context is then inherited by milestone events captured inside the command handler, which
 lets one CLI invocation share a single `command_run_id`.
 
+The wrapper also rejects the removed global `--create-ticket` flag (with any value) before the
+handler runs. The rejection happens inside the instrumented region, so it still emits
+`cli_command_executed` with an `error_fingerprint` ending in `:removed_flag`. A command that fails
+earlier, such as on a missing credential in its runtime layer, or that shows help, reports that
+instead.
+
 ## Event Model
 
 The primary analytics event is:
@@ -72,16 +78,19 @@ sanitized error classification:
 - `has_suggestion`
 - `suggestion_type`
 - `suggested_command` (only when the remediation is an allowlisted command)
+- `config_key` (only on `invalid_config` failures from config resolution: the failing config key
+  path, such as `inbucket` or `auth.email.smtp.port`, comma-joined when several removed keys fail;
+  keys only, never values, file paths or user-chosen names, which collapse to their nearest known
+  parent key)
 
-These values come exclusively from the closed taxonomy in
+Apart from `config_key`, these values come exclusively from the closed taxonomy in
 `src/shared/telemetry/error-actionability.ts` — never from raw error text —
 and the KPI query semantics (strict recovery, repeat errors, internal/unknown
 bug rate) are documented there in `CliErrorActionabilityMetricDefinitions`.
 A `workflow` property is reserved in the catalog but not emitted yet.
 
-Not every failure is classified: pure Go-proxy commands report through the Go
-binary, which does not emit these fields, and events from CLI versions before
-they existed never carry them. KPI queries therefore scope to
+Not every failure is classified: events from CLI versions before these fields
+existed never carry them. KPI queries therefore scope to
 `error_kind IS NOT NULL`, and the `classificationCoverage` metric definition
 reports the classified share of failures so the covered fraction is explicit
 rather than assumed.
@@ -91,11 +100,20 @@ Local-runtime commands also carry properties that split error rates by runtime:
 - `stack_backend` (`legacy` or `stack`) on commands routed by `experimental.stack`; see
   [backend selection](stack-commands.md)
 - `stack_runtime` (`docker`, `podman`, or `native`): the runtime of the stack a stack-backend
-  command looked up, which for `--db-url` may be the project stack even when the URL targets
+  command looked up, which for `--remote=<url>` may be the project stack even when the URL targets
   another database
 - `orioledb` (boolean) once the command resolves local database config, `true` when the project
   selects an OrioleDB image (`db.orioledb_version` on a 15/17 project). It describes local config
-  only; for linked or `--db-url` targets it says nothing about the remote database
+  only; for `--remote` targets it says nothing about the remote database
+- `serve_end_reason` on the Docker-runtime `functions serve`, set once its final outcome is known:
+  `signal` (the CLI received a shutdown signal), `container_stopped` (an external supervisor
+  stopped the Edge Runtime container, e.g. `supabase stop`), `container_exited` (the container
+  exited on its own with code 0), `container_removed` (the container disappeared), or
+  `container_crashed` (the container exited with a crash code, which also fails the command). A
+  restart records nothing; only the final end does
+- `edge_runtime_exit_code` (number) alongside `serve_end_reason` when the container's exit code is
+  known: its stop code for `container_stopped`, `0` for `container_exited`, its crash code for
+  `container_crashed`
 
 Flag capture is intentionally conservative: `flags` records only flags changed on the command
 line, and redacts each value unless it is boolean, a choice flag, or listed in the command's
@@ -120,6 +138,10 @@ The analytics layer attaches a base set of properties to every PostHog event:
 - `is_tty`
 - `is_ci`
 - `is_agent`
+- `agent_name` (the detected agent, such as `claude`, `codex`, or `cursor_cli`; only when
+  `is_agent` is true)
+- `is_eval` (true when `SUPABASE_EVAL` is `1` or `true`, so automated evaluation runs can be
+  excluded from usage metrics)
 - `env_signals` (allowlisted agent and terminal environment variables, when any are set)
 - `os`
 - `arch`

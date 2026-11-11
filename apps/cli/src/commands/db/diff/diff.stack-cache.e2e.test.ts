@@ -1,11 +1,12 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path, Redacted } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { create as createStack } from "@supabase/stack/effect";
-import { tmpdir } from "node:os";
+import { Effect, FileSystem, Layer, Path, Redacted } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { create as createStack, discover as discoverStacks } from "@supabase/stack/effect";
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
+import { selection } from "../../../../tests/helpers/pins.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS * 4 + 2 * 60_000;
@@ -46,8 +47,8 @@ const composeStack = Effect.fn("DbDiffStackCacheE2e.composeStack")(function* (
   const [database] = yield* stack.composition.supabase([
     {
       service: "database",
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make("postgres"),
         jwtSecret: Redacted.make("db-diff-stack-cache-e2e-jwt-secret-with-32-chars"),
         jwtExpiry: 3600,
@@ -91,10 +92,9 @@ describe("supabase db diff (stack shadow baseline cache)", () => {
           const home = yield* fs.makeTempDirectoryScoped({
             prefix: `db-diff-cache-home-${runtime}-`,
           });
-          const sharedArtifacts = path.join(tmpdir(), "supabase-stack-artifacts");
-          yield* fs.makeDirectory(sharedArtifacts, { recursive: true });
+          yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
           yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
-          yield* fs.symlink(sharedArtifacts, path.join(home, "cache", "stack"));
+          yield* fs.symlink(stackArtifactCacheRoot, path.join(home, "cache", "stack"));
 
           const supabase = path.join(project, "supabase");
           const migrations = path.join(supabase, "migrations");
@@ -130,11 +130,12 @@ describe("supabase db diff (stack shadow baseline cache)", () => {
           expect(second.stdout).toMatch(/stack_cache_second/iu);
           expect(second.stdout).not.toMatch(/stack_cache_first/iu);
 
-          const stackEntries = (yield* fs.readDirectory(path.join(home, "stacks"))).filter(
-            (entry) => /^[0-9a-f]{64}$/u.test(entry),
-          );
-          expect(stackEntries).toEqual([stack.id]);
-        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, FetchHttpClient.layer])),
+          const registered = yield* discoverStacks({ stateRoot: path.join(home, "stacks") });
+          expect(registered.map(({ definition }) => definition.id)).toEqual([stack.id]);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide([Layer.merge(BunServices.layer, BunCrypto.layer), FetchHttpClient.layer]),
+        ),
       { timeout: TEST_TIMEOUT_MS },
     );
   }

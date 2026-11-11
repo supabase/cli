@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices, NodeStream } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices, NodeStream } from "@effect/platform-node";
 import {
   Context,
   Data,
@@ -11,18 +11,20 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test fixture owns inherited readiness and release descriptors.
 import { closeSync, createReadStream, writeSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- consumes its own startup payload file the way the real consumer does.
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { currentRelease, launchHost, authorizes, type HostEndpoint } from "../src/HostProcess.ts";
 import { bindControl } from "../src/StackHost.ts";
-import * as State from "../src/State.ts";
+import * as StackNamespace from "../src/StackNamespace.ts";
 
 class FixtureError extends Data.TaggedError("FixtureError")<{ readonly message: string }> {}
 
 const makeState = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 
 const awaitBarrier = NodeStream.fromReadable({
@@ -44,9 +46,28 @@ const report = (value: unknown) => {
   }
 };
 
-const [stateRoot, cacheRoot, stackId, mode = "owner", ownerEntrypoint] = process.argv.slice(2);
+const [stateRoot, cacheRoot, stackId, fourth, fifth] = process.argv.slice(2);
 if (stateRoot === undefined || stackId === undefined)
   throw new FixtureError({ message: "fixture arguments missing" });
+/**
+ * A spawned owner's startup payload travels as a file path in this same position instead of this
+ * fixture's own "mode"/entrypoint test convention; a real file path on disk, checked here,
+ * disambiguates it. Consuming it the way the real consumer does leaves nothing behind for a test
+ * that launches this fixture with `register` or `requestedCreations`.
+ */
+const payloadFile = fourth !== undefined && existsSync(fourth) ? fourth : undefined;
+if (payloadFile !== undefined) {
+  // Tests read this marker to assert the payload file's permissions at the moment it was read.
+  writeFileSync(`${stateRoot}/payload-mode`, (statSync(payloadFile).mode & 0o777).toString(8));
+  readFileSync(payloadFile, "utf8");
+  try {
+    unlinkSync(payloadFile);
+  } catch {
+    /* Already removed, or the parent is cleaning up; the secret is gone either way. */
+  }
+}
+const mode = payloadFile === undefined ? (fourth ?? "owner") : "owner";
+const ownerEntrypoint = payloadFile === undefined ? fifth : undefined;
 
 /** Follows the owner protocol without services; `held` acknowledges shutdown but stays alive. */
 const owner = Effect.scoped(
@@ -56,11 +77,15 @@ const owner = Effect.scoped(
     const path = yield* Path.Path;
     const stack = yield* state.read(stackId);
     if (stack === undefined) return yield* new FixtureError({ message: "stack is not registered" });
-    if (!(yield* state.lease(stackId))) {
-      report({ type: "error", message: "lease held", reason: "lease-held" });
-      return;
-    }
-    yield* state.retractHolder(stackId);
+    const lease = yield* state.acquireLease(stackId).pipe(
+      Effect.catchTag("Namespace.LeaseHeldError", () =>
+        Effect.sync(() => {
+          report({ type: "error", message: "lease held", reason: "lease-held" });
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
+    if (lease === undefined) return;
+    yield* lease.retractHolder;
     if (stack.identity.stackName === "slow-handshake") {
       const marker = path.join(stateRoot, "slow-handshake.pid");
       yield* fs.writeFileString(`${marker}.tmp`, String(process.pid));
@@ -97,7 +122,7 @@ const owner = Effect.scoped(
         }),
       )
       .pipe(Effect.forkScoped);
-    yield* state.publishHolder(stackId, {
+    yield* lease.publishHolder({
       role: "owner",
       secret,
       port: endpoint.port,
@@ -109,7 +134,7 @@ const owner = Effect.scoped(
     report({ type: "ready", endpoint, secret });
     if (mode === "held") yield* awaitBarrier;
     else yield* Deferred.await(shutdown);
-    yield* state.retractHolder(stackId);
+    yield* lease.retractHolder;
   }),
 );
 
@@ -128,7 +153,7 @@ const launcher = Effect.scoped(
 );
 
 try {
-  const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+  const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
   if (mode === "launcher") await Effect.runPromise(launcher.pipe(Effect.provide(layer)));
   else await Effect.runPromise(owner.pipe(Effect.provide(layer)));
 } catch (cause) {

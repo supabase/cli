@@ -10,8 +10,8 @@
  */
 
 import { Effect, Stream } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
@@ -22,6 +22,7 @@ import { withChildTraceEnv, withProcessSpanScoped } from "../../../shared/teleme
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { platformDefaultDockerHost } from "../../../command-internal/hostname.ts";
 import { renderStartVectorYaml } from "../lib/template-render.ts";
+import { ambientEnvironment } from "../../../shared/config/cli-config-provider.layer.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -151,12 +152,14 @@ export function resolveVectorDockerSocketPlan(
 }
 
 function collectText<E, R>(stream: Stream.Stream<Uint8Array, E, R>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
+  return Effect.suspend(() => {
+    const decoder = new TextDecoder();
+    return Stream.runFold(
+      stream,
+      () => "",
+      (text, chunk) => text + decoder.decode(chunk, { stream: true }),
+    ).pipe(Effect.map((text) => text + decoder.decode()));
+  });
 }
 
 /**
@@ -207,7 +210,7 @@ function inspectDockerContextHost(spawner: Spawner): Effect.Effect<string, strin
  */
 export function resolveDockerDaemonHost(
   spawner: Spawner,
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: Readonly<Record<string, string | undefined>> = ambientEnvironment(),
   platform: NodeJS.Platform = process.platform,
 ): Effect.Effect<string> {
   const fromEnv = env.DOCKER_HOST;

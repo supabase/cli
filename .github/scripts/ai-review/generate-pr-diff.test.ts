@@ -87,4 +87,68 @@ describe("generatePrDiff", () => {
     expect(diff).toContain("+feature");
     expect(diff).not.toContain("base-only.txt");
   });
+
+  test("diffs the pinned head even after the PR branch moves", () => {
+    const { seed, checkout } = setupRepository();
+    git(seed, "switch", "-c", "feature");
+    writeFileSync(join(seed, "reviewed.txt"), "reviewed\n");
+    git(seed, "add", "reviewed.txt");
+    git(seed, "commit", "-m", "reviewed change");
+    publishPullRequest(seed, 88);
+    const headSha = git(seed, "rev-parse", "HEAD");
+    writeFileSync(join(seed, "late.txt"), "pushed during the review\n");
+    git(seed, "add", "late.txt");
+    git(seed, "commit", "-m", "late change");
+    publishPullRequest(seed, 88);
+
+    const outputPath = join(checkout, "pr.diff");
+    generatePrDiff({
+      repositoryPath: checkout,
+      prNumber: 88,
+      baseRef: "develop",
+      outputPath,
+      headSha,
+    });
+
+    const diff = readFileSync(outputPath, "utf8");
+    expect(diff).toContain("+reviewed");
+    expect(diff).not.toContain("late.txt");
+  });
+
+  test("writes only the sync branch's own resolution and repairs for a develop-into-next sync", () => {
+    const { seed, checkout } = setupRepository();
+    const commit = (file: string, content: string, message: string) => {
+      writeFileSync(join(seed, file), content);
+      git(seed, "add", file);
+      git(seed, "commit", "-m", message);
+    };
+    git(seed, "switch", "-c", "next");
+    commit("shared.txt", "next side\n", "next change");
+    git(seed, "push", "origin", "next");
+    git(seed, "switch", "develop");
+    commit("shared.txt", "develop side\n", "develop change");
+    commit("develop-only.txt", "reviewed on develop\n", "develop feature");
+    git(seed, "push", "origin", "develop");
+
+    git(seed, "switch", "-c", "sync");
+    expect(() => git(seed, "merge", "next")).toThrow();
+    commit("shared.txt", "resolved by claude\n", "resolve the sync");
+    commit("repair.txt", "repair\n", "repair the sync");
+    publishPullRequest(seed, 99);
+
+    const syncResolutionPath = join(checkout, "sync-resolution.diff");
+    generatePrDiff({
+      repositoryPath: checkout,
+      prNumber: 99,
+      baseRef: "next",
+      outputPath: join(checkout, "pr.diff"),
+      syncResolutionPath,
+    });
+
+    const diff = readFileSync(syncResolutionPath, "utf8");
+    expect(diff).toContain("+resolved by claude");
+    expect(diff).toContain("+repair");
+    expect(diff).not.toContain("develop-only.txt");
+    expect(diff).not.toContain("+develop side");
+  });
 });

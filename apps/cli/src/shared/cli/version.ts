@@ -28,7 +28,8 @@ export function parseSemver(version: string): ParsedSemver | undefined {
     /^(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)?(?![\s\S])/.exec(
       version,
     );
-  if (match === null) return undefined;
+  const major = match?.[1];
+  if (match === null || major === undefined) return undefined;
   const prerelease = match[4] ?? "";
   if (
     prerelease
@@ -40,17 +41,17 @@ export function parseSemver(version: string): ParsedSemver | undefined {
     return undefined;
   }
   return {
-    nums: [match[1]!, match[2] ?? "0", match[3] ?? "0"],
+    nums: [major, match[2] ?? "0", match[3] ?? "0"],
     prerelease,
   };
 }
 
 /**
  * Which kind of build a CLI version string identifies. `beta` is the `develop` release train,
- * `preview` is a pull-request package, and `development` covers source runs, local builds, and
+ * `next` is the breaking-change train, `preview` is a pull-request package, and `development` covers source runs, local builds, and
  * any prerelease identifier the release pipeline does not produce.
  */
-export type CliBuildChannel = "stable" | "beta" | "preview" | "development";
+export type CliBuildChannel = "stable" | "beta" | "next" | "preview" | "development";
 
 export function cliBuildChannel(version: string): CliBuildChannel {
   const parsed = parseSemver(version);
@@ -58,6 +59,7 @@ export function cliBuildChannel(version: string): CliBuildChannel {
   if (parsed.prerelease === "") return "stable";
   const identifier = parsed.prerelease.split(".")[0];
   if (identifier === "beta") return "beta";
+  if (identifier === "next") return "next";
   if (identifier === "pr") return "preview";
   return "development";
 }

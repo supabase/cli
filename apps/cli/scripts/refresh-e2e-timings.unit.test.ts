@@ -13,6 +13,7 @@ describe("mergeTimings", () => {
       [
         cache(
           ["e2e:src/start.e2e.test.ts", { duration: 1200, failed: false }],
+          ["e2e-exclusive:src/health.e2e.test.ts", { duration: 900, failed: false }],
           ["unit:src/start.unit.test.ts", { duration: 5, failed: false }],
           [":src/start.integration.test.ts", { duration: 40, failed: false }],
         ),
@@ -20,7 +21,10 @@ describe("mergeTimings", () => {
       { vitestVersion },
     );
 
-    expect(timings).toEqual({ "src/start.e2e.test.ts": 1200 });
+    expect(timings).toEqual({
+      "src/health.e2e.test.ts": 900,
+      "src/start.e2e.test.ts": 1200,
+    });
   });
 
   test("skips failed entries and reports each one", () => {

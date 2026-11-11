@@ -1,6 +1,6 @@
 import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Duration, Effect, Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
@@ -10,6 +10,12 @@ import {
   type NetworkErrorFactory,
   type StatusErrorFactory,
 } from "./http-errors.ts";
+import { block } from "./command-permissions/model.ts";
+
+/** `findBranchName`'s branch listing. */
+export const branchTarget = block("branch-target", [
+  { operationId: "v1-list-all-branches", kind: "best-effort" },
+]);
 
 type BranchLookupBranches = typeof V1ListAllBranchesOutput.Type;
 
@@ -85,10 +91,7 @@ const acquireBranchLookupApi = Effect.fnUntraced(function* () {
   const factoryOption = yield* Effect.serviceOption(CommandPlatformApiFactory);
   if (Option.isNone(factoryOption)) return Option.none<ApiClient>();
 
-  return yield* factoryOption.value.make.pipe(
-    Effect.map(Option.some),
-    Effect.catch(() => Effect.succeed(Option.none<ApiClient>())),
-  );
+  return yield* factoryOption.value.make.pipe(Effect.option);
 });
 
 /**
@@ -132,7 +135,7 @@ export const findBranchName = Effect.fn("BranchTarget.findName")(function* (
     Effect.timeout(BRANCH_LOOKUP_TIMEOUT),
     // Any failure or the timeout above degrades to `None`; this helper never fails on a
     // flaky or slow lookup.
-    Effect.catch(() => Effect.succeed(Option.none<BranchLookupBranches>())),
+    Effect.orElseSucceed(() => Option.none<BranchLookupBranches>()),
   );
 
   const name = Option.isSome(branchesOption)

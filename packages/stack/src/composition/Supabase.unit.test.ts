@@ -3,8 +3,14 @@ import { Deferred, Effect, Exit, Fiber, Redacted, Ref, Scope, Stream } from "eff
 import * as TestClock from "effect/testing/TestClock";
 import * as Orchestrator from "../Orchestrator.ts";
 import { makeService, ServiceError } from "../Service.ts";
+import type { SavedStack } from "../StackNamespace.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
-import { makeSupabaseComposition, type SupabaseCompositionOperations } from "./Supabase.ts";
+import {
+  makeSupabaseComposition,
+  planEndpointReplan,
+  type SupabaseCompositionOperations,
+} from "./Supabase.ts";
+import { selection } from "../../tests/pins.ts";
 
 /** A registered instance with no runtime behavior beyond an immediate healthy start and stop. */
 const makeInstance = (
@@ -31,22 +37,24 @@ const makeInstance = (
           }),
         removeData: () => Effect.void,
       },
-      { id, config: {}, coordinate: orchestrator.admissionFor(id) },
+      { id, config: {}, report: orchestrator.report },
     );
-    const instance: Orchestrator.RegisteredInstance = {
+    yield* orchestrator.register({
       id,
       service: id,
       core,
-      startAt: (revision, inputs, wake, guard) => core.startAt(revision, inputs, wake, guard),
-      restart: (revision, inputs, config, guard) => core.restart(inputs, revision, guard),
+      launch: (generation, inputs) => core.launch(generation, inputs),
+      prepare: () => Effect.void,
       bind: Effect.void,
       close: Effect.void,
+      confirmRemoved: Effect.void,
+      release: Effect.void,
+      releasePorts: Effect.void,
       hasEndpoint: options.hasEndpoint ?? true,
       inputs: options.inputs ?? [],
       outputs: options.outputs ?? {},
-    };
-    yield* orchestrator.register(instance);
-    return instance;
+    });
+    return { status: orchestrator.status(id), observation: orchestrator.changes(id) };
   });
 
 /** Merges optional config bindings onto a creation; the config union can't express this generically. */
@@ -55,15 +63,15 @@ const withValues = <C extends ServiceCreation>(
   values: Record<string, string | undefined>,
 ): C => ({ ...creation, config: { ...creation.config, ...values } }) as C;
 
-const stopped = (instance: Orchestrator.RegisteredInstance) =>
-  instance.core.observation.pipe(
+const stopped = (instance: Effect.Success<ReturnType<typeof makeInstance>>) =>
+  instance.observation.pipe(
     Stream.filter((state) => state.lifecycle === "stopped" && state.currentOperation === undefined),
     Stream.take(1),
     Stream.runDrain,
   );
 
 it.live(
-  "keeps a studio member's pgmeta prerequisite awake past 60s, and sleeps both after studio idles",
+  "keeps Studio's pgmeta prerequisite awake without coupling its lifecycle to Functions",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -71,8 +79,8 @@ it.live(
         const inputs: ReadonlyArray<ServiceCreation> = [
           {
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("studio-idle-password"),
               jwtSecret: Redacted.make("studio-idle-jwt-secret-with-32-chars"),
               jwtExpiry: 3600,
@@ -81,16 +89,34 @@ it.live(
           },
           {
             service: "auth",
+            pin: selection.auth,
             config: { jwtSecret: "studio-idle-jwt-secret-with-32-chars", jwtExpiry: 3600 },
             endpoints: { http: { port: "auto" } },
           },
-          { service: "studio", config: {}, endpoints: { http: { port: "auto" } } },
-          { service: "pgmeta", config: {}, endpoints: { http: { port: "auto" } } },
+          {
+            service: "functions",
+            pin: selection.functions,
+            config: { functionsRoot: "/project/supabase/functions" },
+            endpoints: { http: { port: "auto" } },
+          },
+          {
+            service: "studio",
+            pin: selection.studio,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
+          {
+            service: "pgmeta",
+            pin: selection.pgmeta,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
         ];
         const baseById = new Map(inputs.map((creation) => [idFor(creation.service), creation]));
         const captured = yield* Ref.make<Orchestrator.CompositionConfig | undefined>(undefined);
         const operations: SupabaseCompositionOperations = {
           currentComposition: Effect.succeed({ members: [], dependencies: [] }),
+          randomToken: Effect.succeed("token"),
           get: () => Effect.die("get is unused"),
           status: () => Effect.die("status is unused"),
           create: (creation) => Effect.succeed({ id: idFor(creation.service), creation }),
@@ -107,11 +133,12 @@ it.live(
           replaceCreation: () => Effect.die("replaceCreation is unused"),
           configure: (configuration) => Ref.set(captured, configuration),
         };
-        yield* makeSupabaseComposition(operations, inputs);
+        const configured = yield* makeSupabaseComposition(operations, inputs);
         const configuration = yield* Ref.get(captured);
         if (configuration === undefined) return yield* Effect.die("Composition was not configured");
 
         const studioId = idFor("studio");
+        const functionsId = idFor("functions");
         const pgmetaId = idFor("pgmeta");
         // pgmeta must be a declared prerequisite of studio for the dependent-blocks-sleep rule below to apply.
         expect(
@@ -119,6 +146,10 @@ it.live(
             (dependency) => dependency.from === pgmetaId && dependency.to === studioId,
           ),
         ).toBe(true);
+        const configuredStudio = configured.find(({ creation }) => creation.service === "studio");
+        if (configuredStudio?.creation.service !== "studio")
+          return yield* Effect.die("Studio was not configured");
+        expect(configuredStudio.creation.config.functionsUrl).toBe(`url::${functionsId}`);
 
         const orchestrator = yield* Orchestrator.make<Orchestrator.RegisteredInstance>();
         const database = yield* makeInstance(orchestrator, idFor("database"), {
@@ -132,18 +163,27 @@ it.live(
           inputs: ["databaseUrl"],
           outputs: { url: Effect.succeed("http://pgmeta") },
         });
+        yield* makeInstance(orchestrator, functionsId, {
+          outputs: { url: Effect.succeed(`url::${functionsId}`) },
+        });
         const studio = yield* makeInstance(orchestrator, studioId, {
           inputs: ["databaseUrl", "pgmetaUrl", "analyticsUrl", "functionsUrl"],
         });
         yield* orchestrator.configure(configuration);
         yield* orchestrator.startComposition;
+        yield* orchestrator.restart(functionsId);
+        yield* orchestrator.ready(functionsId);
+        expect(yield* studio.status).toMatchObject({ lifecycle: "stopped", wakeEnabled: true });
 
         const requestScope = yield* Scope.make();
         yield* orchestrator.acquire(studioId).pipe(Scope.provide(requestScope));
         yield* TestClock.adjust("1 second");
-        expect((yield* database.core.get).lifecycle).toBe("running");
-        expect((yield* pgmeta.core.get).lifecycle).toBe("running");
-        expect((yield* studio.core.get).lifecycle).toBe("running");
+        expect((yield* database.status).lifecycle).toBe("running");
+        expect((yield* pgmeta.status).lifecycle).toBe("running");
+        expect((yield* studio.status).lifecycle).toBe("running");
+        yield* orchestrator.restart(functionsId);
+        yield* orchestrator.ready(functionsId);
+        expect((yield* studio.status).lifecycle).toBe("running");
 
         // The request finished; studio itself now idles on its own 5-minute timer.
         yield* Scope.close(requestScope, Exit.void);
@@ -151,19 +191,93 @@ it.live(
         // Well past pgmeta's own 60s idle mark but within studio's 5-minute window: studio
         // isn't idle yet, so the dependent-blocks-sleep rule keeps pgmeta running too.
         yield* TestClock.adjust("90 seconds");
-        expect((yield* studio.core.get).lifecycle).toBe("running");
-        expect((yield* pgmeta.core.get).lifecycle).toBe("running");
+        expect((yield* studio.status).lifecycle).toBe("running");
+        expect((yield* pgmeta.status).lifecycle).toBe("running");
 
         // One second before studio's 5-minute idle deadline, measured from the request.
         yield* TestClock.adjust("208 seconds");
-        expect((yield* studio.core.get).lifecycle).toBe("running");
-        expect((yield* pgmeta.core.get).lifecycle).toBe("running");
+        expect((yield* studio.status).lifecycle).toBe("running");
+        expect((yield* pgmeta.status).lifecycle).toBe("running");
 
         const studioStopped = yield* stopped(studio).pipe(Effect.forkChild);
         const pgmetaStopped = yield* stopped(pgmeta).pipe(Effect.forkChild);
         yield* TestClock.adjust("2 seconds");
         yield* Fiber.join(studioStopped);
+        expect((yield* pgmeta.status).lifecycle).toBe("running");
+
+        // Once studio's stop is confirmed, pgmeta idles on its own timer.
+        yield* TestClock.adjust("60 seconds");
         yield* Fiber.join(pgmetaStopped);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
 );
+
+it("does not let an excluded sibling's stale fixed port mask a shared endpoint's own change", () => {
+  const fixedPort = 54_321;
+  const saved: Pick<SavedStack, "instances" | "composition"> = {
+    instances: [
+      {
+        id: "rest-1",
+        creation: {
+          service: "rest",
+          pin: selection.rest,
+          config: {},
+          endpoints: { http: { port: fixedPort } },
+        },
+      },
+      {
+        id: "auth-1",
+        creation: {
+          service: "auth",
+          pin: selection.auth,
+          config: {},
+          endpoints: { http: { port: fixedPort } },
+        },
+      },
+    ],
+    composition: {
+      members: [
+        { id: "rest-1", activation: "eager" },
+        { id: "auth-1", activation: "eager" },
+      ],
+      dependencies: [],
+    },
+  };
+  // The config dropped [api] port and the start excludes auth, so only REST is requested.
+  const requested: ReadonlyArray<ServiceCreation> = [
+    { service: "rest", pin: selection.rest, config: {}, endpoints: { http: { port: "auto" } } },
+  ];
+  const plan = planEndpointReplan(saved, requested);
+  expect(plan?.changes).toEqual([
+    {
+      id: "rest-1",
+      service: "rest",
+      endpoint: "http",
+      key: "api",
+      previous: fixedPort,
+    },
+  ]);
+});
+
+it("releases the shared listener's automatic claim when another sharing service takes a fixed port", () => {
+  const saved: Pick<SavedStack, "instances" | "composition"> = {
+    instances: [
+      {
+        id: "auth-1",
+        creation: {
+          service: "auth",
+          pin: selection.auth,
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        },
+      },
+    ],
+    composition: { members: [{ id: "auth-1", activation: "eager" }], dependencies: [] },
+  };
+  // Auth is excluded from this start and REST takes the config's fixed [api] port.
+  const requested: ReadonlyArray<ServiceCreation> = [
+    { service: "rest", pin: selection.rest, config: {}, endpoints: { http: { port: 8_911 } } },
+  ];
+  expect(planEndpointReplan(saved, requested)?.releasesSharedApi).toBe(true);
+  expect(planEndpointReplan(saved, [])).toBeUndefined();
+});

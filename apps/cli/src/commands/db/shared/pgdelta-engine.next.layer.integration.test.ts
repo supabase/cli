@@ -1,15 +1,17 @@
+import * as BunCrypto from "@effect/platform-bun/BunCrypto";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
+import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { pgDeltaNextEngineLayer } from "./pgdelta-engine.next.layer.ts";
 import { PgDeltaEngine } from "./pgdelta-engine.service.ts";
 import { PgDeltaNextAdapter } from "./pgdelta-next-adapter.service.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
-import type { DbTomlValues } from "../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 
 const common = {
   context: {
@@ -24,15 +26,14 @@ const common = {
   strictCoverage: false,
 } as const;
 
-const toml: DbTomlValues = {
+const toml: DbConfigValues = {
   projectEnv: {},
-  envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
+  exposedSchemas: ["public", "graphql_public"],
   port: 54322,
   shadowPort: 54320,
   password: "postgres",
-  poolerConnectionString: Option.none(),
-  projectId: Option.none(),
+  projectId: "test",
   majorVersion: 17,
   orioledbVersion: Option.none(),
   denoVersion: 2,
@@ -55,11 +56,15 @@ const toml: DbTomlValues = {
   seed: { enabled: true, sqlPaths: [] },
   vault: [],
   appliedRemote: undefined,
-  remoteOverrideKeys: new Set(),
+  configFile: { format: "toml", path: "supabase/config.toml" },
 };
 
 function setup() {
-  const state = { migrations: 0, plan: 0, planBypassCache: undefined as boolean | undefined };
+  const state: { migrations: number; plan: number; planBypassCache: boolean | undefined } = {
+    migrations: 0,
+    plan: 0,
+    planBypassCache: undefined,
+  };
   const shadow = Layer.succeed(PgDeltaNextShadow, {
     provisionMigrations: () =>
       Effect.sync(() => {
@@ -91,10 +96,12 @@ function setup() {
   });
   const dependencies = Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     shadow,
     unusedAdapter,
     debug,
     mockOutput().layer,
+    mockCommandSettings({ workdir: "/unused-pgdelta-next-workdir" }),
   );
   return {
     state,

@@ -1,28 +1,30 @@
-import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { postgres } from "@supabase/stack/commands";
+import {
+  databaseArtifactPin,
+  isOrioledbVersion,
+  type ArtifactPin,
+} from "@supabase/stack/internal/artifacts";
 
-import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
-import { readDbToml } from "./db-config.toml-read.ts";
+import { readDbConfig } from "./db-config.read.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { resolveDbTargetFlags } from "./db-target-flags.ts";
+import {
+  requireTargetMutationConsent,
+  hostedMutationPreapproval,
+} from "./hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "./target/resolve-target.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import type { TestDbFlags } from "./test-db.command-handler.ts";
-import {
-  TestDbEnablePgtapError,
-  TestDbMutuallyExclusiveFlagsError,
-  TestDbNoTestsError,
-  TestDbRunError,
-} from "./test-db.errors.ts";
-import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
+import { TestDbEnablePgtapError, TestDbNoTestsError, TestDbRunError } from "./test-db.errors.ts";
+import { buildPgProveArgs, pgProveMajor } from "./test-db.pg-prove-args.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import {
   rewriteDumpHostForToolContainer,
@@ -38,7 +40,6 @@ const DISABLE_PGTAP = "drop extension if exists pgtap";
 // Compose pin: the config schema has no `[images]` override. Stack prove uses
 // catalog `pg_prove` instead. Re-verify `NO_TESTS_VERDICT` when bumping this tag.
 const PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
-const MAX_PROJECT_ID_LENGTH = 40;
 /**
  * `pg_prove` exits 0 even when it finds nothing to run, so a typo'd path or a
  * misresolved bind can silently report success on zero tests. Detecting
@@ -54,7 +55,7 @@ type ManagedStack = {
   readonly stack: Stack;
   readonly database: DatabaseInstance;
   readonly connection: PgConnInput;
-  readonly major: 15 | 17;
+  readonly pin: ArtifactPin;
 };
 
 const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
@@ -79,16 +80,18 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local stack primary service is not a database.",
     });
-  const major =
-    status.config.config.version === "15"
-      ? 15
-      : status.config.config.version === "17"
-        ? 17
-        : undefined;
+  const savedPin = status.config.pin;
+  const major = pgProveMajor(savedPin.upstreamVersion);
   if (major === undefined)
     return yield* new LocalDbRunningError({
-      message: `The local database major version ${status.config.config.version} is not supported by pg_prove.`,
+      message: `The local database version ${savedPin.upstreamVersion} is not supported by pg_prove.`,
     });
+  // An OrioleDB database runs pg_prove from the stock build of its major.
+  const pin = isOrioledbVersion(savedPin.upstreamVersion)
+    ? yield* databaseArtifactPin(String(major)).pipe(
+        Effect.mapError((cause) => new LocalDbRunningError({ message: cause.message })),
+      )
+    : savedPin;
   const credentials = yield* database.credentials({ from: "runtime" }).pipe(
     Effect.mapError(
       (cause) =>
@@ -102,20 +105,13 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local database did not provide runtime credentials.",
     });
-  const connection = parseConnectionString(databaseUrl);
+  const connection = yield* parseConnectionString(databaseUrl);
   if (connection === undefined)
     return yield* new LocalDbRunningError({
       message: "The local database returned malformed runtime credentials.",
     });
-  return { stack, database, connection, major } satisfies ManagedStack;
+  return { stack, database, connection, pin } satisfies ManagedStack;
 });
-
-function sanitizeProjectId(src: string): string {
-  return src
-    .replace(/[^a-zA-Z0-9_.-]+/g, "_")
-    .replace(/^[_.-]+/, "")
-    .slice(0, MAX_PROJECT_ID_LENGTH);
-}
 
 export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
   const output = yield* Output;
@@ -130,40 +126,17 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
   const debug = yield* DebugFlag;
   const networkIdFlag = yield* NetworkIdFlag;
   const dnsResolver = yield* DnsResolverFlag;
-  const cliArgs = yield* CliArgs;
 
   yield* Effect.gen(function* () {
-    // Selection is keyed off flag presence, not its boolean value: `--linked=false`
-    // and `--no-linked` both count as explicitly setting `linked`.
-    const target = resolveDbTargetFlags(cliArgs.args);
-    const { setFlags } = target;
-    if (setFlags.length > 1) {
-      return yield* Effect.fail(
-        new TestDbMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-        }),
-      );
-    }
+    const target = yield* resolveTarget(flags);
 
-    const connType = target.connType ?? "local";
-
-    // `--project-ref` never implies `--linked`; see push.handler.ts's
-    // identical guard (db push) for the rationale.
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new TestDbMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
-    }
-
-    const { conn, isLocal } = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType,
+    const resolved = yield* resolver.resolveConnection({
+      target,
       dnsResolver,
-      linkedProjectRef: flags.projectRef,
+      password: Option.none(),
+      networkBanRemoval: yield* hostedMutationPreapproval,
     });
+    const { conn, isLocal } = resolved;
 
     const args = buildPgProveArgs({
       paths: flags.paths,
@@ -174,7 +147,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
 
     const backend = yield* currentStackBackend;
     const managedStack =
-      backend.kind === "stack" && connType === "local" ? yield* managedStackFor() : undefined;
+      backend.kind === "stack" && target.kind === "local" ? yield* managedStackFor() : undefined;
     const proveRuntime =
       backend.kind === "stack" && managedStack === undefined
         ? yield* resolveBundledPostgresRuntime(undefined, runtimeInfo.platform, runtimeInfo.arch)
@@ -190,7 +163,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         managedStack !== undefined
           ? proveConnection.host
           : useNativeProve
-            ? connType === "local"
+            ? target.kind === "local"
               ? "127.0.0.1"
               : conn.host
             : stackPublishedProve
@@ -219,14 +192,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         ? { _tag: "named" as const, name: networkId }
         : isLocal && backend.kind !== "stack"
           ? yield* Effect.gen(function* () {
-              const toml = yield* readDbToml(fs, path, cliSettings.workdir);
-              // The project id is sanitized unconditionally before deriving the
-              // network name, so a configured `project_id` like "my project" joins
-              // the same sanitized network the local stack created.
-              const projectId = sanitizeProjectId(
-                Option.getOrElse(toml.projectId, () => nodePath.basename(cliSettings.workdir)),
-              );
-              return { _tag: "named" as const, name: `supabase_network_${projectId}` };
+              const toml = yield* readDbConfig(fs, path, cliSettings.workdir);
+              return { _tag: "named" as const, name: `supabase_network_${toml.projectId}` };
             })
           : { _tag: "host" as const };
 
@@ -236,13 +203,17 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     let lastVerdict = "";
     let lastSummary = "";
 
+    yield* requireTargetMutationConsent(resolved, {
+      action: "Run pgTAP tests",
+      details: [
+        "enable the pgtap extension",
+        `run pg_prove against ${args.hostPaths.join(", ")}`,
+        "drop the pgtap extension afterwards unless it was already installed",
+      ],
+    });
+
     const { exitCode } = yield* Effect.scoped(
       Effect.gen(function* () {
-        // stdout is reserved for the pg_prove TAP stream (forwarded byte-exact
-        // below), so connection diagnostics go to stderr. An `Output.task`
-        // spinner would also corrupt the stream: it writes ANSI to stdout in
-        // text mode, and JSON log events to stdout in stream-json mode.
-        yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
         const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
         // Detect pre-existence before enabling so the drop is skipped when pgTAP
@@ -294,11 +265,11 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           const hostWorkingDir =
             hostPath === undefined
               ? undefined
-              : nodePath.extname(hostPath) !== ""
-                ? nodePath.dirname(hostPath)
+              : path.extname(hostPath) !== ""
+                ? path.dirname(hostPath)
                 : hostPath;
           return yield* managedStack.stack.commands
-            .run(postgres.pgProve({ major: managedStack.major }), {
+            .run(postgres.pgProve({ pin: managedStack.pin }), {
               args: args.cmd.slice(1),
               env: runEnv,
               pgProve: {
@@ -311,25 +282,28 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             })
             .pipe(
               Effect.mapError(
-                (cause) => new TestDbRunError({ message: `pg_prove run failed: ${cause.message}` }),
+                (cause) =>
+                  new TestDbRunError({ message: `pg_prove run failed: ${cause.message}`, cause }),
               ),
             );
         }
         if (backend.kind === "stack") {
           const bundled = yield* BundledPostgresClient;
-          const toml = yield* readDbToml(fs, path, cliSettings.workdir);
-          const version = String(toml.majorVersion);
+          const toml = yield* readDbConfig(fs, path, cliSettings.workdir);
+          const pin = yield* databaseArtifactPin(String(toml.majorVersion)).pipe(
+            Effect.mapError((cause) => new TestDbRunError({ message: cause.message, cause })),
+          );
           const hostPath = args.hostPaths[0];
           const hostWorkingDir =
             hostPath === undefined
               ? undefined
-              : nodePath.extname(hostPath) !== ""
-                ? nodePath.dirname(hostPath)
+              : path.extname(hostPath) !== ""
+                ? path.dirname(hostPath)
                 : hostPath;
           const nativeArgs = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r", ...args.hostPaths];
           if (debug) nativeArgs.push("--verbose");
           return yield* bundled.run({
-            version,
+            pin,
             runtime: proveRuntime,
             argv: useNativeProve ? nativeArgs : args.cmd,
             env: runEnv,
@@ -370,22 +344,18 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     // Non-zero pg_prove exit fails the command; the TAP failure detail has
     // already streamed to stdout.
     if (exitCode !== 0) {
-      return yield* Effect.fail(
-        new TestDbRunError({
-          message: `error running ${managedStack !== undefined || useNativeProve ? "pg_prove" : "container"}: exit ${exitCode}`,
-        }),
-      );
+      return yield* new TestDbRunError({
+        message: `error running ${managedStack !== undefined || useNativeProve ? "pg_prove" : "container"}: exit ${exitCode}`,
+      });
     }
 
     // A stream that ends without a trailing newline leaves the verdict unterminated.
     const finalVerdict = pendingLine.startsWith(VERDICT_PREFIX) ? pendingLine : lastVerdict;
     const aggregatedFiles = FILES_SUMMARY.exec(lastSummary)?.[1];
     if (finalVerdict.trimEnd() === NO_TESTS_VERDICT && aggregatedFiles === "0") {
-      return yield* Effect.fail(
-        new TestDbNoTestsError({
-          message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
-        }),
-      );
+      return yield* new TestDbNoTestsError({
+        message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
+      });
     }
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

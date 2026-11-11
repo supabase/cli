@@ -1,0 +1,26 @@
+{
+  "workloads": [
+    { "id": "version", "args": ["--version"], "cwdSetup": "none" },
+    { "id": "help", "args": ["--help"], "cwdSetup": "none" },
+    { "id": "init", "args": ["init"], "cwdSetup": "none" },
+    { "id": "migration-new", "args": ["migration", "new", "bench"], "cwdSetup": "init" },
+    {
+      "id": "gen-types",
+      "args": ["gen", "types", "--lang", "typescript", "--project-id", "replayfixtureprojref"],
+      "cwdSetup": "none",
+      "scenario": "gen-types-generates-typescript-types-from-project"
+    },
+    {
+      "id": "projects-list",
+      "args": ["projects", "list"],
+      "cwdSetup": "none",
+      "scenario": "projects-list-renders-project-list"
+    },
+    {
+      "id": "functions-list",
+      "args": ["functions", "list", "--project-ref", "replayfixtureprojref"],
+      "cwdSetup": "none",
+      "scenario": "functions-list-renders-fixture-data-in-output"
+    }
+  ]
+}

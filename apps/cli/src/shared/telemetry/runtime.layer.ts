@@ -1,5 +1,6 @@
 import { note } from "@clack/prompts";
-import { Config, Crypto, Effect, Layer, Option } from "effect";
+import { Config, Effect, Layer, Option } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
@@ -12,7 +13,7 @@ const CI_ENV_VARS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_U
 /** Whether a well-known CI provider variable is set. */
 export const detectCi = Effect.gen(function* () {
   for (const envVar of CI_ENV_VARS) {
-    if (Option.isSome(yield* Config.option(Config.string(envVar)))) return true;
+    if (Option.isSome(yield* Config.option(Config.String(envVar)))) return true;
   }
   return false;
 });
@@ -20,7 +21,7 @@ export const detectCi = Effect.gen(function* () {
 export const telemetryRuntimeLayer = Layer.effect(
   TelemetryRuntime,
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configDir = yield* getConfigDir;
     const tty = yield* Tty;
     const runtimeInfo = yield* RuntimeInfo;
@@ -55,8 +56,8 @@ export const telemetryRuntimeLayer = Layer.effect(
         };
       } else {
         identity = {
-          deviceId: yield* crypto.randomUUIDv4,
-          sessionId: yield* crypto.randomUUIDv4,
+          deviceId: yield* crypto.uuidV4(),
+          sessionId: yield* crypto.uuidV4(),
           distinctId: undefined,
           isFirstRun: false,
         };

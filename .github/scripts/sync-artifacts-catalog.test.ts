@@ -57,12 +57,6 @@ const manifestWithUpstreamImage =
   async () =>
     JSON.stringify({ upstream_image: image });
 
-/** A `fetchProvenance` returning a mirrored service's `source`. */
-const provenanceWithSource =
-  (source: string): RevisionIo["fetchProvenance"] =>
-  async () =>
-    JSON.stringify({ source });
-
 const unusedFetchManifest: RevisionIo["fetchManifest"] = async () => {
   throw new Error("fetchManifest should not be called for this service");
 };
@@ -188,6 +182,24 @@ const postgresPlannerFixture = `const workloadCatalog = {
   ),
 };
 `;
+
+/** `postgresPlannerFixture` plus a resolved OrioleDB line beside stock 17. */
+const postgresOrioleFixture = postgresPlannerFixture.replace(
+  `        natives: {},
+      },
+    },
+  ),`,
+  `        natives: {},
+      },
+      "17.11.0.002-orioledb": {
+        upstreamVersion: "17.11.0.002-orioledb",
+        revision: 0,
+        image: "ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r0@sha256:5555555555555555555555555555555555555555555555555555555555555",
+        natives: {},
+      },
+    },
+  ),`,
+);
 
 describe("validateSlimReleasePublishedPayload", () => {
   test("rejects a newline injected into upstream_version", () => {
@@ -319,6 +331,42 @@ describe("planSlimUpdates", () => {
     ]);
     expect(warnings).toEqual([
       "::warning ::postgrest v16.2-r1 hotfix skipped because this line is upgrading to v16.4-r0; run --service postgrest --release v16.2-r1 to pin the hotfix alone.",
+    ]);
+  });
+
+  test("a held service skips the upgrade with a warning but still takes the pinned upstream's hotfix", () => {
+    const analyticsFixture = `const workloadCatalog = {
+  analytics: definition(
+    "analytics",
+    {
+      upstreamVersion: "v1.50.15",
+      revision: 1,
+      image: "ghcr.io/supabase/cli/analytics:v1.50.15-r1@sha256:4444444444444444444444444444444444444444444444444444444444444",
+      natives: {},
+    },
+    "bin/analytics",
+  ),
+};
+`;
+
+    const { updates, warnings } = planSlimUpdates(analyticsFixture, "analytics", [
+      "analytics-v1.50.15-r2",
+      "analytics-v1.53.1-r0",
+    ]);
+
+    expect(updates).toEqual([
+      {
+        kind: "hotfix",
+        line: undefined,
+        branch: "slim-hotfix/analytics",
+        title: "chore(stack): pin analytics v1.50.15-r2",
+        fromRelease: "v1.50.15-r1",
+        toUpstream: "v1.50.15",
+        toRelease: "v1.50.15-r2",
+      },
+    ]);
+    expect(warnings).toEqual([
+      "::warning ::analytics upgrade to v1.53.1-r0 held at v1.50.15: Logflare 1.52+ breaks Postgres-backend endpoint queries (https://github.com/Logflare/logflare/issues/4158).",
     ]);
   });
 
@@ -499,6 +547,100 @@ describe("planSlimUpdates", () => {
         toUpstream: "17.11.0.002",
         toRelease: "17.11.0.002-r0",
       },
+    ]);
+  });
+
+  test("postgres: the first OrioleDB release adds its newest build and never moves stock 17", () => {
+    const { updates, warnings } = planSlimUpdates(postgresPlannerFixture, "postgres", [
+      "postgres-17.9.0.028-orioledb-r0",
+      "postgres-17.11.0.002-orioledb-r0",
+      "postgres-17.11.0.002-orioledb-r1",
+      "postgres-17.4.1.030-orioledb",
+    ]);
+
+    expect(warnings).toEqual([]);
+    expect(updates).toEqual([
+      {
+        kind: "add",
+        line: "17.11.0.002-orioledb",
+        branch: "slim-bump/postgres-17-orioledb",
+        title: "chore(stack): add postgres 17.11.0.002-orioledb-r1",
+        toUpstream: "17.11.0.002-orioledb",
+        toRelease: "17.11.0.002-orioledb-r1",
+      },
+    ]);
+  });
+
+  test("postgres: only the newest unshipped OrioleDB build is added beside the pinned one, which still takes hotfixes", () => {
+    const { updates, warnings } = planSlimUpdates(postgresOrioleFixture, "postgres", [
+      "postgres-17.6.1.168-r2",
+      "postgres-17.9.0.028-orioledb-r0",
+      "postgres-17.11.0.001-orioledb-r0",
+      "postgres-17.11.0.002-orioledb-r1",
+      "postgres-17.11.0.003-orioledb-r0",
+      "postgres-17.12.0.001-orioledb-r0",
+    ]);
+
+    expect(warnings).toEqual([]);
+    expect(updates).toEqual([
+      {
+        kind: "hotfix",
+        line: "17",
+        branch: "slim-hotfix/postgres-17",
+        title: "chore(stack): pin postgres 17.6.1.168-r2",
+        fromRelease: "17.6.1.168-r1",
+        toUpstream: "17.6.1.168",
+        toRelease: "17.6.1.168-r2",
+      },
+      {
+        kind: "hotfix",
+        line: "17.11.0.002-orioledb",
+        branch: "slim-hotfix/postgres-17.11.0.002-orioledb",
+        title: "chore(stack): pin postgres 17.11.0.002-orioledb-r1",
+        fromRelease: "17.11.0.002-orioledb-r0",
+        toUpstream: "17.11.0.002-orioledb",
+        toRelease: "17.11.0.002-orioledb-r1",
+      },
+      {
+        kind: "add",
+        line: "17.12.0.001-orioledb",
+        branch: "slim-bump/postgres-17-orioledb",
+        title: "chore(stack): add postgres 17.12.0.001-orioledb-r0",
+        toUpstream: "17.12.0.001-orioledb",
+        toRelease: "17.12.0.001-orioledb-r0",
+      },
+    ]);
+  });
+
+  test("postgres: OrioleDB builds older than the pinned one are never backfilled", () => {
+    expect(
+      planSlimUpdates(postgresOrioleFixture, "postgres", [
+        "postgres-17.9.0.028-orioledb-r0",
+        "postgres-17.11.0.001-orioledb-r0",
+      ]),
+    ).toEqual({ updates: [], warnings: [] });
+  });
+
+  test("postgres: an OrioleDB release for a major the catalog does not carry is ignored and warned about", () => {
+    const { updates, warnings } = planSlimUpdates(postgresPlannerFixture, "postgres", [
+      "postgres-18.0.0.001-orioledb-r0",
+    ]);
+
+    expect(updates).toEqual([]);
+    expect(warnings).toEqual([
+      "::warning ::postgres 18.0.0.001-orioledb is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-18.0.0.001-orioledb-r0.",
+    ]);
+  });
+
+  test("postgres: a catalog with no additional pin ignores a new OrioleDB line it could not insert", () => {
+    const singlePin = `${postgresPlannerFixture.slice(0, postgresPlannerFixture.indexOf('    {\n      "15.14.1.168"'))}  ),\n};\n`;
+    const { updates, warnings } = planSlimUpdates(singlePin, "postgres", [
+      "postgres-17.11.0.002-orioledb-r0",
+    ]);
+
+    expect(updates).toEqual([]);
+    expect(warnings).toEqual([
+      "::warning ::postgres 17.11.0.002-orioledb is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-17.11.0.002-orioledb-r0.",
     ]);
   });
 
@@ -1062,6 +1204,84 @@ describe("refreshCatalogPin", () => {
   });
 });
 
+describe("refreshCatalogPin keeps every OrioleDB build", () => {
+  const orioleIo = (revision: number, seed: string, upstream = "17.11.0.002"): RevisionIo => {
+    const release = `${upstream}-orioledb-r${revision}`;
+    const digests = nativeDigests(seed);
+    return {
+      listReleaseTags: async () =>
+        Array.from({ length: revision + 1 }, (_, n) => `postgres-${upstream}-orioledb-r${n}`),
+      fetchChecksums: async () => checksumsFor("postgres", release, digests),
+      imageDigest: async () => digest(seed),
+      s3Sha256: matchingS3("postgres", release, digests),
+      fetchManifest: manifestWithUpstreamImage(`supabase/postgres:${upstream}-orioledb`),
+      fetchProvenance: unusedFetchProvenance,
+    };
+  };
+
+  test("inserts the first OrioleDB pin, hotfixes it, then adds a newer build beside it", async () => {
+    const added = await refreshCatalogPin({
+      catalog: fixture,
+      service: "postgres",
+      release: "17.11.0.002-orioledb-r0",
+      io: orioleIo(0, "oriole-0"),
+    });
+
+    expect(added.update).toEqual({
+      service: "postgres",
+      version: "17.11.0.002-orioledb",
+      revision: 0,
+      target: "additional",
+    });
+    expect(added.source).toContain(postgres17Image);
+    expect(added.source).toContain('"15.14.1.168": { upstreamVersion: "15.14.1.168"');
+    expect(added.source).toContain(
+      '"17.11.0.002-orioledb": { upstreamVersion: "17.11.0.002-orioledb"',
+    );
+
+    const formatted = await formatWithOxfmt(added.source);
+    const hotfixed = await refreshCatalogPin({
+      catalog: formatted,
+      service: "postgres",
+      release: "17.11.0.002-orioledb-r1",
+      io: orioleIo(1, "oriole-1"),
+    });
+
+    expect(hotfixed.update).toEqual({
+      service: "postgres",
+      version: "17.11.0.002-orioledb",
+      revision: 1,
+      previousVersion: "17.11.0.002-orioledb",
+      target: "additional",
+    });
+    expect(hotfixed.source).toContain(postgres17Image);
+    expect(hotfixed.source).toContain(
+      `"ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r1@${digest("oriole-1")}"`,
+    );
+    expect(hotfixed.source).not.toContain(digest("oriole-0"));
+
+    const newer = await refreshCatalogPin({
+      catalog: await formatWithOxfmt(hotfixed.source),
+      service: "postgres",
+      release: "17.12.0.001-orioledb-r0",
+      io: orioleIo(0, "oriole-next", "17.12.0.001"),
+    });
+
+    expect(newer.update).toEqual({
+      service: "postgres",
+      version: "17.12.0.001-orioledb",
+      revision: 0,
+      target: "additional",
+    });
+    expect(newer.source).toContain(
+      `"ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r1@${digest("oriole-1")}"`,
+    );
+    expect(newer.source).toContain(
+      `"ghcr.io/supabase/cli/postgres:17.12.0.001-orioledb-r0@${digest("oriole-next")}"`,
+    );
+  });
+});
+
 describe("resolveRevisionPin waits for the S3 mirror", () => {
   test("waits while one S3 object is missing, then resolves once it appears", async () => {
     const digests = nativeDigests("s3-wait");
@@ -1284,20 +1504,42 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
     );
   });
 
-  test("resolves a mirrored service's upstreamImage from its oci-provenance source", async () => {
+  const mirroredIo = (provenanceLine: (provenance: string) => string | undefined): RevisionIo => {
     const digests = nativeDigests("ag");
-    const io: RevisionIo = {
+    const provenance = JSON.stringify({ source: "docker.io/timberio/vector:0.53.0-alpine" });
+    const line = provenanceLine(provenance);
+    return {
       listReleaseTags: async () => ["vector-0.53.0-r0"],
-      fetchChecksums: async () => checksumsFor("vector", "0.53.0-r0", digests),
+      fetchChecksums: async () =>
+        [checksumsFor("vector", "0.53.0-r0", digests), line]
+          .filter((entry) => entry !== undefined)
+          .join("\n"),
       imageDigest: async () => digest("ah"),
       s3Sha256: matchingS3("vector", "0.53.0-r0", digests),
       fetchManifest: unusedFetchManifest,
-      fetchProvenance: provenanceWithSource("docker.io/timberio/vector:0.53.0-alpine"),
+      fetchProvenance: async () => provenance,
     };
+  };
+
+  test("resolves a mirrored service's upstreamImage from its oci-provenance source", async () => {
+    const io = mirroredIo((provenance) => `${hex(provenance)}  vector-0.53.0.oci-provenance.json`);
 
     const result = await refreshCatalogPin({ catalog: vectorFixture, service: "vector", io });
 
     expect(result.source).toContain('upstreamImage: "timberio/vector:0.53.0-alpine"');
+  });
+
+  test.each([
+    ["has no SHA256SUMS line", () => undefined, /has no line for vector-0\.53\.0\.oci-provenance/],
+    [
+      "does not match SHA256SUMS",
+      () => `${hex("other")}  vector-0.53.0.oci-provenance.json`,
+      /does not match SHA256SUMS/,
+    ],
+  ])("rejects an oci-provenance file that %s", async (_name, line, message) => {
+    await expect(
+      refreshCatalogPin({ catalog: vectorFixture, service: "vector", io: mirroredIo(line) }),
+    ).rejects.toThrow(message);
   });
 
   test("rejects a manifest upstream_image carrying a quote or template expression, writing nothing", async () => {

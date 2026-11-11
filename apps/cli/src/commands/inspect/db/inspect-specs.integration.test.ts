@@ -2,9 +2,20 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+  mockCommandSettings,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { NO_TARGET } from "../../../../tests/helpers/db-target-selection.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConfig,
+} from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { bloatSpec } from "./bloat/bloat.query.ts";
 import { blockingSpec } from "./blocking/blocking.query.ts";
@@ -19,8 +30,10 @@ import { outliersSpec } from "./outliers/outliers.query.ts";
 import { replicationSlotsSpec } from "./replication-slots/replication-slots.query.ts";
 import { roleStatsSpec } from "./role-stats/role-stats.query.ts";
 import { tableStatsSpec } from "./table-stats/table-stats.query.ts";
+import { toastSizesSpec } from "./toast-sizes/toast-sizes.query.ts";
 import { trafficProfileSpec } from "./traffic-profile/traffic-profile.query.ts";
 import { vacuumStatsSpec } from "./vacuum-stats/vacuum-stats.query.ts";
+import { xidAgeSpec } from "./xid-age/xid-age.query.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -35,11 +48,17 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
   let querySql: string | undefined;
   let queryParams: ReadonlyArray<unknown> | undefined;
   const layer = Layer.mergeAll(
-    out.layer,
-    Layer.succeed(CliArgs, { args: [] }),
+    buildTestRuntime({
+      out,
+      api: mockCommandPlatformApi(),
+      cliSettings: mockCommandSettings({ workdir: "/tmp/inspect-specs-test" }),
+    }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    configValuesLayer(),
     Layer.succeed(DbConfigResolver, {
-      resolve: (_flags: DbConfigFlags) =>
-        Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies ResolvedDbConfig),
+      resolveConnection: (input: DbConnectionInput) =>
+        Effect.succeed({ conn: LOCAL_CONN, isLocal: true, target: input.target }),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(DbConnection, {
@@ -69,13 +88,6 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
     },
   };
 }
-
-const localFlags = {
-  dbUrl: Option.none<string>(),
-  linked: false,
-  local: true,
-  projectRef: Option.none<string>(),
-};
 
 type ParamKind = "none" | "schemas1" | "schemas2";
 
@@ -236,6 +248,16 @@ const cases: ReadonlyArray<Case> = [
     expect: ["public.t", "8 kB", "10 kB", "1000"],
   },
   {
+    spec: xidAgeSpec,
+    params: "schemas1",
+    row: {
+      name: "public.users",
+      xid_age: 500000000,
+      transactions_remaining: 1500000000,
+    },
+    expect: ["public.users", "500000000", "1500000000"],
+  },
+  {
     spec: trafficProfileSpec,
     params: "none",
     row: {
@@ -248,18 +270,34 @@ const cases: ReadonlyArray<Case> = [
     },
     expect: ["public", "100", "50", "12.0", "1:1 (Balanced)"],
   },
+  {
+    spec: toastSizesSpec,
+    params: "schemas1",
+    row: {
+      name: "public.events",
+      total_size: "120 kB",
+      heap_size: "80 kB",
+      toast_size: "40 kB",
+      toast_live_chunks: 1200,
+      toast_dead_chunks: 80,
+      toast_dead_pct: "6.3",
+      last_autovacuum: "2025-01-15 03:00",
+      last_vacuum: "",
+    },
+    expect: ["public.events", "120 kB", "40 kB", "1200", "80", "6.3", "2025-01-15 03:00"],
+  },
 ];
 
 describe("inspect db specs (per-subcommand correctness)", () => {
-  it("covers all 13 active subcommands", () => {
-    expect(cases).toHaveLength(13);
+  it("covers all 15 active subcommands", () => {
+    expect(cases).toHaveLength(15);
   });
 
   for (const testCase of cases) {
-    it.live(`runs the ${testCase.spec.name} query and renders its cells`, () => {
+    it.effect(`runs the ${testCase.spec.name} query and renders its cells`, () => {
       const ctx = setup([testCase.row]);
       return Effect.gen(function* () {
-        yield* runInspectQuery(testCase.spec, localFlags, "native");
+        yield* runInspectQuery(testCase.spec, NO_TARGET, "native");
 
         expect(ctx.querySql).toBe(testCase.spec.sql);
 
@@ -304,5 +342,34 @@ describe("inspect db specs (per-subcommand correctness)", () => {
     } satisfies ResolvedDbConfig);
     expect(cells[1]).toBe("``");
     expect(cells[4]).toBe("");
+  });
+
+  it("projects toast-sizes columns in header order, leaving a never-vacuumed cell empty", () => {
+    const row: Record<string, unknown> = {
+      name: "public.events",
+      total_size: "120 kB",
+      heap_size: "80 kB",
+      toast_size: "40 kB",
+      toast_live_chunks: 1200,
+      toast_dead_chunks: 80,
+      toast_dead_pct: "6.3",
+      last_autovacuum: "2025-01-15 03:00",
+      last_vacuum: null,
+    };
+    const cells = toastSizesSpec.project(row, {
+      conn: LOCAL_CONN,
+      isLocal: true,
+    } satisfies ResolvedDbConfig);
+    expect(cells).toEqual([
+      "public.events",
+      "120 kB",
+      "80 kB",
+      "40 kB",
+      "1200",
+      "80",
+      "6.3",
+      "2025-01-15 03:00",
+      "",
+    ]);
   });
 });

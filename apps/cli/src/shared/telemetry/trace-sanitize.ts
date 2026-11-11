@@ -1,7 +1,9 @@
 import { createHmac } from "node:crypto";
-import { Cause, Crypto, Effect, Exit } from "effect";
-import type { KeyValue, AnyValue } from "effect/unstable/observability/OtlpResource";
-import type { ScopeSpan, TraceData } from "effect/unstable/observability/OtlpTracer";
+import { Cause, Effect, Exit } from "effect";
+import { SecureRandom } from "effect/crypto";
+import { absurd } from "effect/Function";
+import type { KeyValue, AnyValue } from "effect/observability/OtlpResource";
+import type { ScopeSpan, TraceData } from "effect/observability/OtlpTracer";
 
 const MAX_STRING_LENGTH = 2048;
 const REDACTED = "<redacted>";
@@ -149,9 +151,9 @@ type AttributeDecision =
 function decide(key: string, numericOrBoolean: boolean): AttributeDecision {
   if (key === "db.query.text") return { _tag: "Query" };
   if (key === "url.query") return { _tag: "Drop" };
-  const header = HEADER_ATTRIBUTE.exec(key);
-  if (header !== null) {
-    return ALLOWED_HEADERS.has(header[1]!.toLowerCase()) ? { _tag: "Keep" } : { _tag: "Drop" };
+  const headerName = HEADER_ATTRIBUTE.exec(key)?.[1];
+  if (headerName !== undefined) {
+    return ALLOWED_HEADERS.has(headerName.toLowerCase()) ? { _tag: "Keep" } : { _tag: "Drop" };
   }
   if (!numericOrBoolean && DENIED_KEY.test(key)) return { _tag: "Drop" };
   return { _tag: "Keep" };
@@ -184,12 +186,15 @@ function sanitizeAttributeEntries(
       case "Query":
         if (typeof value === "string") result.push(...queryAttributes(value, hashQuery));
         break;
-      default:
+      case "Keep":
         result.push([
           key,
           (typeof value === "string" ? sanitizeUrlAttribute(key, value) : undefined) ??
             scrubUnknown(value),
         ]);
+        break;
+      default:
+        absurd(decision);
     }
   }
   return result;
@@ -237,7 +242,7 @@ function sanitizeKeyValues(
         }
         break;
       }
-      default: {
+      case "Keep": {
         const text = attribute.value.stringValue;
         const url =
           typeof text === "string" ? sanitizeUrlAttribute(attribute.key, text) : undefined;
@@ -246,7 +251,10 @@ function sanitizeKeyValues(
           value:
             url === undefined ? scrubAnyValue(attribute.value, hashQuery) : { stringValue: url },
         });
+        break;
       }
+      default:
+        absurd(decision);
     }
   }
   return result;
@@ -324,18 +332,17 @@ export interface TraceSanitizer {
  * Creates a sanitizer whose `db.query.hash` is keyed by a fresh random salt, so repeated
  * statements share a hash within one sanitizer but hashes cannot be compared across runs.
  */
-export const makeTraceSanitizer: Effect.Effect<TraceSanitizer, never, Crypto.Crypto> = Effect.gen(
-  function* () {
-    const crypto = yield* Crypto.Crypto;
-    const salt = yield* Effect.orDie(crypto.randomBytes(QUERY_HASH_SALT_BYTES));
+export const makeTraceSanitizer: Effect.Effect<TraceSanitizer, never, SecureRandom.SecureRandom> =
+  Effect.gen(function* () {
+    const crypto = yield* SecureRandom.SecureRandom;
+    const salt = yield* crypto.randomBytes(QUERY_HASH_SALT_BYTES);
     const hashQuery: QueryHasher = (text) =>
       createHmac("sha256", salt).update(text).digest("hex").slice(0, QUERY_HASH_HEX_LENGTH);
     return {
       attributeEntries: (entries) => sanitizeAttributeEntries(entries, hashQuery),
       traceData: (data) => sanitizeTraceData(data, hashQuery),
     };
-  },
-);
+  });
 
 function failureOf(reason: Cause.Reason<unknown>): unknown {
   if (Cause.isFailReason(reason)) return reason.error;

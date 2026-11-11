@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Context,
@@ -13,27 +13,28 @@ import {
   Schema,
 } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { SignJWT } from "jose";
-import { tmpdir } from "node:os";
-import * as State from "../State.ts";
-import type { SavedStack } from "../State.ts";
+import * as StackNamespace from "../StackNamespace.ts";
+import type { SavedStack } from "../StackNamespace.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
 import {
   makeSupabaseComposition,
   SupabaseCompositionError,
   type SupabaseCompositionOperations,
 } from "./Supabase.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
-// Below every OS ephemeral range, so another test's outbound socket cannot already hold them.
-const FIXED_STUDIO_PORT = 24_391;
-const FIXED_MAIL_PORT = 24_392;
+const cacheRoot = testArtifactCacheRoot;
+// Below the stack's native and auto port ranges and every OS ephemeral range, so neither another
+// test's auto allocation nor an outbound socket can already hold it.
+const FIXED_STUDIO_PORT = 9_391;
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
-    const context = yield* Layer.build(State.layer({ root }));
-    return Context.get(context, State.Service);
+    const context = yield* Layer.build(StackNamespace.layer({ root }));
+    return Context.get(context, StackNamespace.Service);
   });
 
 const query = (url: string, statement: string) =>
@@ -60,7 +61,6 @@ const initial = (id: string): SavedStack => ({
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 it.live("reports the failed binding and cleanup reason with the retained instance ID", () =>
@@ -68,6 +68,7 @@ it.live("reports the failed binding and cleanup reason with the retained instanc
     const unused = () => Effect.die("unused operation");
     const operations: SupabaseCompositionOperations = {
       currentComposition: Effect.succeed({ members: [], dependencies: [] }),
+      randomToken: Effect.succeed("token"),
       get: unused,
       status: unused,
       create: (creation) => Effect.succeed({ id: "retained-mail", creation }),
@@ -81,7 +82,7 @@ it.live("reports the failed binding and cleanup reason with the retained instanc
       configure: unused,
     };
     const error = yield* makeSupabaseComposition(operations, [
-      { service: "mail", config: {}, endpoints: {} },
+      { service: "mail", pin: selection.mail, config: {}, endpoints: {} },
     ]).pipe(Effect.flip);
     expect(error.message).toContain("mail retained-mail: port is occupied");
     expect(error.message).toContain("retained-mail: cannot remove owned data");
@@ -102,6 +103,7 @@ it.live("removes a managed SMTP binding when Mail is excluded", () =>
         Effect.gen(function* () {
           const auth = {
             service: "auth" as const,
+            pin: selection.auth,
             config: {
               jwtSecret: "exclude-mail-jwt-secret-with-32-chars",
               jwtExpiry: 3600,
@@ -111,7 +113,12 @@ it.live("removes a managed SMTP binding when Mail is excluded", () =>
           const members = yield* owner.rpc.supabaseComposition({
             services: [
               auth,
-              { service: "mail", config: {}, endpoints: { smtp: { port: "auto" } } },
+              {
+                service: "mail",
+                pin: selection.mail,
+                config: {},
+                endpoints: { smtp: { port: "auto" } },
+              },
             ],
           });
           const instance = members.find(({ creation }) => creation.service === "auth");
@@ -136,7 +143,11 @@ it.live("removes a managed SMTP binding when Mail is excluded", () =>
         }),
       () => owner.namespace.destroy,
     );
-  }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("cleans created registrations when composition is interrupted", () =>
@@ -146,8 +157,8 @@ it.live("cleans created registrations when composition is interrupted", () =>
     const destroyed = yield* Ref.make<ReadonlyArray<string>>([]);
     const database = {
       service: "database" as const,
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make("interrupt-password"),
         jwtSecret: Redacted.make("interrupt-jwt-secret-with-32-chars"),
         jwtExpiry: 3600,
@@ -158,6 +169,7 @@ it.live("cleans created registrations when composition is interrupted", () =>
       Effect.fail(new SupabaseCompositionError({ message: `${operation} is unused` }));
     const operations: SupabaseCompositionOperations = {
       currentComposition: Effect.succeed({ members: [], dependencies: [] }),
+      randomToken: Effect.succeed("token"),
       get: () => unused("get"),
       status: () => unused("status"),
       create: (creation) =>
@@ -209,8 +221,8 @@ it.live(
           services: [
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(jwtSecret),
                 jwtExpiry: 3600,
@@ -219,6 +231,7 @@ it.live(
             },
             {
               service: "auth",
+              pin: selection.auth,
               config: {
                 jwtSecret,
                 jwtExpiry: 3600,
@@ -227,6 +240,7 @@ it.live(
             },
             {
               service: "storage",
+              pin: selection.storage,
               config: {
                 filePath: storageRoot,
                 jwtSecret,
@@ -324,7 +338,145 @@ it.live(
         );
         expect(remove.status).toBe(200);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
+  { timeout: 180_000 },
+);
+
+const MailpitMessages = Schema.Struct({
+  messages: Schema.Array(
+    Schema.Struct({
+      ID: Schema.String,
+      To: Schema.Array(Schema.Struct({ Address: Schema.String })),
+    }),
+  ),
+});
+const MailpitMessage = Schema.Struct({ HTML: Schema.String });
+
+it.live(
+  "mails the configured template over unchanged listeners and follows a changed content_path",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const client = yield* HttpClient.HttpClient;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-templates-" }),
+        );
+        const first = `${root}/first.html`;
+        const second = `${root}/second.html`;
+        yield* fs.writeFileString(first, "<p>first template marker</p>");
+        yield* fs.writeFileString(second, "<p>second template marker</p>");
+        const saved = initial("catalog-native-templates");
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save(saved);
+        const owner = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+        const jwtSecret = "catalog-native-templates-secret-with-at-least-32-chars";
+        const services = (templates: ReadonlyArray<string>) => [
+          {
+            service: "database" as const,
+            pin: selection.database,
+            config: {
+              databasePassword: Redacted.make("postgres"),
+              jwtSecret: Redacted.make(jwtSecret),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" as const } },
+          },
+          {
+            service: "auth" as const,
+            pin: selection.auth,
+            config: {
+              jwtSecret,
+              jwtExpiry: 3600,
+              templates: templates.map((path) => ({ id: "invite", path, root })),
+            },
+            endpoints: { http: { port: "auto" as const } },
+          },
+          {
+            service: "mail" as const,
+            pin: selection.mail,
+            config: {},
+            endpoints: { http: { port: "auto" as const }, smtp: { port: "auto" as const } },
+          },
+        ];
+        const created = yield* owner.rpc.supabaseComposition({ services: services([]) });
+        const idOf = (service: string) => {
+          const id = created.find((entry) => entry.creation.service === service)?.id;
+          return id === undefined ? Effect.die(`${service} missing`) : Effect.succeed(id);
+        };
+        const reuseIds = [yield* idOf("database"), yield* idOf("auth"), yield* idOf("mail")];
+        const bindings = (
+          observations: Effect.Success<ReturnType<typeof owner.rpc.startComposition>>,
+        ) =>
+          observations
+            .flatMap(({ id, endpoints }) => endpoints.map((endpoint) => ({ id, ...endpoint })))
+            .toSorted((left, right) => left.port - right.port);
+        const withoutTemplates = bindings(yield* owner.rpc.startComposition());
+        yield* owner.rpc.stopComposition();
+
+        yield* owner.rpc.supabaseComposition({ services: services([first]), reuseIds });
+        expect(bindings(yield* owner.rpc.startComposition())).toEqual(withoutTemplates);
+
+        const auth = yield* owner.rpc.credentials({ id: yield* idOf("auth"), from: "host" });
+        const mail = yield* owner.rpc.credentials({ id: yield* idOf("mail"), from: "host" });
+        if (auth.url === undefined || auth.apiUrl === undefined || mail.url === undefined)
+          return yield* Effect.die("Native service URLs missing");
+        const serviceToken = yield* Effect.tryPromise(() =>
+          new SignJWT({ role: "service_role" })
+            .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+            .setSubject("catalog-native-templates")
+            .setIssuedAt()
+            .setExpirationTime("1h")
+            .sign(new TextEncoder().encode(jwtSecret)),
+        );
+        /* Auth answers an invite with 200 and its built-in email even when its template fetch fails. */
+        const invitedBody = (email: string) =>
+          Effect.gen(function* () {
+            const invite = yield* client.execute(
+              yield* HttpClientRequest.bodyJson({ email })(
+                HttpClientRequest.post(`${auth.url}/invite`).pipe(
+                  HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
+                ),
+              ),
+            );
+            expect(invite.status, yield* invite.text).toBe(200);
+            const { messages } = yield* Schema.decodeUnknownEffect(MailpitMessages)(
+              yield* (yield* client.get(`${mail.url}/api/v1/messages`)).json,
+            );
+            const message = messages.find(({ To }) => To.some((to) => to.Address === email));
+            if (message === undefined) return yield* Effect.die(`No email for ${email}`);
+            const { HTML } = yield* Schema.decodeUnknownEffect(MailpitMessage)(
+              yield* (yield* client.get(`${mail.url}/api/v1/message/${message.ID}`)).json,
+            );
+            return HTML;
+          });
+        expect(yield* invitedBody("first@example.test")).toContain("first template marker");
+
+        yield* owner.rpc.stopComposition();
+        const changed = yield* owner.rpc.supabaseComposition({
+          services: services([second]),
+          reuseIds,
+        });
+        yield* owner.rpc.startComposition();
+        const composed = changed.find(({ creation }) => creation.service === "auth")?.creation;
+        if (composed?.service !== "auth") return yield* Effect.die("Auth missing");
+        const route = `${auth.apiUrl}/email/invite`;
+        expect((yield* client.get(route)).status).toBe(404);
+        const served = yield* client.get(`${route}?token=${composed.config.templateToken}`);
+        expect(yield* served.text).toContain("second template marker");
+        expect(yield* invitedBody("second@example.test")).toContain("second template marker");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -347,8 +499,8 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const databaseCreation = {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("reuse-database-password"),
             jwtSecret: Redacted.make("reuse-database-jwt-secret-with-32-chars"),
             jwtExpiry: 3600,
@@ -372,6 +524,7 @@ it.live(
             databaseCreation,
             {
               service: "rest",
+              pin: selection.rest,
               config: {},
               endpoints: { http: { port: "auto" } },
             },
@@ -398,6 +551,7 @@ it.live(
             rest.creation,
             {
               service: "auth",
+              pin: selection.auth,
               config: {
                 jwtSecret: Redacted.value(databaseCreation.config.jwtSecret),
                 jwtExpiry: 3600,
@@ -420,7 +574,77 @@ it.live(
         expect((yield* client.get(restAddress.url)).status).toBe(200);
         expect((yield* client.get(`${authAddress.url}/health`)).status).toBe(200);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
+  { timeout: 180_000 },
+);
+
+it.live(
+  "rebinds one stopped member alone and keeps the other members and their dependencies",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-retain-" });
+        const stack = initial("catalog-native-retain");
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({
+          saved: stack,
+          state,
+          root: `${root}/data`,
+          cacheRoot,
+        });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const databaseCreation = {
+          service: "database" as const,
+          pin: selection.database,
+          config: {
+            databasePassword: Redacted.make("retain-database-password"),
+            jwtSecret: Redacted.make("retain-database-jwt-secret-with-32-chars"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" as const } },
+        };
+        const created = yield* owner.rpc.supabaseComposition({
+          services: [
+            databaseCreation,
+            {
+              service: "rest",
+              pin: selection.rest,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+          ],
+        });
+        const database = created.find((entry) => entry.creation.service === "database");
+        if (database === undefined) return yield* Effect.die("Database member missing");
+        const saved = yield* state.read(stack.id);
+        const before = saved?.composition;
+        expect(before?.members).toHaveLength(2);
+        expect(before?.dependencies.length).toBeGreaterThan(0);
+
+        yield* owner.rpc.supabaseComposition({
+          services: [databaseCreation],
+          reuseIds: [database.id],
+          retainMembers: true,
+        });
+        expect((yield* state.read(stack.id))?.composition).toEqual(before);
+
+        yield* owner.rpc.supabaseComposition({
+          services: [databaseCreation],
+          reuseIds: [database.id],
+        });
+        expect((yield* state.read(stack.id))?.composition.members).toHaveLength(1);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -443,8 +667,8 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const database = {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("studio-reuse-password"),
             jwtSecret: Redacted.make("studio-reuse-jwt-secret-with-32-chars"),
             jwtExpiry: 3600,
@@ -453,16 +677,19 @@ it.live(
         };
         const rest = {
           service: "rest" as const,
+          pin: selection.rest,
           config: {},
           endpoints: { http: { port: "auto" as const } },
         };
         const pgmeta = {
           service: "pgmeta" as const,
+          pin: selection.pgmeta,
           config: {},
           endpoints: { http: { port: "auto" as const } },
         };
         const studio = {
           service: "studio" as const,
+          pin: selection.studio,
           config: {
             analyticsApiKey: "studio-reuse-analytics-key",
             jwtSecret: "studio-reuse-jwt-secret-with-32-chars",
@@ -505,7 +732,11 @@ it.live(
         if (studioCredentials.url === undefined) return yield* Effect.die("Studio URL missing");
         expect(new URL(studioCredentials.url).port).toBe(String(FIXED_STUDIO_PORT));
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -528,8 +759,8 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const databaseCreation = {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("reuse-running-password"),
             jwtSecret: Redacted.make("reuse-running-jwt-secret-with-32-chars"),
             jwtExpiry: 3600,
@@ -549,7 +780,11 @@ it.live(
         ]);
         yield* owner.rpc.stopComposition();
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -570,18 +805,22 @@ it.live(
           cacheRoot,
         });
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
-        const fixedPort = FIXED_MAIL_PORT;
         const standaloneMail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
-          endpoints: { http: { port: fixedPort } },
+          endpoints: { http: { port: "auto" } },
         });
         yield* owner.rpc.startService({ id: standaloneMail.id });
         yield* owner.rpc.readyService({ id: standaloneMail.id });
+        const mailPort = (yield* owner.rpc.status({ id: standaloneMail.id })).endpoints.find(
+          (endpoint) => endpoint.name === "http",
+        )?.port;
+        if (mailPort === undefined) return yield* Effect.die("Missing mail http endpoint");
         const database = {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("reuse-cleanup-password"),
             jwtSecret: Redacted.make("reuse-cleanup-jwt-secret-with-32-chars"),
             jwtExpiry: 3600,
@@ -592,7 +831,12 @@ it.live(
           .supabaseComposition({
             services: [
               database,
-              { service: "mail", config: {}, endpoints: { http: { port: fixedPort } } },
+              {
+                service: "mail",
+                pin: selection.mail,
+                config: {},
+                endpoints: { http: { port: mailPort } },
+              },
             ],
           })
           .pipe(Effect.flip);
@@ -602,6 +846,10 @@ it.live(
         ]);
         yield* owner.rpc.stopService({ id: standaloneMail.id });
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );

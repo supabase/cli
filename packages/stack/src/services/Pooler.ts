@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, requiredInput, localJwtSecret } from "./ServiceConfig.ts";
 import {
+  DEFAULT_ERL_MAX_PORTS,
   DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
   DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
 } from "../Defaults.ts";
@@ -48,6 +49,7 @@ const environment: ProcessRecipeSpec<Creation>["env"] = (creation, endpoints, co
       DEFAULT_POOL_SIZE: String(creation.config.defaultPoolSize ?? 20),
       MAX_CLIENT_CONN: String(creation.config.maxClientConnections ?? 100),
       POOL_MODE: mode,
+      ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
       // Supavisor advertises Ranch-bound ports, so native instances can use ephemeral internal listeners.
       ...(container
         ? {}
@@ -55,6 +57,7 @@ const environment: ProcessRecipeSpec<Creation>["env"] = (creation, endpoints, co
             PROXY_PORT: "0",
             SESSION_PROXY_PORTS: "0",
             TRANSACTION_PROXY_PORTS: "0",
+            SUPAVISOR_BIND_IP: "127.0.0.1",
           }),
       ...(sql === undefined
         ? {}

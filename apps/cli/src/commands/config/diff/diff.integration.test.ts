@@ -1,13 +1,15 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
-import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
-  mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
+  mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import { v2ProjectConfigResponse } from "../../../../tests/helpers/config-fixtures.ts";
 import {
@@ -21,8 +23,13 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { configDiffHandler } from "./diff.command.ts";
 import { CONFIG_DIFF_PAYLOAD_VERSION } from "./diff.format.ts";
@@ -35,6 +42,7 @@ const BACKDATED_MTIME_SECONDS = 1_577_836_800;
 
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_REF = "cccccccccccccccccccc";
+const API = "https://api.supabase.com";
 
 const writeProjectFile = Effect.fnUntraced(function* (name: string, contents: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -45,12 +53,39 @@ const writeProjectFile = Effect.fnUntraced(function* (name: string, contents: st
 });
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonText = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** Schema-valid v2 project-config body whose managed values all sit at the local schema
  *  defaults, so an empty config.toml diffs clean against it. */
 const v2Response = v2ProjectConfigResponse;
 
-/** V1GetABranch body for the branch-name `--project-ref` lookup. */
+const jsonRecord = Schema.Record(Schema.String, Schema.Unknown);
+const asJsonRecord = Schema.decodeUnknownSync(jsonRecord);
+const decodeJsonRecord = Schema.decodeUnknownEffect(jsonRecord);
+const decodeChanges = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.StructWithRest(Schema.Struct({ path: Schema.Array(Schema.String) }), [jsonRecord]),
+  ),
+);
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
+
+/** A branch row of the linked project's branch list. */
 const BRANCH_BY_NAME = {
   id: BRANCH_UUID,
   name: "staging",
@@ -64,7 +99,7 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
-/** V1GetABranchConfig body for the UUID `--project-ref` lookup. */
+/** V1GetABranchConfig body for the UUID `--remote` lookup. */
 const BRANCH_CONFIG = {
   ref: BRANCH_REF,
   postgres_version: "15",
@@ -79,9 +114,9 @@ interface SetupOpts {
   readonly toml?: string;
   readonly dotenv?: string;
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly v2?: { status: number; body: unknown } | "fail";
-  readonly branchByName?: { status: number; body: unknown };
+  readonly branchList?: { status: number; body: unknown };
   readonly branchByUuid?: { status: number; body: unknown };
   /** `false` simulates a directory with no linked project. */
   readonly linked?: boolean;
@@ -93,7 +128,6 @@ interface SetupOpts {
   readonly workdir?: string;
   /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
   readonly explicitWorkdir?: boolean;
-  readonly analytics?: ReturnType<typeof mockContextualAnalytics>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -118,8 +152,8 @@ function setup(opts: SetupOpts = {}) {
         const b = opts.branchByUuid ?? { status: 200, body: BRANCH_CONFIG };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
-      if (url.includes("/branches/")) {
-        const b = opts.branchByName ?? { status: 200, body: BRANCH_BY_NAME };
+      if (url.endsWith("/branches")) {
+        const b = opts.branchList ?? { status: 200, body: [BRANCH_BY_NAME] };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
       return Effect.succeed(jsonResponse(request, 200, {}));
@@ -145,22 +179,32 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       processControl,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
-      ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     projectFiles,
+    cliConfigValuesTestLayer,
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl };
 }
 
 const noFlags = {
+  remote: Option.none<RemoteValue>(),
   projectRef: Option.none<string>(),
   exitCode: false,
 };
 
+const remoteRef = (ref: string) => ({
+  ...noFlags,
+  remote: Option.some<RemoteValue>({ _tag: "Ref", ref }),
+});
+const remoteBranch = (name: string) => ({
+  ...noFlags,
+  remote: Option.some<RemoteValue>({ _tag: "Branch", name }),
+});
+
 describe("config diff integration", () => {
-  it.live("reports drift against the linked project without touching the config file", () => {
-    const { layer, out, processControl, telemetry, linkedProjectCache } = setup({
+  it.effect("reports drift against the linked project without touching the config file", () => {
+    const { layer, out, processControl, telemetry, linkedProjectCache, api } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
     return Effect.gen(function* () {
@@ -190,10 +234,11 @@ describe("config diff integration", () => {
       expect(processControl.exitCode).toBeUndefined();
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
+      assertPermissionDrift({ command: "config diff", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a clean config produces the success message and exit 0 even with --exit-code", () => {
+  it.effect("a clean config produces the success message and exit 0 even with --exit-code", () => {
     const { layer, out, processControl } = setup({ toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, exitCode: true });
@@ -202,17 +247,20 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a project that never set up SMS diffs clean against a declared enabled = false", () => {
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n[auth.sms.twilio]\nenabled = false\n',
-    });
-    return Effect.gen(function* () {
-      yield* configDiff(noFlags);
-      expect(out.stdoutText).toContain("No config differences found.");
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "a project that never set up SMS diffs clean against a declared enabled = false",
+    () => {
+      const { layer, out } = setup({
+        toml: 'project_id = "test"\n[auth.sms.twilio]\nenabled = false\n',
+      });
+      return Effect.gen(function* () {
+        yield* configDiff(noFlags);
+        expect(out.stdoutText).toContain("No config differences found.");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("a disabled Data API diffs clean against a declared enabled = false", () => {
+  it.effect("a disabled Data API diffs clean against a declared enabled = false", () => {
     const { layer, out, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nenabled = false\n',
       v2: {
@@ -221,7 +269,7 @@ describe("config diff integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             api: {
-              ...(attributes["api"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["api"]),
               db_schema: "pg_pgrst_no_exposed_schemas",
             },
           }),
@@ -235,7 +283,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a configured provider still diffs clean", () => {
+  it.effect("a configured provider still diffs clean", () => {
     const { layer, out } = setup({
       toml: [
         'project_id = "test"',
@@ -253,7 +301,7 @@ describe("config diff integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             auth: {
-              ...(attributes["auth"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["auth"]),
               sms_twilio_account_sid: "AC1",
               sms_twilio_message_service_sid: "MG1",
             },
@@ -267,17 +315,23 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--exit-code sets exit 2 when differences are found", () => {
-    const { layer, processControl } = setup({
+  it.effect("--exit-code sets exit 2 when differences are found", () => {
+    const { layer, processControl, api } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, exitCode: true });
       expect(processControl.exitCode).toBe(2);
+      assertPermissionDrift({
+        command: "config diff",
+        activeFlags: { "exit-code": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--exit-code in text mode prints a stderr reason line before exiting 2", () => {
+  it.effect("--exit-code in text mode prints a stderr reason line before exiting 2", () => {
     const { layer, out, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
@@ -288,7 +342,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--exit-code in json mode exits 2 without the stderr reason line", () => {
+  it.effect("--exit-code in json mode exits 2 without the stderr reason line", () => {
     const { layer, out, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
       format: "json",
@@ -300,7 +354,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("declared properties the response does not carry are local_only", () => {
+  it.effect("declared properties the response does not carry are local_only", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n[auth]\nsite_url = "https://local.example.com"\n',
       v2: {
@@ -308,7 +362,7 @@ describe("config diff integration", () => {
         body: v2Response({
           attributes: (attributes) => {
             // Drop site_url so the response genuinely omits the declared property.
-            const { site_url: _siteUrl, ...auth } = attributes["auth"] as Record<string, unknown>;
+            const { site_url: _siteUrl, ...auth } = asJsonRecord(attributes["auth"]);
             return { ...attributes, auth };
           },
         }),
@@ -322,7 +376,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("env()-resolved values compare resolved and name the variable on drift", () => {
+  it.effect("env()-resolved values compare resolved and name the variable on drift", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = "env(PGRST_MAX_ROWS)"\n',
       dotenv: "PGRST_MAX_ROWS=500\n",
@@ -334,7 +388,82 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("declared secrets are masked, not compared, and never count for --exit-code", () => {
+  it.effect("marks a value a project .env file overrides with the variable and file", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS in supabase/.env)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("marks a value the shell environment overrides with the variable alone", () => {
+    const { layer, out } = setup({ toml: 'project_id = "test"\n[api]\nmax_rows = 500\n' });
+    return withEnvVar(
+      "SUPABASE_API_MAX_ROWS",
+      "700",
+      Effect.gen(function* () {
+        yield* configDiff(noFlags);
+        expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS)");
+        expect(out.stdoutText).not.toContain("SUPABASE_API_MAX_ROWS in");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  it.effect("carries an origin on an env-sourced change in the machine payload only", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n[auth]\nsite_url = "https://local.example.com"\n',
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      const changes = yield* decodeChanges(data["changes"]);
+      expect(changes.find((change) => change.path[0] === "api")).toEqual({
+        path: ["api", "max_rows"],
+        class: "update",
+        declared: true,
+        local: 700,
+        remote: 1000,
+        origin: {
+          source: "project_env",
+          env_variable: "SUPABASE_API_MAX_ROWS",
+          file: "supabase/.env",
+        },
+      });
+      expect(changes.find((change) => change.path[0] === "auth")).not.toHaveProperty("origin");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("an env override beats the matched [remotes.*] value as the local operand", () => {
+    const { layer, out } = setup({
+      toml: [
+        'project_id = "test"',
+        "[api]",
+        "max_rows = 500",
+        "[remotes.staging]",
+        `project_id = "${VALID_REF}"`,
+        "[remotes.staging.api]",
+        "max_rows = 1000",
+        "",
+      ].join("\n"),
+      dotenv: "SUPABASE_API_MAX_ROWS=700\n",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stderrText).toContain(
+        `Comparing against project ${VALID_REF} using [remotes.staging]`,
+      );
+      expect(out.stdoutText).toContain("local:  700 (from SUPABASE_API_MAX_ROWS in supabase/.env)");
+      expect(out.stdoutText).toContain("remote: 1000");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("declared secrets are masked, not compared, and never count for --exit-code", () => {
     const { layer, out, processControl } = setup({
       toml: [
         'project_id = "test"',
@@ -373,7 +502,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("secret strings never reach the machine payload either", () => {
+  it.effect("secret strings never reach the machine payload either", () => {
     const { layer, out } = setup({
       toml: [
         'project_id = "test"',
@@ -409,7 +538,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a matching [remotes.*] block becomes the local operand", () => {
+  it.effect("a matching [remotes.*] block becomes the local operand", () => {
     const { layer, out } = setup({
       toml: [
         'project_id = "test"',
@@ -431,88 +560,61 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "an env()-resolving [remotes.*] project_id does not match the target and does not double-warn (CLI-2287)",
+  it.effect("an env()-resolving [remotes.*] project_id does not match the target", () => {
+    const { layer, out } = setup({
+      toml: ['project_id = "test"', "[remotes.x]", 'project_id = "env(REMOTE_REF)"', ""].join("\n"),
+      dotenv: `REMOTE_REF=${VALID_REF}\n`,
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stderrText).toContain(`Comparing against project ${VALID_REF} using base config`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "branch-name resolution uses the linked PARENT, not a branch ref in project-ref",
     () => {
-      const { layer, out } = setup({
-        toml: [
-          'project_id = "test"',
-          "[inbucket]",
-          "enabled = true",
-          "port = 12345",
-          "[remotes.x]",
-          'project_id = "env(REMOTE_REF)"',
-          "",
-        ].join("\n"),
-        dotenv: `REMOTE_REF=${VALID_REF}\n`,
+      // project-ref holds the branch's own ref; linked-project.json recovers the parent, which the
+      // parent-scoped branches endpoint requires.
+      const { layer, out, api } = setup({
+        toml: 'project_id = "test"\n',
+        linked: false,
+        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       });
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       return Effect.gen(function* () {
-        yield* configDiff(noFlags);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temp = path.join(tempRoot.current, "supabase", ".temp");
+        yield* fs.makeDirectory(temp, { recursive: true });
+        yield* fs.writeFileString(path.join(temp, "project-ref"), BRANCH_REF);
+        yield* fs.writeFileString(
+          path.join(temp, "linked-project.json"),
+          yield* jsonText({ ref: VALID_REF }),
+        );
+        yield* configDiff(remoteBranch("staging"));
         expect(out.stderrText).toContain(
-          `Comparing against project ${VALID_REF} using base config`,
+          `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
         );
-        const inbucketWarnings = errorSpy.mock.calls.filter((call) =>
-          String(call[0]).includes("[inbucket] is deprecated"),
-        );
-        expect(inbucketWarnings).toHaveLength(1);
-      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+        const urls = api.requests.map((request) => request.url);
+        expect(urls.some((url) => url.endsWith(`/v1/projects/${VALID_REF}/branches`))).toBe(true);
+        expect(urls.some((url) => url.includes(`/v1/projects/${BRANCH_REF}/`))).toBe(false);
+        assertPermissionDrift({
+          command: "config diff",
+          activeFlags: { remote: "staging" },
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("a branch-named --project-ref resolves via the parent project", () => {
-    const { layer, out, api } = setup({
-      toml: 'project_id = "test"\n',
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
-      expect(out.stderrText).toContain(
-        `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
-      );
-      const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
-        true,
-      );
-      expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("branch-name resolution uses the linked PARENT, not a branch ref in project-ref", () => {
-    // project-ref holds the branch's own ref; linked-project.json recovers the parent, which the
-    // parent-scoped branches endpoint requires.
-    const { layer, api } = setup({
-      toml: 'project_id = "test"\n',
-      linked: false,
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const temp = path.join(tempRoot.current, "supabase", ".temp");
-      yield* fs.makeDirectory(temp, { recursive: true });
-      yield* fs.writeFileString(path.join(temp, "project-ref"), BRANCH_REF);
-      yield* fs.writeFileString(
-        path.join(temp, "linked-project.json"),
-        yield* jsonText({ ref: VALID_REF }),
-      );
-      yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
-      const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
-        true,
-      );
-      expect(urls.some((url) => url.includes(`/v1/projects/${BRANCH_REF}/`))).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("a UUID --project-ref resolves directly, even in an unlinked directory", () => {
+  it.effect("a UUID --remote resolves directly, even in an unlinked directory", () => {
     const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       linked: false,
     });
     return Effect.gen(function* () {
-      yield* configDiff({ ...noFlags, projectRef: Option.some(BRANCH_UUID) });
+      yield* configDiff(remoteBranch(BRANCH_UUID));
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
@@ -520,37 +622,62 @@ describe("config diff integration", () => {
       expect(out.stderrText).toContain(
         `Comparing against branch ${BRANCH_UUID} (project ref ${BRANCH_REF})`,
       );
+      assertPermissionDrift({
+        command: "config diff",
+        activeFlags: { remote: BRANCH_UUID },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a ref-shaped --project-ref never touches the branches API", () => {
+  it.effect("a ref-shaped --remote never touches the branches API", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configDiff({ ...noFlags, projectRef: Option.some(BRANCH_REF) });
+      yield* configDiff(remoteRef(BRANCH_REF));
       const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
+      expect(urls.some((url) => url.includes("/branches"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
+      assertPermissionDrift({
+        command: "config diff",
+        activeFlags: { remote: BRANCH_REF },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an unknown branch fails with a branches-list suggestion", () => {
+  it.effect("a bare --remote diffs against the linked project", () => {
+    const { layer, out, api } = setup({ toml: 'project_id = "test"\n' });
+    return Effect.gen(function* () {
+      yield* configDiff({ ...noFlags, remote: Option.some<RemoteValue>({ _tag: "Linked" }) });
+      expect(out.stderrText).toContain(`Comparing against project ${VALID_REF} using base config`);
+      expect(api.requests.some((request) => request.url.includes("/branches"))).toBe(false);
+      assertPermissionDrift({
+        command: "config diff",
+        activeFlags: { remote: true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("an unknown branch fails listing the available branches", () => {
     const { layer, telemetry, linkedProjectCache } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 404, body: { message: "not found" } },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
     });
     return Effect.gen(function* () {
-      const exit = yield* configDiff({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
-        Effect.exit,
-      );
+      const exit = yield* configDiff(remoteBranch("ghost")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigDiffBranchNotFoundError");
-        expect(causeText).toContain('Branch "ghost" not found');
-        expect(causeText).toContain("supabase branches list");
+        expect(causeText).toContain("LinkBranchNotFoundError");
+        expect(causeText).toContain(
+          `Branch "ghost" not found for project ${VALID_REF}. Available branches: staging`,
+        );
       }
       // Telemetry still flushes on failure; the linked-project cache stays untouched since no
       // ref resolved.
@@ -559,23 +686,21 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a non-404 branch lookup failure keeps its status error", () => {
+  it.effect("a non-404 branch lookup failure keeps its status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 500, body: { message: "boom" } },
+      branchList: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* configDiff({ ...noFlags, projectRef: Option.some("staging") }).pipe(
-        Effect.exit,
-      );
+      const exit = yield* configDiff(remoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigDiffBranchResolveStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("LinkBranchListStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a missing config file points at supabase init before any resolution", () => {
+  it.effect("a missing config file points at supabase init before any resolution", () => {
     const { layer, telemetry, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -583,8 +708,10 @@ describe("config diff integration", () => {
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("ConfigDiffLoadConfigError");
-        // loadCliConfig probes both config.toml and config.json, so the message names both.
-        expect(causeText).toContain("supabase/config.toml or supabase/config.json: file not found");
+        // The config load probes both config.toml and config.json, so the message names both.
+        expect(causeText).toContain(
+          "supabase/config.toml, config.json or config.jsonc: file not found",
+        );
         expect(causeText).toContain("supabase init");
       }
       expect(api.requests).toHaveLength(0);
@@ -592,7 +719,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
     () =>
       Effect.gen(function* () {
@@ -627,7 +754,7 @@ describe("config diff integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "does not hint at an ancestor when explicit --workdir has no project anywhere above it",
     () => {
       const { layer, api } = setup({ explicitWorkdir: true });
@@ -644,7 +771,7 @@ describe("config diff integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () =>
       Effect.gen(function* () {
@@ -662,7 +789,7 @@ describe("config diff integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "a defaulted workdir still resolves a config.json project root above a config-less subdirectory",
     () =>
       Effect.gen(function* () {
@@ -671,20 +798,22 @@ describe("config diff integration", () => {
         yield* writeProjectFile("config.json", yield* jsonText({ project_id: "test" }));
         const sub = path.join(tempRoot.current, "nested", "dir");
         yield* fs.makeDirectory(sub, { recursive: true });
-        const { layer, api } = setup({ workdir: sub, explicitWorkdir: false });
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
+        const { layer, api } = setup({
+          workdir: resolved.workdir,
+          explicitWorkdir: resolved.explicit,
+        });
         yield* configDiff(noFlags).pipe(Effect.provide(layer));
         expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(true);
         expect(api.requests).not.toHaveLength(0);
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("a malformed config aborts before any network call, even with a branch target", () => {
+  it.effect("a malformed config aborts before any network call, even with a branch target", () => {
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const exit = yield* configDiff({ ...noFlags, projectRef: Option.some("staging") }).pipe(
-        Effect.exit,
-      );
+      const exit = yield* configDiff(remoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       // The message names the actual file that failed to parse, workdir-relative regardless of
       // invocation cwd.
@@ -698,7 +827,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a malformed config file fails as a parse error", () => {
+  it.effect("a malformed config file fails as a parse error", () => {
     const { layer } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -712,7 +841,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("duplicate [remotes.*] project_ids abort the load", () => {
+  it.effect("duplicate [remotes.*] project_ids abort the load", () => {
     const { layer } = setup({
       toml: [
         'project_id = "test"',
@@ -732,7 +861,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a remote config transport failure maps to the read network error", () => {
+  it.effect("a remote config transport failure maps to the read network error", () => {
     const { layer, telemetry } = setup({ toml: 'project_id = "test"\n', v2: "fail" });
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -745,7 +874,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an out-of-domain mapped value in the response keeps its typed parse error", () => {
+  it.effect("an out-of-domain mapped value in the response keeps its typed parse error", () => {
     // See ADR 0021: this stays a typed ProjectConfigParseError, not a network failure.
     const { layer } = setup({
       toml: 'project_id = "test"\n',
@@ -755,7 +884,7 @@ describe("config diff integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             storage: {
-              ...(attributes["storage"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["storage"]),
               file_size_limit: -1,
             },
           }),
@@ -776,7 +905,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an unknown enum value in the response degrades instead of failing", () => {
+  it.effect("an unknown enum value in the response degrades instead of failing", () => {
     // ADR 0019: executeRaw bypasses the generated client's closed enums, so a new platform enum
     // value degrades instead of failing.
     const { layer, out } = setup({
@@ -787,7 +916,7 @@ describe("config diff integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             pooler: {
-              ...(attributes["pooler"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["pooler"]),
               pool_mode: "burst_v9",
             },
           }),
@@ -800,8 +929,8 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a remote config error status maps to the read status error", () => {
-    const { layer } = setup({
+  it.effect("a remote config error status maps to the read status error", () => {
+    const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 403, body: { message: "forbidden" } },
     });
@@ -815,10 +944,14 @@ describe("config diff integration", () => {
         expect(causeText).toContain("Access denied");
         expect(causeText).toContain(VALID_REF);
       }
+      expect(
+        api.requests.map((request) => `${request.method} ${new URL(request.url).pathname}`),
+      ).toEqual([`GET /v2/projects/${VALID_REF}/config`]);
+      assertPermissionDrift({ command: "config diff", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 401 on the config read points at re-authenticating", () => {
+  it.effect("a 401 on the config read points at re-authenticating", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 401, body: { message: "unauthorized" } },
@@ -834,7 +967,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a 404 on the config read names the sanitized ref, suggests projects list, and hedges the api host",
     () => {
       const { layer } = setup({
@@ -855,7 +988,7 @@ describe("config diff integration", () => {
     },
   );
 
-  it.live("other config-read statuses keep the generic unexpected-status message", () => {
+  it.effect("other config-read statuses keep the generic unexpected-status message", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 500, body: { message: "boom" } },
@@ -869,7 +1002,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output-format json emits the structured change set", () => {
+  it.effect("--output-format json emits the structured change set", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
       format: "json",
@@ -879,9 +1012,11 @@ describe("config diff integration", () => {
       const success = out.messages.find((message) => message.type === "success");
       expect(success).toBeDefined();
       expect(success?.message).toContain("1 config difference found.");
-      const data = success?.data as Record<string, unknown>;
-      expect(data["target"]).toMatchObject({
+      const data = yield* decodeJsonRecord(success?.data);
+      expect(data["target"]).toEqual({
+        kind: "linked",
         project_ref: VALID_REF,
+        environment: "unverified",
         local_scope: "base",
       });
       // schema_version is the payload contract's version; the user's $schema reference travels
@@ -902,7 +1037,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output-format stream-json reports zero differences as a success result", () => {
+  it.effect("--output-format stream-json reports zero differences as a success result", () => {
     const { layer, out } = setup({ toml: 'project_id = "test"\n', format: "stream-json" });
     return Effect.gen(function* () {
       yield* configDiff(noFlags);
@@ -911,14 +1046,14 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("every -o/--output value is rejected outright before any work happens", () => {
+  it.effect("every -o/--output value is rejected outright before any work happens", () => {
     // Iterates every value the global `-o`/`--output` flag can carry, so a value added there
     // automatically extends this coverage.
     const values = GLOBAL_OUTPUT_FORMATS;
-    const run = (goOutput: (typeof values)[number]) => {
+    const run = (outputFlag: (typeof values)[number]) => {
       const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-        goOutput,
+        outputFlag,
       });
       return Effect.gen(function* () {
         const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -940,7 +1075,7 @@ describe("config diff integration", () => {
     });
   });
 
-  it.live("a fetch failure in json mode still maps cleanly without a spinner", () => {
+  it.effect("a fetch failure in json mode still maps cleanly without a spinner", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', v2: "fail", format: "json" });
     return Effect.gen(function* () {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -951,7 +1086,27 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("json payload carries the remotes scope and env variable annotations", () => {
+  it.effect("json target for a branch name carries the branch, its parent and the identity", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n',
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(remoteBranch("staging"));
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      expect(data["target"]).toEqual({
+        kind: "linked",
+        project_ref: BRANCH_REF,
+        environment: "branch",
+        parent_project_ref: VALID_REF,
+        branch: "staging",
+        local_scope: "base",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("json payload carries the remotes scope and env variable annotations", () => {
     const { layer, out } = setup({
       toml: [
         'project_id = "test"',
@@ -967,7 +1122,7 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       yield* configDiff(noFlags);
       const success = out.messages.find((message) => message.type === "success");
-      const data = success?.data as Record<string, unknown>;
+      const data = yield* decodeJsonRecord(success?.data);
       expect(data["target"]).toMatchObject({ local_scope: "remotes.staging" });
       expect(data["changes"]).toEqual([
         {
@@ -982,7 +1137,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("remote-only drift renders (unset) locals distinguishably from empty ones", () => {
+  it.effect("remote-only drift renders (unset) locals distinguishably from empty ones", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -991,7 +1146,7 @@ describe("config diff integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             database: {
-              ...(attributes["database"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["database"]),
               postgres_settings: { work_mem: "64MB" },
             },
           }),
@@ -1006,7 +1161,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("remote-only drift on a defaulted path shows the local schema default", () => {
+  it.effect("remote-only drift on a defaulted path shows the local schema default", () => {
     // The file never declares api.max_rows, so a config push would overwrite the remote's 250
     // with the schema default 1000; the output must say so, not imply the key exists only
     // remotely.
@@ -1017,7 +1172,7 @@ describe("config diff integration", () => {
         body: v2Response({
           attributes: (attributes) => ({
             ...attributes,
-            api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+            api: { ...asJsonRecord(attributes["api"]), max_rows: 250 },
           }),
         }),
       },
@@ -1032,7 +1187,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("the config file is read relative to --workdir, not the invoking directory", () =>
+  it.effect("the config file is read relative to --workdir, not the invoking directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1049,7 +1204,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("hostile names cannot inject ANSI or forge output lines in text mode", () => {
+  it.effect("hostile names cannot inject ANSI or forge output lines in text mode", () => {
     // [remotes.*] names are unconstrained TOML keys an attacker could control, so escape bytes
     // must not reach the terminal raw.
     const { layer, out } = setup({
@@ -1070,7 +1225,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an empty block record is reported not-returned, not silently compared", () => {
+  it.effect("an empty block record is reported not-returned, not silently compared", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -1086,7 +1241,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a missing block's not-compared caveat travels with the machine `.message`", () => {
+  it.effect("a missing block's not-compared caveat travels with the machine `.message`", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       format: "json",
@@ -1104,7 +1259,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("the same missing-block caveat renders as a Note in text mode", () => {
+  it.effect("the same missing-block caveat renders as a Note in text mode", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -1121,7 +1276,7 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a declared path push cannot communicate surfaces in the unmanaged note", () => {
+  it.effect("a declared path push cannot communicate surfaces in the unmanaged note", () => {
     // DISABLED_SENTINEL_PRUNES drops authorization_url_path from the local projection while the
     // container is declared disabled, so a disagreeing remote value can't be a change entry but
     // must not vanish silently either.
@@ -1133,7 +1288,7 @@ describe("config diff integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             auth: {
-              ...(attributes["auth"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["auth"]),
               oauth_server_enabled: false,
               oauth_server_authorization_path: "/other",
             },
@@ -1150,45 +1305,36 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "a branch-NAME --project-ref in an unlinked dir fails immediately, naming the value",
-    () => {
-      const { layer, api, telemetry, linkedProjectCache } = setup({
-        toml: 'project_id = "test"\n',
-        linked: false,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* configDiff({
-          ...noFlags,
-          projectRef: Option.some("somebranch"),
-        }).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("ConfigDiffBranchNotLinkedError");
-          expect(causeText).toContain('"somebranch"');
-        }
-        expect(api.requests).toHaveLength(0);
-        expect(telemetry.flushed).toBe(true);
-        expect(linkedProjectCache.cachedRef).toBeUndefined();
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("a branch-NAME --remote in an unlinked dir fails immediately, naming the value", () => {
+    const { layer, api, telemetry, linkedProjectCache } = setup({
+      toml: 'project_id = "test"\n',
+      linked: false,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* configDiff(remoteBranch("somebranch")).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("LinkBranchNotLinkedError");
+        expect(causeText).toContain('"somebranch"');
+      }
+      expect(api.requests).toHaveLength(0);
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedProjectCache.cachedRef).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.live("a branch-NAME --project-ref with a corrupt linked ref reports it as invalid", () => {
+  it.effect("a branch-NAME --remote with a corrupt linked ref reports it as invalid", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       projectId: Option.some("not-a-valid-ref"),
     });
     return Effect.gen(function* () {
-      const exit = yield* configDiff({
-        ...noFlags,
-        projectRef: Option.some("somebranch"),
-      }).pipe(Effect.exit);
+      const exit = yield* configDiff(remoteBranch("somebranch")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigDiffParentRefInvalidError");
+        expect(causeText).toContain("LinkParentRefInvalidError");
         expect(causeText).toContain('"somebranch"');
         expect(causeText).toContain("Relink the parent project");
       }
@@ -1196,70 +1342,88 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a resolved branch with no project ref yet fails with a not-ready error", () => {
+  it.effect("a resolved branch with no project ref yet fails with a not-ready error", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
+      branchList: { status: 200, body: [{ ...BRANCH_BY_NAME, project_ref: "" }] },
     });
     return Effect.gen(function* () {
-      const exit = yield* configDiff({
-        ...noFlags,
-        projectRef: Option.some("staging"),
-      }).pipe(Effect.exit);
+      const exit = yield* configDiff(remoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigDiffBranchNotReadyError");
+        expect(causeText).toContain("LinkBranchNotReadyError");
         expect(causeText).toContain("has no project ref yet");
       }
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
-});
 
-describe("config diff telemetry wiring", () => {
-  // Uses configDiffHandler (not the bare handler) since the safeFlags guard lives in the command
-  // wiring, not the handler itself.
-  const wiringLayer = (analytics: ReturnType<typeof mockContextualAnalytics>, projectRef: string) =>
-    Layer.mergeAll(
-      setup({ toml: 'project_id = "test"\n', analytics }).layer,
-      commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
-      Stdio.layerTest({
-        args: Effect.succeed(["config", "diff", "--project-ref", projectRef]),
-      }),
-    );
-
-  it.live("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(
-        configDiffHandler({ projectRef: Option.some(VALID_REF), exitCode: false }),
+  it.effect(
+    "diffs the project chosen from the picker and fills the real linked-project cache",
+    () => {
+      const out = mockOutput({ format: "text", promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          Effect.sync(() => {
+            if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+              return jsonResponse(request, 200, [PROJECT]);
+            }
+            if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+              return jsonResponse(request, 200, PROJECT);
+            }
+            if (request.url === `${API}/v2/projects/${VALID_REF}/config`) {
+              return jsonResponse(request, 200, v2Response());
+            }
+            return jsonResponse(request, 404, { message: "unexpected request" });
+          }),
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = Layer.merge(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings,
+          tty: mockTty({ stdinIsTty: true }),
+          linkedProjectCache: realLinkedProjectCache({
+            httpClient: api.httpClientLayer,
+            cliSettings,
+          }),
+        }),
+        cliConfigValuesTestLayer,
       );
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ "project-ref": VALID_REF });
-    }).pipe(Effect.provide(wiringLayer(analytics, VALID_REF)));
-  });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeProjectFile("config.toml", 'project_id = "test"\n');
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
 
-  it.live("redacts a branch-name-shaped --project-ref", () => {
-    // --project-ref also accepts branch names; a user-created name must never reach PostHog
-    // verbatim.
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(
-        configDiffHandler({ projectRef: Option.some("staging"), exitCode: false }),
-      );
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
-    }).pipe(Effect.provide(wiringLayer(analytics, "staging")));
-  });
+        yield* configDiff(noFlags);
+
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${API}/v1/projects`,
+          `GET ${API}/v2/projects/${VALID_REF}/config`,
+          `GET ${API}/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stdoutText).toContain("No config differences found.");
+        expect(yield* decodeJsonText(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "config diff", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 describe("config diff -o/--output wrapper wiring", () => {
   // diff.command.ts's `outputFormats` override widens the flag's enum to the full choice list;
   // without it, `-o table` would hit the wrapper's own generic rejection before reaching this
   // command's specific one. Uses the real configDiffHandler wiring so this exercises that override.
-  it.live("-o table reaches this command's own message, not the wrapper's generic one", () => {
-    const { layer, api } = setup({ toml: 'project_id = "test"\n', goOutput: "table" });
+  it.effect("-o table reaches this command's own message, not the wrapper's generic one", () => {
+    const { layer, api } = setup({ toml: 'project_id = "test"\n', outputFlag: "table" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(configDiffHandler(noFlags));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1273,10 +1437,22 @@ describe("config diff -o/--output wrapper wiring", () => {
       Effect.provide(
         Layer.mergeAll(
           layer,
-          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
+          commandRuntimeLayer(["config", "diff"]).pipe(
+            Layer.provide([BunServices.layer, BunCrypto.layer]),
+          ),
           Stdio.layerTest({ args: Effect.succeed(["config", "diff", "-o", "table"]) }),
         ),
       ),
     );
   });
+});
+
+describeHostedTargetSelection("config diff", {
+  files: { "supabase/config.toml": 'project_id = "test"\n' },
+  respond: (request, ref) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.url.includes("/v2/projects/") ? v2Response({ ref }) : {}),
+    ),
+  run: (flags) =>
+    configDiff({ ...noFlags, ...flags }).pipe(Effect.provide(cliConfigValuesTestLayer)),
 });

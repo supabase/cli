@@ -1,9 +1,11 @@
 import { Effect } from "effect";
 
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import type { OutputTask } from "../../../shared/output/output.service.ts";
 import {
   PostgresConfigInvalidConfigValueError,
   PostgresConfigUpdateNetworkError,
@@ -24,7 +26,6 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
   flags: PostgresConfigUpdateFlags,
 ) {
   const output = yield* Output;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -38,38 +39,57 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
       nextOverrides[splits[0] ?? ""] = splits[1] ?? "";
     }
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
-      const updating =
-        output.format === "text" ? yield* output.task("Updating Postgres config...") : undefined;
+      const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>
+        output.format === "text" ? output.task("Updating Postgres config...") : Effect.undefined,
+      );
 
-      const finalOverrides = flags.replaceExistingOverrides
+      const fetching = flags.replaceExistingOverrides ? undefined : yield* startTask;
+      const preserved = flags.replaceExistingOverrides
         ? {}
         : yield* fetchCurrentPostgresConfig(ref).pipe(
-            Effect.tapError(() => updating?.fail() ?? Effect.void),
+            Effect.tapError(() => fetching?.fail() ?? Effect.void),
           );
+      yield* fetching?.clear ?? Effect.void;
 
+      const changes: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(nextOverrides)) {
-        finalOverrides[key] = parseConfigValue(value);
+        changes[key] = parseConfigValue(value);
       }
 
       if (flags.noRestart) {
-        finalOverrides["restart_database"] = false;
+        changes["restart_database"] = false;
       }
 
-      normalizeTimeoutConfig(finalOverrides);
+      normalizeTimeoutConfig(changes);
+      normalizeTimeoutConfig(preserved);
 
-      const updated = yield* putPostgresConfig(ref, finalOverrides, {
-        serializeError: (args) => new PostgresConfigUpdateSerializeError(args),
-        networkError: (args) => new PostgresConfigUpdateNetworkError(args),
-        statusError: (args) => new PostgresConfigUpdateUnexpectedStatusError(args),
-        unmarshalError: (args) => new PostgresConfigUpdateUnmarshalError(args),
-        networkMessage: (description) => `failed to update config overrides: ${description}`,
-        statusMessage: (status, body) =>
-          `unexpected update config overrides status ${status}: ${body}`,
-        unmarshalMessage: (description) => `failed to unmarshal update response: ${description}`,
-      }).pipe(Effect.tapError(() => updating?.fail() ?? Effect.void));
+      yield* requireHostedMutationConsent({
+        action: "Update the Postgres config overrides",
+        details: [
+          ...(flags.replaceExistingOverrides ? ["Replaces all existing overrides"] : []),
+          ...Object.entries(nextOverrides).map(([key, value]) => `Set ${key} = ${value}`),
+          ...(flags.noRestart ? ["Does not restart the database"] : []),
+        ],
+      });
+
+      const updating = yield* startTask;
+      const updated = yield* putPostgresConfig(
+        ref,
+        { changes, preserved },
+        {
+          serializeError: (args) => new PostgresConfigUpdateSerializeError(args),
+          networkError: PostgresConfigUpdateNetworkError,
+          statusError: PostgresConfigUpdateUnexpectedStatusError,
+          parseError: (args) => new PostgresConfigUpdateUnmarshalError(args),
+          networkMessage: (description) => `failed to update config overrides: ${description}`,
+          statusMessage: (status, body) =>
+            `unexpected update config overrides status ${status}: ${body}`,
+          parseMessage: (description) => `failed to parse update response: ${description}`,
+        },
+      ).pipe(Effect.tapError(() => updating?.fail() ?? Effect.void));
 
       yield* updating?.clear ?? Effect.void;
       yield* writePostgresConfigOutput(updated);

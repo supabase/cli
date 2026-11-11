@@ -16,12 +16,13 @@ import {
   type Path,
   type Scope,
 } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
@@ -82,6 +83,7 @@ export class ShadowDbError extends Data.TaggedError("ShadowDbError")<{
     | "port_conflict"
     | "filesystem"
     | "database";
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
@@ -98,7 +100,12 @@ export class ShadowDbError extends Data.TaggedError("ShadowDbError")<{
       case "database":
         return { ...actionability.dbFinding, fingerprint_suffix: "database" };
       default:
-        return { ...actionability.invalidConfig, fingerprint_suffix: "container_configuration" };
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.invalidConfig,
+            fingerprint_suffix: "container_configuration",
+          }
+        );
     }
   }
 }
@@ -208,15 +215,7 @@ export const createShadowDatabase = (
       [CLI_PROJECT_LABEL]: input.projectId,
       [COMPOSE_PROJECT_LABEL]: input.projectId,
     };
-    yield* ensureNetwork(spawner, input.networkId, labels).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ShadowDbError({
-            message: cause.message,
-            reason: shadowContainerReason(cause.reason),
-          }),
-      ),
-    );
+    yield* ensureNetwork(spawner, input.networkId, labels);
     // Both overrides are the shadow baseline cache's and nobody else's — see each field's doc
     // comment on {@link CreateShadowDatabaseInput}.
     const baseSpec = buildShadowPostgresContainerSpec(input);
@@ -234,17 +233,16 @@ export const createShadowDatabase = (
       workdir: input.workdir,
       extraHosts: input.extraHosts,
     };
-    const containerId = yield* createContainer(spawner, spec, containerOpts).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ShadowDbError({
-            message: cause.message,
-            reason: shadowContainerReason(cause.reason),
-          }),
-      ),
-    );
+    const containerId = yield* createContainer(spawner, spec, containerOpts);
     return { containerId };
   }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ShadowDbError({
+          message: cause.message,
+          reason: shadowContainerReason(cause.reason),
+        }),
+    ),
     Effect.withSpan("ShadowDatabase.create", {
       attributes: { "shadow.restore_archive": input.restoreArchive !== undefined },
     }),
@@ -751,8 +749,8 @@ const migrateShadowDatabaseWith = <E>(
   );
 
 /**
- * Migrates a shadow for migra and the legacy pg-delta engine. Those Go-backed
- * workflows historically include `pg_net` in the platform baseline regardless of
+ * Migrates a shadow for migra and the legacy pg-delta engine. Those
+ * workflows include `pg_net` in the platform baseline regardless of
  * project config, so preserve that baseline while sharing the native TS setup path.
  */
 export const migrateShadowDatabase = <E>(

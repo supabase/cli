@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import { formatAccess } from "./GatewayLog.ts";
 import { logflareEvent } from "./LogflareEvents.ts";
 
 const received = "2026-09-28T10:00:00.000Z";
@@ -18,6 +19,36 @@ it("merges structured Auth lines into metadata and keeps the raw message", () =>
       time: "2026-09-28T09:59:59Z",
       path: "/health",
     },
+  });
+});
+
+it("masks a template token in Auth's message and metadata", () => {
+  const line = JSON.stringify({
+    level: "error",
+    msg: 'template: http://host.supabase.internal:54321/email/recovery?token=secret-uuid:1: unexpected "<" in operand',
+    error:
+      "http: GET http://host.supabase.internal:54321/email/recovery?token=secret-uuid: status code 404",
+    time: "2026-09-28T09:59:59Z",
+  });
+  const event = logflareEvent("auth", received, line);
+  expect(JSON.stringify(event)).not.toContain("secret-uuid");
+  expect(event.event_message).toContain("/email/recovery?token=redacted:1:");
+  expect(event.metadata).toMatchObject({
+    error: expect.stringContaining("/email/recovery?token=redacted: status code 404"),
+  });
+});
+
+it("keeps Auth metadata when a masked template URL is quoted", () => {
+  const line = JSON.stringify({
+    level: "error",
+    msg: 'Get "http://host.supabase.internal:54321/email/invite?token=secret-uuid": connection refused',
+    time: "2026-09-28T09:59:59Z",
+  });
+  const event = logflareEvent("auth", received, line);
+  expect(JSON.stringify(event)).not.toContain("secret-uuid");
+  expect(event.metadata).toMatchObject({
+    level: "error",
+    msg: expect.stringContaining('/email/invite?token=redacted": connection refused'),
   });
 });
 
@@ -132,6 +163,50 @@ it("derives the Postgres severity from the last level marker and defaults to LOG
   expect(logflareEvent("database", received, "\tat character 15").metadata.parsed).toEqual({
     timestamp: received,
     error_severity: "LOG",
+  });
+});
+
+it("ships a gateway access line as an API Gateway request stamped with its request time", () => {
+  const line = formatAccess({
+    time: Date.parse("2026-10-01T09:25:23.456Z"),
+    client: "127.0.0.1",
+    method: "GET",
+    target: '/rest/v1/todos?select=*&q="x"',
+    protocol: "HTTP/1.1",
+    status: 200,
+    bytes: 126,
+    userAgent: "curl/8.7.1\u009b",
+    durationMillis: 12,
+  });
+
+  expect(line).toBe(
+    '127.0.0.1 - - [01/Oct/2026:09:25:23.456 +0000] "GET /rest/v1/todos?select=*&q=\\x22x\\x22 HTTP/1.1" 200 126 "-" "curl/8.7.1\\x9b" 12ms',
+  );
+  expect(logflareEvent("gateway", received, line)).toEqual({
+    project: "default",
+    appname: "gateway",
+    event_message: line,
+    timestamp: "2026-10-01T09:25:23.456Z",
+    metadata: {
+      request: {
+        method: "GET",
+        path: "/rest/v1/todos",
+        search: '?select=*&q="x"',
+        protocol: "HTTP/1.1",
+        headers: { cf_connecting_ip: "127.0.0.1", user_agent: "curl/8.7.1\u009b" },
+      },
+      response: { status_code: 200 },
+    },
+  });
+});
+
+it("passes a malformed gateway line through without request metadata", () => {
+  expect(logflareEvent("gateway", received, "not an access line")).toEqual({
+    project: "default",
+    appname: "gateway",
+    event_message: "not an access line",
+    timestamp: received,
+    metadata: {},
   });
 });
 

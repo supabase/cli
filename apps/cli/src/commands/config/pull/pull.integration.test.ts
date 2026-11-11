@@ -1,4 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
+import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -10,11 +11,12 @@ import {
   Option,
   Path,
   PlatformError,
+  Schema,
   Sink,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   mockOutput,
@@ -23,6 +25,8 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -36,7 +40,14 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import { configPullRun } from "../../../command-internal/config-pull-run.ts";
 import { GLOBAL_OUTPUT_FORMATS, YesFlag } from "../../../command-internal/global-flags.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   configPull,
@@ -51,11 +62,40 @@ import type { ConfigPullFlags } from "./pull.command.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-pull-int-");
 
+const jsonRecord = Schema.Record(Schema.String, Schema.Unknown);
+const asJsonRecord = Schema.decodeUnknownSync(jsonRecord);
+const decodeJsonRecord = Schema.decodeUnknownEffect(jsonRecord);
+const decodeJsonText = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonRecords = Schema.decodeUnknownEffect(Schema.Array(jsonRecord));
+const decodeChanges = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.StructWithRest(Schema.Struct({ path: Schema.Array(Schema.String) }), [jsonRecord]),
+  ),
+);
+
 // A past mtime for "untouched file" checks, so a rewrite within the same millisecond still shows.
 const BACKDATED_MTIME_SECONDS = 1_577_836_800;
 
+const API = "https://api.supabase.com";
 const BRANCH_REF = "cccccccccccccccccccc";
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
 
 const projectFilePath = Effect.fnUntraced(function* (name: string) {
   const path = yield* Path.Path;
@@ -156,7 +196,7 @@ function v2Response(
       mailer_notifications_mfa_factor_enrolled_enabled: false,
       mailer_notifications_mfa_factor_unenrolled_enabled: false,
       external_phone_enabled: false,
-      sms_autoconfirm: false,
+      sms_autoconfirm: true,
       sms_max_frequency: 5,
       sms_otp_exp: 60,
       sms_otp_length: 6,
@@ -217,7 +257,7 @@ function v2Response(
   };
 }
 
-/** V1FindBranch body for the branch-name `--project-ref` lookup. */
+/** A branch row of the linked project's branch list. */
 const BRANCH_BY_NAME = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "staging",
@@ -231,7 +271,7 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
-/** V1GetABranchConfig body for the UUID `--project-ref` lookup. */
+/** V1GetABranchConfig body for the UUID `--remote` lookup. */
 const BRANCH_CONFIG = {
   ref: BRANCH_REF,
   postgres_version: "15",
@@ -328,14 +368,17 @@ interface SetupOpts {
   readonly toml?: string;
   readonly dotenv?: string;
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
+  readonly outputFlag?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
   readonly v2?: { status: number; body: unknown } | "fail" | "decode-fail";
-  readonly branchByName?: { status: number; body: unknown } | "fail";
+  readonly branchList?: { status: number; body: unknown } | "fail";
   readonly branchByUuid?: { status: number; body: unknown };
   /** `false` simulates a directory with no linked project. */
   readonly linked?: boolean;
   /** Overrides `cliSettings.projectId` directly — takes precedence over `linked`. */
   readonly projectId?: Option.Option<string>;
+  /** Serves the project list and project lookup, answers the project picker with `VALID_REF`, and
+   *  writes the linked-project cache through the real cache layer. */
+  readonly pickerAndRealCache?: boolean;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -357,7 +400,11 @@ function setup(opts: SetupOpts = {}) {
       opts.dotenv === undefined ? Effect.void : writeProjectFile(".env", opts.dotenv),
     ]),
   ).pipe(Layer.provide(BunServices.layer));
-  const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    promptConfirmResponses: opts.confirm,
+    ...(opts.pickerAndRealCache === true ? { promptSelectResponses: [VALID_REF] } : {}),
+  });
   const outputLayer =
     opts.confirmSideEffect === undefined
       ? out.layer
@@ -365,6 +412,13 @@ function setup(opts: SetupOpts = {}) {
   const api = mockCommandPlatformApi({
     handler: (request) => {
       const url = request.url;
+      if (opts.pickerAndRealCache === true && request.method === "GET") {
+        if (url === `${API}/v1/projects`)
+          return Effect.succeed(jsonResponse(request, 200, [PROJECT]));
+        if (url === `${API}/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, PROJECT));
+        }
+      }
       if (url.includes("/v2/projects/")) {
         if (opts.v2 === "fail") {
           return Effect.fail(transportFailure(request));
@@ -387,11 +441,11 @@ function setup(opts: SetupOpts = {}) {
         const b = opts.branchByUuid ?? { status: 200, body: BRANCH_CONFIG };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
-      if (url.includes("/branches/")) {
-        if (opts.branchByName === "fail") {
+      if (url.endsWith("/branches")) {
+        if (opts.branchList === "fail") {
           return Effect.fail(transportFailure(request));
         }
-        const b = opts.branchByName ?? { status: 200, body: BRANCH_BY_NAME };
+        const b = opts.branchList ?? { status: 200, body: [BRANCH_BY_NAME] };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
       return Effect.succeed(jsonResponse(request, 200, {}));
@@ -400,6 +454,15 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
   const processControl = mockProcessControl();
+  const cliSettings = mockCommandSettings({
+    workdir: opts.workdir ?? tempRoot.current,
+    explicitWorkdir: opts.explicitWorkdir ?? false,
+    ...(opts.projectId !== undefined
+      ? { projectId: opts.projectId }
+      : opts.linked === false
+        ? { projectId: Option.none<string>() }
+        : {}),
+  });
   const gitStatus = mockGitStatusSpawner({
     dirty: opts.gitDirty,
     spawnFails: opts.gitSpawnFails,
@@ -408,21 +471,16 @@ function setup(opts: SetupOpts = {}) {
     buildTestRuntime({
       out: { layer: outputLayer },
       api,
-      cliSettings: mockCommandSettings({
-        workdir: opts.workdir ?? tempRoot.current,
-        explicitWorkdir: opts.explicitWorkdir ?? false,
-        ...(opts.projectId !== undefined
-          ? { projectId: opts.projectId }
-          : opts.linked === false
-            ? { projectId: Option.none<string>() }
-            : {}),
-      }),
+      cliSettings,
       runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       telemetry: telemetry.layer,
-      linkedProjectCache: linkedProjectCache.layer,
+      linkedProjectCache:
+        opts.pickerAndRealCache === true
+          ? realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings })
+          : linkedProjectCache.layer,
       processControl,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -430,16 +488,21 @@ function setup(opts: SetupOpts = {}) {
     // BunServices.layer provides (last-wins).
     gitStatus.layer,
     projectFiles,
+    configValuesLayer({ output: outputLayer }),
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl, gitStatus };
 }
 
 const noFlags: ConfigPullFlags = {
+  remote: Option.none<RemoteValue>(),
   projectRef: Option.none<string>(),
   remoteLabel: Option.none<string>(),
   dryRun: false,
   force: false,
 };
+
+const branchRemote = (name: string) => Option.some<RemoteValue>({ _tag: "Branch", name });
+const refRemote = (ref: string) => Option.some<RemoteValue>({ _tag: "Ref", ref });
 
 /** Number of lines that differ between two texts of equal line count. */
 function countChangedLines(before: string, after: string): number {
@@ -450,11 +513,14 @@ function countChangedLines(before: string, after: string): number {
 }
 
 describe("config pull integration", () => {
-  it.live(
+  it.effect(
     "root-target single-property update writes the file with exactly one changed line",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
-      const { layer, out, telemetry, linkedProjectCache } = setup({ toml: before, yes: true });
+      const { layer, out, telemetry, linkedProjectCache, api } = setup({
+        toml: before,
+        yes: true,
+      });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
         const after = yield* readConfig;
@@ -464,13 +530,48 @@ describe("config pull integration", () => {
         expect(out.stdoutText).toContain("1 change written.");
         expect(telemetry.flushed).toBe(true);
         expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
+        assertPermissionDrift({ command: "config pull", requests: api.requests, exact: true });
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("--dry-run leaves the file untouched and reports dry_run in the payload", () => {
+  it.effect(
+    "pulls from the project chosen in the picker and fills the real linked-project cache",
+    () => {
+      const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+      const { layer, out, api } = setup({
+        toml: before,
+        yes: true,
+        linked: false,
+        stdinIsTty: true,
+        pickerAndRealCache: true,
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+
+        yield* configPull(noFlags);
+
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${API}/v1/projects`,
+          `GET ${API}/v2/projects/${VALID_REF}/config`,
+          `GET ${API}/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* readConfig).toContain("max_rows = 1000");
+        expect(out.stdoutText).toContain("1 change written.");
+        expect(yield* decodeJsonText(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "config pull", requests: api.requests, exact: true });
+        assertBlockDrift(configPullRun, { requests: api.requests.slice(1, 2), exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("--dry-run leaves the file untouched and reports dry_run in the payload", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
-    const { layer, out } = setup({ toml: before, format: "json", yes: true });
+    const { layer, out, api } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* projectFilePath("config.toml");
@@ -480,17 +581,42 @@ describe("config pull integration", () => {
       expect((yield* fs.stat(path)).mtime).toEqual(beforeStat.mtime);
       expect(yield* readConfig).toBe(beforeStat.contents);
       const success = out.messages.find((message) => message.type === "success");
-      const data = success?.data as Record<string, unknown>;
+      const data = yield* decodeJsonRecord(success?.data);
       expect(data["dry_run"]).toBe(true);
       expect(data["wrote"]).toBe(false);
-      const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+      const changes = yield* decodeJsonRecords(data["changes"]);
       expect(changes.every((change) => change["written"] === false)).toBe(true);
+      assertPermissionDrift({
+        command: "config pull",
+        activeFlags: { "dry-run": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a branch-named target creates a new [remotes.<name>] block at EOF", () => {
+  it.effect("the json target carries the linked identity alongside the scope fields", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull({ ...noFlags, dryRun: true });
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      expect(data["target"]).toEqual({
+        kind: "linked",
+        project_ref: VALID_REF,
+        environment: "unverified",
+        local_scope: "base",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a branch-named target creates a new [remotes.<name>] block at EOF", () => {
     const before = 'project_id = "test"\n';
-    const { layer } = setup({
+    const { layer, out } = setup({
       toml: before,
       yes: true,
       v2: {
@@ -499,13 +625,14 @@ describe("config pull integration", () => {
           ref: BRANCH_REF,
           attributes: (attributes) => ({
             ...attributes,
-            api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+            api: { ...asJsonRecord(attributes["api"]), max_rows: 250 },
           }),
         }),
       },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, remote: branchRemote("staging") });
+      expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
       const after = yield* readConfig;
       expect(after.startsWith(before)).toBe(true);
       const remotesIndex = after.indexOf("[remotes.staging]");
@@ -521,7 +648,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a first-pull auth.oauth_server.enabled no longer trips the ADR 0021 unpushable warning (CLI-2314)",
     () => {
       // `enabled` is now an ordinary comparable path: writing it converges local and remote
@@ -538,7 +665,7 @@ describe("config pull integration", () => {
             attributes: (attributes) => ({
               ...attributes,
               auth: {
-                ...(attributes["auth"] as Record<string, unknown>),
+                ...asJsonRecord(attributes["auth"]),
                 oauth_server_enabled: true,
               },
             }),
@@ -557,7 +684,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a first-pull auth.rate_limit.email_sent DOES trip the ADR 0021 unpushable warning, for a sparse remote (review round, CLI-2314)",
     () => {
       // applyDisabledSentinels's cross-section rule deletes auth.rate_limit.email_sent whenever
@@ -573,7 +700,7 @@ describe("config pull integration", () => {
           status: 200,
           body: v2Response({
             attributes: (attributes) => {
-              const auth = { ...(attributes["auth"] as Record<string, unknown>) };
+              const auth = { ...asJsonRecord(attributes["auth"]) };
               delete auth["smtp_host"];
               auth["rate_limit_email_sent"] = 50;
               return { ...attributes, auth };
@@ -594,7 +721,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a clean remote reports nothing to write without prompting", () => {
+  it.effect("a clean remote reports nothing to write without prompting", () => {
     const { layer, out } = setup({ toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
       yield* configPull(noFlags);
@@ -603,7 +730,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a disabled Data API leaves a declared enabled = false untouched", () => {
+  it.effect("a disabled Data API leaves a declared enabled = false untouched", () => {
     const before = 'project_id = "test"\n[api]\nenabled = false\n';
     const { layer, out } = setup({
       toml: before,
@@ -614,7 +741,7 @@ describe("config pull integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             api: {
-              ...(attributes["api"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["api"]),
               db_schema: "pg_pgrst_no_exposed_schemas",
             },
           }),
@@ -628,7 +755,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("declining the confirmation prompt leaves the file unchanged", () => {
+  it.effect("declining the confirmation prompt leaves the file unchanged", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({
       toml: before,
@@ -649,14 +776,14 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--output-format json reports written flags, destination, and counts", () => {
+  it.effect("--output-format json reports written flags, destination, and counts", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       yield* configPull(noFlags);
       const success = out.messages.find((message) => message.type === "success");
-      const data = success?.data as Record<string, unknown>;
+      const data = yield* decodeJsonRecord(success?.data);
       expect(data["config_path"]).toBe(path.join("supabase", "config.toml"));
       expect(data["destination"]).toEqual({ scope: "base", created: false });
       expect(data["wrote"]).toBe(true);
@@ -675,7 +802,66 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("telemetry flushes and the linked-project cache writes on a failed run too", () => {
+  it.effect.each([
+    {
+      name: "enabled",
+      declared: "enabled = true",
+      written: "enabled = false",
+      absent: "enable_signup",
+      documentPath: ["auth", "email", "enabled"],
+      deprecationWarned: false,
+    },
+    {
+      name: "the deprecated enable_signup",
+      declared: "enable_signup = true",
+      written: "enable_signup = false",
+      absent: "enabled",
+      documentPath: ["auth", "email", "enable_signup"],
+      deprecationWarned: true,
+    },
+  ])(
+    "an email provider turned off remotely rewrites the key the file declares: $name",
+    ({ declared, written, absent, documentPath, deprecationWarned }) => {
+      const { layer, out } = setup({
+        toml: `project_id = "test"\n[auth.email]\n${declared}\n`,
+        format: "json",
+        yes: true,
+        v2: {
+          status: 200,
+          body: v2Response({
+            attributes: (attributes) => ({
+              ...attributes,
+              auth: { ...asJsonRecord(attributes["auth"]), external_email_enabled: false },
+            }),
+          }),
+        },
+      });
+      return Effect.gen(function* () {
+        yield* configPull(noFlags);
+        const config = yield* readConfig;
+        expect(config).toContain(written);
+        expect(config).not.toMatch(new RegExp(`^${absent} =`, "m"));
+        const success = out.messages.find((message) => message.type === "success");
+        const data = yield* decodeJsonRecord(success?.data);
+        expect(data["changes"]).toEqual([
+          {
+            path: ["auth", "email", "enable_signup"],
+            class: "update",
+            declared: true,
+            local: true,
+            remote: false,
+            written: true,
+            document_path: documentPath,
+          },
+        ]);
+        const deprecation =
+          "WARN: auth.email.enable_signup is deprecated and will be removed in v4, use auth.email.enabled instead.\n";
+        expect(out.stderrText.includes(deprecation)).toBe(deprecationWarned);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("telemetry flushes and the linked-project cache writes on a failed run too", () => {
     const { layer, telemetry, linkedProjectCache, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
@@ -695,7 +881,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
     () =>
       Effect.gen(function* () {
@@ -731,7 +917,7 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () =>
       Effect.gen(function* () {
@@ -751,7 +937,7 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "reuses an existing [remotes.*] block regardless of its own label when its project_id matches the target",
     () => {
       const before = [
@@ -764,7 +950,7 @@ describe("config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(out.stderrText).toContain("→ [remotes.prod]");
         expect(out.stderrText).not.toContain("[remotes.staging]");
         const after = yield* readConfig;
@@ -775,28 +961,31 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("--remote-label naming the block block reuse already selected succeeds unchanged", () => {
-    const before = [
-      'project_id = "test"',
-      "[remotes.prod]",
-      `project_id = "${BRANCH_REF}"`,
-      "[remotes.prod.api]",
-      "max_rows = 500",
-      "",
-    ].join("\n");
-    const { layer, out } = setup({ toml: before, yes: true });
-    return Effect.gen(function* () {
-      yield* configPull({
-        ...noFlags,
-        projectRef: Option.some("staging"),
-        remoteLabel: Option.some("prod"),
-      });
-      expect(out.stderrText).toContain("→ [remotes.prod]");
-      expect(yield* readConfig).toContain("max_rows = 1000");
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "--remote-label naming the block block reuse already selected succeeds unchanged",
+    () => {
+      const before = [
+        'project_id = "test"',
+        "[remotes.prod]",
+        `project_id = "${BRANCH_REF}"`,
+        "[remotes.prod.api]",
+        "max_rows = 500",
+        "",
+      ].join("\n");
+      const { layer, out } = setup({ toml: before, yes: true });
+      return Effect.gen(function* () {
+        yield* configPull({
+          ...noFlags,
+          remote: branchRemote("staging"),
+          remoteLabel: Option.some("prod"),
+        });
+        expect(out.stderrText).toContain("→ [remotes.prod]");
+        expect(yield* readConfig).toContain("max_rows = 1000");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live(
+  it.effect(
     "the confirmation prompt names the destination block when writing into a [remotes.*] block (CLI-2064 item F.5)",
     () => {
       const before = [
@@ -810,7 +999,7 @@ describe("config pull integration", () => {
       const { layer, out } = setup({ toml: before, stdinIsTty: true, confirm: [true] });
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(out.promptConfirmCalls[0]?.message).toBe(
           `Apply 1 change(s) to ${path.join("supabase", "config.toml")} [remotes.prod]?`,
         );
@@ -818,7 +1007,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--remote-label naming a block that already tracks a different project fails with a collision error",
     () => {
       const before = [
@@ -845,7 +1034,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--remote-label naming a nonexistent label while a different block already tracks the ref fails with a collision error",
     () => {
       const before = [
@@ -873,7 +1062,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "an env()-spelled [remotes.*].project_id resolving to the target ref is a hard error, and the file stays untouched",
     () => {
       const before = [
@@ -902,7 +1091,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--remote-label alongside an env-spelled match creates the requested block instead of refusing (CLI-2064 item B)",
     () => {
       const before = [
@@ -927,7 +1116,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a branch-named target that collides with an existing, differently-tracked block fails with a collision error, and the file stays untouched (CLI-2064 item A)",
     () => {
       const before = [
@@ -942,7 +1131,7 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull({
           ...noFlags,
-          projectRef: Option.some("staging"),
+          remote: branchRemote("staging"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -955,7 +1144,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a --remote-label collision is still caught when the raw value differs from the existing block's name only by control characters (CLI-2064 item A, sanitization bypass)",
     () => {
       const before = [
@@ -981,7 +1170,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "the destination line prints to stderr before any network call, and survives a failed fetch",
     () => {
       const { layer, out } = setup({ toml: 'project_id = "test"\n', v2: "fail" });
@@ -993,7 +1182,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("no temp file is left behind in supabase/ after a successful write", () => {
+  it.effect("no temp file is left behind in supabase/ after a successful write", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -1006,7 +1195,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "an editor refusal (an edit path through an inline table) leaves the file byte-identical and fails with ConfigPullUnsupportedLayoutError",
     () => {
       // A genuine duplicate [api] table header would be rejected by smol-toml itself at load
@@ -1030,7 +1219,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a local-only declared property survives the write and is reported skipped", () => {
+  it.effect("a local-only declared property survives the write and is reported skipped", () => {
     const before = [
       'project_id = "test"',
       "[auth]",
@@ -1047,7 +1236,7 @@ describe("config pull integration", () => {
         status: 200,
         body: v2Response({
           attributes: (attributes) => {
-            const { site_url: _siteUrl, ...auth } = attributes["auth"] as Record<string, unknown>;
+            const { site_url: _siteUrl, ...auth } = asJsonRecord(attributes["auth"]);
             return { ...attributes, auth };
           },
         }),
@@ -1057,16 +1246,14 @@ describe("config pull integration", () => {
       yield* configPull(noFlags);
       expect(yield* readConfig).toContain('site_url = "https://local.example.com"');
       const success = out.messages.find((message) => message.type === "success");
-      const data = success?.data as Record<string, unknown>;
-      const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
-      const siteUrlChange = changes.find(
-        (change) => (change["path"] as Array<string>).join(".") === "auth.site_url",
-      );
+      const data = yield* decodeJsonRecord(success?.data);
+      const changes = yield* decodeChanges(data["changes"]);
+      const siteUrlChange = changes.find((change) => change.path.join(".") === "auth.site_url");
       expect(siteUrlChange).toMatchObject({ written: false, skipped_reason: "local_only" });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "an env()-declared property is never replaced, even when other keys in the same run are written",
     () => {
       const before = [
@@ -1089,18 +1276,77 @@ describe("config pull integration", () => {
         expect(after).toContain('site_url = "env(SITE_URL)"');
         expect(after).toContain("max_rows = 1000");
         const success = out.messages.find((message) => message.type === "success");
-        const data = success?.data as Record<string, unknown>;
-        const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
-        const siteUrlChange = changes.find(
-          (change) => (change["path"] as Array<string>).join(".") === "auth.site_url",
-        );
+        const data = yield* decodeJsonRecord(success?.data);
+        const changes = yield* decodeChanges(data["changes"]);
+        const siteUrlChange = changes.find((change) => change.path.join(".") === "auth.site_url");
         expect(siteUrlChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
         expect(siteUrlChange?.["env_variables"]).toEqual(["SITE_URL"]);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect("an env() reference on a numeric key is never replaced by the remote value", () => {
+    const before = ['project_id = "test"', "[api]", 'max_rows = "env(ROWS)"', ""].join("\n");
+    const { layer, out } = setup({
+      toml: before,
+      dotenv: "ROWS=010\n",
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toContain('max_rows = "env(ROWS)"');
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      const changes = yield* decodeChanges(data["changes"]);
+      const rowsChange = changes.find((change) => change.path.join(".") === "api.max_rows");
+      expect(rowsChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
+      expect(rowsChange?.["env_variables"]).toEqual(["ROWS"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("an env() reference inside an array is never replaced by the remote list", () => {
+    const before = [
+      'project_id = "test"',
+      "[auth]",
+      'additional_redirect_urls = ["env(CALLBACK_URL)"]',
+      "",
+    ].join("\n");
+    const { layer, out } = setup({
+      toml: before,
+      dotenv: "CALLBACK_URL=https://local.example.com/callback\n",
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toContain('additional_redirect_urls = ["env(CALLBACK_URL)"]');
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      const changes = yield* decodeChanges(data["changes"]);
+      const redirectChange = changes.find(
+        (change) => change.path.join(".") === "auth.additional_redirect_urls",
+      );
+      expect(redirectChange).toMatchObject({ written: false, skipped_reason: "env_reference" });
+      expect(redirectChange?.["env_variables"]).toEqual(["CALLBACK_URL"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("compares against the file's declared values, ignoring a SUPABASE_* override", () => {
+    const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+    const { layer, out } = setup({ toml: before, yes: true });
+    return withEnvVar(
+      "SUPABASE_API_MAX_ROWS",
+      "1000",
+      Effect.gen(function* () {
+        yield* configPull(noFlags);
+        expect(yield* readConfig).toContain("max_rows = 1000");
+        expect(out.stdoutText).toContain("1 change written.");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
     "a declared secret is never written, even though the config file has it declared before AND after the run",
     () => {
       const before = [
@@ -1123,7 +1369,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a REMOTE value spelled as env() is never written — the loader would resolve it against the LOCAL environment on the next load (CLI-2064 security finding)",
     () => {
       const before = [
@@ -1144,7 +1390,7 @@ describe("config pull integration", () => {
             attributes: (attributes) => ({
               ...attributes,
               auth: {
-                ...(attributes["auth"] as Record<string, unknown>),
+                ...asJsonRecord(attributes["auth"]),
                 site_url: "env(SUPABASE_ACCESS_TOKEN)",
               },
             }),
@@ -1159,22 +1405,20 @@ describe("config pull integration", () => {
         expect(after).toContain('site_url = "https://local.example.com"');
         expect(after).toContain("max_rows = 1000");
         const success = out.messages.find((message) => message.type === "success");
-        const data = success?.data as Record<string, unknown>;
-        const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
-        const siteUrlChange = changes.find(
-          (change) => (change["path"] as Array<string>).join(".") === "auth.site_url",
-        );
+        const data = yield* decodeJsonRecord(success?.data);
+        const changes = yield* decodeChanges(data["changes"]);
+        const siteUrlChange = changes.find((change) => change.path.join(".") === "auth.site_url");
         expect(siteUrlChange).toMatchObject({
           written: false,
           skipped_reason: "remote_env_reference",
         });
-        const counts = data["counts"] as Record<string, unknown>;
+        const counts = yield* decodeJsonRecord(data["counts"]);
         expect(counts["skipped"]).toBeGreaterThanOrEqual(1);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("writing a dual-scope property to the config root warns before the prompt", () => {
+  it.effect("writing a dual-scope property to the config root warns before the prompt", () => {
     const before = 'project_id = "test"\n[auth]\nsite_url = "https://custom.example.com"\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -1186,7 +1430,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "the same dual-scope property written into a [remotes.*] block carries no dual-scope warning",
     () => {
       const { layer, out } = setup({
@@ -1199,7 +1443,7 @@ describe("config pull integration", () => {
             attributes: (attributes) => ({
               ...attributes,
               auth: {
-                ...(attributes["auth"] as Record<string, unknown>),
+                ...asJsonRecord(attributes["auth"]),
                 site_url: "https://staging.example.com",
               },
             }),
@@ -1207,7 +1451,7 @@ describe("config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(out.stdoutText).not.toContain("Warnings:");
         expect(out.stdoutText).not.toContain("also configures the local stack");
         expect(yield* readConfig).toContain('site_url = "https://staging.example.com"');
@@ -1215,7 +1459,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a remote block's write that duplicates the config root's own value warns of redundancy",
     () => {
       // array_drift (an array-valued remote_only write into a block the root also declares) is
@@ -1235,7 +1479,7 @@ describe("config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(out.stdoutText).toContain(
           "api.max_rows already matches the config root's value — this remote block now carries a redundant copy.",
         );
@@ -1244,7 +1488,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "uncommitted changes abort without --force in text+non-tty mode, leaving the file untouched",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1261,26 +1505,29 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("uncommitted changes abort without --force in json mode too, even on a real TTY", () => {
-    const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
-    const { layer } = setup({
-      toml: before,
-      gitDirty: true,
-      format: "json",
-      yes: true,
-      stdinIsTty: true,
-    });
-    return Effect.gen(function* () {
-      const exit = yield* configPull(noFlags).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPullUncommittedChangesError");
-      }
-      expect(yield* readConfig).toBe(before);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "uncommitted changes abort without --force in json mode too, even on a real TTY",
+    () => {
+      const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+      const { layer } = setup({
+        toml: before,
+        gitDirty: true,
+        format: "json",
+        yes: true,
+        stdinIsTty: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullUncommittedChangesError");
+        }
+        expect(yield* readConfig).toBe(before);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live(
+  it.effect(
     "on a TTY in text mode, --yes does NOT bypass the uncommitted-changes guard — it aborts instead of silently overwriting (CLI-2064 item C)",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1296,7 +1543,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "--force writes despite uncommitted changes, with no warning or prompt-default flip",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1309,7 +1556,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "on a TTY, uncommitted changes warn and flip the confirmation default to no; declining leaves the file untouched",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1330,7 +1577,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a git spawn failure degrades silently and the run proceeds as if clean", () => {
+  it.effect("a git spawn failure degrades silently and the run proceeds as if clean", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, gitSpawnFails: true, yes: true });
     return Effect.gen(function* () {
@@ -1340,7 +1587,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a converged remote never spawns the git dirty check, even with uncommitted changes (bug A)",
     () => {
       const before = 'project_id = "test"\n';
@@ -1353,7 +1600,7 @@ describe("config pull integration", () => {
         yield* configPull(noFlags);
         const success = out.messages.find((message) => message.type === "success");
         expect(success?.message).toContain("No config differences found.");
-        const data = success?.data as Record<string, unknown>;
+        const data = yield* decodeJsonRecord(success?.data);
         expect(data["wrote"]).toBe(false);
         expect(gitStatus.spawnCalls).toBe(0);
         expect(yield* readConfig).toBe(before);
@@ -1361,7 +1608,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a block-only run is still a write: uncommitted changes abort it too, without --force",
     () => {
       const before = 'project_id = "test"\n';
@@ -1374,7 +1621,7 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull({
           ...noFlags,
-          projectRef: Option.some("staging"),
+          remote: branchRemote("staging"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -1386,7 +1633,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a zero-drift branch target still creates its [remotes.*] block; a second run reuses it and writes nothing",
     () => {
       const before = 'project_id = "test"\n';
@@ -1398,7 +1645,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(first.out.promptConfirmCalls).toHaveLength(1);
         expect(first.out.promptConfirmCalls[0]?.message).toContain("Create [remotes.staging] in");
         expect(first.out.promptConfirmCalls[0]?.message).toContain(
@@ -1424,11 +1671,11 @@ describe("config pull integration", () => {
           format: "json",
           v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
         });
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") }).pipe(
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") }).pipe(
           Effect.provide(second.layer),
         );
         const success = second.out.messages.find((message) => message.type === "success");
-        const data = success?.data as Record<string, unknown>;
+        const data = yield* decodeJsonRecord(success?.data);
         expect(data["destination"]).toMatchObject({ created: false });
         expect(data["wrote"]).toBe(false);
         expect(yield* readConfig).toBe(afterFirst);
@@ -1436,7 +1683,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a zero-drift target with --remote-label creates the named block instead", () => {
+  it.effect("a zero-drift target with --remote-label creates the named block instead", () => {
     const before = 'project_id = "test"\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -1448,7 +1695,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "--dry-run on a zero-drift branch target previews the would-be-created block without writing",
     () => {
       const before = 'project_id = "test"\n';
@@ -1460,12 +1707,12 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         yield* configPull({
           ...noFlags,
-          projectRef: Option.some("staging"),
+          remote: branchRemote("staging"),
           dryRun: true,
         });
         expect(yield* readConfig).toBe(before);
         const success = out.messages.find((message) => message.type === "success");
-        const data = success?.data as Record<string, unknown>;
+        const data = yield* decodeJsonRecord(success?.data);
         expect(data["dry_run"]).toBe(true);
         expect(data["destination"]).toMatchObject({ created: true, label: "staging" });
         expect(data["wrote"]).toBe(false);
@@ -1473,7 +1720,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a declined confirmation on a zero-drift branch target creates nothing", () => {
+  it.effect("a declined confirmation on a zero-drift branch target creates nothing", () => {
     const before = 'project_id = "test"\n';
     const { layer, out } = setup({
       toml: before,
@@ -1482,14 +1729,14 @@ describe("config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, remote: branchRemote("staging") });
       expect(yield* readConfig).toBe(before);
       expect(out.promptConfirmCalls).toHaveLength(1);
       expect(out.stdoutText).toContain("[remotes.staging] not created (declined).");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--yes skips the confirmation prompt entirely, even on a real TTY", () => {
+  it.effect("--yes skips the confirmation prompt entirely, even on a real TTY", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, yes: true, stdinIsTty: true });
     return Effect.gen(function* () {
@@ -1499,7 +1746,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "pulling twice against the same remote converges: the second run reports nothing left to write",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1517,7 +1764,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "the file changing on disk between confirmation and write fails without touching the concurrent edit",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1539,12 +1786,12 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("every -o/--output value is rejected before any config load or network call", () => {
+  it.effect("every -o/--output value is rejected before any config load or network call", () => {
     const values = GLOBAL_OUTPUT_FORMATS;
-    const run = (goOutput: (typeof values)[number]) => {
+    const run = (outputFlag: (typeof values)[number]) => {
       const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-        goOutput,
+        outputFlag,
       });
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
@@ -1566,24 +1813,7 @@ describe("config pull integration", () => {
     });
   });
 
-  it.live("a branch-named target resolves via the linked parent project", () => {
-    const { layer, api, out } = setup({
-      toml: 'project_id = "test"\n',
-      yes: true,
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
-      expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
-      const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
-        true,
-      );
-      expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("a branch UUID target resolves directly, even in an unlinked directory", () => {
+  it.effect("a branch UUID target resolves directly, even in an unlinked directory", () => {
     const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
       yes: true,
@@ -1594,13 +1824,13 @@ describe("config pull integration", () => {
           ref: BRANCH_REF,
           attributes: (attributes) => ({
             ...attributes,
-            api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+            api: { ...asJsonRecord(attributes["api"]), max_rows: 250 },
           }),
         }),
       },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some(BRANCH_UUID) });
+      yield* configPull({ ...noFlags, remote: branchRemote(BRANCH_UUID) });
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
@@ -1610,24 +1840,35 @@ describe("config pull integration", () => {
       // A UUID target creates a new `[remotes.*]` block falling back to the
       // resolved project ref as the label (no branch name to use instead).
       expect(yield* readConfig).toContain(`[remotes.${BRANCH_REF}]`);
+      assertPermissionDrift({
+        command: "config pull",
+        activeFlags: { remote: BRANCH_UUID },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a ref-shaped target never calls the branches API", () => {
+  it.effect("a ref-shaped target never calls the branches API", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       yes: true,
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some(BRANCH_REF) });
+      yield* configPull({ ...noFlags, remote: refRemote(BRANCH_REF) });
       const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
+      expect(urls.some((url) => url.includes("/branches"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
+      assertPermissionDrift({
+        command: "config pull",
+        activeFlags: { remote: BRANCH_REF },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a branch name in an unlinked directory fails with a not-linked error before any request",
     () => {
       const { layer, api, telemetry, linkedProjectCache } = setup({
@@ -1637,12 +1878,12 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull({
           ...noFlags,
-          projectRef: Option.some("somebranch"),
+          remote: branchRemote("somebranch"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("ConfigPullBranchNotLinkedError");
+          expect(causeText).toContain("LinkBranchNotLinkedError");
           expect(causeText).toContain('"somebranch"');
         }
         expect(api.requests).toHaveLength(0);
@@ -1652,7 +1893,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a branch-name target with a corrupt linked ref reports it as invalid", () => {
+  it.effect("a branch-name target with a corrupt linked ref reports it as invalid", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       projectId: Option.some("not-a-valid-ref"),
@@ -1660,12 +1901,12 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("somebranch"),
+        remote: branchRemote("somebranch"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPullParentRefInvalidError");
+        expect(causeText).toContain("LinkParentRefInvalidError");
         expect(causeText).toContain('"somebranch"');
         expect(causeText).toContain("Relink the parent project");
       }
@@ -1673,69 +1914,70 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an unknown branch fails with a branches-list suggestion", () => {
+  it.effect("an unknown branch fails listing the available branches", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 404, body: { message: "not found" } },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPull({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
+      const exit = yield* configPull({ ...noFlags, remote: branchRemote("ghost") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPullBranchNotFoundError");
-        expect(causeText).toContain('Branch "ghost" not found');
-        expect(causeText).toContain("supabase branches list");
+        expect(causeText).toContain("LinkBranchNotFoundError");
+        expect(causeText).toContain(
+          `Branch "ghost" not found for project ${VALID_REF}. Available branches: staging`,
+        );
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a resolved branch with no project ref yet fails with a not-ready error", () => {
+  it.effect("a resolved branch with no project ref yet fails with a not-ready error", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
+      branchList: { status: 200, body: [{ ...BRANCH_BY_NAME, project_ref: "" }] },
     });
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("staging"),
+        remote: branchRemote("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPullBranchNotReadyError");
+        expect(causeText).toContain("LinkBranchNotReadyError");
         expect(causeText).toContain("has no project ref yet");
       }
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a non-404 branch lookup failure keeps its status error", () => {
+  it.effect("a non-404 branch lookup failure keeps its status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 500, body: { message: "boom" } },
+      branchList: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("staging"),
+        remote: branchRemote("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("LinkBranchListStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a malformed config aborts before any network call, even with a branch target", () => {
+  it.effect("a malformed config aborts before any network call, even with a branch target", () => {
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("staging"),
+        remote: branchRemote("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -1748,7 +1990,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("duplicate [remotes.*] project_ids abort the load", () => {
+  it.effect("duplicate [remotes.*] project_ids abort the load", () => {
     const before = [
       'project_id = "test"',
       "[remotes.a]",
@@ -1767,7 +2009,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an out-of-domain mapped value in the response keeps its typed parse error", () => {
+  it.effect("an out-of-domain mapped value in the response keeps its typed parse error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -1776,7 +2018,7 @@ describe("config pull integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             storage: {
-              ...(attributes["storage"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["storage"]),
               file_size_limit: -1,
             },
           }),
@@ -1794,7 +2036,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 401 on the config read points at re-authenticating", () => {
+  it.effect("a 401 on the config read points at re-authenticating", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 401, body: { message: "unauthorized" } },
@@ -1810,8 +2052,8 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 403 on the config read names the sanitized ref", () => {
-    const { layer } = setup({
+  it.effect("a 403 on the config read names the sanitized ref", () => {
+    const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 403, body: { message: "forbidden" } },
     });
@@ -1824,10 +2066,11 @@ describe("config pull integration", () => {
         expect(causeText).toContain("Access denied");
         expect(causeText).toContain(VALID_REF);
       }
+      assertPermissionDrift({ command: "config pull", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 404 on the config read suggests projects list and hedges the api host", () => {
+  it.effect("a 404 on the config read suggests projects list and hedges the api host", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 404, body: { message: "not found" } },
@@ -1844,7 +2087,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("other config-read statuses keep the generic unexpected-status message", () => {
+  it.effect("other config-read statuses keep the generic unexpected-status message", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 500, body: { message: "boom" } },
@@ -1858,7 +2101,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "a config.json project is rewritten preserving key order and indent, changing only the drifted property",
     () => {
       const before = `${JSON.stringify({ project_id: "test", api: { max_rows: 500 } }, null, 4)}\n`;
@@ -1872,23 +2115,43 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a branch-lookup transport failure maps to the read network error", () => {
-    const { layer } = setup({ toml: 'project_id = "test"\n', branchByName: "fail" });
+  it.effect(
+    "a commented config.jsonc with a trailing comma keeps its bytes except the drifted value",
+    () => {
+      const before = `{
+  // local overrides
+  "project_id": "test",
+  "api": {
+    "max_rows": 500, /* rows per page */
+  },
+}
+`;
+      const { layer } = setup({ yes: true });
+      return Effect.gen(function* () {
+        yield* writeProjectFile("config.jsonc", before);
+        yield* configPull(noFlags);
+        expect(yield* readProjectFile("config.jsonc")).toBe(before.replace("500", "1000"));
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("a branch-lookup transport failure maps to the branch list network error", () => {
+    const { layer } = setup({ toml: 'project_id = "test"\n', branchList: "fail" });
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("staging"),
+        remote: branchRemote("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPullReadNetworkError");
-        expect(causeText).toContain("failed to resolve branch");
+        expect(causeText).toContain("LinkBranchListNetworkError");
+        expect(causeText).toContain("failed to list branches");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a fetch failure in json mode still maps cleanly without a spinner", () => {
+  it.effect("a fetch failure in json mode still maps cleanly without a spinner", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', v2: "fail", format: "json" });
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
@@ -1899,22 +2162,25 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a config-read status failure in json mode still maps cleanly without a spinner", () => {
-    const { layer } = setup({
-      toml: 'project_id = "test"\n',
-      v2: { status: 500, body: { message: "boom" } },
-      format: "json",
-    });
-    return Effect.gen(function* () {
-      const exit = yield* configPull(noFlags).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadStatusError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "a config-read status failure in json mode still maps cleanly without a spinner",
+    () => {
+      const { layer } = setup({
+        toml: 'project_id = "test"\n',
+        v2: { status: 500, body: { message: "boom" } },
+        format: "json",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadStatusError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("an undecodable config-read body fails as a decode network error", () => {
+  it.effect("an undecodable config-read body fails as a decode network error", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', v2: "decode-fail" });
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
@@ -1925,7 +2191,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "an undecodable config-read body in json mode still maps cleanly without a spinner",
     () => {
       const { layer } = setup({ toml: 'project_id = "test"\n', v2: "decode-fail", format: "json" });
@@ -1939,7 +2205,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a response body with no data/attributes degrades to an empty scope instead of crashing",
     () => {
       const { layer, out } = setup({
@@ -1954,7 +2220,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("--dry-run in text mode renders the full change-by-change preview", () => {
+  it.effect("--dry-run in text mode renders the full change-by-change preview", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -1965,7 +2231,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "the file disappearing between confirmation and re-read fails with ConfigPullFileChangedError",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1988,7 +2254,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("--remote-label creates a brand-new block when nothing else conflicts", () => {
+  it.effect("--remote-label creates a brand-new block when nothing else conflicts", () => {
     const before = 'project_id = "test"\n';
     const { layer, out } = setup({
       toml: before,
@@ -1998,7 +2264,7 @@ describe("config pull integration", () => {
         body: v2Response({
           attributes: (attributes) => ({
             ...attributes,
-            api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+            api: { ...asJsonRecord(attributes["api"]), max_rows: 250 },
           }),
         }),
       },
@@ -2012,7 +2278,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a filesystem write failure maps to ConfigPullWriteError", () => {
+  it.effect("a filesystem write failure maps to ConfigPullWriteError", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
@@ -2030,7 +2296,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a response missing an entire block is noted as not-returned", () => {
+  it.effect("a response missing an entire block is noted as not-returned", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -2049,7 +2315,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("multiple simultaneous changes pluralize the summary and difference counts", () => {
+  it.effect("multiple simultaneous changes pluralize the summary and difference counts", () => {
     const before =
       'project_id = "test"\n[api]\nmax_rows = 500\nextra_search_path = "custom_schema"\n';
     const { layer, out } = setup({ toml: before, yes: true });
@@ -2060,37 +2326,20 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a branch-named target resolves in json mode without a spinner", () => {
+  it.effect("a branch-named target resolves in json mode without a spinner", () => {
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       format: "json",
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, remote: branchRemote("staging") });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({ target: { branch: "staging" } });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("an unknown branch in json mode fails without a spinner", () => {
-    const { layer } = setup({
-      toml: 'project_id = "test"\n',
-      format: "json",
-      branchByName: { status: 404, body: { message: "not found" } },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* configPull({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
-        Effect.exit,
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPullBranchNotFoundError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("a single declared-but-unpushable property surfaces in the unmanaged note", () => {
+  it.effect("a single declared-but-unpushable property surfaces in the unmanaged note", () => {
     // enabled matches the remote and produces no change; its sibling allow_dynamic_registration
     // is what demonstrates declared-but-unpushable, since DISABLED_SENTINEL_PRUNES drops it from
     // the local projection while the container is disabled.
@@ -2109,7 +2358,7 @@ describe("config pull integration", () => {
           attributes: (attributes) => ({
             ...attributes,
             auth: {
-              ...(attributes["auth"] as Record<string, unknown>),
+              ...asJsonRecord(attributes["auth"]),
               oauth_server_enabled: false,
               oauth_server_allow_dynamic_registration: false,
             },
@@ -2126,7 +2375,7 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
+  it.effect(
     "declared-but-unpushable properties surface in the unmanaged note, pluralized when there's more than one",
     () => {
       // enabled matches the remote and produces no change here; its two siblings
@@ -2149,7 +2398,7 @@ describe("config pull integration", () => {
             attributes: (attributes) => ({
               ...attributes,
               auth: {
-                ...(attributes["auth"] as Record<string, unknown>),
+                ...asJsonRecord(attributes["auth"]),
                 oauth_server_enabled: false,
                 oauth_server_allow_dynamic_registration: false,
                 oauth_server_authorization_path: "/other",
@@ -2168,7 +2417,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a run where every difference is skipped reports 'No changes written', with the skip reason rendered inline",
     () => {
       const before = 'project_id = "test"\n[auth]\nsite_url = "env(SITE_URL)"\n';
@@ -2186,13 +2435,13 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a warning with a path reaches the machine payload's warnings array", () => {
+  it.effect("a warning with a path reaches the machine payload's warnings array", () => {
     const before = 'project_id = "test"\n[auth]\nsite_url = "https://custom.example.com"\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
       yield* configPull(noFlags);
       const success = out.messages.find((message) => message.type === "success");
-      const data = success?.data as Record<string, unknown>;
+      const data = yield* decodeJsonRecord(success?.data);
       expect(data["warnings"]).toEqual([{ kind: "dual_scope", path: ["auth", "site_url"] }]);
     }).pipe(Effect.provide(layer));
   });
@@ -2213,7 +2462,7 @@ describe("config pull integration", () => {
         attributes: (attributes) => ({
           ...attributes,
           auth: {
-            ...(attributes["auth"] as Record<string, unknown>),
+            ...asJsonRecord(attributes["auth"]),
             sms_provider: "twilio",
             sms_twilio_account_sid: "ACreal0000000000000000000000000",
             ...(opts.withMessageServiceSid
@@ -2225,7 +2474,7 @@ describe("config pull integration", () => {
     };
   }
 
-  it.live(
+  it.effect(
     "twilio scenario A: the fixpoint absorbs a disabled SMS provider's credentials once its own `enabled` toggle is written, and the written file reloads (CLI-2064 live-bug repro)",
     () => {
       const { layer, out } = setup({
@@ -2264,41 +2513,44 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live("a declared provider is written back disabled by a remote that never set up SMS", () => {
-    const never = {
-      status: 200,
-      body: v2Response({
-        attributes: (attributes) => ({
-          ...attributes,
-          auth: {
-            ...(attributes["auth"] as Record<string, unknown>),
-            sms_provider: "twilio",
-            sms_twilio_account_sid: null,
-          },
+  it.effect(
+    "a declared provider is written back disabled by a remote that never set up SMS",
+    () => {
+      const never = {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            auth: {
+              ...asJsonRecord(attributes["auth"]),
+              sms_provider: "twilio",
+              sms_twilio_account_sid: null,
+            },
+          }),
         }),
-      }),
-    };
-    const declared = TWILIO_BEFORE.replace("enabled = false", "enabled = true")
-      .replace('account_sid = ""', 'account_sid = "ACdeclared"')
-      .replace('message_service_sid = ""', 'message_service_sid = "MGdeclared"');
-    const { layer } = setup({ toml: declared, yes: true, v2: never });
-    return withEnvVar(
-      TWILIO_AUTH_TOKEN_VAR,
-      "a-real-secret-value",
-      Effect.gen(function* () {
-        yield* configPull(noFlags);
-        const after = yield* readConfig;
-        expect(after).toContain("enabled = false");
-        expect(after).toContain('account_sid = "ACdeclared"');
+      };
+      const declared = TWILIO_BEFORE.replace("enabled = false", "enabled = true")
+        .replace('account_sid = ""', 'account_sid = "ACdeclared"')
+        .replace('message_service_sid = ""', 'message_service_sid = "MGdeclared"');
+      const { layer } = setup({ toml: declared, yes: true, v2: never });
+      return withEnvVar(
+        TWILIO_AUTH_TOKEN_VAR,
+        "a-real-secret-value",
+        Effect.gen(function* () {
+          yield* configPull(noFlags);
+          const after = yield* readConfig;
+          expect(after).toContain("enabled = false");
+          expect(after).toContain('account_sid = "ACdeclared"');
 
-        const second = setup({ toml: after, yes: true, v2: never });
-        yield* configPull(noFlags).pipe(Effect.provide(second.layer));
-        expect(second.out.stdoutText).toContain("No config differences found.");
-      }),
-    ).pipe(Effect.provide(layer));
-  });
+          const second = setup({ toml: after, yes: true, v2: never });
+          yield* configPull(noFlags).pipe(Effect.provide(second.layer));
+          expect(second.out.stdoutText).toContain("No config differences found.");
+        }),
+      ).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live(
+  it.effect(
     "twilio scenario B: the schema-validation gate drops the whole family when a sibling stays unwritable (remote silent on message_service_sid), and the written file still reloads",
     () => {
       const { layer, out } = setup({
@@ -2311,9 +2563,9 @@ describe("config pull integration", () => {
               ...attributes,
               // An unrelated change so this run has something else to write, proving the drop
               // is scoped to the twilio family, not the whole run.
-              api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+              api: { ...asJsonRecord(attributes["api"]), max_rows: 250 },
               auth: {
-                ...(attributes["auth"] as Record<string, unknown>),
+                ...asJsonRecord(attributes["auth"]),
                 sms_provider: "twilio",
                 sms_twilio_account_sid: "ACreal0000000000000000000000000",
                 // sms_twilio_message_service_sid is absent: the remote never
@@ -2361,9 +2613,9 @@ describe("config pull integration", () => {
             body: v2Response({
               attributes: (attributes) => ({
                 ...attributes,
-                api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
+                api: { ...asJsonRecord(attributes["api"]), max_rows: 250 },
                 auth: {
-                  ...(attributes["auth"] as Record<string, unknown>),
+                  ...asJsonRecord(attributes["auth"]),
                   sms_provider: "twilio",
                   sms_twilio_account_sid: "ACreal0000000000000000000000000",
                 },
@@ -2380,7 +2632,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "twilio scenario B's would_invalidate skip/note reach the machine payload (skipped_reason + warnings.missing_fields)",
     () => {
       const { layer, out } = setup({
@@ -2393,7 +2645,7 @@ describe("config pull integration", () => {
             attributes: (attributes) => ({
               ...attributes,
               auth: {
-                ...(attributes["auth"] as Record<string, unknown>),
+                ...asJsonRecord(attributes["auth"]),
                 sms_provider: "twilio",
                 sms_twilio_account_sid: "ACreal0000000000000000000000000",
               },
@@ -2404,15 +2656,14 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         yield* configPull(noFlags);
         const success = out.messages.find((message) => message.type === "success");
-        const data = success?.data as Record<string, unknown>;
-        const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+        const data = yield* decodeJsonRecord(success?.data);
+        const changes = yield* decodeChanges(data["changes"]);
         const enabledChange = changes.find(
-          (change) =>
-            (change["path"] as ReadonlyArray<string>).join(".") === "auth.sms.twilio.enabled",
+          (change) => change.path.join(".") === "auth.sms.twilio.enabled",
         );
         expect(enabledChange?.["written"]).toBe(false);
         expect(enabledChange?.["skipped_reason"]).toBe("would_invalidate");
-        const warnings = data["warnings"] as ReadonlyArray<Record<string, unknown>>;
+        const warnings = yield* decodeJsonRecords(data["warnings"]);
         const warning = warnings.find((entry) => entry["kind"] === "would_invalidate");
         expect(warning?.["path"]).toEqual(["auth", "sms", "twilio"]);
         expect(warning?.["missing_fields"]).toEqual([
@@ -2422,7 +2673,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "fixpoint-only case: a gated non-secret sibling absorbed in round 2 lands in the SAME body/payload with warnings applied (auth.captcha, dual_scope)",
     () => {
       const before =
@@ -2437,7 +2688,7 @@ describe("config pull integration", () => {
             attributes: (attributes) => ({
               ...attributes,
               auth: {
-                ...(attributes["auth"] as Record<string, unknown>),
+                ...asJsonRecord(attributes["auth"]),
                 security_captcha_enabled: true,
                 security_captcha_provider: "turnstile",
               },
@@ -2452,11 +2703,10 @@ describe("config pull integration", () => {
         expect(after).toContain('provider = "turnstile"');
 
         const success = out.messages.find((message) => message.type === "success");
-        const data = success?.data as Record<string, unknown>;
-        const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
+        const data = yield* decodeJsonRecord(success?.data);
+        const changes = yield* decodeChanges(data["changes"]);
         const providerChange = changes.find(
-          (change) =>
-            (change["path"] as ReadonlyArray<string>).join(".") === "auth.captcha.provider",
+          (change) => change.path.join(".") === "auth.captcha.provider",
         );
         expect(providerChange?.["written"]).toBe(true);
         expect(data["warnings"]).toEqual(
@@ -2466,7 +2716,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a numeric env() value resolvable only via the project's supabase/.env validates and writes normally, nothing dropped (review T0)",
     () => {
       // PULL_TEST_NUMERIC_ENV resolves only through the project's own supabase/.env, never
@@ -2490,7 +2740,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "a pre-write decode failure at a path unrelated to the plan is exempted: pull still writes its planned change and exits 0 (review T0)",
     () => {
       // runConfigPull is called directly with a hand-augmented source.loaded.rawDocument/.text:
@@ -2536,7 +2786,7 @@ describe("config pull integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "remote-destination pull: a written value that only violates a business rule once the block is SELECTED gets its family dropped, even though the raw/unmerged document decodes fine on its own (review T1)",
     () => {
       const MERGE_CHECK_REF = "eeeeeeeeeeeeeeeeeeee";
@@ -2561,7 +2811,7 @@ describe("config pull integration", () => {
             attributes: (attributes) => ({
               ...attributes,
               auth: {
-                ...(attributes["auth"] as Record<string, unknown>),
+                ...asJsonRecord(attributes["auth"]),
                 sms_provider: "twilio",
                 sms_twilio_account_sid: "ACreal0000000000000000000000000",
                 // sms_twilio_message_service_sid is absent: writing
@@ -2575,7 +2825,7 @@ describe("config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* configPull({ ...noFlags, projectRef: Option.some(MERGE_CHECK_REF) });
+        yield* configPull({ ...noFlags, remote: refRemote(MERGE_CHECK_REF) });
         const after = yield* readConfig;
         expect(after).toContain("[remotes.staging.auth.sms.twilio]");
         expect(after).toContain("enabled = false");
@@ -2591,4 +2841,16 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedTargetSelection("config pull", {
+  files: { "supabase/config.toml": 'project_id = "test"\n' },
+  respond: (request, ref) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.url.includes("/v2/projects/") ? v2Response({ ref }) : {}),
+    ),
+  run: (flags) =>
+    configPull({ ...noFlags, ...flags }).pipe(
+      Effect.provide(Layer.mergeAll(configValuesLayer(), mockGitStatusSpawner().layer)),
+    ),
 });

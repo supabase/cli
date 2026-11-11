@@ -1,8 +1,9 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Layer, Option, Schema } from "effect";
+import { TestClock } from "effect/testing";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -11,10 +12,22 @@ import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
+  type MockCommandPlatformApiOpts,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { DomainsCnameError } from "../domains.errors.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsCreate } from "./create.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const CUSTOM_HOSTNAME = "shop.acme.dev";
 const EXPECTED_CNAME = `${VALID_REF}.supabase.co.`;
@@ -37,25 +50,39 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly cname?: "ok" | "transport-fail" | "no-cname" | "mismatch" | "status-error";
   readonly apiStatus?: number;
   readonly apiNetwork?: "fail";
   readonly apiResponse?: unknown;
+  readonly dnsRequested?: Deferred.Deferred<void>;
 }
 
 const tempRoot = useTempWorkdir("supabase-domains-create-int-");
 
-function setup(opts: SetupOpts = {}) {
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "yes" }),
+  );
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const confirmed = `Confirmed by --yes: Create custom hostname ${CUSTOM_HOSTNAME} on project ${VALID_REF}\n`;
+
+function apiOptions(opts: SetupOpts): MockCommandPlatformApiOpts {
   const cname = opts.cname ?? "ok";
-  const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockCommandPlatformApi({
+  return {
     handler: (request) => {
       if (request.url.includes("1.1.1.1")) {
+        if (opts.dnsRequested !== undefined) {
+          return Deferred.succeed(opts.dnsRequested, undefined).pipe(Effect.andThen(Effect.never));
+        }
         if (cname === "transport-fail") {
           return Effect.fail(transportFailure(request));
         }
@@ -75,28 +102,34 @@ function setup(opts: SetupOpts = {}) {
         jsonResponse(request, opts.apiStatus ?? 201, opts.apiResponse ?? HOSTNAME_RESPONSE),
       );
     },
-  });
+  };
+}
+
+function setup(opts: SetupOpts = {}) {
+  const out = mockOutput({ format: opts.format ?? "text" });
+  const api = mockCommandPlatformApi(apiOptions(opts));
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const analytics = mockAnalytics();
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-function flags(over: Partial<{ includeRawOutput: boolean }> = {}) {
+function flags() {
   return {
+    remote: Option.none(),
     projectRef: Option.none<string>(),
     customHostname: CUSTOM_HOSTNAME,
-    includeRawOutput: over.includeRawOutput ?? false,
+    includeRawOutput: Option.none<boolean>(),
   };
 }
 
@@ -105,7 +138,7 @@ function postedToInitialize(api: { requests: ReadonlyArray<{ url: string }> }): 
 }
 
 describe("domains create integration", () => {
-  it.live("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
+  it.effect("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
@@ -114,10 +147,11 @@ describe("domains create integration", () => {
       expect(postedToInitialize(api)).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
+      assertPermissionDrift({ command: "domains create", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
       apiStatus: 400,
       apiResponse: {
@@ -135,6 +169,7 @@ describe("domains create integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(2);
       expect(postedToInitialize(api)).toBe(true);
+      assertPermissionDrift({ command: "domains create", requests: api.requests });
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
@@ -146,7 +181,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("plain 400 without envelope produces no upgrade hint", () => {
+  it.effect("plain 400 without envelope produces no upgrade hint", () => {
     const { layer, out, analytics, api } = setup({
       apiStatus: 400,
       apiResponse: { message: "invalid hostname" },
@@ -160,7 +195,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any POST when the CNAME lookup transport fails", () => {
+  it.effect("fails before any POST when the CNAME lookup transport fails", () => {
     const { layer, api } = setup({ cname: "transport-fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -174,7 +209,28 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any POST when no CNAME record resolves", () => {
+  it.effect("fails with a transport CNAME error before any POST when the lookup times out", () =>
+    Effect.gen(function* () {
+      const dnsRequested = yield* Deferred.make<void>();
+      const { layer, api } = setup({ dnsRequested });
+      const fiber = yield* domainsCreate(flags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(dnsRequested);
+      yield* TestClock.adjust("10 seconds");
+      const error = yield* Fiber.join(fiber);
+      expect(error).toBeInstanceOf(DomainsCnameError);
+      expect(error).toMatchObject({
+        transport: true,
+        message: expect.stringContaining("but it failed to resolve: Operation timed out after"),
+      });
+      expect(postedToInitialize(api)).toBe(false);
+    }),
+  );
+
+  it.effect("fails before any POST when no CNAME record resolves", () => {
     const { layer, api } = setup({ cname: "no-cname" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -186,7 +242,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any POST when the CNAME points elsewhere", () => {
+  it.effect("fails before any POST when the CNAME points elsewhere", () => {
     const { layer, api, telemetry } = setup({ cname: "mismatch" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -202,7 +258,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails before any POST when the DNS query returns a non-200 status", () => {
+  it.effect("fails before any POST when the DNS query returns a non-200 status", () => {
     const { layer, api } = setup({ cname: "status-error" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -216,34 +272,26 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout with no status on stderr for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML to stdout with no status on stderr for -o yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("emits YAML to stdout with no status on stderr for -o yaml", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
-      // yaml.v3 lowercases the whole field name.
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("forces Go JSON output when --include-raw-output is set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsCreate(flags({ includeRawOutput: true }));
-      expect(out.stdoutText.startsWith("{")).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("emits a structured success object for --output-format json", () => {
+  it.effect("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
@@ -252,7 +300,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsUnexpectedStatusError when the API returns 503", () => {
+  it.effect("fails with DomainsUnexpectedStatusError when the API returns 503", () => {
     const { layer } = setup({ apiStatus: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -263,7 +311,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with DomainsNetworkError when the create request fails", () => {
+  it.effect("fails with DomainsNetworkError when the create request fails", () => {
     const { layer } = setup({ apiNetwork: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -274,7 +322,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an API error without a spinner in json mode", () => {
+  it.effect("maps an API error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", apiStatus: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(domainsCreate(flags()));
@@ -282,4 +330,80 @@ describe("domains create integration", () => {
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "picks the project, creates the hostname and fills the linked-project cache through the real layers",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          const route = `${request.method} ${request.url}`;
+          if (route === "GET https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          if (request.url.includes("1.1.1.1")) {
+            return Effect.succeed(
+              jsonResponse(request, 200, { Answer: [{ type: 5, data: EXPECTED_CNAME }] }),
+            );
+          }
+          if (
+            route ===
+            `POST https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname/initialize`
+          ) {
+            return Effect.succeed(jsonResponse(request, 201, HOSTNAME_RESPONSE));
+          }
+          return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* domainsCreate(flags());
+        expect(out.stderrText).toContain("Custom hostname configuration complete");
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          "GET https://1.1.1.1/dns-query?name=shop.acme.dev&type=5",
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname/initialize`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "domains create", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});
+
+describeHostedConsent("domains create", {
+  api: apiOptions({}),
+  invoke: () => ({ run: domainsCreate(flags()) }),
+});
+
+describeHostedTargetSelection("domains create", {
+  respond: (request, ref) =>
+    Effect.succeed(
+      request.url.includes("1.1.1.1")
+        ? jsonResponse(request, 200, { Answer: [{ type: 5, data: `${ref}.supabase.co.` }] })
+        : jsonResponse(request, 201, HOSTNAME_RESPONSE),
+    ),
+  run: (selection) => domainsCreate({ ...flags(), ...selection }),
 });

@@ -23,16 +23,18 @@ stopped or unhealthy member is distinguishable from an unavailable owner.
 
 The command compares the project configuration with the saved configuration of existing
 composition members through the stack package's composition plan. It reads
-`supabase/functions/.env` only when Functions is a saved composition member.
+`supabase/functions/.env` only when Functions is a saved composition member, and compares a
+member saved by `start --debug` with that debug mode.
 Values that the composition or stack credentials supply are ignored, as are changes to membership;
 an excluded service is not considered drift. The comparison reads saved state only, so it is
 available while the owner is unavailable. It reports `config_drift.status` as `unchanged` or
-`changed`, with `services.<service>.<path>` paths, when the comparison is possible. A configuration
-loading failure or unreadable saved state keeps the saved stack report available and is shown as
-`config_drift.status: "unavailable"` with a message in JSON. Status does not apply current configuration. The `services` list may include
+`changed`, with `services.<service>.<path>` paths, when the comparison is possible. The requested
+versions come from `supabase/supabase.lock`, read without the project lease and never resolved; a
+missing or stale lock, like a configuration loading failure or unreadable saved state, keeps the
+saved stack report available and is shown as `config_drift.status: "unavailable"` with a message
+in JSON. Status does not apply current configuration. The `services` list may include
 saved standalone instances; composition members identify the services used for
-primary database, environment export, and drift comparisons. Vector instances saved by earlier
-releases are omitted without rewriting saved state.
+primary database, environment export, and drift comparisons.
 
 Text output starts with one line naming the stack, its readiness, runtime, and
 project directory, noting when the owner is unavailable. It then prints the
@@ -80,7 +82,8 @@ required saved database JWT secret.
 
 `--override-name` renames an exported variable, accepting repeated flags or a
 comma-separated list of `EXPORTED_VARIABLE=VALID_ENV_NAME` entries. It requires
-`--env` and rejects an unknown source variable, duplicate source, invalid target,
+`--env` and rejects an unknown source variable (the removed `INBUCKET_URL` names
+`MAILPIT_URL` as its replacement), duplicate source, invalid target,
 malformed entry, or destination collision. Dotenv values that cannot be quoted
 without shell expansion fail with a pointer to `--output-format json`.
 

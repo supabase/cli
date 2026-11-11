@@ -1,9 +1,10 @@
 import { Data, Schema } from "effect";
 import type { Effect, PubSub, Ref, Scope } from "effect";
-import type { ServiceKind } from "../Artifacts.ts";
+import { ArtifactPin, type ServiceKind } from "../Artifacts.ts";
+import type { PortError } from "../Ports.ts";
 import type { LaunchOutput } from "../runtime/Session.ts";
 import type { ServiceDefinition } from "../Service.ts";
-import type { HostGateway } from "../runtime/Container.ts";
+import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 
 type CatalogRuntime = "native" | "docker" | "podman";
@@ -15,12 +16,10 @@ export class CatalogError extends Data.TaggedError("CatalogError")<{
   readonly cause?: unknown;
 }> {}
 
-export interface ServiceEndpoint {
-  readonly kind: "tcp" | "unix";
-  readonly host?: "127.0.0.1";
-  readonly path?: string;
-  readonly port: number;
-}
+export type ServiceEndpoint =
+  | { readonly kind: "tcp"; readonly host?: "127.0.0.1"; readonly port: number }
+  /** `path` is the full socket filename, for example `<dir>/.s.PGSQL.<port>`. */
+  | { readonly kind: "unix"; readonly path: string; readonly port: number };
 
 export const EndpointIntent = Schema.Struct({
   port: Schema.Union([Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)), Schema.Literal("auto")]),
@@ -38,7 +37,7 @@ export const serviceCreation = <
 ) =>
   Schema.Struct({
     service: Schema.Literal(service),
-    version: Schema.optionalKey(Schema.String),
+    pin: ArtifactPin,
     config,
     endpoints: Schema.optionalKey(endpoints),
   });
@@ -56,6 +55,13 @@ export interface CatalogOptions {
   readonly helpers?: DockerHelperRegistry;
   /** Shares one host-gateway probe across this host's container runtimes. */
   readonly hostGateway?: HostGateway;
+  /** Claims a native backend port across this user's stacks until the ambient scope closes. */
+  readonly claimNativePort: (
+    key: string,
+    port: number,
+  ) => Effect.Effect<boolean, PortError, Scope.Scope>;
+  /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
+  readonly engineTarget?: EngineTarget;
 }
 
 /** Subscribes to a recipe's launch output; chunks published before the subscription are missed. */
@@ -70,7 +76,7 @@ export interface CatalogRecipe<C> {
 
 export interface RecipeCreation<K extends ServiceKind, C> {
   readonly service: K;
-  readonly version?: string;
+  readonly pin: ArtifactPin;
   readonly config: C;
   readonly endpoints?: unknown;
 }
