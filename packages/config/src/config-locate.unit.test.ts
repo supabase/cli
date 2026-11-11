@@ -201,4 +201,12 @@ describe("locateCliConfigKey inline-table keys", () => {
     expect(location?.exact).toBe(true);
     expect(source.slice((location?.column ?? 0) - 1, (location?.endColumn ?? 0) - 1)).toBe('"bad"');
   });
+
+  test("matches the real key after a triple-quoted string that holds key-like text", () => {
+    const source = 'api = { note = """x", port = "decoy", y = "z""", port = 0 }\n';
+    const location = locateCliConfigKey(source, "toml", ["api", "port"], "value");
+
+    expect(location?.exact).toBe(true);
+    expect(source.slice((location?.column ?? 0) - 1, (location?.endColumn ?? 0) - 1)).toBe("0");
+  });
 });

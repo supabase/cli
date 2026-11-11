@@ -832,6 +832,47 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("reports a remote's own error when it replaces an unset env() value with a table", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[api]\nmax_rows = "env(UNSET_ROWS)"\n[remotes.prod]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.prod.api.max_rows]\nx = 1\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toContainEqual(
+        expect.objectContaining({ remote: "prod", key: "remotes.prod.api.max_rows" }),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("locates a codec failure under a provider name that contains a dot", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[auth.external."my.idp"]\nenabled = "yes"\n'),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toContainEqual(
+        expect.objectContaining({ line: 3 }),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reports a present key with a bad value once, not also as missing", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[local.services.rest]\nversion = "tok-secret-orioledb"\n'),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { code: "invalid_value", key: "local.services.rest.version", line: 3 },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("locates a remote without project_id inside that remote, not on the base key", () =>
     Effect.gen(function* () {
       const result = yield* validate(
@@ -1109,6 +1150,12 @@ describe("config validate integration", () => {
       [
         "literal dotted key that looks like a public path",
         tomlFile(`project_id = "demo"\n"db.port" = "hunter2"\nbogus = 1\n`),
+      ],
+      [
+        "value-bearing schema filter message",
+        tomlFile(
+          'project_id = "demo"\n[local.services.auth]\nversion = "hunter2"\n[local.services.rest]\nversion = "tok-secret-orioledb"\n',
+        ),
       ],
       [
         "schema reference carrying credentials",

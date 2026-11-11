@@ -31,9 +31,6 @@ An unset `env(NAME)` is a warning when the section it sits in is enabled (the ne
 ```text
   ✗ db.major_version  unsupported Postgres version
     supabase/config.toml:9:17
-    8 │ [db]
-  > 9 │ major_version = 16
-      │                 ^^
     help: use one of 13, 14, 15, 17
 
 ✗ 1 error in supabase/config.toml

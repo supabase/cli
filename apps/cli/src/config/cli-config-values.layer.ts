@@ -565,6 +565,9 @@ export const cliConfigValuesLayer = Layer.effect(
         const issues = entryFailures.flatMap((failure) => failure.issues ?? []);
         return yield* new CliConfigValueError({
           path: firstFailure.path,
+          ...(entryFailures.length === 1 && firstFailure.segments !== undefined
+            ? { segments: firstFailure.segments }
+            : {}),
           tier: "config",
           message: decodingFailedMessage(issues),
           issues,

@@ -392,6 +392,7 @@ export const describeCliConfigEnvLocation = (
 
 interface CliConfigValueFailure {
   readonly path: string;
+  readonly segments: ReadonlyArray<string>;
   readonly raw: string;
   readonly expected: string;
   readonly origin: Exclude<CliConfigKeyOrigin, { readonly tier: "default" }>;
@@ -404,13 +405,14 @@ const invalidCliConfigValue = (
   failure: CliConfigValueFailure,
   ctx: Pick<CliConfigKeyContext, "workdir" | "path">,
 ): CliConfigValueError => {
-  const { path, raw, expected, origin, typeOnly } = failure;
+  const { path, segments, raw, expected, origin, typeOnly } = failure;
   const source = describeCliConfigOrigin(origin, ctx);
   const kind = typeOnly ? "type" : expected.startsWith("one of") ? "enum" : "value";
   switch (origin.tier) {
     case "flag":
       return new CliConfigValueError({
         path,
+        segments,
         tier: "flag",
         source,
         flag: origin.flag,
@@ -426,6 +428,7 @@ const invalidCliConfigValue = (
           : "";
       return new CliConfigValueError({
         path,
+        segments,
         tier: origin.tier,
         source,
         envName: origin.envName,
@@ -438,6 +441,7 @@ const invalidCliConfigValue = (
       const where = describeCliConfigOrigin(origin, ctx);
       return new CliConfigValueError({
         path,
+        segments,
         tier: "config",
         source,
         expected,
@@ -473,6 +477,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
       invalidCliConfigValue(
         {
           path: key.path,
+          segments: key.segments,
           raw: display(raw, key),
           expected: key.codec.expected,
           origin,
@@ -493,6 +498,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
       : Result.fail(
           new CliConfigValueError({
             path: key.path,
+            segments: key.segments,
             tier: origin.tier,
             source: describeCliConfigOrigin(origin, sources.context),
             ...(origin.tier === "shell" || origin.tier === "projectEnv"
@@ -567,6 +573,7 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
         : Result.fail(
             new CliConfigValueError({
               path: key.path,
+              segments: key.segments,
               tier: "config",
               source: describeCliConfigOrigin(origin, sources.context),
               message: decodingFailedMessage(issues),

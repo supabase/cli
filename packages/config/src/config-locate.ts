@@ -92,13 +92,24 @@ function tomlHeaderSpan(source: string, token: TomlHeaderToken): Span {
 function inlineValueEnd(source: string, start: number, limit: number): number {
   let depth = 0;
   let quote: string | undefined;
+  let triple = false;
   for (let index = start; index < limit; index += 1) {
     const character = source[index];
     if (quote !== undefined) {
-      if (character === "\\" && quote === '"') index += 1;
-      else if (character === quote) quote = undefined;
+      if (character === "\\" && quote === '"') {
+        index += 1;
+      } else if (character === quote && (!triple || source.startsWith(quote.repeat(3), index))) {
+        if (triple) {
+          index += 2;
+          for (let extra = 0; extra < 2 && source[index + 1] === quote; extra += 1) index += 1;
+        }
+        quote = undefined;
+        triple = false;
+      }
     } else if (character === '"' || character === "'") {
       quote = character;
+      triple = source.startsWith(character.repeat(3), index);
+      if (triple) index += 2;
     } else if (character === "{" || character === "[") {
       depth += 1;
     } else if (character === "}" || character === "]") {
@@ -293,14 +304,22 @@ function childOf(node: Node, segment: string): { entry: Node; value: Node } | un
   return entry === undefined || value === undefined ? undefined : { entry, value };
 }
 
+interface ScannedJson {
+  readonly root: Node | undefined;
+  readonly starts: ReadonlyArray<number>;
+}
+
+const scanJson = (source: string): ScannedJson => ({
+  root: parseTree(source, [], { allowTrailingComma: true, disallowComments: false }),
+  starts: lineStarts(source),
+});
+
 function locateJson(
-  source: string,
   path: ReadonlyArray<string>,
   target: "key" | "value",
+  { root, starts }: ScannedJson,
 ): CliConfigLocation | undefined {
-  const root = parseTree(source, [], { allowTrailingComma: true, disallowComments: false });
   if (root === undefined) return undefined;
-  const starts = lineStarts(source);
 
   for (let length = path.length; length > 0; length -= 1) {
     let node: Node | undefined = root;
@@ -342,7 +361,8 @@ export function scanCliConfigDocument(text: string, format: ConfigFormat): CliCo
       locate: (path, target) => locateToml(source, path, target, scanned),
     };
   }
+  const scanned = scanJson(source);
   return {
-    locate: (path, target) => locateJson(source, path, target),
+    locate: (path, target) => locateJson(path, target, scanned),
   };
 }

@@ -13,6 +13,8 @@ import type { CliConfigTier } from "./cli-config-key.ts";
  */
 export class CliConfigValueError extends Data.TaggedError("CliConfigValueError")<{
   readonly path: string;
+  /** The key's path segments, for keys whose segments may contain `.`; `path` is these joined. */
+  readonly segments?: ReadonlyArray<string>;
   readonly tier: CliConfigTier;
   readonly message: string;
   readonly source?: string;

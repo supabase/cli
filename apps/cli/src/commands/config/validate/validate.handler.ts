@@ -230,10 +230,16 @@ function unknownKeyProblems(parsed: ParsedCliConfigDocument): ReadonlyArray<Conf
 
 const schemaProblems = (
   failures: ReadonlyArray<CliConfigParseError>,
+  pruned: ReadonlyArray<ReadonlyArray<string>> = [],
 ): ReadonlyArray<ConfigProblem> =>
   failures.flatMap((failure) => {
-    const flat = flattenSchemaIssues(failure.cause);
-    if (flat.length === 0) {
+    const all = flattenSchemaIssues(failure.cause);
+    const flat = all.filter(
+      (issue) =>
+        issue.code !== "missing_required" ||
+        !pruned.some((path) => path.join("\0") === issue.path.join("\0")),
+    );
+    if (all.length === 0) {
       return [problem("invalid_value", { reason: "does not match the config schema" })];
     }
     return flat.map((issue) => {
@@ -259,7 +265,7 @@ function invalidValueProblem(error: CliConfigValueError, file: string): ConfigPr
       : error.issues !== undefined && error.issues.length > 0
         ? error.issues.join("; ")
         : "invalid value";
-  const path = error.path.split(".");
+  const path = error.segments ?? error.path.split(".");
   return problem(
     error.kind === "enum"
       ? "invalid_enum"
@@ -555,7 +561,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       const resolved = result.success;
       if (resolved.pruneLimitReached) {
         return {
-          problems: withRemote(schemaProblems(resolved.schemaFailures), remote),
+          problems: withRemote(schemaProblems(resolved.schemaFailures, resolved.pruned), remote),
           resolved,
           stop: "schema_limit",
         } satisfies PassResult;
@@ -568,14 +574,14 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       );
       const removedPaths = [
         ...resolved.pruned,
-        ...resolved.invalid.map((error) => error.path.split(".")),
+        ...resolved.invalid.map((error) => error.segments ?? error.path.split(".")),
       ];
       const describeOrigin = (origin: CliConfigKeyOrigin) =>
         describeCliConfigOrigin(origin, { workdir, path: pathService });
       const passed: PassResult = {
         problems: withRemote(
           [
-            ...schemaProblems(resolved.schemaFailures),
+            ...schemaProblems(resolved.schemaFailures, resolved.pruned),
             ...resolved.invalid.map((error) => invalidValueProblem(error, file)),
             ...withoutFollowOns(
               semantic.map((issue) =>
@@ -683,7 +689,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       isDocumentRecord(rawRemotes) &&
       path.some((_, index) => {
         const value = getDocumentValue(rawRemotes[remote], path.slice(0, index + 1));
-        return value !== undefined && !isDocumentRecord(value);
+        return value !== undefined && (index === path.length - 1 || !isDocumentRecord(value));
       });
     const inheritedBy = (reference: EnvReference, remote: string): boolean =>
       reference.remote === undefined && !remoteOverrides(remote, reference.path);
