@@ -272,6 +272,7 @@ export const outputsFor = <E>(
   if (creation.service === "database" && endpointNames(creation).includes("sql")) {
     for (const [name, role, database] of [
       ["databaseUrl", "supabase_admin", "postgres"],
+      ["functionsDatabaseUrl", "postgres", "postgres"],
       ["authenticatorUrl", "authenticator", "postgres"],
       ["authDatabaseUrl", "supabase_auth_admin", "postgres"],
       ["storageDatabaseUrl", "supabase_storage_admin", "postgres"],
@@ -320,6 +321,7 @@ export const credentialsFor = Effect.fn("Endpoints.credentialsFor")(function* <E
     const value = yield* databasePassword(creation);
     for (const [name, role, database] of [
       ["databaseUrl", "supabase_admin", "postgres"],
+      ["functionsDatabaseUrl", "postgres", "postgres"],
       ["authenticatorUrl", "authenticator", "postgres"],
       ["authDatabaseUrl", "supabase_auth_admin", "postgres"],
       ["storageDatabaseUrl", "supabase_storage_admin", "postgres"],

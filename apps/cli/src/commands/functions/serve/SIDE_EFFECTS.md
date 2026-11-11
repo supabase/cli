@@ -148,7 +148,8 @@ the process environment cannot carry reach the runtime through its Functions con
 runs the runtime verbose for the command lifetime. A temporary service uses the API port of a
 running REST, Auth, Storage or Realtime service, else the configured `api.port`; on a stack
 started with `[api.tls]` it also gets `SUPABASE_INTERNAL_HOST_URL=https://127.0.0.1:<api>`, which
-its banner prints, like a composed one.
+its banner prints, like a composed one. Functions receive `SUPABASE_DB_URL` for the `postgres`
+role, like legacy serve.
 On a Docker or Podman stack serving `[api.tls]` with its database running, starting the Functions
 instance runs the `stack start` api.tls check; a failure stops the stack's services and fails serve
 with that error.

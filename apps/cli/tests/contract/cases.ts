@@ -353,7 +353,7 @@ const invokesEcho = (key: "PUBLISHABLE_KEY" | "ANON_KEY") =>
   Effect.gen(function* () {
     const client = yield* contractClient(key);
     const data = yield* sdk("invoke echo", (signal) => client.functions.invoke("echo", { signal }));
-    expect(data).toEqual({ ok: true });
+    expect(data).toMatchObject({ ok: true });
   });
 
 const functionsCases: ReadonlyArray<ContractCase> = [
@@ -365,6 +365,17 @@ const functionsCases: ReadonlyArray<ContractCase> = [
   {
     name: "Functions invokes a function with the legacy anon key",
     run: invokesEcho("ANON_KEY"),
+    timeout: COLD_LAUNCH_TIMEOUT_MS,
+  },
+  {
+    name: "Functions sees SUPABASE_DB_URL for the postgres role",
+    run: Effect.gen(function* () {
+      const client = yield* contractClient("PUBLISHABLE_KEY");
+      const data = yield* sdk("invoke echo", (signal) =>
+        client.functions.invoke("echo", { signal }),
+      );
+      expect(data).toMatchObject({ dbUser: "postgres" });
+    }),
     timeout: COLD_LAUNCH_TIMEOUT_MS,
   },
   {
