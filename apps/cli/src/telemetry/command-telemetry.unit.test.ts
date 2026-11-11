@@ -25,6 +25,7 @@ import {
   PropWorkflow,
 } from "../shared/telemetry/event-catalog.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
+import { BranchesCreateUnexpectedStatusError } from "../commands/branches/branches.errors.ts";
 import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
 import { CliConfigValueError } from "../config/cli-config.errors.ts";
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
@@ -1415,6 +1416,56 @@ describe("withCommandTelemetry", () => {
         }),
       ),
       Effect.asVoid,
+    );
+  });
+
+  describe("plan-gated denials", () => {
+    const gatedFailure = new BranchesCreateUnexpectedStatusError({
+      status: 402,
+      body: "{}",
+      message: "unexpected create branch status 402",
+      entitlement: {
+        feature: "branching_limit",
+        upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+      },
+    });
+    const runGated = () => {
+      const analytics = mockContextualAnalytics();
+      return Effect.fail(gatedFailure).pipe(
+        withCommandTelemetry(),
+        Effect.provide(
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "json" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["branches", "create"]) }),
+            commandRuntimeLayer(["branches", "create"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
+        ),
+        Effect.exit,
+        Effect.map(() => analytics.captured),
+      );
+    };
+
+    it.live("fires cli_upgrade_suggested once, before cli_command_executed", () =>
+      runGated().pipe(
+        Effect.tap((captured) =>
+          Effect.sync(() => {
+            expect(captured.map((event) => event.event)).toEqual([
+              "cli_upgrade_suggested",
+              "cli_command_executed",
+            ]);
+            expect(captured[0]?.properties).toMatchObject({
+              feature_key: "branching_limit",
+              org_slug: "env-org",
+            });
+            expect(captured[1]?.properties).toMatchObject({
+              exit_code: 1,
+              error_category: "plan_limit",
+            });
+          }),
+        ),
+      ),
     );
   });
 

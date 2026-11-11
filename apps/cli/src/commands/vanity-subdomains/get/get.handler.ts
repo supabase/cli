@@ -15,7 +15,6 @@ import {
   shapeStruct,
 } from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import {
   VanitySubdomainsGetNetworkError,
   VanitySubdomainsGetUnexpectedStatusError,
@@ -52,7 +51,7 @@ export const vanitySubdomainsGet = Effect.fn("vanity-subdomains.get")(function* 
         output.format === "text" ? yield* output.task("Getting vanity subdomain...") : undefined;
       const response = yield* api.v1.getVanitySubdomainConfig({ ref }).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch(gateMapError({ projectRef: ref }, mapGetError)),
+        Effect.catch(mapGetError),
       );
       yield* fetching?.clear ?? Effect.void;
 

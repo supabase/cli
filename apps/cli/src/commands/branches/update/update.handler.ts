@@ -14,7 +14,6 @@ import {
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
-import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import { BRANCH_RESPONSE_SHAPE } from "../branches.response-shape.ts";
 import {
   BranchesUpdateNetworkError,
@@ -79,26 +78,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
       })
       .pipe(
         Effect.tapError(() => patching?.fail() ?? Effect.void),
-        // Scopes the entitlements check to the branch's own org via its resolved project ref.
-        Effect.catch(
-          gateMapError(
-            { projectRef: branchRef, featureKey: "branching_persistent" },
-            (cause, upgradeSuggested) =>
-              mapUpdateError(cause).pipe(
-                Effect.catchTag("BranchesUpdateUnexpectedStatusError", (mapped) =>
-                  Effect.fail(
-                    new BranchesUpdateUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                      entitlement: mapped.entitlement,
-                    }),
-                  ),
-                ),
-              ),
-          ),
-        ),
+        Effect.catch(mapUpdateError),
       );
     yield* patching?.clear ?? Effect.void;
 

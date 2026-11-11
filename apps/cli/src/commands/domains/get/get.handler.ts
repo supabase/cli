@@ -7,7 +7,6 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
-import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import type { DomainsGetFlags } from "./get.command.ts";
 
 const mapGetError = mapDomainsHttpError("get");
@@ -29,7 +28,7 @@ export const domainsGet = Effect.fn("domains.get")(function* (flags: DomainsGetF
         : undefined;
     const response = yield* api.v1.getHostnameConfig({ ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(gateMapError({ projectRef: ref }, mapGetError)),
+      Effect.catch(mapGetError),
     );
     yield* fetching?.clear ?? Effect.void;
 
