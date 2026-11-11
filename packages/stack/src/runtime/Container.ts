@@ -193,7 +193,7 @@ const transientPullFailure = (error: ContainerError) =>
  * Runs one engine CLI invocation outside the owner's command runner, for resolving its target
  * itself. `pin` precedes `args` so the failure names the subcommand, not a pin flag.
  */
-const runRaw = (
+export const runRaw = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   engine: ContainerEngine,
   args: ReadonlyArray<string>,

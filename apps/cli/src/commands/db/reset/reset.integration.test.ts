@@ -843,6 +843,7 @@ function mockResetStackApi(opts: {
       },
       list: Effect.succeed(members),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: Effect.succeed(RESET_STACK_CREDENTIALS) },
     composition: {
       plan: () => Effect.succeed([]),

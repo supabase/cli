@@ -219,7 +219,8 @@ export const backendAddress = (endpoint: ServiceEndpoint): BackendAddress =>
     ? { path: endpoint.path }
     : { host: endpoint.host ?? "127.0.0.1", port: endpoint.port };
 
-export const publicUrl = (host: string, port: number) => `http://${host}:${port}`;
+export const publicUrl = (host: string, port: number, scheme: "http" | "https" = "http") =>
+  `${scheme}://${host}:${port}`;
 
 const postgresUrl = (
   host: string,
@@ -233,6 +234,7 @@ const postgresUrl = (
 interface EndpointAddress {
   readonly host: string;
   readonly port: number;
+  readonly scheme?: "https";
 }
 
 export type EndpointAddressFor<E> = (
@@ -252,12 +254,14 @@ export const outputsFor = <E>(
   address: EndpointAddressFor<E>,
 ): Readonly<Record<string, Effect.Effect<string, E | EndpointError>>> => {
   const output = (name: string) =>
-    address(name, "runtime").pipe(Effect.map(({ host, port }) => publicUrl(host, port)));
+    address(name, "runtime").pipe(
+      Effect.map(({ host, port, scheme }) => publicUrl(host, port, scheme)),
+    );
   const outputs: Record<string, Effect.Effect<string, E | EndpointError>> = {};
   if (endpointNames(creation).includes("http")) {
     outputs.url = output("http");
     outputs.hostUrl = address("http", "host").pipe(
-      Effect.map(({ host, port }) => publicUrl(host, port)),
+      Effect.map(({ host, port, scheme }) => publicUrl(host, port, scheme)),
     );
     outputs.runtimeUrl = output("http");
   }
@@ -293,8 +297,8 @@ export const credentialsFor = Effect.fn("Endpoints.credentialsFor")(function* <E
 ) {
   const credentials: Record<string, string> = {};
   if (endpointNames(creation).includes("http")) {
-    const { host, port } = yield* address("http", from);
-    const origin = publicUrl(host, port);
+    const { host, port, scheme } = yield* address("http", from);
+    const origin = publicUrl(host, port, scheme);
     credentials.url = `${origin}${apiRoute(creation.service) ?? ""}`;
     if (apiRoute(creation.service) !== undefined) credentials.apiUrl = origin;
   }
