@@ -6,6 +6,7 @@ import {
   getCommandRuntimeSpanName,
 } from "../shared/runtime/command-runtime.service.ts";
 import { failureBesideClosedStdout } from "../shared/output/errors.ts";
+import { normalizeCause } from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import {
   CreateTicketFlag,
@@ -31,10 +32,13 @@ import { DbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.t
 import { DbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
 import {
   EventCommandExecuted,
+  EventUpgradeSuggested,
   PropConfigKey,
   PropDurationMs,
   PropErrorCategory,
   PropExitCode,
+  PropFeatureKey,
+  PropOrgSlug,
   PropOutputFormat,
   PropStackBackend,
 } from "../shared/telemetry/event-catalog.ts";
@@ -101,6 +105,11 @@ interface CommandTelemetryOptions<Flags extends Record<string, unknown> = never>
   // so a `-s public` invocation records the `schema` flag rather than `s`. Global shorthands
   // (`-o` for `--output`) are merged in automatically via `GLOBAL_SHORT_ALIASES` below.
   readonly aliases?: Readonly<Record<string, string>>;
+}
+
+function orgSlugFromUpgradeUrl(upgradeUrl: string): string {
+  const match = /\/org\/([^/]+)/.exec(upgradeUrl);
+  return match?.[1] ?? "";
 }
 
 /**
@@ -573,6 +582,22 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
             : recordedExitCode === 1
               ? toFailureTelemetryProperties(processControlledFailureActionability(command))
               : {};
+        const entitlement =
+          failureCause !== undefined ? normalizeCause(failureCause).entitlement : undefined;
+
+        if (entitlement !== undefined) {
+          yield* analytics
+            .capture(EventUpgradeSuggested, {
+              [PropFeatureKey]: entitlement.feature,
+              [PropOrgSlug]: orgSlugFromUpgradeUrl(entitlement.upgrade_url),
+            })
+            .pipe(
+              withAnalyticsContext(captureContext),
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+              ),
+            );
+        }
 
         yield* analytics
           .capture(EventCommandExecuted, {

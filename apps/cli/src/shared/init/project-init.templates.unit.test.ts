@@ -16,6 +16,7 @@ import {
   INIT_GITIGNORE_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
   VSCODE_EXTENSIONS_TEMPLATE,
+  VSCODE_SCHEMA_TRUST_TEMPLATE,
   VSCODE_SETTINGS_TEMPLATE,
   renderCliConfigTemplate,
 } from "./project-init.templates.ts";
@@ -269,8 +270,11 @@ describe("project init templates", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it("trusts the hosted schema URLs in the VS Code settings", () => {
-    const settings: unknown = JSON.parse(VSCODE_SETTINGS_TEMPLATE);
+  it.each([
+    ["settings", VSCODE_SETTINGS_TEMPLATE],
+    ["schema trust", VSCODE_SCHEMA_TRUST_TEMPLATE],
+  ])("trusts the hosted schema URLs in the VS Code %s template", (_name, template) => {
+    const settings: unknown = JSON.parse(template);
     const trustedDomains = Predicate.isObject(settings)
       ? settings["json.schemaDownload.trustedDomains"]
       : undefined;

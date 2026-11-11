@@ -940,6 +940,11 @@ export function apiTlsKeyReadErrorMessage(cause: unknown): string {
   return `failed to read TLS key: ${messageOf(cause)}`;
 }
 
+/** `Invalid config for api.tls: failed to load TLS key pair from ${cert} and ${key}: ${msg(cause)}` */
+export function apiTlsPairErrorMessage(certPath: string, keyPath: string, cause: unknown): string {
+  return `Invalid config for api.tls: failed to load TLS key pair from ${certPath} and ${keyPath}: ${messageOf(cause)}`;
+}
+
 /**
  * Reports required-field failures for the first enabled provider in the fixed priority order; a
  * later enabled-but-incomplete provider is never checked.

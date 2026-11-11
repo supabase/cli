@@ -15,7 +15,6 @@ import {
 } from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
-import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import { BRANCH_RESPONSE_SHAPE } from "../branches.response-shape.ts";
 import {
   BranchesBranchNameEmptyError,
@@ -27,7 +26,7 @@ import type { BranchesCreateFlags } from "./create.command.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
-const mapCreateErrorRaw = mapHttpError({
+const mapCreateError = mapHttpError({
   networkError: BranchesCreateNetworkError,
   statusError: BranchesCreateUnexpectedStatusError,
   networkMessage: (cause) => `failed to create preview branch: ${cause}`,
@@ -102,24 +101,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
       })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        // Runs the plan-gate check before mapping the error, even for a gated 4xx.
-        Effect.catch(
-          gateMapError({ projectRef: ref }, (cause, upgradeSuggested) =>
-            mapCreateErrorRaw(cause).pipe(
-              Effect.catchTag("BranchesCreateUnexpectedStatusError", (mapped) =>
-                Effect.fail(
-                  new BranchesCreateUnexpectedStatusError({
-                    status: mapped.status,
-                    body: mapped.body,
-                    message: mapped.message,
-                    upgradeSuggested,
-                    entitlement: mapped.entitlement,
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
+        Effect.catch(mapCreateError),
       );
     yield* creating?.clear ?? Effect.void;
 

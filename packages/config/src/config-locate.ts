@@ -5,7 +5,7 @@ import {
   type TomlKeyToken,
   type TomlScanError,
   type TomlScanResult,
-} from "./config-edit.ts";
+} from "./toml-scan.ts";
 import type { ConfigFormat } from "./config-format.ts";
 
 /**

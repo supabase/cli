@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import * as SmolToml from "smol-toml";
+import { parseJsonc } from "@supabase/config/internal";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import {
   Cause,
@@ -31,10 +32,6 @@ const decodeOrioleDbConfig = Schema.decodeUnknownEffect(
   Schema.Struct({
     db: Schema.Struct({ major_version: Schema.Finite, orioledb_version: Schema.String }),
   }),
-);
-
-const decodeJsonObject = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
 const readTextFile = (...segments: Array<string>) =>
@@ -466,7 +463,9 @@ describe("init", () => {
         Effect.provide(layer),
       );
 
-      expect(yield* decodeJsonObject(yield* readTextFile(settingsPath))).toMatchObject({
+      const merged = yield* readTextFile(settingsPath);
+      expect(merged).toContain("// user preferences");
+      expect(parseJsonc(merged)).toMatchObject({
         "editor.fontSize": 14,
         "json.schemaDownload.trustedDomains": {
           "https://example.com/": true,

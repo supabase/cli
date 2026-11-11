@@ -1,14 +1,18 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, Queue } from "effect";
+import { Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Queue, Ref } from "effect";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
+import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { connect as tlsConnect } from "node:tls";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
 import { captureLogs } from "../tests/logs.ts";
 import { ProxyError } from "./Proxy.ts";
-import { makeHttpProxy, type HttpAccess, type HttpRoute } from "./HttpProxy.ts";
+import { API_TLS_CHECK_PATH, makeHttpProxy, type HttpAccess, type HttpRoute } from "./HttpProxy.ts";
+import { externalAddress, onCi, runCommand } from "../tests/api-tls.ts";
 import { sharedRoutes } from "./host/Endpoints.ts";
 
 const listen = (server: Server | NetServer, options?: { readonly beforeClose?: () => void }) =>
@@ -2066,4 +2070,709 @@ it.live("records and releases a request whose client resets after the full body 
       expect(yield* Queue.size(accesses)).toBe(0);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const testPair = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const certs = path.join(import.meta.dirname, "..", "tests", "certs");
+  return {
+    cert: yield* fs.readFileString(path.join(certs, "trusted.crt")),
+    key: yield* fs.readFileString(path.join(certs, "localhost.key")),
+  };
+});
+
+/* Writes `head` over plain TCP or TLS to the proxy at `host` and answers with every byte it sent
+   back. */
+const exchange = (port: number, head: string, ca?: string, host = "127.0.0.1") =>
+  Effect.callback<string, HttpProxyTestError>((resume) => {
+    let text = "";
+    const socket =
+      ca === undefined
+        ? new Socket().connect(port, host, () => socket.write(head))
+        : tlsConnect({ host, port, ca, servername: "localhost" }, () => socket.write(head));
+    socket.on("data", (chunk: Buffer) => {
+      text += chunk.toString("latin1");
+    });
+    socket.once("close", () => resume(Effect.succeed(text)));
+    socket.once("error", () => resume(Effect.succeed(text)));
+    return Effect.sync(() => socket.destroy());
+  });
+
+it.live("serves TLS to every peer and plain HTTP on the same port only from loopback", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { cert, key } = yield* testPair;
+      const lan = yield* externalAddress;
+      const backend = yield* listen(
+        createServer((incoming, outgoing) =>
+          outgoing.end(
+            `proto=${headerOf(incoming.headers["x-forwarded-proto"])} port=${headerOf(incoming.headers["x-forwarded-port"])}`,
+          ),
+        ),
+      );
+      const proxy = yield* makeHttpProxy({ host: "0.0.0.0", port: 0, tls: { cert, key } });
+      yield* proxy.setRoutes([
+        { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backend) },
+        {
+          id: "file",
+          prefix: "/email",
+          file: () => Effect.succeed(new TextEncoder().encode("file marker")),
+        },
+      ]);
+      const at = (host: string, target = "/x", ...lines: Array<string>) =>
+        [`GET ${target} HTTP/1.1`, `Host: ${host}`, ...lines, "Connection: close", "", ""].join(
+          "\r\n",
+        );
+      const local = `127.0.0.1:${proxy.port}`;
+
+      expect(yield* exchange(proxy.port, at(local), cert)).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(yield* exchange(proxy.port, at(local, "/api"), cert)).toMatch(
+        new RegExp(`proto=https port=${proxy.port}$`, "u"),
+      );
+      expect(yield* exchange(proxy.port, at("evil.example", "/api"), cert)).toMatch(
+        new RegExp(`proto=https port=${proxy.port}$`, "u"),
+      );
+      expect(yield* exchange(proxy.port, at(local, "/api"))).toMatch(
+        new RegExp(`proto=http port=${proxy.port}$`, "u"),
+      );
+      /* A peer on this host's LAN address gets no plain byte, but TLS from the same address. */
+      expect(yield* exchange(proxy.port, at(local, "/api"), undefined, lan)).toBe("");
+      expect(yield* exchange(proxy.port, at(local, "/api"), cert, lan)).toMatch(
+        new RegExp(`proto=https port=${proxy.port}$`, "u"),
+      );
+      /* `pg_net` SQL may name the bridge gateway or this host by IP. */
+      expect(yield* exchange(proxy.port, at(`172.17.0.1:${proxy.port}`, "/api"))).toMatch(
+        new RegExp(`proto=http port=${proxy.port}$`, "u"),
+      );
+      const browser = ["Origin: http://evil.example", "Sec-Fetch-Site: cross-site"];
+      expect(yield* exchange(proxy.port, at(local, "/api", ...browser))).toMatch(
+        new RegExp(`proto=http port=${proxy.port}$`, "u"),
+      );
+      expect(yield* exchange(proxy.port, at(local, "/email/invite"))).toContain("file marker");
+      const overTls = yield* exchange(proxy.port, at(local, "/email/invite"), cert);
+      expect(overTls).toMatch(/^HTTP\/1\.1 404 /u);
+      expect(overTls).not.toContain("file marker");
+      for (const head of [
+        at(`evil.example:${proxy.port}`, "/api"),
+        at("127.0.0.1", "/api"),
+        at(`localhost:${proxy.port + 1}`, "/api"),
+        at(`evil.example:${proxy.port}`, "/api", "Upgrade: websocket", "Connection: Upgrade"),
+      ])
+        expect(yield* exchange(proxy.port, head), head).toMatch(/^HTTP\/1\.1 421 /u);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+class RoutedPeerError extends Data.TaggedError("RoutedPeerError")<{ readonly message: string }> {}
+
+/* docker0's IPv4, when sudo works without a password, curl is installed and docker0 holds a /16
+   or wider IPv4 network to carve a /24 from. */
+const routedPrerequisites = Effect.gen(function* () {
+  const sudo = yield* runCommand("sudo", ["-n", "true"]);
+  const curl = yield* runCommand("curl", ["--version"]);
+  const address = yield* runCommand("ip", ["-4", "-o", "addr", "show", "docker0"]);
+  const [, gateway, prefix] = /\binet (\d+\.\d+\.\d+\.\d+)\/(\d+)/u.exec(address.stdout) ?? [];
+  if (sudo.code !== 0 || curl.code !== 0 || gateway === undefined || Number(prefix) > 16)
+    return undefined;
+  return gateway;
+}).pipe(Effect.orElseSucceed(() => undefined));
+
+const routedGateway =
+  process.platform === "linux"
+    ? await Effect.runPromise(routedPrerequisites.pipe(Effect.provide(NodeServices.layer)))
+    : undefined;
+const ci = Effect.runSync(onCi);
+
+/* A network namespace whose veth peer holds `<a.b>.<n>.5/24` inside docker0's network, `<n>` taken
+   from its id, routed to this host by a narrower /24 on `<a.b>.<n>.1`. Its exact netns and links
+   are removed when the scope closes, and the close fails when any is left. `exec` runs a command
+   inside it as root. */
+const routedNamespace = (gateway: string) =>
+  Effect.gen(function* () {
+    const id = randomUUID().slice(0, 8);
+    const namespace = `sbt-${id}`;
+    const hostSide = `sbh${id}`;
+    const peerSide = `sbp${id}`;
+    const [first, second] = gateway.split(".");
+    const subnet = `${first}.${second}.${100 + (Number.parseInt(id.slice(0, 2), 16) % 150)}`;
+    const inside = ["ip", "netns", "exec", namespace];
+    const steps = [
+      ["ip", "netns", "add", namespace],
+      ["ip", "link", "add", hostSide, "type", "veth", "peer", "name", peerSide],
+      ["ip", "link", "set", peerSide, "netns", namespace],
+      ["ip", "addr", "add", `${subnet}.1/24`, "dev", hostSide],
+      ["ip", "link", "set", hostSide, "up"],
+      [...inside, "ip", "addr", "add", `${subnet}.5/24`, "dev", peerSide],
+      [...inside, "ip", "link", "set", peerSide, "up"],
+      [...inside, "ip", "link", "set", "lo", "up"],
+      [...inside, "ip", "route", "add", "default", "via", `${subnet}.1`],
+    ];
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        yield* runCommand("sudo", ["-n", "ip", "netns", "del", namespace]);
+        yield* runCommand("sudo", ["-n", "ip", "link", "del", hostSide]);
+        const namespaces = yield* runCommand("ip", ["netns", "list"]);
+        const link = yield* runCommand("ip", ["link", "show", hostSide]);
+        if (namespaces.stdout.split("\n").some((line) => line.split(" ")[0] === namespace))
+          return yield* Effect.die(`the routed-peer test left netns ${namespace}`);
+        if (link.code === 0) return yield* Effect.die(`the routed-peer test left link ${hostSide}`);
+      }).pipe(Effect.orDie),
+    );
+    yield* Effect.forEach(steps, (step) =>
+      runCommand("sudo", ["-n", ...step]).pipe(
+        Effect.filterOrFail(
+          ({ code }) => code === 0,
+          ({ stderr }) => new RoutedPeerError({ message: `${step.join(" ")} failed: ${stderr}` }),
+        ),
+      ),
+    );
+    return {
+      exec: (args: ReadonlyArray<string>) => runCommand("sudo", ["-n", ...inside, ...args]),
+    };
+  });
+
+/* A routed peer: an address inside docker0's network that this host reaches through
+   a narrower route, as a VPN or second bridge would, is not loopback however it is routed. */
+it.live.skipIf(process.platform !== "linux" || (routedGateway === undefined && !ci))(
+  "gives a routed peer inside the bridge network no plain byte, but TLS",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (routedGateway === undefined)
+          return yield* Effect.die(
+            "the routed-peer test needs `sudo -n`, curl and a /16 or wider docker0 IPv4 on Linux CI",
+          );
+        const proxy = yield* makeHttpProxy({ host: "0.0.0.0", port: 0, tls: yield* testPair });
+        const namespace = yield* routedNamespace(routedGateway);
+        const plain = yield* namespace.exec([
+          "bash",
+          "-c",
+          `exec 3<>/dev/tcp/${routedGateway}/${proxy.port} && printf 'GET /x HTTP/1.0\\r\\nHost: 127.0.0.1:${proxy.port}\\r\\n\\r\\n' >&3 && { IFS= read -r -d '' -t 5 reply <&3; printf '%s %s' "$?" "$reply"; }`,
+        ]);
+        /* Connected and asked, then closed with nothing read. */
+        expect(plain.stdout, plain.stderr).toMatch(/^\d+ $/u);
+        const secure = yield* namespace.exec([
+          "curl",
+          "-sk",
+          "--max-time",
+          "10",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          `https://${routedGateway}:${proxy.port}/x`,
+        ]);
+        expect(secure.stdout, secure.stderr).toBe("404");
+        /* The same listener still serves loopback in plain. */
+        expect(
+          yield* exchange(proxy.port, `GET /x HTTP/1.0\r\nHost: 127.0.0.1:${proxy.port}\r\n\r\n`),
+        ).toMatch(/^HTTP\/1\.1 404 /u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  30_000,
+);
+
+it.live(
+  "answers the readiness route in plain with the armed body, and leaves it to routing otherwise",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cert, key } = yield* testPair;
+        let routed = 0;
+        const backend = yield* listen(
+          createServer((_incoming, outgoing) => {
+            routed += 1;
+            outgoing.end("routed");
+          }),
+        );
+        const armed = yield* Ref.make<string | undefined>(undefined);
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: { cert, key, check: Ref.get(armed) },
+        });
+        yield* proxy.setRoutes([
+          { id: "api", prefix: "/", gateway: true, target: Effect.succeed(backend) },
+        ]);
+        const local = `127.0.0.1:${proxy.port}`;
+        const probe = (method = "GET", host = local) =>
+          `${method} ${API_TLS_CHECK_PATH} HTTP/1.1\r\nHost: ${host}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`;
+        const routedTo = (reply: string) =>
+          reply.startsWith("HTTP/1.1 200 ") && reply.endsWith("routed");
+
+        expect(routedTo(yield* exchange(proxy.port, probe()))).toBe(true);
+        expect(routed).toBe(1);
+        yield* Ref.set(armed, "supabase-stack s1 n1");
+        const reply = yield* exchange(proxy.port, probe());
+        const [head = "", body] = reply.split("\r\n\r\n");
+        expect(head).toMatch(/^HTTP\/1\.1 200 /u);
+        const headers = head.toLowerCase().split("\r\n");
+        expect(headers).toContain("content-type: text/plain; charset=utf-8");
+        expect(headers).toContain("x-content-type-options: nosniff");
+        expect(headers).toContain("cache-control: no-store");
+        expect(body).toBe("supabase-stack s1 n1");
+        expect(routed).toBe(1);
+        /* Over TLS and for any other method, the path is the gateway's like any other. */
+        expect(routedTo(yield* exchange(proxy.port, probe(), cert))).toBe(true);
+        expect(routedTo(yield* exchange(proxy.port, probe("POST")))).toBe(true);
+        expect(routed).toBe(3);
+        expect(yield* exchange(proxy.port, probe("GET", `evil.example:${proxy.port}`))).toMatch(
+          /^HTTP\/1\.1 421 /u,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/* A raw connection, over TLS with `ca`, that sends `head`, collecting what comes back until the
+   proxy closes it. */
+const held = (port: number, head: string | Buffer, ca?: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const send = () => {
+        if (head.length > 0) socket.write(head);
+      };
+      const socket =
+        ca === undefined
+          ? new Socket().connect(port, "127.0.0.1", send)
+          : tlsConnect({ host: "127.0.0.1", port, ca, servername: "localhost" }, send);
+      const received = { text: "" };
+      socket.on("data", (chunk: Buffer) => {
+        received.text += chunk.toString("latin1");
+      });
+      socket.on("error", () => socket.destroy());
+      return { socket, received };
+    }),
+    ({ socket }) => Effect.sync(() => socket.destroy()),
+  );
+
+const closed = (socket: Socket) =>
+  Effect.callback<void>((resume) => {
+    if (socket.destroyed) return resume(Effect.void);
+    const onClose = () => resume(Effect.void);
+    socket.once("close", onClose);
+    return Effect.sync(() => socket.off("close", onClose));
+  });
+
+/* Resolves once `received` holds `count` replies ending in `body`. */
+const replies = (
+  connection: Effect.Success<ReturnType<typeof held>>,
+  body: string,
+  count: number,
+) =>
+  Effect.callback<string>((resume) => {
+    const check = () => {
+      if (connection.received.text.split(body).length - 1 >= count)
+        resume(Effect.succeed(connection.received.text));
+    };
+    connection.socket.on("data", check);
+    check();
+    return Effect.sync(() => connection.socket.off("data", check));
+  });
+
+it.live(
+  "closes a TLS port's silent, stalled and idle connections on the plain listener's clocks",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pair = yield* testPair;
+        const deadlines = { headers: 2_000, request: 60_000, idle: 150 };
+        const admitted = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: { ...pair, deadlines },
+        });
+        const idle = yield* held(
+          admitted.port,
+          `GET /x HTTP/1.1\r\nHost: 127.0.0.1:${admitted.port}\r\n\r\n`,
+        );
+        const stalled = yield* Effect.all([
+          held(admitted.port, ""),
+          held(admitted.port, "G"),
+          held(admitted.port, `GET /x HTTP/1.1\r\nHost: 127.0.0.1:${admitted.port}\r\n`),
+          held(admitted.port, Buffer.from([0x16])),
+        ]);
+        yield* Effect.forEach([...stalled, idle], ({ socket }) => closed(socket), {
+          concurrency: "unbounded",
+        });
+        for (const { received } of stalled) expect(received.text).toBe("");
+        expect(idle.received.text).toMatch(/^HTTP\/1\.1 404 /u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  10_000,
+);
+
+it.effect(
+  "keeps a TLS port's slow, keep-alive and WebSocket connections past the header deadline",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pair = yield* testPair;
+        const slow = yield* Deferred.make<ServerResponse>();
+        const backend = createServer((incoming, outgoing) =>
+          incoming.url === "/api/slow"
+            ? Deferred.doneUnsafe(slow, Effect.succeed(outgoing))
+            : outgoing.end("pong"),
+        );
+        const sockets = new WebSocketServer({ server: backend });
+        sockets.on("connection", (socket) =>
+          socket.on("message", (message) => socket.send(message)),
+        );
+        const backendAddress = yield* listen(backend, {
+          beforeClose: () => {
+            for (const client of sockets.clients) client.terminate();
+          },
+        });
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: { ...pair, deadlines: { headers: 1_000, request: 1_000, idle: 60_000 } },
+        });
+        yield* proxy.setRoutes([
+          { id: "api", prefix: "/api", gateway: true, target: Effect.succeed(backendAddress) },
+        ]);
+        const request = (target: string) =>
+          `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${proxy.port}\r\n\r\n`;
+        const kept = yield* held(proxy.port, request("/api/x"));
+        yield* replies(kept, "pong", 1);
+        const waiting = yield* held(proxy.port, request("/api/slow"));
+        const response = yield* Deferred.await(slow);
+        const client = yield* Effect.acquireRelease(
+          Effect.callback<WebSocket, HttpProxyTestError>((resume) => {
+            const socket = new WebSocket(`ws://127.0.0.1:${proxy.port}/api/ws`);
+            socket.once("open", () => resume(Effect.succeed(socket)));
+            socket.once("error", (cause) =>
+              resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause }))),
+            );
+          }),
+          (socket) => Effect.sync(() => socket.terminate()),
+        );
+        /* Each connection is past its headers, so running out their clocks must close none. */
+        yield* TestClock.adjust(1_000);
+        response.end("late");
+        expect(yield* replies(waiting, "late", 1)).toMatch(/^HTTP\/1\.1 200 /u);
+        kept.socket.write(request("/api/x"));
+        expect(yield* replies(kept, "pong", 2)).toMatch(/^HTTP\/1\.1 200 /u);
+        const echoed = yield* Effect.callback<string>((resume) => {
+          client.once("message", (message) =>
+            resume(Effect.succeed(Buffer.isBuffer(message) ? message.toString() : "")),
+          );
+          client.send("still open");
+        });
+        expect(echoed).toBe("still open");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/* A keep-alive connection on a TLS port at the plain listener's clocks whose first request,
+   `POST /api/hold`, the backend answers only once its body ends; `woken` gates each route target. */
+const keepAlive = (
+  mode: "plain" | "tls",
+  head: (host: string) => string,
+  woken: Effect.Effect<void> = Effect.void,
+) =>
+  Effect.gen(function* () {
+    const pair = yield* testPair;
+    const holding = yield* Deferred.make<void>();
+    const backend = yield* listen(
+      createServer((incoming, outgoing) => {
+        if (incoming.url !== "/api/hold") return outgoing.end("pong");
+        Deferred.doneUnsafe(holding, Effect.void);
+        incoming.resume();
+        incoming.once("end", () => outgoing.end("held"));
+      }),
+    );
+    const proxy = yield* makeHttpProxy({
+      host: "127.0.0.1",
+      port: 0,
+      tls: { ...pair, deadlines: { headers: 12_000, request: 300_000, idle: 75_000 } },
+    });
+    yield* proxy.setRoutes([
+      { id: "api", prefix: "/api", gateway: true, target: woken.pipe(Effect.as(backend)) },
+    ]);
+    const host = `Host: 127.0.0.1:${proxy.port}\r\n`;
+    const connection = yield* held(proxy.port, head(host), mode === "tls" ? pair.cert : undefined);
+    return { connection, holding, host };
+  });
+
+/* Its first body byte, which reaches the backend only after the proxy's request, then the rest
+   and the next request's start in one write, which the proxy has read once the held response
+   arrives on the same connection. */
+const straddling = (mode: "plain" | "tls") =>
+  Effect.gen(function* () {
+    const { connection, holding, host } = yield* keepAlive(
+      mode,
+      (host) => `POST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nb`,
+    );
+    yield* Deferred.await(holding);
+    connection.socket.write("odyGET /api/x HTTP/1.1\r\n");
+    yield* replies(connection, "held", 1);
+    return { connection, rest: `${host}\r\n` };
+  });
+
+/* The connection's next reply, or `closed` when the proxy closes it first. */
+const nextReply = (connection: Effect.Success<ReturnType<typeof held>>, body: string, count = 1) =>
+  Effect.raceFirst(
+    replies(connection, body, count),
+    closed(connection.socket).pipe(Effect.as("closed")),
+  );
+
+for (const mode of ["plain", "tls"] as const) {
+  it.effect(`lets a ${mode} request that started before idle ran out finish its headers`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, rest } = yield* straddling(mode);
+        yield* TestClock.adjust(75_000);
+        yield* TestClock.adjust(11_999);
+        connection.socket.write(rest);
+        expect(yield* nextReply(connection, "pong")).toMatch(/HTTP\/1\.1 200 [^]*pong$/u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    `closes a ${mode} request that started before idle ran out at its header deadline`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { connection } = yield* straddling(mode);
+          yield* TestClock.adjust(75_000);
+          yield* TestClock.adjust(12_000);
+          yield* closed(connection.socket);
+          expect(connection.received.text).not.toContain("pong");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`closes an idle ${mode} connection at idle`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection } = yield* keepAlive(
+          mode,
+          (host) => `GET /api/x HTTP/1.1\r\n${host}\r\n`,
+        );
+        yield* replies(connection, "pong", 1);
+        yield* TestClock.adjust(75_000);
+        yield* closed(connection.socket);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`lets a ${mode} request body arrive until its request deadline`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, holding } = yield* keepAlive(
+          mode,
+          (host) => `POST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nb`,
+        );
+        yield* Deferred.await(holding);
+        yield* TestClock.adjust(299_999);
+        connection.socket.write("ody");
+        expect(yield* nextReply(connection, "held")).toMatch(/HTTP\/1\.1 200 [^]*held$/u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`closes a ${mode} request whose body stalls at its request deadline`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, holding } = yield* keepAlive(
+          mode,
+          (host) => `POST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nb`,
+        );
+        yield* Deferred.await(holding);
+        yield* TestClock.adjust(300_000);
+        yield* closed(connection.socket);
+        expect(connection.received.text).not.toContain("held");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`keeps a bodyless ${mode} request waiting on its route past the request deadline`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const asked = yield* Deferred.make<void>();
+        const wake = yield* Deferred.make<void>();
+        const { connection } = yield* keepAlive(
+          mode,
+          (host) => `GET /api/x HTTP/1.1\r\n${host}\r\n`,
+          Deferred.succeed(asked, undefined).pipe(Effect.andThen(Deferred.await(wake))),
+        );
+        yield* Deferred.await(asked);
+        yield* TestClock.adjust(300_000);
+        yield* Deferred.succeed(wake, undefined);
+        expect(yield* nextReply(connection, "pong")).toMatch(/HTTP\/1\.1 200 [^]*pong$/u);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    `keeps a ${mode} request whose body arrived waiting on its route past the request deadline`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const asked = yield* Deferred.make<void>();
+          const wake = yield* Deferred.make<void>();
+          const { connection } = yield* keepAlive(
+            mode,
+            (host) => `POST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nbody`,
+            Deferred.succeed(asked, undefined).pipe(Effect.andThen(Deferred.await(wake))),
+          );
+          yield* Deferred.await(asked);
+          yield* TestClock.adjust(300_000);
+          yield* Deferred.succeed(wake, undefined);
+          expect(yield* nextReply(connection, "held")).toMatch(/HTTP\/1\.1 200 [^]*held$/u);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`closes a ${mode} pipelined request whose body stalls at its request deadline`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, holding } = yield* keepAlive(
+          mode,
+          (host) =>
+            `GET /api/x HTTP/1.1\r\n${host}\r\nPOST /api/hold HTTP/1.1\r\n${host}Content-Length: 4\r\n\r\nb`,
+        );
+        yield* replies(connection, "pong", 1);
+        yield* Deferred.await(holding);
+        yield* TestClock.adjust(300_000);
+        yield* closed(connection.socket);
+        expect(connection.received.text).not.toContain("held");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`keeps a ${mode} pipelined partial request open for idle`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { connection, host } = yield* keepAlive(
+          mode,
+          (host) => `GET /api/x HTTP/1.1\r\n${host}\r\nGET /api/x HTTP/1.1\r\n`,
+        );
+        yield* replies(connection, "pong", 1);
+        yield* TestClock.adjust(74_999);
+        connection.socket.write(`${host}\r\n`);
+        expect(yield* nextReply(connection, "pong", 2)).toMatch(
+          /pong[^]*HTTP\/1\.1 200 [^]*pong$/u,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.live(
+  "fails to listen when the certificate and key are not a pair, or it has no IP SAN for 127.0.0.1",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pair = yield* testPair;
+        const other = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey;
+        for (const tls of [
+          { cert: pair.cert, key: other.export({ type: "pkcs8", format: "pem" }).toString() },
+          { cert: pair.cert, key: "not a pem" },
+          { cert: "not a pem", key: pair.key },
+          { cert: "", key: "" },
+        ]) {
+          const error = yield* Effect.flip(makeHttpProxy({ host: "127.0.0.1", port: 0, tls }));
+          expect(error.message).toMatch(/^api\.tls: invalid certificate or key: /u);
+        }
+        /* A matching pair whose certificate names 127.0.0.1 only by CN, beside DNS:localhost. */
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dnsOnly = yield* fs.readFileString(
+          path.join(import.meta.dirname, "..", "tests", "certs", "dns-only.crt"),
+        );
+        const uncovered = yield* Effect.flip(
+          makeHttpProxy({ host: "127.0.0.1", port: 0, tls: { cert: dnsOnly, key: pair.key } }),
+        );
+        expect(uncovered.message).toBe(
+          "api.tls: invalid certificate or key: the certificate has no IP subject alternative name for 127.0.0.1 (for example `mkcert localhost 127.0.0.1`)",
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "records a plain request or upgrade refused for its Host like any other, its token redacted",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const accesses = yield* Queue.unbounded<HttpAccess>();
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          onAccess: (access) => Queue.offer(accesses, access),
+          tls: yield* testPair,
+        });
+        const head = `GET /email/invite?token=secret HTTP/1.1\r\nHost: evil.example:${proxy.port}\r\nConnection: close\r\n\r\n`;
+        expect(yield* exchange(proxy.port, head)).toMatch(/^HTTP\/1\.1 421 /u);
+        const access = yield* Queue.take(accesses);
+        expect(access).toMatchObject({ status: 421, target: "/email/invite?token=redacted" });
+        const upgrade = [
+          `GET /socket?token=secret HTTP/1.1`,
+          `Host: evil.example:${proxy.port}`,
+          "Connection: Upgrade",
+          "Upgrade: websocket",
+          "Sec-WebSocket-Version: 13",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "",
+          "",
+        ].join("\r\n");
+        expect(yield* exchange(proxy.port, upgrade)).toMatch(/^HTTP\/1\.1 421 /u);
+        expect(yield* Queue.take(accesses)).toMatchObject({
+          status: 421,
+          target: "/socket?token=redacted",
+        });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "closes a plain upgrade refused for its Host even when the client keeps its side open",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          tls: yield* testPair,
+        });
+        const upgrade = [
+          "GET /socket HTTP/1.1",
+          `Host: evil.example:${proxy.port}`,
+          "Connection: Upgrade",
+          "Upgrade: websocket",
+          "Sec-WebSocket-Version: 13",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "",
+          "",
+        ].join("\r\n");
+        const socket = yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            const client = new Socket({ allowHalfOpen: true });
+            client.on("error", () => client.destroy());
+            return client.connect(proxy.port, "127.0.0.1", () => client.write(upgrade));
+          }),
+          (client) => Effect.sync(() => client.destroy()),
+        );
+        const reply = yield* Effect.callback<string>((resume) => {
+          let text = "";
+          const onData = (chunk: Buffer) => {
+            text += chunk.toString("latin1");
+          };
+          const onEnd = () => resume(Effect.succeed(text));
+          socket.on("data", onData);
+          socket.once("end", onEnd);
+          return Effect.sync(() => {
+            socket.off("data", onData);
+            socket.off("end", onEnd);
+          });
+        });
+        expect(reply).toMatch(/^HTTP\/1\.1 421 /u);
+        /* Bytes after the reply reach a closed connection, which resets it. */
+        socket.write("still here");
+        yield* closed(socket).pipe(Effect.timeout("10 seconds"));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -474,6 +474,13 @@ export const VSCODE_SETTINGS_TEMPLATE = `{
 }
 `;
 
+export const VSCODE_SCHEMA_TRUST_TEMPLATE = `{
+  "json.schemaDownload.trustedDomains": {
+    "https://supabase.com/schemas/": true
+  }
+}
+`;
+
 export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 <project version="1">
   <component name="DenoSettings">

@@ -69,6 +69,7 @@ it.live("reports the failed binding and cleanup reason with the retained instanc
     const operations: SupabaseCompositionOperations = {
       currentComposition: Effect.succeed({ members: [], dependencies: [] }),
       randomToken: Effect.succeed("token"),
+      validated: Effect.void,
       get: unused,
       status: unused,
       create: (creation) => Effect.succeed({ id: "retained-mail", creation }),
@@ -170,6 +171,7 @@ it.live("cleans created registrations when composition is interrupted", () =>
     const operations: SupabaseCompositionOperations = {
       currentComposition: Effect.succeed({ members: [], dependencies: [] }),
       randomToken: Effect.succeed("token"),
+      validated: Effect.void,
       get: () => unused("get"),
       status: () => unused("status"),
       create: (creation) =>

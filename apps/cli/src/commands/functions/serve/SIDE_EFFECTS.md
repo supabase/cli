@@ -133,8 +133,9 @@ any difference between the configuration serve resolves (env files, per-function
 restarts Functions for the serving session, and the saved composed configuration is restored on
 exit when the owner remains reachable. Edits made while serving apply on the next
 `functions serve`, because the stack backend does not watch files. Import-map and inspector flags
-are rejected before any stack mutation. Stack mode writes no project files and does not stop or
-restart the whole composition.
+are rejected before any stack mutation with `Import-map and inspector flags are not supported by
+experimental Functions serve.` Stack mode writes no project files and does not stop or
+restart the whole composition, except that a failed api.tls start check stops it.
 Stack mode resolves the env like legacy serve on every invocation, for a composed or temporary
 service: the shared Functions `.env`, or the explicit `--env-file` instead, overrides the TOML
 `edge_runtime.secrets`, and without `--env-file` each enabled `<function-name>/.env` overrides
@@ -145,7 +146,12 @@ fails the command.
 Per-function TOML `env` remains the final override for that function. Multiline values and names
 the process environment cannot carry reach the runtime through its Functions config. `--debug`
 runs the runtime verbose for the command lifetime. A temporary service uses the API port of a
-running REST, Auth, Storage or Realtime service, else the configured `api.port`.
+running REST, Auth, Storage or Realtime service, else the configured `api.port`; on a stack
+started with `[api.tls]` it also gets `SUPABASE_INTERNAL_HOST_URL=https://127.0.0.1:<api>`, which
+its banner prints, like a composed one.
+On a Docker or Podman stack serving `[api.tls]` with its database running, starting the Functions
+instance runs the `stack start` api.tls check; a failure stops the stack's services and fails serve
+with that error.
 Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
 per-function `import_map.json` is not read and does not fail the command.
 
