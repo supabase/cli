@@ -4,7 +4,7 @@
 
 | Path                                                              | Format     | When                                                                                         |
 | ----------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`, `config.json` or `config.jsonc` | TOML/JSONC | always; the same text is reused for the code frames                                          |
+| `<workdir>/supabase/config.toml`, `config.json` or `config.jsonc` | TOML/JSONC | always; read to locate each problem's line and column                                        |
 | `<workdir>/supabase/.env*`, `<workdir>/.env*`                     | dotenv     | always, selected by `SUPABASE_ENV`, to resolve `env()` references and `SUPABASE_*` overrides |
 | `<workdir>/supabase/<content_path>`                               | text       | when an `auth.email.template.*` or notification `content_path` is set                        |
 | `<workdir>/supabase/<cert_path>`, `<key_path>`                    | PEM        | when `api.tls.enabled` is true                                                               |
@@ -55,7 +55,7 @@ Each stage reports every problem it finds; a run stops after a stage only when t
 
 ### `--output-format text`
 
-stdout is one report: every problem in file order, each as `<key>  <reason>` with `file:line:column`, a code frame, an optional `help:` line and a `[remote: <name>]` label, then a total. Colour only on a TTY, per `NO_COLOR`/`CLICOLOR`. Code frames show keys, table headers and positions, never values: every value is masked as `****` on every line it spans, and the text of comments is masked after its `#` or `//`. A document that cannot be parsed is masked line by line in full. Nothing is written to stderr by the command itself.
+stdout is one report: every problem in file order, each as `<key>  <reason>` with `file:line:column`, an optional `help:` line and a `[remote: <name>]` label, then a total. Colour only on a TTY, per `NO_COLOR`/`CLICOLOR`. The report shows key paths and `file:line:column`, never source text or values; see [ADR 0034](../../../../../../docs/adr/0034-config-diagnostics-print-no-source-text.md). Nothing is written to stderr by the command itself.
 
 ### `--output-format json`
 

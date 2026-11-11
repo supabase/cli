@@ -7,8 +7,6 @@ const locateCliConfigKey = (
   path: ReadonlyArray<string>,
   target: "key" | "value",
 ) => scanCliConfigDocument(source, format).locate(path, target);
-const cliConfigValueSpans = (source: string, format: "toml" | "json") =>
-  scanCliConfigDocument(source, format).valueSpans();
 import { isSecretPath } from "./lib/secret-paths.ts";
 
 const toml = [
@@ -192,49 +190,6 @@ describe("locateCliConfigKey (spans and inline tables)", () => {
     const source = 'api = { note = "port = 1", port = 2 }\n';
     const location = locateCliConfigKey(source, "toml", ["api", "port"], "value");
     expect(source.slice((location?.column ?? 0) - 1, (location?.endColumn ?? 0) - 1)).toBe("2");
-  });
-});
-
-describe("cliConfigValueSpans", () => {
-  const textOf = (source: string, spans: ReturnType<typeof cliConfigValueSpans>) =>
-    (spans ?? []).map((span) => {
-      const lines = source.split("\n");
-      const first = lines[span.line - 1] ?? "";
-      if (span.endLine === undefined || span.endLine === span.line) {
-        return first.slice(span.column - 1, (span.endColumn ?? 1) - 1);
-      }
-      return [
-        first.slice(span.column - 1),
-        ...lines.slice(span.line, span.endLine - 1),
-        (lines[span.endLine - 1] ?? "").slice(0, (span.endColumn ?? 1) - 1),
-      ].join("\n");
-    });
-
-  test("covers a multi-line toml string and each value of an inline table", () => {
-    const source = 'a = """\n# x\nb=="""\nc = { d = 1, e = "two" }\nf = [1, 2]\n';
-    expect(textOf(source, cliConfigValueSpans(source, "toml"))).toEqual([
-      '"""\n# x\nb=="""',
-      "1",
-      '"two"',
-      "[1, 2]",
-    ]);
-  });
-
-  test("covers each json scalar, including those of a multi-line array", () => {
-    const source = '{\n  "a": [\n    "x",\n    2\n  ],\n  "b": { "c": true }\n}';
-    expect(textOf(source, cliConfigValueSpans(source, "json"))).toEqual(['"x"', "2", "true"]);
-  });
-
-  test("covers an inline table holding a triple-quoted string as one span", () => {
-    const source = 'auth = { jwt_secret = """foo", hunter2 = "x", tail = "bar""" }\n';
-    expect(textOf(source, cliConfigValueSpans(source, "toml"))).toEqual([
-      '{ jwt_secret = """foo", hunter2 = "x", tail = "bar""" }',
-    ]);
-  });
-
-  test("is undefined when the text does not parse", () => {
-    expect(cliConfigValueSpans('a = """\nx', "toml")).toBeUndefined();
-    expect(cliConfigValueSpans('{ "a": ', "json")).toBeUndefined();
   });
 });
 

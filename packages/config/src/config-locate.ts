@@ -1,4 +1,4 @@
-import { parseTree, type Node, type ParseError } from "jsonc-parser";
+import { parseTree, type Node } from "jsonc-parser";
 import {
   scanTomlDocument,
   type TomlHeaderToken,
@@ -322,56 +322,6 @@ function locateJson(
   return undefined;
 }
 
-function tomlValueSpans(source: string, span: Span): ReadonlyArray<Span> {
-  if (source[span.start] !== "{") return [span];
-  const text = source.slice(span.start, span.end);
-  if (text.includes('"""') || text.includes("'''")) return [span];
-  const entries = inlineTableEntries(source, span);
-  return entries === undefined
-    ? [span]
-    : entries.flatMap((entry) => tomlValueSpans(source, entry.value));
-}
-
-function jsonValueSpans(root: Node): ReadonlyArray<Span> {
-  const found: Array<Span> = [];
-  const walk = (node: Node): void => {
-    if (node.type === "object") {
-      for (const property of node.children ?? []) {
-        const value = property.children?.[1];
-        if (value !== undefined) walk(value);
-      }
-    } else if (node.type === "array") {
-      for (const child of node.children ?? []) walk(child);
-    } else {
-      found.push({ start: node.offset, end: node.offset + node.length });
-    }
-  };
-  walk(root);
-  return found;
-}
-
-function tomlDocumentValueSpans(
-  source: string,
-  { scan, starts }: ScannedToml,
-): ReadonlyArray<CliConfigLocation> | undefined {
-  if (isScanError(scan)) return undefined;
-  return scan.tokens
-    .filter((token): token is TomlKeyToken => token.kind === "kv")
-    .flatMap((token) => tomlValueSpans(source, { start: token.valueStart, end: token.valueEnd }))
-    .filter((span) => span.end > span.start)
-    .map((span) => toLocation(starts, span, true));
-}
-
-function jsonDocumentValueSpans(source: string): ReadonlyArray<CliConfigLocation> | undefined {
-  const errors: Array<ParseError> = [];
-  const root = parseTree(source, errors, { allowTrailingComma: true, disallowComments: false });
-  if (root === undefined || errors.length > 0) return undefined;
-  const starts = lineStarts(source);
-  return jsonValueSpans(root)
-    .filter((span) => span.end > span.start)
-    .map((span) => toLocation(starts, span, true));
-}
-
 /** One scan of raw config text, owned by the caller so the text is not retained beyond it. */
 export interface CliConfigDocumentScan {
   /**
@@ -382,8 +332,6 @@ export interface CliConfigDocumentScan {
     path: ReadonlyArray<string>,
     target: "key" | "value",
   ) => CliConfigLocation | undefined;
-  /** The span of every scalar or array value, multi-line ones included; undefined when unparseable. */
-  readonly valueSpans: () => ReadonlyArray<CliConfigLocation> | undefined;
 }
 
 export function scanCliConfigDocument(text: string, format: ConfigFormat): CliConfigDocumentScan {
@@ -392,11 +340,9 @@ export function scanCliConfigDocument(text: string, format: ConfigFormat): CliCo
     const scanned = scanToml(source);
     return {
       locate: (path, target) => locateToml(source, path, target, scanned),
-      valueSpans: () => tomlDocumentValueSpans(source, scanned),
     };
   }
   return {
     locate: (path, target) => locateJson(source, path, target),
-    valueSpans: () => jsonDocumentValueSpans(source),
   };
 }

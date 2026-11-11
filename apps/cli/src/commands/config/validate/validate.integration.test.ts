@@ -168,50 +168,29 @@ describe("config validate integration", () => {
       expect(result.stdout).toMatchInlineSnapshot(`
         "  ✗ api.prot  unknown key
             supabase/config.toml:5:1
-            4 │ enabled = ****
-          > 5 │ prot = ****
-              │ ^^^^
             help: did you mean \`port\`?
 
           ✗ api.max_rows  expected a non-negative integer
             supabase/config.toml:6:12
-            5 │ prot = ****
-          > 6 │ max_rows = ****
-              │            ^^^^
 
           ✗ db.major_version  unsupported Postgres version
             supabase/config.toml:9:17
-            8 │ [db]
-          > 9 │ major_version = ****
-              │                 ^^^^
             help: use one of 13, 14, 15, 17
 
           ✗ auth.external.github.client_id  required when auth.external.github.enabled = true
             supabase/config.toml:11:2
-            10 │
-          > 11 │ [auth.external.github]
-               │  ^^^^^^^^^^^^^^^^^^^^
             help: set client_id, or set enabled = false
 
           ✗ auth.external.github.secret  required when auth.external.github.enabled = true
             supabase/config.toml:11:2
-            10 │
-          > 11 │ [auth.external.github]
-               │  ^^^^^^^^^^^^^^^^^^^^
             help: set secret, or set enabled = false
 
           ⚠ auth.email.smtp.pass  SMTP_PASS is not set, so this key gets the literal text "env(SMTP_PASS)"
             supabase/config.toml:19:8
-            18 │ user = ****
-          > 19 │ pass = ****
-               │        ^^^^
             help: set SMTP_PASS in your shell or supabase/.env (SUPABASE_ENV=<name> also reads supabase/.env.<name>)
 
           ✗ api.max_rows  expected a non-negative integer  [remote: staging]
             supabase/config.toml:26:12
-            25 │ [remotes.staging.api]
-          > 26 │ max_rows = ****
-               │            ^^^^
 
         ✗ 6 errors, 1 warning in supabase/config.toml
           Checked remotes: staging
@@ -335,22 +314,13 @@ describe("config validate integration", () => {
       expect(result.stdout).toMatchInlineSnapshot(`
         "  ✗ api.prot  unknown key
             supabase/config.jsonc:5:5
-            4 │   "api": {
-          > 5 │     "prot": ****,
-              │     ^^^^^^
             help: did you mean \`port\`?
 
           ✗ api.max_rows  expected a non-negative integer
             supabase/config.jsonc:6:17
-            5 │     "prot": ****,
-          > 6 │     "max_rows": ****,
-              │                 ^^^^
 
           ✗ db.major_version  unsupported Postgres version
             supabase/config.jsonc:8:28
-            7 │   },
-          > 8 │   "db": { "major_version": **** }
-              │                            ^^^^
             help: use one of 13, 14, 15, 17
 
         ✗ 3 errors in supabase/config.jsonc
@@ -974,13 +944,12 @@ describe("config validate integration", () => {
     const leaks = (result: Parameters<typeof reportedTexts>[0]) =>
       expect(reportedTexts(result)).not.toContain(SECRET);
 
-    it.effect("masks every line of a document with a syntax error", () =>
+    it.effect("prints no source text for a document with a syntax error", () =>
       Effect.gen(function* () {
         const result = yield* validate(
           tomlFile(`project_id = "demo"\n[auth.email.smtp]\npass = "${SECRET}"\nhost = "x\n`),
         );
 
-        expect(result.stdout).toContain("> 4 │ ****");
         leaks(result);
       }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -1004,7 +973,6 @@ describe("config validate integration", () => {
             `project_id = "demo"\n[auth.email.smtp]\nenabled = true\nhost = "h"\nport = 25\nuser = "u"\nadmin_email = "a@b.dev"\npasss = "${SECRET}"\n`,
           ),
         );
-        expect(text.stdout).toContain("passs = ****");
         leaks(text);
       }).pipe(Effect.provide(BunServices.layer)),
     );
@@ -1035,7 +1003,6 @@ describe("config validate integration", () => {
           );
 
           expect(result.stdout).toContain("auth.hook.send_email.bogus");
-          expect(result.stdout).toContain("bogus = ****");
           leaks(result);
           expect(result.stdout).not.toContain(padded.slice(0, 8));
         }).pipe(Effect.provide(BunServices.layer)),
@@ -1058,7 +1025,6 @@ describe("config validate integration", () => {
         const context = yield* validate(
           tomlFile(`project_id = "demo"\n[auth]\nsite_url = "${url}"\nbogus = 1\n`),
         );
-        expect(context.stdout).toContain("site_url = ****");
         expect(context.stdout).not.toContain("pass-secret");
         expect(context.stdout).not.toContain("tok-secret");
 

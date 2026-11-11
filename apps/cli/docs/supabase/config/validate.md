@@ -1,6 +1,6 @@
 # supabase-config-validate
 
-Checks the project config file (`supabase/config.toml`, `config.json` or `config.jsonc`) and reports every problem in one pass, each with its line and a code frame. It never modifies a project file and never contacts the Supabase API.
+Checks the project config file (`supabase/config.toml`, `config.json` or `config.jsonc`) and reports every problem in one pass, each with its key path and `file:line:column`. It never modifies a project file and never contacts the Supabase API.
 
 ## What is checked
 
@@ -16,7 +16,7 @@ Stages 1 to 4 stop the run when they fail, because later checks cannot be comput
 
 ## Secrets
 
-Code frames show keys, headers and positions, never values: every value, on every line it spans, prints as `****`, and the text of comments is masked after its `#` or `//`. JSON output never contains source text or values. A value that comes from a `SUPABASE_*` variable is reported against its key, not a line.
+The report shows key paths and `file:line:column`, never source text or values, in text and JSON alike (see [ADR 0034](https://github.com/supabase/cli/blob/develop/docs/adr/0034-config-diagnostics-print-no-source-text.md)). A value that comes from a `SUPABASE_*` variable is reported against its key, not a line.
 
 ## `env()` references
 

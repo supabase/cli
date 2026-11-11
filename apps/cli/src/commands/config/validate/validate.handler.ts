@@ -405,7 +405,6 @@ export const configValidate = Effect.fn("config.validate")(function* () {
     return {
       file: display,
       format: reportFormat(display, format),
-      source,
       remotes: [],
       skippedRemotes: [],
       stoppedAt,
@@ -603,7 +602,6 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       const report = {
         file,
         format,
-        source: parsed.rawText,
         remotes: [],
         skippedRemotes: [],
         stoppedAt: base.stop,
@@ -761,7 +759,6 @@ export const configValidate = Effect.fn("config.validate")(function* () {
     return yield* emit({
       file,
       format,
-      source: parsed.rawText,
       remotes: checkedRemotes,
       skippedRemotes,
       ...(remoteStop === undefined ? {} : { stoppedAt: remoteStop }),
