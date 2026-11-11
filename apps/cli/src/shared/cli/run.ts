@@ -9,6 +9,7 @@ import {
   FileSystem,
   Fiber,
   Layer,
+  Option,
   Path,
   PlatformError,
   Predicate,
@@ -626,6 +627,8 @@ export interface RunCliOptions<BeforeParseError = never> {
     args: ReadonlyArray<string>,
     info: {
       readonly cleanShowHelp: boolean;
+      readonly outputFormat: OutputFormat;
+      readonly detectedAgent: boolean;
       readonly workingDirectory?: string;
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
@@ -725,9 +728,16 @@ export const runCli = Effect.fnUntraced(function* <
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
   const suggestionContext = { rootCommand, args };
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
-  const outputFormat = yield* Effect.gen(function* () {
+  const { outputFormat, detectedAgent } = yield* Effect.gen(function* () {
     const aiTool = yield* AiTool;
-    return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
+    return {
+      outputFormat: resolveAgentOutputFormatFromArgs(
+        args,
+        aiTool.name,
+        options.agentDefaultOutputFormat,
+      ),
+      detectedAgent: Option.isSome(aiTool.name),
+    };
   }).pipe(Effect.provide(aiToolLayer));
   const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat);
 
@@ -804,6 +814,8 @@ export const runCli = Effect.fnUntraced(function* <
                           const workingDirectory = yield* successTrailer.workingDirectory;
                           yield* afterSuccessHook(args, {
                             cleanShowHelp,
+                            outputFormat,
+                            detectedAgent,
                             workingDirectory,
                             isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
                               rootCommand,

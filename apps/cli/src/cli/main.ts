@@ -4,6 +4,7 @@ import { Effect, Exit, Layer, Stdio } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { runCli } from "../shared/cli/run.ts";
 import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
+import { accountRecoveryReminderHook } from "../command-internal/account-recovery-reminder.ts";
 import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
@@ -63,7 +64,10 @@ if (
           : "legacy",
       ).pipe(Layer.provide(FetchHttpClient.layer)),
       agentDefaultOutputFormat,
-      afterSuccess: upgradeNoticeHook,
+      afterSuccess: (commandArgs, info) =>
+        upgradeNoticeHook(commandArgs, info).pipe(
+          Effect.andThen(accountRecoveryReminderHook(commandArgs, info)),
+        ),
       ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
     }),
   );
