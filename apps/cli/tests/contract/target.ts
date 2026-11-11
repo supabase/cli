@@ -154,7 +154,9 @@ insert into public.contract_log (source) select format('migration 0 sees auth=%s
 `,
   "buckets/public/a.txt": "seeded object\n",
   "buckets/public/nested/b.txt": "nested object\n",
-  "functions/echo/index.ts": `Deno.serve(() => Response.json({ ok: true }));
+  "functions/echo/index.ts": `Deno.serve(() =>
+  Response.json({ ok: true, dbUser: URL.parse(Deno.env.get("SUPABASE_DB_URL") ?? "")?.username ?? null }),
+);
 `,
   "templates/shared/invite.html": `<p>${inviteTemplateMarker}</p><a href="{{ .ConfirmationURL }}">Accept</a>
 `,

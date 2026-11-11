@@ -223,7 +223,10 @@ const fixture = (
       service: "database" as const,
       status: Effect.succeed(observation("database", databaseCreation)),
       credentials: () =>
-        Effect.succeed({ databaseUrl: "postgresql://postgres@127.0.0.1:54322/postgres" }),
+        Effect.succeed({
+          databaseUrl: "postgresql://supabase_admin@127.0.0.1:54322/postgres",
+          functionsDatabaseUrl: "postgresql://postgres@127.0.0.1:54322/postgres",
+        }),
       start: Effect.void,
       ready: Effect.void,
       stop: Effect.void,
@@ -449,6 +452,7 @@ describe("experimental Stack Functions serve", () => {
           expect(created.config.anonKey).toBeUndefined();
           expect(created.config.serviceRoleKey).toBeUndefined();
           expect(created.config.jwks).toBeDefined();
+          expect(created.config.databaseUrl).toBe("postgresql://postgres@127.0.0.1:54322/postgres");
           const jwks = yield* Schema.decodeEffect(testJwksDocument)(created.config.jwks ?? "");
           expect(
             jwks.keys.some((key) => key.kty === "oct" && key.k === "c2F2ZWQtand0LXNlY3JldA"),
