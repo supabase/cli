@@ -97,3 +97,34 @@ export function dim(text: string, stream: ColorStream = process.stderr): string 
 export function inverse(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("inverse", text, { validateStream: false }) : text;
 }
+
+// Colour roles. New code uses these instead of the raw colours above; see
+// docs/adr/0034-cli-colour-system.md.
+
+/** Marks a complete command or flag to type next. */
+export const command = aqua;
+
+/** Marks the primary outcome, or a name inside a sentence. */
+export const emphasis = bold;
+
+/** Renders frame lines and optional metadata. */
+export const muted = gray;
+
+/** Renders table headers and help headings: bold blue, apart from the status colours. */
+export function heading(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream)
+    ? styleText(["bold", "blue"], text, { validateStream: false })
+    : text;
+}
+
+/** Names a setting or property, such as `auth.site_url` in a config diff. */
+export const property = magenta;
+
+/** Marks a finished step or a healthy state. */
+export const success = green;
+
+/** Marks something that needs attention but did not stop the command. */
+export const warning = yellow;
+
+/** Marks a failure. */
+export const error = red;

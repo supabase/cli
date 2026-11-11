@@ -17,6 +17,9 @@ export interface OutputTask {
 interface OutputSelectOption {
   readonly value: string;
   readonly label: string;
+  /** Shown beside the label on every row, in a muted aligned column. */
+  readonly detail?: string;
+  /** Shown only on the highlighted row. */
   readonly hint?: string;
 }
 

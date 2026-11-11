@@ -12,8 +12,9 @@ import {
   BranchesDeleteUnexpectedStatusError,
 } from "../branches.errors.ts";
 import { promptBranchId } from "../branches.prompt.ts";
-import { resolveBranchProjectRef } from "../branches.resolver.ts";
+import { resolveBranchProjectRef, announceBranchTarget } from "../branches.resolver.ts";
 import type { BranchesDeleteFlags } from "./delete.command.ts";
+import { CommandTarget } from "../../../shared/output/command-target.service.ts";
 
 const mapDeleteError = mapHttpError({
   networkError: BranchesDeleteNetworkError,
@@ -31,6 +32,7 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
   // endpoint.
+  yield* CommandTarget.use((target) => target.holdAsParent);
   const ref = yield* resolveProjectTarget(
     { remote: flags.remote, projectRef: flags.projectRef },
     { parent: true },
@@ -40,6 +42,7 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.name, ref);
     const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
+    yield* announceBranchTarget(branchInput, branchRef);
 
     yield* requireHostedMutationConsent({
       action: `Delete preview branch ${branchInput}`,
@@ -58,6 +61,8 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
       yield* output.success("Deleted preview branch", { project_ref: branchRef });
       return;
     }
-    yield* output.raw(`Deleted preview branch: ${branchRef}\n`, "stderr");
+    yield* output.interactive
+      ? output.success(`Deleted preview branch ${branchInput}`)
+      : output.raw(`Deleted preview branch: ${branchRef}\n`, "stderr");
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

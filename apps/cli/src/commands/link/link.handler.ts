@@ -58,6 +58,8 @@ import {
   resolveLinkBranchRef,
 } from "../../command-internal/target/branch-resolution.ts";
 import type { LinkFlags } from "./link.command.ts";
+import { detailRows, nextStep } from "../../shared/output/gutter.ts";
+import { homedir } from "node:os";
 
 // Classify a `getProject` failure: a 404 means the project is a branch (resolve
 // to `None`, link continues); any other status surfaces the body; transport
@@ -217,6 +219,13 @@ const publishStackLink = Effect.fn("link.lock")(function* (input: {
   return result;
 });
 
+const displayWorkdir = (workdir: string): string => {
+  const home = homedir();
+  return workdir === home || workdir.startsWith(`${home}/`)
+    ? `~${workdir.slice(home.length)}`
+    : workdir;
+};
+
 export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
@@ -239,6 +248,12 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   yield* Effect.gen(function* () {
     // An empty-string positional or flag value is treated as absent, matching the resolver's
     // own treatment of an empty `--project-ref`.
+    if (output.format === "text") {
+      yield* output.raw(
+        `${detailRows([["Directory", displayWorkdir(cliSettings.workdir), "middle"]], process.stderr)}\n`,
+        "stderr",
+      );
+    }
     const refArg = Option.filter(flags.refOrBranch, (value) => value.length > 0);
     const projectRefFlag = Option.filter(flags.projectRef, (value) => value.length > 0);
 
@@ -494,9 +509,34 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       }
     }
 
-    // 6. PostRun: `Finished supabase link.` to stdout (text), structured success otherwise.
+    // 6. PostRun: the linked project and the next step (text), structured success otherwise.
     if (output.format === "text") {
-      yield* output.raw("Finished supabase link.\n");
+      const projectName = Option.map(project, (found) => sanitizeInlineName(found.name));
+      const branchName = Option.map(branchResolution, (found) =>
+        sanitizeInlineName(found.branchName),
+      );
+      yield* output.success(
+        `Linked to ${Option.getOrElse(
+          Option.orElse(branchName, () => projectName),
+          () => ref,
+        )}`,
+      );
+      yield* output.raw(
+        detailRows([
+          [
+            "Project",
+            Option.match(projectName, { onNone: () => ref, onSome: (name) => `${name} (${ref})` }),
+          ],
+          ...Option.match(project, {
+            onNone: () => [],
+            onSome: (found) => [["Organization", found.organization_slug] as const],
+          }),
+          ...Option.match(branchName, {
+            onNone: () => [],
+            onSome: (name) => [["Branch", name] as const],
+          }),
+        ]) + nextStep("Pull the remote schema into this folder", "supabase db pull"),
+      );
     } else {
       yield* output.success("", {
         project_ref: ref,

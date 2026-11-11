@@ -1,3 +1,4 @@
+import { renderGlamourTable } from "../output/glamour-table.ts";
 import { stringWidth } from "./string-width.ts";
 
 // Width counts East Asian Wide as 2 and zero-width/combining as 0, so CJK/emoji cells still
@@ -16,6 +17,13 @@ export function renderTablewriter(
 ): string {
   if (cols.length === 0) return "";
   const rows = data.map((row) => row.map((cell, columnIndex) => formatCell(cell, columnIndex)));
+  // A person at a terminal gets the shared borderless table; column names stay as written.
+  if (process.stdout.isTTY) {
+    return renderGlamourTable(
+      cols.map((col) => ({ terminal: col, kind: "data" as const })),
+      rows.map((row) => row.map((cell) => cell.replaceAll("\n", "↵"))),
+    );
+  }
   // Column width is the widest visual line, since a multi-line cell splits across stacked lines.
   const widths = cols.map((col, i) => {
     let width = displayWidth(col);

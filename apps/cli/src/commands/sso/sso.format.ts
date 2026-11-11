@@ -167,7 +167,7 @@ export function renderListProviders(items: ReadonlyArray<SsoProviderView>): stri
         formatSsoTimestamp(item.updated_at),
       ] as const,
   );
-  return renderGlamourTable(LIST_HEADERS, rows);
+  return renderGlamourTable(LIST_HEADERS, rows, process.stdout, "No SSO providers configured");
 }
 
 /**

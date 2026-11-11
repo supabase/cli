@@ -11,14 +11,14 @@ import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
 import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
 const LIST_HEADERS = [
-  "ID",
-  "NAME",
+  { piped: "ID", terminal: "ID", kind: "id" },
+  { piped: "NAME", terminal: "Name", kind: "primary" },
   "DEFAULT",
-  "GIT BRANCH",
+  { piped: "GIT BRANCH", terminal: "Git Branch", kind: "meta" },
   "WITH DATA",
-  "STATUS",
-  "CREATED AT (UTC)",
-  "UPDATED AT (UTC)",
+  { piped: "STATUS", terminal: "Status", kind: "status" },
+  { piped: "CREATED AT (UTC)", terminal: "Created At (UTC)", kind: "meta" },
+  { piped: "UPDATED AT (UTC)", terminal: "Updated At (UTC)", kind: "meta" },
 ] as const;
 
 const GET_HEADERS = [
@@ -55,7 +55,7 @@ export function renderBranchesListTable(
     formatTimestamp(b.created_at),
     formatTimestamp(b.updated_at),
   ]);
-  return renderGlamourTable(LIST_HEADERS, rows);
+  return renderGlamourTable(LIST_HEADERS, rows, process.stdout, "No preview branches");
 }
 
 /**

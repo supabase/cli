@@ -40,6 +40,8 @@ import {
   BRANCH_UUID_PATTERN,
 } from "../../../command-internal/ref-patterns.ts";
 import type { BranchesGetFlags } from "./get.command.ts";
+import { announceBranchTarget } from "../branches.resolver.ts";
+import { CommandTarget } from "../../../shared/output/command-target.service.ts";
 
 type BranchDetail = typeof V1GetABranchConfigOutput.Type;
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
@@ -83,6 +85,7 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
+  yield* CommandTarget.use((target) => target.holdAsParent);
   const ref = yield* resolveProjectTarget(
     { remote: flags.remote, projectRef: flags.projectRef },
     { parent: true },
@@ -99,6 +102,7 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
         .pipe(Effect.catch(mapFindError));
       branchIdOrRef = lookup.project_ref;
     }
+    yield* announceBranchTarget(branchInput, branchIdOrRef);
 
     const fetching =
       output.format === "text" ? yield* output.task("Fetching branch...") : undefined;

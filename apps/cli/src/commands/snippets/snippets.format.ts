@@ -36,5 +36,5 @@ export function renderSnippetsTable(items: ReadonlyArray<SnippetRow>): string {
     formatTimestamp(snippet.inserted_at),
     formatTimestamp(snippet.updated_at),
   ]);
-  return renderGlamourTable(HEADERS, rows);
+  return renderGlamourTable(HEADERS, rows, process.stdout, "No SQL snippets");
 }

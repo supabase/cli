@@ -1,5 +1,5 @@
 import { operationDefinitions } from "@supabase/api/effect";
-import { Effect, Option } from "effect";
+import { Clock, Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -29,7 +29,9 @@ import {
   type LinkedProject,
   readProjectField,
   renderProjectsListTable,
+  renderProjectsTerminalTable,
 } from "../projects.format.ts";
+import { nextStep } from "../../../shared/output/gutter.ts";
 import type { ProjectsListFlags } from "./list.command.ts";
 
 /**
@@ -119,11 +121,6 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
     }
     yield* fetching?.clear ?? Effect.void;
 
-    // Prints the not-linked message to stderr but still renders the table below.
-    if (Option.isNone(linkedRef)) {
-      yield* output.raw("Cannot find project ref. Have you run supabase link?\n", "stderr");
-    }
-
     // `markerRef` decides which row shows as linked, since a linked branch's own ref never
     // matches a project row here. An exact match on `linkedRef` wins outright; only when it
     // misses do we fall back to the parent chain (env → linked-project.json → project-ref file).
@@ -175,7 +172,20 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
       return;
     }
 
-    yield* output.raw(renderProjectsListTable(projects));
+    if (!output.interactive) {
+      yield* output.raw(renderProjectsListTable(projects));
+      return;
+    }
+    // Organization names make the terminal table readable; without them it shows slugs.
+    const organizationNames = yield* api.v1.listAllOrganizations().pipe(
+      Effect.map((orgs) => new Map(orgs.map((org) => [org.id, org.name] as const))),
+      Effect.orElseSucceed(() => new Map<string, string>()),
+    );
+    const nowMs = yield* Clock.currentTimeMillis;
+    yield* output.raw(renderProjectsTerminalTable(projects, { organizationNames, nowMs }));
+    if (Option.isNone(linkedRef)) {
+      yield* output.raw(nextStep("Link this folder to a project", "supabase link"));
+    }
   }).pipe(
     Effect.ensuring(
       Option.isSome(linkedRef) ? linkedProjectCache.cache(linkedRef.value) : Effect.void,

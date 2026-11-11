@@ -4,6 +4,9 @@ import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { apiKeyValue } from "../../command-internal/api-keys.format.ts";
 import { formatRegion } from "../../command-internal/region.format.ts";
 import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
+import { formatAge } from "../../command-internal/age.format.ts";
+import { truncateEnd } from "../../shared/output/gutter.ts";
+import { success } from "../../command-internal/colors.ts";
 
 type ApiKey = typeof ApiKeyResponse_Output.Type;
 
@@ -37,16 +40,12 @@ export function dashboardUrlForProfile(profile: string): string {
 
 // `renderGlamourTable` lays out cells directly, so a literal `|` in a project name passes
 // through unescaped.
-const LIST_HEADERS = [
-  "LINKED",
-  "ORG ID",
-  "REFERENCE ID",
-  "NAME",
-  "REGION",
-  "CREATED AT (UTC)",
-] as const;
+const ORGANIZATION = { piped: "ORG ID", terminal: "Organization" } as const;
+const ID = { piped: "REFERENCE ID", terminal: "ID" } as const;
 
-const CREATE_HEADERS = ["ORG ID", "REFERENCE ID", "NAME", "REGION", "CREATED AT (UTC)"] as const;
+const LIST_HEADERS = ["LINKED", ORGANIZATION, ID, "NAME", "REGION", "CREATED AT (UTC)"] as const;
+
+const CREATE_HEADERS = [ORGANIZATION, ID, "NAME", "REGION", "CREATED AT (UTC)"] as const;
 
 const API_KEYS_HEADERS = ["NAME", "KEY VALUE"] as const;
 
@@ -69,6 +68,49 @@ export function renderProjectsListTable(projects: ReadonlyArray<LinkedProject>):
     formatTimestamp(readProjectField(project, "created_at")),
   ]);
   return renderGlamourTable(LIST_HEADERS, rows);
+}
+
+const TERMINAL_LIST_HEADERS = [
+  { terminal: "Name", kind: "primary" },
+  { terminal: "ID", kind: "id" },
+  { terminal: "Status", kind: "status" },
+  { terminal: "Organization", kind: "meta" },
+  { terminal: "Region", kind: "meta" },
+  { terminal: "Created", kind: "meta" },
+] as const;
+const NAME_WIDTH = 32;
+
+/** What the terminal `projects list` table adds beyond the project records. */
+export interface ProjectsTerminalContext {
+  readonly organizationNames: ReadonlyMap<string, string>;
+  readonly nowMs: number;
+}
+
+/**
+ * `projects list` on a terminal: newest first, the linked project marked on its name, organization
+ * names in place of slugs, and creation as a relative age.
+ */
+export function renderProjectsTerminalTable(
+  projects: ReadonlyArray<LinkedProject>,
+  { organizationNames, nowMs }: ProjectsTerminalContext,
+): string {
+  const created = (project: LinkedProject) =>
+    Date.parse(readProjectField(project, "created_at")) || 0;
+  const rows = [...projects]
+    .sort((left, right) => created(right) - created(left))
+    .map((project) => {
+      const name = truncateEnd(readProjectField(project, "name"), NAME_WIDTH);
+      const slug = readProjectField(project, "organization_slug");
+      return [
+        project.linked ? `${name} ${success("● linked", process.stdout)}` : name,
+        readProjectField(project, "id"),
+        readProjectField(project, "status"),
+        organizationNames.get(slug) ?? slug,
+        formatRegion(readProjectField(project, "region")),
+        formatAge(readProjectField(project, "created_at"), nowMs),
+      ];
+    });
+  return renderGlamourTable(TERMINAL_LIST_HEADERS, rows, process.stdout, "No projects");
 }
 
 /** `projects create` pretty table. */

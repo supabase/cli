@@ -373,6 +373,8 @@ describe("migration fetch", () => {
       CommandTarget,
       CommandTarget.of({
         announce: () => Effect.void,
+        holdAsParent: Effect.void,
+        announceSubject: () => Effect.void,
         hintLocal: () => Effect.void,
         json: Effect.succeed(Option.none()),
         text: Effect.succeed(Option.some("project my-app (flagflagflagflagflag) · production")),

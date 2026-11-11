@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Command } from "effect/cli";
-import { collectCommands, findCommand } from "./command-docs.ts";
+import { collectCommands, commandHeaderFor, findCommand } from "./command-docs.ts";
 
 function makeTree() {
   const login = Command.make("login").pipe(Command.withDescription("Log in to Supabase"));
@@ -97,5 +97,28 @@ describe("collectCommands", () => {
     const results = collectCommands(leaf, ["leaf"]);
     expect(results).toHaveLength(1);
     expect(results[0]?.command.name).toBe("leaf");
+  });
+});
+
+describe("commandHeaderFor", () => {
+  const list = Command.make("list").pipe(Command.withShortDescription("List migrations"));
+  const migration = Command.make("migration").pipe(
+    Command.withAlias("migrations"),
+    Command.withShortDescription("Manage migrations"),
+    Command.withSubcommands([list]),
+  );
+  const undocumented = Command.make("undocumented");
+
+  it("names the invoked command by its canonical path, ignoring positional arguments", () => {
+    expect(commandHeaderFor([migration], ["migrations", "list", "extra"])).toEqual({
+      path: "migration list",
+      description: "List migrations",
+    });
+  });
+
+  it("returns undefined without a command or a description to show", () => {
+    expect(commandHeaderFor([migration], [])).toBeUndefined();
+    expect(commandHeaderFor([migration], ["unknown"])).toBeUndefined();
+    expect(commandHeaderFor([undocumented], ["undocumented"])).toBeUndefined();
   });
 });

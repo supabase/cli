@@ -2,7 +2,12 @@ import type { OrganizationResponseV1_Output } from "@supabase/api/effect";
 
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 
-const HEADERS = ["ID", "NAME"] as const;
+// TODO: the terminal table could add Plan (one `GET /v1/organizations/{slug}` per org) and a
+// project count (one `GET /v1/projects`); keep piped output to ID and NAME.
+const HEADERS = [
+  { piped: "ID", terminal: "ID", kind: "id" },
+  { piped: "NAME", terminal: "Name", kind: "primary" },
+] as const;
 
 type Organization = typeof OrganizationResponseV1_Output.Type;
 
@@ -16,5 +21,5 @@ type Organization = typeof OrganizationResponseV1_Output.Type;
  */
 export function renderOrgsListTable(orgs: ReadonlyArray<Organization>): string {
   const rows = orgs.map((o) => [o.id, o.name]);
-  return renderGlamourTable(HEADERS, rows);
+  return renderGlamourTable(HEADERS, rows, process.stdout, "No organizations");
 }

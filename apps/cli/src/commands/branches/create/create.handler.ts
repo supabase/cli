@@ -24,6 +24,8 @@ import {
 } from "../branches.errors.ts";
 import { renderBranchesListTable } from "../branches.format.ts";
 import type { BranchesCreateFlags } from "./create.command.ts";
+import { announceBranchTarget } from "../branches.resolver.ts";
+import { CommandTarget } from "../../../shared/output/command-target.service.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
@@ -67,6 +69,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
   // endpoint.
+  yield* CommandTarget.use((target) => target.holdAsParent);
   const ref = yield* resolveProjectTarget(
     { remote: flags.remote, projectRef: flags.projectRef },
     { parent: true },
@@ -74,6 +77,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
+    yield* announceBranchTarget(branchName, undefined);
     yield* requireHostedMutationConsent({
       action: `Create preview branch ${branchName}`,
       details: [
@@ -152,7 +156,9 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
       return;
     }
 
-    yield* output.raw("Created preview branch:\n");
+    yield* output.interactive
+      ? output.success(`Created preview branch ${created.name}`)
+      : output.raw("Created preview branch:\n");
     yield* output.raw(renderBranchesListTable([created]));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

@@ -1,4 +1,5 @@
 import type { Command, HelpDoc } from "effect/cli";
+import type { CommandHeader } from "../output/output.layer.ts";
 import { withRemoteFlagUsage } from "../output/target-help.ts";
 import { helpDocFor } from "./subcommand-flag-suggestions.ts";
 
@@ -33,6 +34,29 @@ export function findCommand(
     current = found;
   }
   return current;
+}
+
+/**
+ * The header for the command `tokens` invoke among the root's `commands`, matched by name or alias
+ * up to the first token that names no subcommand. `undefined` when no described command matches.
+ */
+export function commandHeaderFor(
+  commands: ReadonlyArray<Command.Command.Any>,
+  tokens: ReadonlyArray<string>,
+): CommandHeader | undefined {
+  let candidates = commands;
+  let current: Command.Command.Any | undefined;
+  const path: Array<string> = [];
+  for (const token of tokens) {
+    const next = candidates.find((command) => command.name === token || command.alias === token);
+    if (next === undefined) break;
+    current = next;
+    candidates = next.subcommands.flatMap((group) => group.commands);
+    path.push(next.name);
+  }
+  if (current === undefined) return undefined;
+  const description = current.shortDescription ?? current.description?.split("\n")[0];
+  return description ? { path: path.join(" "), description } : undefined;
 }
 
 // Collect all commands in the tree (returns flat list of {command, commandPath})

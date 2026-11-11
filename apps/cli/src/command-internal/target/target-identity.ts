@@ -9,14 +9,21 @@ const hostWithPort = (host: string, port: number): string =>
 
 export const renderLocalTarget = (host: string, port: number): RenderedTarget => ({
   text: `local stack (${hostWithPort(sanitizeInlineName(host), port)})`,
+  view: { name: "Local stack", id: hostWithPort(sanitizeInlineName(host), port) },
   json: { kind: "local", host, port },
 });
 
 /** Names the host and port only; the connection string's credentials never reach the banner. */
 export const renderDbUrlTarget = (host: string, port: number): RenderedTarget => ({
   text: `custom Postgres (${hostWithPort(sanitizeInlineName(host), port)})`,
+  view: { name: "Custom Postgres", id: hostWithPort(sanitizeInlineName(host), port) },
   json: { kind: "db-url", host, port },
 });
+
+const safeName = (name: string | undefined): string | undefined => {
+  const safe = name === undefined ? "" : sanitizeInlineName(name);
+  return safe.length === 0 ? undefined : safe;
+};
 
 const named = (name: string | undefined, ref: string): string => {
   const safeName = name === undefined ? "" : sanitizeInlineName(name);
@@ -25,6 +32,7 @@ const named = (name: string | undefined, ref: string): string => {
 
 const productionTarget = (ref: string, name: string | undefined): RenderedTarget => ({
   text: `project ${named(name, ref)} · production`,
+  view: { name: safeName(name), id: ref, production: true },
   json: {
     kind: "linked",
     project_ref: ref,
@@ -57,6 +65,11 @@ export const describeLinkedTarget = (input: {
   );
   return {
     text: `project ${named(input.name, ref)}${differsFromLinked ? " (not the linked project)" : ""}`,
+    view: {
+      name: safeName(input.name),
+      id: ref,
+      ...(differsFromLinked ? { note: "not the linked project" } : {}),
+    },
     json: {
       kind: "linked",
       project_ref: ref,
@@ -109,6 +122,11 @@ export const renderBranchTarget = (input: {
   return {
     text:
       parentRef === undefined ? label : `project ${named(input.parentName, parentRef)} · ${label}`,
+    view: {
+      name: safeName(input.parentName),
+      id: parentRef ?? input.ref,
+      branch: Option.getOrElse(branch, () => input.ref),
+    },
     json: {
       kind: "linked",
       project_ref: input.ref,

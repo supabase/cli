@@ -26,5 +26,7 @@ export function renderFunctionsTable(functions: Functions): string {
       String(fn.version),
       formatUnixMilliTimestamp(fn.updated_at),
     ]),
+    process.stdout,
+    "No Edge Functions deployed",
   );
 }

@@ -7,6 +7,8 @@ import { OutputFlag } from "./global-flags.ts";
 import { requireHostedMutationConsent } from "./hosted-consent/hosted-consent.ts";
 import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import { Output } from "../shared/output/output.service.ts";
+import { detailRows } from "../shared/output/gutter.ts";
+import { formatRegion } from "./region.format.ts";
 import { encodeEnv, encodeSortedJson } from "./output.encoders.ts";
 import {
   encodeStructToml,
@@ -65,8 +67,11 @@ export interface ProjectCreateInput {
 }
 
 /** Formats `key: value`, padding `key:` to width 20. */
-function printKeyValue(key: string, value: string): string {
-  return `${key}:${" ".repeat(Math.max(0, 20 - key.length))}${value}`;
+/** Echoes a resolved value to stderr: a gutter row on a terminal, the established line otherwise. */
+function printKeyValue(key: string, terminalKey: string, value: string): string {
+  return process.stderr.isTTY
+    ? detailRows([[terminalKey, value]], process.stderr)
+    : `${key}:${" ".repeat(Math.max(0, 20 - key.length))}${value}\n`;
 }
 
 /**
@@ -98,19 +103,19 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   if (name.length === 0) {
     name = yield* promptProjectName();
   } else if (output.format === "text") {
-    yield* output.raw(printKeyValue("Creating project", name) + "\n", "stderr");
+    yield* output.raw(printKeyValue("Creating project", "Project", name), "stderr");
   }
   if (orgId.length === 0) {
     orgId = yield* promptOrgId();
     if (output.format === "text") {
-      yield* output.raw(printKeyValue("Selected org-id", orgId) + "\n", "stderr");
+      yield* output.raw(printKeyValue("Selected org-id", "Organization", orgId), "stderr");
     }
   }
   if (region === undefined) {
     const chosenRegion = yield* promptProjectRegion();
     region = chosenRegion;
     if (output.format === "text") {
-      yield* output.raw(printKeyValue("Selected region", chosenRegion) + "\n", "stderr");
+      yield* output.raw(printKeyValue("Selected region", "Region", chosenRegion), "stderr");
     }
   }
   if (dbPassword.length === 0) {
@@ -169,11 +174,24 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   };
   yield* Effect.annotateCurrentSpan("project.ref", id);
 
-  // Printed to stderr for every output format.
   const projectUrl = `${dashboardUrlForProfile(cliSettings.profile)}/project/${id}`;
+  const outputFlagFormat = Option.getOrUndefined(outputFlag);
+  // A person at a terminal gets the outcome and the new project's details as rows.
+  if (output.format === "text" && output.interactive && outputFlagFormat === undefined) {
+    yield* output.success(`Created project ${result.name || name}`);
+    yield* output.raw(
+      detailRows([
+        ["ID", id],
+        ["Organization", result.organizationSlug || orgId],
+        ["Region", formatRegion(readProjectField(created, "region"))],
+        ["Dashboard", projectUrl],
+      ]),
+    );
+    return result;
+  }
+  // Printed to stderr for every other output format.
   yield* output.raw(`Created a new project at ${projectUrl}\n`, "stderr");
 
-  const outputFlagFormat = Option.getOrUndefined(outputFlag);
   if (outputFlagFormat === "json") {
     yield* output.raw(encodeSortedJson(created));
     return result;

@@ -7,6 +7,7 @@
  * offline backoff.
  */
 
+import { GUTTER, block } from "../shared/output/gutter.ts";
 import { stripVTControlCharacters } from "node:util";
 
 import { findCliProjectRoot } from "@supabase/config/effect";
@@ -129,6 +130,14 @@ export function formatUpgradeNotice(latestTag: string, currentVersion: string): 
     `A new version of Supabase CLI is available: ${yellow(latestTag)} (currently installed v${currentVersion})\n` +
     `We recommend updating regularly for new features and bug fixes: ${bold(CLI_UPGRADE_GUIDE_URL)}`
   );
+}
+
+/** The upgrade notice for a person at a terminal, laid out on the status gutter. */
+export function formatTerminalUpgradeNotice(latestTag: string, currentVersion: string): string {
+  return `\n${block(
+    `Supabase CLI ${latestTag} is available. You have v${currentVersion}.\n` +
+      `Update to get new features and fixes:\n${GUTTER}${CLI_UPGRADE_GUIDE_URL}`,
+  ).trimEnd()}`;
 }
 
 /** A failed release lookup; its message follows the `Failed to fetch latest release: ` prefix. */
@@ -370,7 +379,9 @@ export const runUpgradeNotice = Effect.fnUntraced(function* (
 
   // Gated on the anchored semver match: no escape bytes can reach the terminal.
   if (isNewerCliVersion(latestTag, deps.currentVersion)) {
-    const notice = formatUpgradeNotice(latestTag, deps.currentVersion);
+    const notice = process.stderr.isTTY
+      ? formatTerminalUpgradeNotice(latestTag, deps.currentVersion)
+      : formatUpgradeNotice(latestTag, deps.currentVersion);
     yield* Effect.sync(() => deps.writeStderr(`${notice}\n`));
   }
   return { cache: cachePathIsSafe ? (inProject ? "project" : "user") : "disabled", cacheFresh };

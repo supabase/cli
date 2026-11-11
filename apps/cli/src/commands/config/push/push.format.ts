@@ -1,3 +1,12 @@
+import {
+  type ColorStream,
+  emphasis,
+  error,
+  muted,
+  property,
+  success,
+  warning,
+} from "../../../command-internal/colors.ts";
 import type { ConfigChange } from "@supabase/config";
 
 import { configFileName, DEFAULT_CONFIG_FILE } from "../../../command-internal/config-advice.ts";
@@ -495,4 +504,37 @@ export function configPushPayloadFields(target: ConfigPushTarget): {
       ? { parent_project_ref: target.parentRef }
       : {}),
   };
+}
+
+/** One resource's changes for a terminal: `~` changed, `+` added, `-` removed, new value first. */
+export function pushTerminalSection(
+  title: string,
+  changes: ReadonlyArray<ConfigChange>,
+  stream: ColorStream = process.stderr,
+): string {
+  const rows = changes.flatMap((change) => {
+    const name = property(
+      configRenderPath(change.path.slice(1)) || configRenderPath(change.path),
+      stream,
+    );
+    const local = configRenderValue(change.local, "(unset)");
+    const remote = configRenderValue(change.remote, "(unset)");
+    if (change.class === "local_only") {
+      return [`${success("+", stream)} ${name}`, `    ${local}`];
+    }
+    if (change.class === "remote_only") {
+      return [`${error("-", stream)} ${name}`, `    ${muted(remote, stream)}`];
+    }
+    return [`${warning("~", stream)} ${name}`, `    ${local}  ${muted(`← ${remote}`, stream)}`];
+  });
+  // Change lines sit under the section name; their values sit under the setting name.
+  return `${emphasis(title, stream)}\n${rows.map((row) => `  ${row}`).join("\n")}\n`
+    .split("\n")
+    .map((line, index) => (index === 0 || line === "" ? line : `  ${line}`))
+    .join("\n");
+}
+
+/** The terminal title of a resource, e.g. "Auth" or "Network restrictions". */
+export function pushResourceTitle(resource: PushResource): string {
+  return RESOURCE_DISPLAY_NAME[resource].replace(/^DB (?=\w)/, "").replace(/^DB$/, "Database");
 }

@@ -155,8 +155,8 @@ describe("projectRefLayer", () => {
       expect(call?.message).toBe("Select a project:");
       expect(call?.options[0]).toEqual({
         value: VALID_REF,
-        label: VALID_REF,
-        hint: "name: alpha, org: acme, region: us-east-1",
+        label: `alpha (${VALID_REF})`,
+        hint: "acme, us-east-1",
       });
       // "Selected project: ..." is emitted via output.info (-> stderr in text mode).
       const infos = out.messages.filter((m) => m.type === "info").map((m) => m.message);
