@@ -7,9 +7,15 @@ import { ProcessControl } from "../../shared/runtime/process-control.service.ts"
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
-import { collectLocalAdvisorLints } from "../db/advisors/advisors.handler.ts";
-import { fetchPerformanceAdvisors, fetchSecurityAdvisors } from "../db/advisors/advisors.linked.ts";
-import { apiLintsToAdvisorLints, type AdvisorLint } from "../db/advisors/advisors.format.ts";
+import { collectLocalAdvisorLints } from "../../command-internal/advisors/advisors.local.ts";
+import {
+  fetchPerformanceAdvisors,
+  fetchSecurityAdvisors,
+} from "../../command-internal/advisors/advisors.linked.ts";
+import {
+  apiLintsToAdvisorLints,
+  type AdvisorLint,
+} from "../../command-internal/advisors/advisors.format.ts";
 import {
   groupIssues,
   isUnavailableCheck,

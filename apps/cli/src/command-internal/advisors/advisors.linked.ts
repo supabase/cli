@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 
-import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
-import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
+import { mapHttpError } from "../http-errors.ts";
 import {
   DbAdvisorsPerformanceNetworkError,
   DbAdvisorsPerformanceStatusError,

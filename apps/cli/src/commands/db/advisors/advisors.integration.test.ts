@@ -60,12 +60,15 @@ import {
   DbAdvisorsFailOnError,
   DbAdvisorsInvalidTokenError,
   DbAdvisorsNotLoggedInError,
-} from "./advisors.errors.ts";
-import { encodeAdvisorLints, scanAdvisorLintRow } from "./advisors.format.ts";
+} from "../../../command-internal/advisors/advisors.errors.ts";
+import {
+  encodeAdvisorLints,
+  scanAdvisorLintRow,
+} from "../../../command-internal/advisors/advisors.format.ts";
 import { dbAdvisors } from "./advisors.handler.ts";
 import { issues } from "../../issues/issues.handler.ts";
 import type { IssuesFlags } from "../../issues/issues.command.ts";
-import { splitLintsSql } from "./advisors.lints-sql.ts";
+import { splitLintsSql } from "../../../command-internal/advisors/advisors.lints-sql.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
 
 const LOCAL_CONN: PgConnInput = {

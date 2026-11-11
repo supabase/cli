@@ -1,5 +1,5 @@
 import { Effect, Option, Schema } from "effect";
-import type { AdvisorLint } from "../db/advisors/advisors.format.ts";
+import type { AdvisorLint } from "../../command-internal/advisors/advisors.format.ts";
 
 export const IssueSeverity = Schema.Literals(["info", "warning", "critical"]);
 export type IssueSeverity = typeof IssueSeverity.Type;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scanAdvisorLintRow } from "../db/advisors/advisors.format.ts";
+import { scanAdvisorLintRow } from "../../command-internal/advisors/advisors.format.ts";
 import { Effect } from "effect";
 import { groupIssues as group } from "./issues.format.ts";
 

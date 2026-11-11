@@ -8,7 +8,7 @@ import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.t
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { issues } from "./issues.handler.ts";
-import { dbAdvisorsRuntimeLayer } from "../db/advisors/advisors.layers.ts";
+import { advisorChecksRuntimeLayer } from "../../command-internal/advisors/advisors.layers.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
@@ -94,7 +94,7 @@ export const issuesCommand = Command.make("issues", config).pipe(
     ),
   ),
   Command.provide(commandRuntimeLayer(["issues"])),
-  Command.provide(dbAdvisorsRuntimeLayer),
+  Command.provide(advisorChecksRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({
