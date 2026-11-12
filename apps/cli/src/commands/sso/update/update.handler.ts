@@ -464,7 +464,13 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         // Resolved inside `ensuring` so the memoized token read doesn't run
         // before the handler body.
         Effect.flatMap(reconciledTokenForAux, (token) =>
-          linkedProjectCache.cache(ref, undefined, Option.getOrUndefined(profileApiUrl), token),
+          linkedProjectCache.cache(
+            ref,
+            undefined,
+            token === undefined
+              ? undefined
+              : { apiUrl: Option.getOrUndefined(profileApiUrl), accessToken: token },
+          ),
         ),
       ),
     );

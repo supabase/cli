@@ -11,6 +11,7 @@ import {
   mockCommandPlatformApi,
 } from "../../tests/helpers/command-mocks.ts";
 import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
+import { realPlatformApiFactory } from "../../tests/helpers/permission-real-layers.ts";
 import { linkedProjectCache, linkedProjectCacheLayer } from "./linked-project-cache.layer.ts";
 import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
@@ -73,6 +74,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(BunServices.layer),
       );
       const layer = linkedProjectCacheLayer.pipe(
+        Layer.provide(realPlatformApiFactory),
         Layer.provide(api.httpClientLayer),
         Layer.provide(mockCommandSettings({ workdir })),
         Layer.provide(mockCommandCredentialsLayer),
@@ -139,6 +141,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(BunServices.layer),
       );
       const layer = linkedProjectCacheLayer.pipe(
+        Layer.provide(realPlatformApiFactory),
         Layer.provide(api.httpClientLayer),
         Layer.provide(mockCommandSettings({ workdir })),
         Layer.provide(mockCommandCredentialsLayer),
@@ -188,6 +191,7 @@ describe("linkedProjectCacheLayer", () => {
           Layer.provide(BunServices.layer),
         );
         const layer = linkedProjectCacheLayer.pipe(
+          Layer.provide(realPlatformApiFactory),
           Layer.provide(api.httpClientLayer),
           Layer.provide(mockCommandSettings({ workdir })),
           Layer.provide(mockCommandCredentialsLayer),
@@ -223,6 +227,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(BunServices.layer),
       );
       const layer = linkedProjectCacheLayer.pipe(
+        Layer.provide(realPlatformApiFactory),
         Layer.provide(api.httpClientLayer),
         Layer.provide(mockCommandSettings({ workdir })),
         Layer.provide(mockCommandCredentialsLayer),
@@ -277,6 +282,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(BunServices.layer),
       );
       const layer = linkedProjectCacheLayer.pipe(
+        Layer.provide(realPlatformApiFactory),
         Layer.provide(api.httpClientLayer),
         Layer.provide(mockCommandSettings({ workdir, supabaseHome: path.join(workdir, "home") })),
         Layer.provide(mockCommandCredentialsLayer),

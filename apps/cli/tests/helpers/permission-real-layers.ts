@@ -3,7 +3,11 @@ import { ConfigProvider, Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import type { CommandCredentials } from "../../src/auth/command-credentials.service.ts";
+import { makeCommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.layer.ts";
+import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { dbConfigLayer } from "../../src/command-internal/db-config.layer.ts";
+import type { IdentityStitch } from "../../src/command-internal/identity-stitch.ts";
 import type { DbConfigResolver } from "../../src/command-internal/db-config.service.ts";
 import type { DbConnection } from "../../src/command-internal/db-connection.service.ts";
 import {
@@ -37,6 +41,8 @@ import {
 export function realLinkedProjectCache(opts: {
   readonly httpClient: Layer.Layer<HttpClient.HttpClient>;
   readonly cliSettings: Layer.Layer<CommandSettings>;
+  /** Defaults to the real lazy factory over `httpClient`. */
+  readonly platformApiFactory?: Layer.Layer<CommandPlatformApiFactory>;
 }): Layer.Layer<LinkedProjectCache> {
   const analytics = mockAnalytics();
   const identityStitch = identityStitchLayer.pipe(
@@ -45,6 +51,7 @@ export function realLinkedProjectCache(opts: {
     Layer.provide(BunServices.layer),
   );
   return linkedProjectCacheLayer.pipe(
+    Layer.provide(opts.platformApiFactory ?? realPlatformApiFactory),
     Layer.provide(opts.httpClient),
     Layer.provide(opts.cliSettings),
     Layer.provide(mockCommandCredentialsLayer),
@@ -53,6 +60,18 @@ export function realLinkedProjectCache(opts: {
     Layer.provide(BunServices.layer),
   );
 }
+
+/**
+ * The real lazy `CommandPlatformApiFactory`, built on whatever `HttpClient`, settings, credentials
+ * and identity stitcher the caller provides next, so the factory shares the test's recording client.
+ */
+export const realPlatformApiFactory: Layer.Layer<
+  CommandPlatformApiFactory,
+  never,
+  HttpClient.HttpClient | CommandSettings | CommandCredentials | IdentityStitch
+> = Layer.effect(CommandPlatformApiFactory, makeCommandPlatformApiFactory).pipe(
+  Layer.provide(Layer.succeed(DebugLogger, { debug: () => Effect.void, http: () => Effect.void })),
+);
 
 /**
  * The real `DbConfigResolver` on the linked path: the direct host (`db.<ref>.invalid`) is

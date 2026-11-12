@@ -1,12 +1,19 @@
 import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
-import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockTelemetryRuntime,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
   jsonResponse,
+  mockCommandCredentialsLayer,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
@@ -19,9 +26,19 @@ import {
   assertBlockDrift,
   assertPermissionDrift,
 } from "../../../../tests/helpers/permission-drift.ts";
-import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import {
+  realLinkedProjectCache,
+  realPlatformApiFactory,
+} from "../../../../tests/helpers/permission-real-layers.ts";
+import { commandPlatformApiFactoryFromApiLayer } from "../../../auth/command-platform-api-factory.layer.ts";
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { readContract } from "../../../command-internal/command-contract/command-contract.annotation.ts";
+import { managementApiGuardLayer } from "../../../command-internal/command-contract/management-api-guard.ts";
+import { readPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
 import { branchPrompt } from "../branches.prompt.ts";
-import type { BranchesDeleteFlags } from "./delete.command.ts";
+import { type BranchesDeleteFlags, branchesDeleteCommand } from "./delete.command.ts";
 import { branchesDelete } from "./delete.handler.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
@@ -136,6 +153,29 @@ function setupTracked(opts: SetupOpts = {}) {
   });
   return { layer, out, api, telemetry, cache };
 }
+
+/** Serves the project picker, the branch listing, the delete of `BRANCH_REF` and the cache fill. */
+const pickerApiOptions: MockCommandPlatformApiOpts = {
+  handler: (request) =>
+    Effect.sync(() => {
+      if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+        return jsonResponse(request, 200, [PROJECT]);
+      }
+      if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+        return jsonResponse(request, 200, PROJECT);
+      }
+      if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}/branches`) {
+        return jsonResponse(request, 200, [
+          branchListing(OTHER_BRANCH_REF, "other"),
+          branchListing(BRANCH_REF, "feat-x"),
+        ]);
+      }
+      if (request.method === "DELETE" && request.url === `${API}/v1/branches/${BRANCH_REF}`) {
+        return jsonResponse(request, 200, { message: "ok" });
+      }
+      return jsonResponse(request, 404, { message: "unexpected request" });
+    }),
+};
 
 const baseFlags: BranchesDeleteFlags = {
   name: Option.none(),
@@ -281,30 +321,7 @@ describe("branches delete integration", () => {
     "deletes the branch chosen from the pickers and fills the real linked-project cache",
     () => {
       const out = mockOutput({ format: "text", promptSelectResponses: [VALID_REF, BRANCH_REF] });
-      const api = mockCommandPlatformApi({
-        handler: (request) =>
-          Effect.sync(() => {
-            if (request.method === "GET" && request.url === `${API}/v1/projects`) {
-              return jsonResponse(request, 200, [PROJECT]);
-            }
-            if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
-              return jsonResponse(request, 200, PROJECT);
-            }
-            if (
-              request.method === "GET" &&
-              request.url === `${API}/v1/projects/${VALID_REF}/branches`
-            ) {
-              return jsonResponse(request, 200, [
-                branchListing(OTHER_BRANCH_REF, "other"),
-                branchListing(BRANCH_REF, "feat-x"),
-              ]);
-            }
-            if (request.method === "DELETE" && request.url === `${API}/v1/branches/${BRANCH_REF}`) {
-              return jsonResponse(request, 200, { message: "ok" });
-            }
-            return jsonResponse(request, 404, { message: "unexpected request" });
-          }),
-      });
+      const api = mockCommandPlatformApi(pickerApiOptions);
       const cliSettings = mockCommandSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
@@ -346,4 +363,154 @@ describe("branches delete integration", () => {
 describeHostedConsent("branches delete", {
   api: apiOptions({}),
   invoke: () => ({ run: branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }) }),
+});
+
+const contract = Option.getOrThrow(readContract(branchesDeleteCommand));
+const permissions = readPermissions(branchesDeleteCommand);
+const OTHER_BRANCH_UUID = "22222222-2222-4222-8222-222222222222";
+
+/**
+ * The real Management API client, built by `makeCommandPlatformApi` over the recording client,
+ * under the guard `withContract` provides for `flags`. The cache shares that client, as the
+ * runtime layer arranges in production.
+ */
+function guardedSetup(opts: {
+  readonly flags: BranchesDeleteFlags;
+  readonly api: MockCommandPlatformApiOpts;
+  readonly out?: ReturnType<typeof mockOutput>;
+  readonly tty?: Parameters<typeof buildTestRuntime>[0]["tty"];
+  readonly projectId?: Option.Option<string>;
+  readonly realCache?: boolean;
+}) {
+  const out = opts.out ?? mockOutput({ format: "text" });
+  const api = mockCommandPlatformApi(opts.api);
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+  });
+  const analytics = mockAnalytics();
+  const identityStitch = identityStitchLayer.pipe(
+    Layer.provide(analytics.layer),
+    Layer.provide(mockTelemetryRuntime()),
+    Layer.provide(BunServices.layer),
+  );
+  const guard = managementApiGuardLayer(contract, permissions, opts.flags).pipe(
+    Layer.provide(out.layer),
+  );
+  const platformApi = Layer.effect(
+    CommandPlatformApi,
+    CommandPlatformApiFactory.pipe(Effect.flatMap((factory) => factory.make)),
+  ).pipe(
+    Layer.provide(realPlatformApiFactory),
+    Layer.provide(
+      Layer.mergeAll(
+        api.httpClientLayer,
+        cliSettings,
+        mockCommandCredentialsLayer,
+        identityStitch,
+        guard,
+      ),
+    ),
+    Layer.orDie,
+  );
+  const layer = buildRuntime({
+    out: { layer: guard },
+    api: { layer: platformApi, httpClientLayer: api.httpClientLayer },
+    cliSettings,
+    ...(opts.tty === undefined ? {} : { tty: opts.tty }),
+    ...(opts.realCache === true
+      ? {
+          linkedProjectCache: realLinkedProjectCache({
+            httpClient: api.httpClientLayer,
+            cliSettings,
+            platformApiFactory: commandPlatformApiFactoryFromApiLayer.pipe(
+              Layer.provide(platformApi),
+            ),
+          }),
+        }
+      : {}),
+  });
+  return { layer, out, api };
+}
+
+const failureOf = (exit: Exit.Exit<unknown, unknown>) =>
+  Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+
+describe("branches delete under its contract guard", () => {
+  it.effect("deletes the branch picked at the prompt, a target only the answer supplies", () => {
+    const { layer, api, out } = guardedSetup({
+      flags: baseFlags,
+      api: pickerApiOptions,
+      out: mockOutput({ format: "text", promptSelectResponses: [VALID_REF, BRANCH_REF] }),
+      tty: mockTty({ stdinIsTty: true }),
+      projectId: Option.none(),
+      realCache: true,
+    });
+    return Effect.gen(function* () {
+      yield* branchesDelete(baseFlags);
+
+      expect(sequence(api.requests)).toEqual([
+        `GET ${API}/v1/projects`,
+        `GET ${API}/v1/projects/${VALID_REF}/branches`,
+        `DELETE ${API}/v1/branches/${BRANCH_REF}`,
+        `GET ${API}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stderrText).toContain(`Deleted preview branch: ${BRANCH_REF}`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("refuses a delete aimed at a branch no input, answer or lookup supplied", () => {
+    const flags = { ...baseFlags, name: Option.some(BRANCH_UUID) };
+    const { layer, api } = guardedSetup({ flags, api: apiOptions({}) });
+    return Effect.gen(function* () {
+      const platformApi = yield* CommandPlatformApi;
+
+      const exit = yield* Effect.exit(
+        platformApi.v1.deleteABranch({ branch_id_or_ref: OTHER_BRANCH_UUID }),
+      );
+
+      expect(failureOf(exit)).toMatchObject({
+        _tag: "ContractViolation",
+        message: expect.stringContaining(`targets branch_id_or_ref=${OTHER_BRANCH_UUID}`),
+      });
+      expect(api.requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("refuses an operation the command doesn't declare before sending it", () => {
+    const { layer, api } = guardedSetup({ flags: baseFlags, api: apiOptions({}) });
+    return Effect.gen(function* () {
+      const platformApi = yield* CommandPlatformApi;
+
+      const exit = yield* Effect.exit(platformApi.v1.listAllOrganizations());
+
+      expect(failureOf(exit)).toMatchObject({
+        _tag: "ContractViolation",
+        message: "v1-list-all-organizations is not declared by the command",
+      });
+      expect(api.requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("refuses a second delete past the contract's max of one", () => {
+    const flags = { ...baseFlags, name: Option.some(BRANCH_UUID) };
+    const { layer, api } = guardedSetup({ flags, api: apiOptions({}) });
+    return Effect.gen(function* () {
+      yield* branchesDelete(flags);
+      const platformApi = yield* CommandPlatformApi;
+
+      const exit = yield* Effect.exit(
+        platformApi.v1.deleteABranch({ branch_id_or_ref: BRANCH_UUID }),
+      );
+
+      expect(failureOf(exit)).toMatchObject({
+        _tag: "ContractViolation",
+        message: "v1-delete-a-branch would run 2 times; the contract allows 1",
+      });
+      expect(sequence(api.requests)).toEqual([
+        `GET ${API}/v1/branches/${BRANCH_UUID}`,
+        `DELETE ${API}/v1/branches/${BRANCH_UUID}`,
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
 });

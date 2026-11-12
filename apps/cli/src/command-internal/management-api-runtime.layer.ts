@@ -70,7 +70,7 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
     cliSettings,
     projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
-      Layer.provide(credentials),
+      Layer.provide(platformApiFactory),
       Layer.provide(cliSettings),
       Layer.provide(httpClient),
       Layer.provide(identityStitchLayer),
@@ -145,7 +145,7 @@ export function linkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<string>) 
     cliSettings,
     projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
-      Layer.provide(credentials),
+      Layer.provide(platformApiFactory),
       Layer.provide(cliSettings),
       Layer.provide(httpClient),
     ),

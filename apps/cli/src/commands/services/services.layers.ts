@@ -3,6 +3,7 @@ import { Layer } from "effect";
 import type * as HttpClient from "effect/http/HttpClient";
 
 import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
+import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -29,6 +30,12 @@ export const servicesRuntimeLayer = (() => {
     Layer.provide(cliSettings),
     Layer.provide(debugLoggerLayer),
   );
+  const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
+    Layer.provide(credentials),
+    Layer.provide(cliSettings),
+    Layer.provide(debugLoggerLayer),
+    Layer.provide(identityStitchLayer),
+  );
 
   const built = Layer.mergeAll(
     httpClient,
@@ -36,7 +43,7 @@ export const servicesRuntimeLayer = (() => {
     cliSettings,
     debugLoggerLayer,
     linkedProjectCacheLayer.pipe(
-      Layer.provide(credentials),
+      Layer.provide(platformApiFactory),
       Layer.provide(cliSettings),
       Layer.provide(httpClient),
       // The cache GET stitches session identity via the one per-command
