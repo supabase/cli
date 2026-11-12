@@ -284,6 +284,8 @@ export interface ConfigValidationIssue {
   readonly code: ConfigValidationIssueCode;
   readonly reason: string;
   readonly help?: string;
+  /** Config keys whose values this issue depends on besides the one it names; a table read covers every key under it. */
+  readonly reads?: ReadonlyArray<ReadonlyArray<string>>;
 }
 
 const lastSegment = (path: string): string => path.split(".").at(-1) ?? path;
@@ -328,6 +330,7 @@ export function missingIssue(
         path,
         message,
         code: "missing_required",
+        reads: [gate.split(".")],
         reason: `required when ${gate} = true`,
         help: `set ${lastSegment(path)}, or set ${parentOf(gate) === parentOf(path) ? lastSegment(gate) : gate} = false`,
       };
@@ -363,10 +366,17 @@ export function collectConfigValidationIssues(
   const missing = (path: string, message: string): void => {
     report(missingIssue(path, message));
   };
+  const readingFrom = (start: number, key: ReadonlyArray<string>): void => {
+    for (let index = start; index < issues.length; index += 1) {
+      const issue = issues[index];
+      if (issue !== undefined) issues[index] = { ...issue, reads: [...(issue.reads ?? []), key] };
+    }
+  };
   if (input.projectId !== undefined && input.projectId.length === 0) {
     missing("project_id", "Missing required field in config: project_id");
   }
 
+  const apiStart = issues.length;
   if (input.api?.enabled) {
     const api = input.api;
     if (api.port === 0) missing("api.port", "Missing required field in config: api.port");
@@ -375,6 +385,8 @@ export function collectConfigValidationIssues(
       if (absent !== undefined) missing(absent, `Missing required field in config: ${absent}`);
     }
   }
+
+  readingFrom(apiStart, ["api", "enabled"]);
 
   if (input.db.port === 0) {
     missing("db.port", "Missing required field in config: db.port");
@@ -415,6 +427,7 @@ export function collectConfigValidationIssues(
     }
   }
 
+  const studioStart = issues.length;
   if (input.studio?.enabled) {
     if (input.studio.port === 0) {
       missing("studio.port", "Missing required field in config: studio.port");
@@ -433,10 +446,13 @@ export function collectConfigValidationIssues(
     }
   }
 
+  readingFrom(studioStart, ["studio", "enabled"]);
+
   if (input.localSmtp?.enabled && input.localSmtp.port === 0) {
     missing("local_smtp.port", "Missing required field in config: local_smtp.port");
   }
 
+  const authStart = issues.length;
   if (input.auth !== undefined) {
     const auth = input.auth;
 
@@ -502,11 +518,11 @@ export function collectConfigValidationIssues(
     }
 
     // Caller pre-filters to enabled-only hooks, pre-ordered by the fixed hook-type sequence.
-    for (const hook of auth.hooks) {
+    const checkHook = (hook: (typeof auth.hooks)[number]): void => {
       const hookPath = `auth.hook.${hook.type}`;
       if (hook.uri.length === 0) {
         missing(`${hookPath}.uri`, `Missing required field in config: auth.hook.${hook.type}.uri`);
-        continue;
+        return;
       }
       // Uses `parseUrl`'s stricter semantics (the same port used for `studio.api_url`
       // above) so a malformed URI like an unterminated IPv6 host (`http://[::1`) fails the
@@ -523,7 +539,7 @@ export function collectConfigValidationIssues(
             "use an http(s):// or pg-functions:// URI",
           ),
         );
-        continue;
+        return;
       }
       if (scheme === "http" || scheme === "https") {
         if (hook.secrets.length === 0) {
@@ -562,6 +578,11 @@ export function collectConfigValidationIssues(
           ),
         );
       }
+    };
+    for (const hook of auth.hooks) {
+      const hookStart = issues.length;
+      checkHook(hook);
+      readingFrom(hookStart, ["auth", "hook", hook.type, "enabled"]);
     }
 
     for (const factor of auth.mfa) {
@@ -574,6 +595,7 @@ export function collectConfigValidationIssues(
             `set auth.mfa.${factor.label}.verify_enabled = true, or disable enroll_enabled`,
           ),
         );
+        readingFrom(issues.length - 1, ["auth", "mfa", factor.label, "verify_enabled"]);
       }
     }
 
@@ -605,6 +627,7 @@ export function collectConfigValidationIssues(
       const base = `auth.third_party.${thirdParty.provider === "cognito" ? "aws_cognito" : thirdParty.provider}`;
       const missingMessage = (field: string) =>
         `Invalid config: auth.third_party.${thirdParty.provider} is enabled but without a ${field}.`;
+      const providerStart = issues.length;
       switch (thirdParty.provider) {
         case "firebase": {
           if (thirdParty.requiredField.length === 0) {
@@ -651,6 +674,7 @@ export function collectConfigValidationIssues(
           break;
         }
       }
+      readingFrom(providerStart, [...base.split("."), "enabled"]);
     }
     if (auth.thirdParty.length > 1) {
       report(
@@ -661,8 +685,13 @@ export function collectConfigValidationIssues(
           "enable one auth.third_party provider and set enabled = false on the others",
         ),
       );
+      for (const thirdParty of auth.thirdParty) {
+        const provider = thirdParty.provider === "cognito" ? "aws_cognito" : thirdParty.provider;
+        readingFrom(issues.length - 1, ["auth", "third_party", provider, "enabled"]);
+      }
     }
   }
+  readingFrom(authStart, ["auth", "enabled"]);
 
   for (const slug of input.functionSlugs) {
     if (!FUNCTION_SLUG_PATTERN.test(slug)) {
@@ -953,18 +982,22 @@ export function collectAuthSmsProviderIssues(
   sms: CliConfig["auth"]["sms"],
 ): ReadonlyArray<ConfigValidationIssue> {
   const issues: Array<ConfigValidationIssue> = [];
+  const smsOrder = ["twilio", "twilio_verify", "messagebird", "textlocal", "vonage"];
   const requireFields = (
     provider: string,
     fields: ReadonlyArray<readonly [string, string | undefined]>,
   ): void => {
     for (const [field, value] of fields) {
       if (value === undefined || value.length === 0) {
-        issues.push(
-          missingIssue(
+        issues.push({
+          ...missingIssue(
             `auth.sms.${provider}.${field}`,
             `Missing required field in config: auth.sms.${provider}.${field}`,
           ),
-        );
+          reads: smsOrder
+            .slice(0, smsOrder.indexOf(provider) + 1)
+            .map((earlier) => ["auth", "sms", earlier, "enabled"]),
+        });
       }
     }
   };
@@ -1025,6 +1058,7 @@ export function collectAuthExternalProviderIssues(
           `Missing required field in config: auth.external.${name}.client_id`,
         ),
         segments: ["auth", "external", name, "client_id"],
+        reads: [["auth", "external", name, "enabled"]],
       });
     }
     if (
@@ -1038,6 +1072,7 @@ export function collectAuthExternalProviderIssues(
           `Missing required field in config: auth.external.${name}.secret`,
         ),
         segments: ["auth", "external", name, "secret"],
+        reads: [["auth", "external", name, "enabled"]],
       });
     }
   }

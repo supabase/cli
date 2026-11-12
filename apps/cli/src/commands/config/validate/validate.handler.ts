@@ -318,7 +318,7 @@ function semanticProblem(
   const path = issue.segments ?? issue.path.split(".");
   const fromEnv = origin.tier === "shell" || origin.tier === "projectEnv";
   return problem(code, {
-    derived: true as const,
+    ...(issue.reads === undefined ? {} : { reads: issue.reads }),
     ...(issue.path === "" ? {} : { path }),
     reason: issue.reason,
     ...(fromEnv
@@ -713,33 +713,50 @@ export const configValidate = Effect.fn("config.validate")(function* () {
           unresolvedSet.has(reference) &&
           (reference.remote === remote || (remote !== undefined && inheritedBy(reference, remote))),
       );
-    const { kept, blamed } = withoutUnresolvedEnvErrors(
-      dedupeProblems(
-        [
-          ...notices,
-          ...base.problems,
-          ...(base.resolved?.remoteFailures ?? [])
-            .filter(
-              (failure) =>
-                remoteNames.includes(failure.remote) &&
-                !unresolvedProjectIdRemotes.has(failure.remote),
-            )
-            .map((failure) => remoteFailureProblem(failure, file)),
-          ...remotePasses.flatMap((item) => item.problems),
-        ],
-        remoteWrites,
-      ),
-      unresolvedFor,
-    );
-
     const isGateOpen = (reference: EnvReference, context: string | undefined): boolean => {
       const owner = passes.get(context)?.resolved;
       const fellBack = owner?.pruned.some((path) => path.every((s, i) => s === reference.path[i]));
       const configs = fellBack
         ? [owner?.loaded.document]
         : [owner?.materialized.config, owner?.loaded.document];
-      return nearestEnabledGate(configs, reference.path) !== false;
+      const scope =
+        reference.path.at(-1) === "enabled" ? reference.path.slice(0, -1) : reference.path;
+      return nearestEnabledGate(configs, scope) !== false;
     };
+    const isOverridden = (reference: EnvReference, context: string | undefined): boolean => {
+      const materialized = passes.get(context)?.resolved?.materialized;
+      return reference.path.some((_, index) => {
+        const origin = materialized?.originAt(displayPath(reference.path.slice(0, index + 1)));
+        return origin?.tier === "shell" || origin?.tier === "projectEnv" || origin?.tier === "flag";
+      });
+    };
+    const blamed: Array<{ readonly reference: EnvReference; readonly remote?: string }> = [];
+    const suppressed = (
+      problems: ReadonlyArray<ConfigProblem>,
+      context: string | undefined,
+    ): ReadonlyArray<ConfigProblem> => {
+      const result = withoutUnresolvedEnvErrors(problems, () =>
+        unresolvedFor(context).filter((reference) => !isOverridden(reference, context)),
+      );
+      blamed.push(...result.blamed);
+      return result.kept;
+    };
+    const kept = dedupeProblems(
+      [
+        ...notices,
+        ...suppressed(base.problems, undefined),
+        ...(base.resolved?.remoteFailures ?? [])
+          .filter(
+            (failure) =>
+              remoteNames.includes(failure.remote) &&
+              !unresolvedProjectIdRemotes.has(failure.remote),
+          )
+          .map((failure) => remoteFailureProblem(failure, file)),
+        ...remotePasses.flatMap((item, index) => suppressed(item.problems, checkedRemotes[index])),
+      ],
+      remoteWrites,
+    );
+
     const isRelevantIn = (reference: EnvReference, context: string | undefined): boolean =>
       CLI_CONFIG_OPTIONAL_ENV_PATHS[displayPath(reference.path)] === undefined &&
       isGateOpen(reference, context);
@@ -751,13 +768,6 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         help: `set ${reference.name} in your shell or supabase/.env (SUPABASE_ENV=<name> also reads supabase/.env.<name>)`,
         ...(remote === undefined ? {} : { remote }),
       });
-    const isOverridden = (reference: EnvReference, context: string | undefined): boolean => {
-      const materialized = passes.get(context)?.resolved?.materialized;
-      return reference.path.some((_, index) => {
-        const origin = materialized?.originAt(displayPath(reference.path.slice(0, index + 1)));
-        return origin?.tier === "shell" || origin?.tier === "projectEnv" || origin?.tier === "flag";
-      });
-    };
     const envWarnings = unresolved.flatMap((reference) => {
       const warns = (context: string | undefined) =>
         !isOverridden(reference, context) &&

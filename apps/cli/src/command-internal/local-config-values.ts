@@ -195,7 +195,7 @@ const SIGNED_KEY_ISSUE: IssueMeta = {
 
 const CONTENT_PATH_ISSUE: IssueMeta = {
   reason: "content_path is not a readable file inside the project",
-  help: "point content_path at an existing file under the project root, or use `content` instead of `content_path`",
+  help: "point content_path at an existing file under the project root",
 };
 
 /** Without a collector `effect` runs unchanged; with one a failure is recorded at `path` and `fallback` stands in. */

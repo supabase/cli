@@ -846,6 +846,62 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("keeps a cross-key error whose check does not read the unresolved gate", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[edge_runtime]\nenabled = "env(ENABLE_EDGE)"\ndeno_version = 99\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { key: "edge_runtime.deno_version" },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keeps the error a SUPABASE_* override of an unresolved gate leaves in place", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[api]\nenabled = "env(ENABLE_API)"\nport = 0\n'),
+        { format: "json", env: { SUPABASE_API_ENABLED: "true" } },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([{ key: "api.port" }]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keeps a remote's own error when the base copy is suppressed", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth]\nenabled = "env(ENABLE_AUTH)"\nsite_url = ""\n[remotes.prod]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.prod.auth]\nenabled = true\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { key: "remotes.prod.auth.site_url", remote: "prod" },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect.each(["auth.hook.custom_access_token", "api.tls", "auth.email.smtp"])(
+    "warns about an unset env() on the %s enabled flag itself",
+    (path) =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile(`project_id = "demo"\n[${path}]\nenabled = "env(FLAG_ON)"\n`),
+          { format: "json" },
+        );
+
+        expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
+          { code: "env_unresolved", key: `${path}.enabled` },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("still reports a malformed literal remote project_id", () =>
     Effect.gen(function* () {
       const result = yield* validate(
