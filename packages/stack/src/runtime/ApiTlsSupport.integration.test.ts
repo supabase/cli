@@ -22,7 +22,8 @@ interface ListedContainer {
    label, and runs its `exec` scripts with this host's bash, where the stack alias is loopback, so
    the probe reaches the API port as a database container would; a `refusing` engine fails each
    exec, and a `writeAfterReset` engine holds the request until the listener reset the
-   connection. `commands` records every engine command. */
+   connection, failing the exec with 97 when no reset arrives. `commands` records every engine
+   command. */
 const engineOnHost = (
   containers: string | ReadonlyArray<ListedContainer>,
   commands: Array<ReadonlyArray<string>> = [],
@@ -59,7 +60,7 @@ const engineOnHost = (
         );
       const script = command.args.at(-1);
       const held = writeAfterReset
-        ? `printf() { unset -f printf; IFS= read -r -t 5 -u 3 _; builtin printf "$@"; }; `
+        ? `printf() { unset -f printf; IFS= read -r -t 5 -u 3 _; [ $? -eq 1 ] || exit 97; builtin printf "$@"; }; `
         : "";
       return delegate.spawn(
         ChildProcess.make(bash, [
