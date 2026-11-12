@@ -144,7 +144,7 @@ const scenarios: ReadonlyArray<ParityScenario> = [
     toml: ["[db]", "major_version = 13"],
     overrides: { db: { major_version: 13 } },
     message:
-      "Postgres version 13.x is unsupported. To use the CLI, upgrade your project to a newer Postgres version, then update db.major_version in your project config: https://supabase.com/docs/guides/platform/upgrading.",
+      "Postgres version 13.x is unsupported. To use the CLI, upgrade your project to Postgres 17, then set db.major_version = 17 in your project config: https://supabase.com/docs/guides/platform/upgrading.",
   },
   {
     name: "db.major_version unsupported (16)",

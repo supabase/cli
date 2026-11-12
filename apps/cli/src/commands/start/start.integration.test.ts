@@ -779,6 +779,7 @@ describe("start integration", () => {
 
         yield* start(flags()).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Postgres 14 reached end of life");
+        expect(out.stderrText).toContain("Upgrade your project to Postgres 17");
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 

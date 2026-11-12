@@ -65,7 +65,7 @@ export const warnIfPostgres14Deprecated = Effect.fn("DbImage.warnIfPostgres14Dep
     const output = yield* Output;
     yield* output.raw(
       `${yellow("WARNING:")} Postgres 14 reached end of life on November 12, 2026, and the Supabase CLI will drop support for it soon. ` +
-        "Upgrade your project to a newer Postgres version, then update db.major_version in your project config: " +
+        "Upgrade your project to Postgres 17, then set db.major_version = 17 in your project config: " +
         "https://supabase.com/docs/guides/platform/upgrading\n",
       "stderr",
     );
