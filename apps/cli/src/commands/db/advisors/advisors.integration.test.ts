@@ -38,6 +38,7 @@ import {
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
@@ -922,67 +923,67 @@ const issueFlags = (over: Partial<IssuesFlags> = {}): IssuesFlags => ({
   ...over,
 });
 describe("issues", () => {
-  it.effect.each([false, true])(
-    "groups local and direct database findings and reports unavailable health (%s)",
-    (direct) => {
-      const { layer, out, connection } = setup({
-        format: "json",
-        rows: [
-          lintRow(),
-          lintRow({
-            level: "INFO",
-            cache_key: "second",
-            metadata: {
-              name: "search",
-              type: "function",
-              schema: "app",
-              arguments: "text, integer",
-            },
-          }),
-        ],
-      });
-      return Effect.gen(function* () {
-        yield* issues(
-          issueFlags(
-            direct
-              ? { dbUrl: Option.some("postgresql://postgres:postgres@localhost:54322/postgres") }
-              : {},
-          ),
-        );
-        expect(out.messages).toContainEqual({
-          type: "success",
-          message: "issues",
-          data: {
-            issues: [
-              expect.objectContaining({
-                id: "rls_disabled_in_public",
-                severity: "critical",
-                affected: [
-                  expect.objectContaining({ id: "rls_disabled_in_public_public_users" }),
-                  expect.objectContaining({
-                    id: "second",
-                    severity: "info",
-                    resource: { name: "search(text, integer)", type: "function", schema: "app" },
-                  }),
-                ],
-              }),
-            ],
-            checks: [
-              { type: "security", status: "complete" },
-              { type: "performance", status: "complete" },
-              {
-                type: "health",
-                status: "unavailable",
-                reason: "Health checks require a remote project.",
-              },
-            ],
+  it.effect.each([
+    { direct: false, format: "json" as const },
+    { direct: true, format: "stream-json" as const },
+  ])("groups local and direct database findings without text output (%j)", ({ direct, format }) => {
+    const { layer, out, connection } = setup({
+      format,
+      rows: [
+        lintRow(),
+        lintRow({
+          level: "INFO",
+          cache_key: "second",
+          metadata: {
+            name: "search",
+            type: "function",
+            schema: "app",
+            arguments: "text, integer",
           },
-        });
-        expect(connection.execs.at(-1)).toBe("rollback");
-        expect(out.stdoutText).toBe("");
-      }).pipe(Effect.provide(layer));
-    },
-  );
+        }),
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* issues(
+        issueFlags(
+          direct
+            ? { dbUrl: Option.some("postgresql://postgres:postgres@localhost:54322/postgres") }
+            : {},
+        ),
+      );
+      expect(out.messages).toContainEqual({
+        type: "success",
+        message: "issues",
+        data: {
+          issues: [
+            expect.objectContaining({
+              id: "rls_disabled_in_public",
+              severity: "critical",
+              affected: [
+                expect.objectContaining({ id: "rls_disabled_in_public_public_users" }),
+                expect.objectContaining({
+                  id: "second",
+                  severity: "info",
+                  resource: { name: "search(text, integer)", type: "function", schema: "app" },
+                }),
+              ],
+            }),
+          ],
+          checks: [
+            { type: "security", status: "complete" },
+            { type: "performance", status: "complete" },
+            {
+              type: "health",
+              status: "unavailable",
+              reason: "Health checks require a remote project.",
+            },
+          ],
+        },
+      });
+      expect(connection.execs.at(-1)).toBe("rollback");
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
   it.effect("rejects local health before opening a database connection", () => {
     const { layer, connection } = setup();
     return Effect.gen(function* () {
@@ -1154,6 +1155,87 @@ describe("issues boundary failures", () => {
           "the -o/--output flag is not supported by issues; use --output-format json|stream-json instead.",
       });
       expect(connection.execs).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("issues readable text", () => {
+  it.effect(
+    "renders grouped findings as a table with coverage and a complete-evidence hint",
+    () => {
+      const { layer, out, processControl } = setup({
+        rows: [lintRow(), lintRow({ cache_key: "second" })],
+      });
+      return Effect.gen(function* () {
+        yield* issues(issueFlags({ failOn: Option.some("warning") }));
+        expect(out.stdoutText).toContain("1 issue (info or higher).");
+        expect(out.stdoutText).toMatch(/│ Severity\s+│ Category\s+│ Issue\s+│ Affected\s+│/u);
+        expect(out.stdoutText).toMatch(
+          /│ critical\s+│ security\s+│ RLS disabled in public\s+│ 2\s+│/u,
+        );
+        expect(out.stdoutText).toContain("security: complete");
+        expect(out.stdoutText).toContain(
+          "health: unavailable — Health checks require a remote project.",
+        );
+        expect(out.stdoutText).toContain("Some checks are unavailable; results are incomplete.");
+        expect(out.stdoutText.replaceAll(/\s+/gu, " ")).toContain(
+          "Use --output-format json for affected resources, evidence, and remediation links.",
+        );
+        expect(processControl.exitCode).toBe(1);
+        expect(out.messages.some((message) => message.type === "success")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+  it.effect.each([false, true])(
+    "describes empty filtered findings without hiding incomplete coverage (unavailable %s)",
+    (unavailable) => {
+      const { layer, out, processControl } = setup({
+        securityLints: [lintRow({ level: "WARN" })],
+        healthLints: unavailable
+          ? [
+              lintRow({
+                name: "advisor_check_unavailable",
+                detail: "Health logs are temporarily unavailable",
+              }),
+            ]
+          : [],
+      });
+      return Effect.gen(function* () {
+        yield* issues(
+          issueFlags({
+            remote: REMOTE_LINKED,
+            severity: Option.some("critical"),
+            failOn: Option.some("info"),
+          }),
+        );
+        expect(out.stdoutText).toContain("No issues match --severity critical.");
+        expect(out.stdoutText).toContain("security: complete");
+        expect(out.stdoutText).toContain(
+          unavailable
+            ? "health: unavailable — advisor_check_unavailable: Health logs are temporarily"
+            : "health: complete",
+        );
+        if (unavailable)
+          expect(out.stdoutText).toContain("Some checks are unavailable; results are incomplete.");
+        expect(processControl.exitCode).toBe(unavailable ? 1 : undefined);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+  it.effect.each([80, 120])("uses the terminal's %s-column width for long titles", (columns) => {
+    const { layer, out } = setup({
+      rows: [lintRow({ title: "Long database check title ".repeat(8) })],
+    });
+    return Effect.gen(function* () {
+      yield* issues(issueFlags({ type: Option.some("security") })).pipe(
+        Effect.provideService(Tty, {
+          stdinIsTty: false,
+          stdoutIsTty: true,
+          stdoutIsPipe: false,
+          stdoutColumns: columns,
+        }),
+      );
+      const separator = out.stdoutText.split("\n").find((line) => line.startsWith("┌"));
+      expect(separator?.length).toBe(columns);
     }).pipe(Effect.provide(layer));
   });
 });
