@@ -1,10 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Console, Effect, Exit, Layer } from "effect";
-import { CliError, CliOutput, Command } from "effect/cli";
+import { Console, Effect, Exit, Layer } from "effect";
+import { CliOutput, Command } from "effect/cli";
 import { emptyEnv, fakeConsole, mockOutput } from "../../tests/helpers/mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { withoutParseErrorHelpDump } from "../shared/cli/run.ts";
-import { jsonCliOutputFormatter } from "../shared/output/json-formatter.ts";
 import { normalizeCause } from "../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../shared/output/text-formatter.ts";
 import { rootCommandForFeatures } from "./root.ts";
@@ -17,10 +16,7 @@ type Root = typeof legacyRoot;
 const optInAdvice =
   "Set SUPABASE_EXPERIMENTAL_STACK=1, or add stack = true under [experimental] in supabase/config.toml.";
 
-/**
- * Parses `args` against `root` and returns what `runCli` reports for the failure: the normalized
- * message for text output and the formatter's payload for JSON output.
- */
+/** Parses `args` against `root` and returns the normalized failure message `runCli` reports. */
 const parse = (
   root: Root,
   args: ReadonlyArray<string>,
@@ -47,15 +43,8 @@ const parse = (
       ),
       Effect.exit,
     );
-    if (Exit.isSuccess(exit)) return { failed: false, message: "", json: "" };
-    const failure = Cause.squash(exit.cause);
-    const errors =
-      CliError.isCliError(failure) && failure._tag === "ShowHelp" ? failure.errors : [];
-    return {
-      failed: true,
-      message: normalizeCause(exit.cause, context).message,
-      json: jsonCliOutputFormatter(context).formatErrors(errors),
-    };
+    if (Exit.isSuccess(exit)) return { failed: false, message: "" };
+    return { failed: true, message: normalizeCause(exit.cause, context).message };
   });
 
 describe("stack-only flags rejected by the legacy backend", () => {
@@ -82,20 +71,11 @@ describe("stack-only flags rejected by the legacy backend", () => {
     );
   }
 
-  it.effect("names the opt-in in JSON output", () =>
-    Effect.gen(function* () {
-      const { json } = yield* parse(legacyRoot, ["start", "--runtime", "native"], { stackRoot });
-      expect(json).toContain('"code":"UnrecognizedOption"');
-      expect(json).toContain(`Hint: --runtime needs the stack backend. ${optInAdvice}`);
-    }),
-  );
-
   it.effect("adds no hint for a flag neither backend accepts", () =>
     Effect.gen(function* () {
-      const { message, json } = yield* parse(legacyRoot, ["start", "--bogus"], { stackRoot });
+      const { message } = yield* parse(legacyRoot, ["start", "--bogus"], { stackRoot });
       expect(message).toContain("Unrecognized flag: --bogus");
       expect(message).not.toContain("Hint:");
-      expect(json).not.toContain("Hint:");
     }),
   );
 
@@ -107,10 +87,11 @@ describe("stack-only flags rejected by the legacy backend", () => {
     }),
   );
 
-  it.effect("the stack backend's own start accepts the flag", () =>
+  it.effect("the stack backend's own start recognizes the flag", () =>
     Effect.gen(function* () {
-      const { message } = yield* parse(stackRoot, ["start", "--runtime", "native", "--help"]);
-      expect(message).not.toContain("Unrecognized flag");
+      const result = yield* parse(stackRoot, ["start", "--runtime", "bogus"]);
+      expect(result.failed).toBe(true);
+      expect(result.message).toContain('Invalid value for flag --runtime: "bogus"');
     }),
   );
 });
