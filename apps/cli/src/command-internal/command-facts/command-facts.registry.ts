@@ -7,7 +7,8 @@ import type * as Permissions from "../command-permissions/model.ts";
 import { CommandFlagsAnnotation } from "../command-permissions/permission-flags.ts";
 import { TargetPolicyAnnotation } from "../target/target-policy.ts";
 import type { TargetPolicyShape } from "../target/target-policy.ts";
-import { registerFact } from "./command-fact.ts";
+import { registerDerivedFact, registerFact } from "./command-fact.ts";
+import { CommandOutputAnnotation } from "./command-output.ts";
 
 type AllKeys<T> = T extends unknown ? keyof T : never;
 type SameKeys<A, B> = [AllKeys<A>] extends [AllKeys<B>]
@@ -91,6 +92,10 @@ const TargetPolicy = covering<TargetPolicyShape>()(
 export const COMMAND_FACTS = [
   registerFact(CommandPermissionsAnnotation, { schema: CommandPermissions, checked: ["none"] }),
   registerFact(TargetPolicyAnnotation, { schema: TargetPolicy, checked: ["runtime", "compiler"] }),
+  registerDerivedFact(CommandOutputAnnotation, {
+    serialize: (contract) => Schema.toJsonSchemaDocument(contract.schema),
+    checked: ["test"],
+  }),
 ] as const;
 
 /**

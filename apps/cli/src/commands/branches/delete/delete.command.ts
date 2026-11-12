@@ -11,6 +11,8 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesDelete } from "./delete.handler.ts";
+import { branchesDeleteOutput } from "./delete.output.ts";
+import { withOutput } from "../../../command-internal/command-facts/command-output.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
@@ -27,6 +29,7 @@ export type BranchesDeleteFlags = CliCommand.Command.Config.Infer<typeof config>
 export const branchesDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription("Delete a preview branch by its name or ID."),
   Command.withShortDescription("Delete a preview branch"),
+  withOutput(branchesDeleteOutput),
   withPermissions(
     compose(
       { operations: [{ operationId: "v1-delete-a-branch", kind: "required" }] },

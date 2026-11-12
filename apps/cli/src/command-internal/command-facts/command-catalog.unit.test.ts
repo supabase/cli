@@ -43,6 +43,23 @@ describe("commandCatalog", () => {
     }),
   );
 
+  it.effect("reports a command's declared output schema as test-checked", () =>
+    Effect.gen(function* () {
+      const entry = yield* entryAt("branches delete");
+
+      expect(entry?.facts["supabase/CommandOutput"]).toMatchObject({
+        checked: ["test"],
+        value: {
+          schema: {
+            type: "object",
+            properties: { project_ref: { type: "string" } },
+            required: expect.arrayContaining(["project_ref", "message"]),
+          },
+        },
+      });
+    }),
+  );
+
   it.effect("keeps a permission entry's conditions and request details", () =>
     Effect.gen(function* () {
       const entry = yield* entryAt("projects api-keys");

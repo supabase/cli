@@ -23,6 +23,7 @@ import { realLinkedProjectCache } from "../../../../tests/helpers/permission-rea
 import { branchPrompt } from "../branches.prompt.ts";
 import type { BranchesDeleteFlags } from "./delete.command.ts";
 import { branchesDelete } from "./delete.handler.ts";
+import { branchesDeleteOutput } from "./delete.output.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -341,6 +342,44 @@ describe("branches delete integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describe("branches delete JSON output contract", () => {
+  const setupJson = (opts: SetupOpts = {}) => {
+    const out = mockOutput({ format: "json", contract: branchesDeleteOutput });
+    const api = buildApi(opts);
+    const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+    return { out, layer: buildRuntime({ out, api, cliSettings }) };
+  };
+
+  it.effect("writes one result that matches the declared schema", () => {
+    const { out, layer } = setupJson();
+    return Effect.gen(function* () {
+      yield* out.verifyCompletion(branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }));
+      expect(out.messages).toEqual([
+        {
+          type: "success",
+          message: "Deleted preview branch",
+          data: { project_ref: BRANCH_UUID },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reports a failed delete as its own error, not a missing result", () => {
+    const { out, layer } = setupJson({ deleteStatus: 500 });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        out.verifyCompletion(branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesDeleteUnexpectedStatusError");
+        expect(causeText).not.toContain("OutputContractViolation");
+      }
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describeHostedConsent("branches delete", {
