@@ -6,7 +6,7 @@ The default `--type all --severity info` displays every issue. Use `--fail-on wa
 
 Inspects the local database by default. Use `--remote` for the linked project, or `--remote=<ref|branch|url>` for another target. Security and performance checks use a transaction that is always rolled back for local databases and direct database URLs. Health checks require a remote project: `--type health` rejects local and direct database targets, while `--type all` reports health coverage as unavailable for those targets.
 
-By default, the command prints a table with severity, category, issue title, and the number of affected resources, followed by check coverage. Long titles wrap to fit the terminal. Unavailable checks include their reason and an incomplete-results warning. An empty result means no issues match the selected severity; it does not establish that the project is healthy.
+By default, the command prints a table with severity, category, issue title, and the number of affected resources, followed by check coverage. Long titles wrap to fit the terminal. Narrow terminals show stacked fields when the table cannot fit. Unavailable checks include their reason and an incomplete-results warning. An empty result means no issues match the selected severity; it does not establish that the project is healthy.
 
 Structured output contains `issues` and `checks`. Each issue includes its stable check ID, severity, category, documentation URL, and affected resources. Coverage reports each requested category as complete or unavailable. A remote check that cannot run is reported as unavailable and exits with status 1; it is never reported as a clean check.
 
