@@ -1657,6 +1657,27 @@ describe("start integration", () => {
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
+    it.effect("fails a removed config key with its replacement as the suggestion", () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configContents: 'project_id = "demo"\n\n[inbucket]\nenabled = true\n',
+        });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(normalizeCliError(error)).toMatchObject({
+            code: "StartConfigLoadError",
+            message:
+              "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
+            suggestion: "Update supabase/config.toml, then rerun the command.",
+          });
+        }
+        expect(child.spawned).toEqual([]);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
     it.effect("reports a config.json and config.jsonc conflict without an error-class prefix", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

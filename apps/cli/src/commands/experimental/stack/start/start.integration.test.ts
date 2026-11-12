@@ -42,6 +42,7 @@ import {
   writeLock,
 } from "@supabase/stack/effect";
 import { planSupabaseComposition } from "@supabase/stack/internal/composition";
+import { normalizeCliError } from "../../../../shared/output/normalize-error.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -784,6 +785,29 @@ describe("experimental stack start", () => {
       expect(error.message).toBe(
         `failed to parse environment file: ${path.join(root, "supabase", "functions", ".env")} (unexpected character '-' in variable name)`,
       );
+      expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("fails a removed config key with its replacement as the suggestion", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-removed-key-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "removed-key"\n\n[inbucket]\nenabled = true\n',
+      );
+      const fixture = fakeStack();
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(normalizeCliError(error)).toMatchObject({
+        code: "ExperimentalStackStartError",
+        message: "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
+        suggestion: "Update supabase/config.toml, then rerun the command.",
+      });
       expect(fixture.composed).toBe(0);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );

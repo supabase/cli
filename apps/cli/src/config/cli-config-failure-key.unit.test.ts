@@ -95,11 +95,11 @@ describe("cliConfigFailureKey for a removed key", () => {
       new CliConfigRemovedKeyError({
         path: "supabase/config.toml",
         format: "toml",
-        removedKeys: keys.map((key) => ({ key, replacement: "[replacement]" })),
+        removedKeys: keys.map((key) => ({ key, replacement: "replacement" })),
       });
 
-    expect(cliConfigFailureKey(removedKeys(`[${SECRET}]`, "[inbucket]"))).toBe("inbucket");
-    expect(cliConfigFailureKey(removedKeys(`[${SECRET}]`))).toBeUndefined();
+    expect(cliConfigFailureKey(removedKeys(SECRET, "inbucket"))).toBe("inbucket");
+    expect(cliConfigFailureKey(removedKeys(SECRET))).toBeUndefined();
   });
 });
 

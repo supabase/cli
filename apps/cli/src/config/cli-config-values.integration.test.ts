@@ -2251,8 +2251,8 @@ enabled = false
       expect(failure).toMatchObject({
         _tag: "CliConfigRemovedKeyError",
         removedKeys: [
-          { key: "[inbucket]", replacement: "[local_smtp]" },
-          { key: "[auth.external.slack]", replacement: "[auth.external.slack_oidc]" },
+          { key: "inbucket", replacement: "local_smtp" },
+          { key: "auth.external.slack", replacement: "auth.external.slack_oidc" },
         ],
       });
       expect(loaded.materialized.config.local_smtp.enabled).toBe(true);

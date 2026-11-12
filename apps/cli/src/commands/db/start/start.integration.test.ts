@@ -1951,7 +1951,7 @@ describe("db start", () => {
           const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(
-            "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+            "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
           );
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
