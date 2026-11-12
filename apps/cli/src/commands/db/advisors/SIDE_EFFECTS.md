@@ -2,7 +2,7 @@
 
 Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
 
-Writes a deprecation notice to stderr naming `supabase issues`. Existing flags, defaults, payloads, and exit behavior are preserved.
+Writes an informational migration notice to stderr explaining the planned future deprecation and naming `supabase issues`. Existing flags, defaults, payloads, and exit behavior are preserved.
 
 Checks a database for security and performance issues. Two backends: the local
 stack and `--remote=<url>` query the database directly; a project fetches from the

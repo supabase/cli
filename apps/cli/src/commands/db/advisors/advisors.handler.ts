@@ -149,7 +149,7 @@ const runAdvisors = Effect.fnUntraced(function* (
 
 export const dbAdvisors = Effect.fn("db.advisors")(function* (flags: DbAdvisorsFlags) {
   yield* (yield* Output).raw(
-    "supabase db advisors is deprecated; use supabase issues instead.\n",
+    "supabase db advisors is planned for deprecation in a future release. It remains supported; consider supabase issues for security, performance, and health checks.\n",
     "stderr",
   );
   const dnsResolver = yield* DnsResolverFlag;

@@ -532,7 +532,7 @@ describe("db advisors — local", () => {
       );
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toContain(
-        "supabase db advisors is deprecated; use supabase issues instead.",
+        "supabase db advisors is planned for deprecation in a future release. It remains supported; consider supabase issues for security, performance, and health checks.",
       );
     }).pipe(Effect.provide(layer));
   });

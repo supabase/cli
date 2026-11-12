@@ -1,6 +1,6 @@
 ## supabase-db-advisors
 
-Deprecated: use `supabase issues`. Existing flags, defaults, output, and exit behavior remain supported. A deprecation notice is written to stderr.
+`supabase db advisors` is planned for deprecation in a future release. It remains available alongside `supabase issues`. Existing flags, defaults, output, and exit behavior remain supported. An informational migration notice is written to stderr.
 
 Inspects the database for common security and performance issues such as missing RLS policies, unindexed foreign keys, exposed auth.users, and more.
 

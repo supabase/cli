@@ -10,6 +10,6 @@ By default, the command prints a table with severity, category, issue title, and
 
 Structured output contains `issues` and `checks`. Each issue includes its stable check ID, severity, category, documentation URL, and affected resources. Coverage reports each requested category as complete or unavailable. A remote check that cannot run is reported as unavailable and exits with status 1; it is never reported as a clean check.
 
-`supabase db advisors` is deprecated. Its existing flags, defaults, output, and exit behavior remain supported.
+`supabase db advisors` is planned for deprecation in a future release and remains available alongside `supabase issues`. Its existing flags, defaults, output, and exit behavior remain supported.
 
 Use `--output-format json` or `--output-format stream-json` for structured output. The legacy `-o` / `--output` flag is not supported by this command. Check IDs identify check types within a project; they are not persistent incident IDs.
