@@ -204,6 +204,8 @@ code is surfaced on failure.
 
 ### `--output-format text`
 
+- `db.major_version = 14` → a `WARNING:` line on **stderr** saying Postgres 14 is end of life
+  and the CLI will drop support for it soon, printed before the already-running check.
 - Already running → `Postgres database is already running.` on **stderr**, exit 0.
 - Starting → `Starting database...` / `Starting database from backup...`, then (fresh
   volume, no `--from-backup`) `Initialising schema...` and `Seeding globals from

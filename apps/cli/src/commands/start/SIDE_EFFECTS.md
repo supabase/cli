@@ -375,6 +375,8 @@ output modes.
 
 - stderr (conditional, `--exclude` had invalid values): a `WARNING:` line naming the
   invalid values and listing the 13 valid ones — the command still proceeds.
+- stderr (conditional, `db.major_version = 14`): a `WARNING:` line saying Postgres 14 is end of life
+  and the CLI will drop support for it soon, printed before any container work and in every output mode.
 - stderr: already-running banner (`supabase start` in aqua) **or** the bring-up sequence:
   `Starting database...` (fresh volume) / `Starting database from backup...` (existing
   volume) → Postgres create+start+readiness wait → `Starting containers...` → (image

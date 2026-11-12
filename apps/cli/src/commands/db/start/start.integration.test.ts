@@ -862,6 +862,7 @@ describe("db start", () => {
       });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Postgres 14 reached end of life");
         expect(out.stderrText).toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
         expect(dbSession.calls.length).toBeGreaterThan(0);

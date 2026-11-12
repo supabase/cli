@@ -1,6 +1,8 @@
 import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { usesStackState } from "./stack-backend.ts";
 import { Effect, type FileSystem, type Path } from "effect";
+import { Output } from "../shared/output/output.service.ts";
+import { yellow } from "./colors.ts";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
 import {
@@ -55,6 +57,20 @@ function compareSemver(a: string, b: string): number {
   }
   return 0;
 }
+
+/** Warns on stderr when the local project runs Postgres 14, which is end of life and soon unsupported. */
+export const warnIfPostgres14Deprecated = Effect.fn("DbImage.warnIfPostgres14Deprecated")(
+  function* (majorVersion: number) {
+    if (majorVersion !== 14) return;
+    const output = yield* Output;
+    yield* output.raw(
+      `${yellow("WARNING:")} Postgres 14 reached end of life on November 12, 2026, and the Supabase CLI will drop support for it soon. ` +
+        "Upgrade your project to a newer Postgres version, then update db.major_version in supabase/config.toml: " +
+        "https://supabase.com/docs/guides/platform/upgrading\n",
+      "stderr",
+    );
+  },
+);
 
 /** OrioleDB replaces the Postgres image only on 15/17 projects with a version set. */
 export const selectsOrioleDb = (
