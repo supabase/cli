@@ -185,8 +185,23 @@ interface IssueMeta {
   readonly code?: ConfigValidationIssue["code"];
 }
 
-const issueFrom = (path: string, message: string, meta: IssueMeta): ConfigValidationIssue =>
-  invalidIssue(path, message, meta.reason, meta.help, meta.code);
+type Reads = ReadonlyArray<ReadonlyArray<string>>;
+
+const issueFrom = (
+  path: string,
+  message: string,
+  meta: IssueMeta,
+  reads?: Reads,
+): ConfigValidationIssue => ({
+  ...invalidIssue(path, message, meta.reason, meta.help, meta.code),
+  ...(reads === undefined ? {} : { reads }),
+});
+
+const readingKey = (
+  issues: ReadonlyArray<ConfigValidationIssue>,
+  key: ReadonlyArray<string>,
+): ReadonlyArray<ConfigValidationIssue> =>
+  issues.map((issue) => ({ ...issue, reads: [...(issue.reads ?? []), key] }));
 
 const SIGNED_KEY_ISSUE: IssueMeta = {
   reason: "could not be generated",
@@ -198,19 +213,20 @@ const CONTENT_PATH_ISSUE: IssueMeta = {
   help: "point content_path at an existing file under the project root",
 };
 
-/** Without a collector `effect` runs unchanged; with one a failure is recorded at `path` and `fallback` stands in. */
+/** Without a collector `effect` runs unchanged; with one a failure is recorded at `path`, declaring the config keys the read runs behind in `reads`, and `fallback` stands in. */
 const collecting = <A, E extends { readonly message: string }, R>(
   collector: Array<ConfigValidationIssue> | undefined,
   path: string,
   effect: Effect.Effect<A, E, R>,
   fallback: A,
   meta: IssueMeta,
+  reads?: Reads,
 ): Effect.Effect<A, E, R> =>
   collector === undefined
     ? effect
     : effect.pipe(
         Effect.catch((error: E) => {
-          collector.push(issueFrom(path, error.message, meta));
+          collector.push(issueFrom(path, error.message, meta, reads));
           return Effect.succeed(fallback);
         }),
       );
@@ -528,6 +544,7 @@ const readAuthEmailTemplateContent = Effect.fnUntraced(function* (
       readEntry("template", name, tmpl),
       undefined,
       CONTENT_PATH_ISSUE,
+      [["auth", "enabled"]],
     );
   }
   for (const [name, tmpl] of Object.entries(email.notification)) {
@@ -538,6 +555,10 @@ const readAuthEmailTemplateContent = Effect.fnUntraced(function* (
       readEntry("notification", name, tmpl),
       undefined,
       CONTENT_PATH_ISSUE,
+      [
+        ["auth", "enabled"],
+        ["auth", "email", "notification", name, "enabled"],
+      ],
     );
   }
 });
@@ -908,10 +929,20 @@ const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
         ["key", "api.tls.key_path", apiTlsKeyPath],
       ] as const) {
         if (configured === undefined || configured.length === 0) continue;
-        yield* collecting(collector, key, readApiTlsFile(kind, workdir, configured), undefined, {
-          reason: `${kind === "cert" ? "certificate" : "private key"} file is not readable`,
-          help: "point it at an existing file, relative to the supabase/ directory",
-        });
+        yield* collecting(
+          collector,
+          key,
+          readApiTlsFile(kind, workdir, configured),
+          undefined,
+          {
+            reason: `${kind === "cert" ? "certificate" : "private key"} file is not readable`,
+            help: "point it at an existing file, relative to the supabase/ directory",
+          },
+          [
+            ["api", "enabled"],
+            ["api", "tls", "enabled"],
+          ],
+        );
       }
     }
   }
@@ -995,6 +1026,7 @@ const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
             reason: "signing keys file is missing, unreadable or invalid",
             help: "point signing_keys_path at a JSON array of JWKs, relative to the supabase/ directory",
           },
+          [["auth", "enabled"]],
         )) ?? [DEFAULT_SIGNING_KEY])[0]
       : undefined;
   // This block only accumulates the inputs passkey/webauthn/hook/mfa/email/smtp/third_party
@@ -1012,6 +1044,7 @@ const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
         attempt(() => rawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled")),
         false,
         { reason: "expected a boolean", help: "use true or false", code: "invalid_type" },
+        [["auth", "enabled"]],
       ));
     const rpId = asString(webauthnDoc?.["rp_id"]);
     const rpOrigins = rawOrigins(webauthnDoc?.["rp_origins"]);
@@ -1078,6 +1111,7 @@ const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
         attempt(() => resolveThirdPartyProviders(config.auth.third_party)),
         [],
         { reason: "invalid third-party provider settings" },
+        [["auth", "enabled"]],
       ),
     };
   }
@@ -1166,10 +1200,20 @@ const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
   } else {
     collector.push(...collectConfigValidationIssues(input));
     if (authEnabled) {
-      collector.push(...collectAuthSmsProviderIssues(resolveAuthSms(config.auth.sms)));
+      const externalFailures: Array<ConfigValidationIssue> = [];
+      const external = resolveAuthExternalProviders(
+        authDocument,
+        config.auth.external,
+        externalFailures,
+      );
       collector.push(
-        ...collectAuthExternalProviderIssues(
-          resolveAuthExternalProviders(authDocument, config.auth.external, collector),
+        ...readingKey(
+          [
+            ...collectAuthSmsProviderIssues(resolveAuthSms(config.auth.sms)),
+            ...externalFailures,
+            ...collectAuthExternalProviderIssues(external),
+          ],
+          ["auth", "enabled"],
         ),
       );
     }

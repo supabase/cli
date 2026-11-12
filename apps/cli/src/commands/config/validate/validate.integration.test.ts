@@ -902,6 +902,154 @@ describe("config validate integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  const GATED_PRODUCERS: ReadonlyArray<{
+    readonly name: string;
+    readonly gate: string;
+    readonly error: string;
+    readonly toml: (gate: string) => string;
+  }> = [
+    {
+      name: "api required fields",
+      gate: "api.enabled",
+      error: "api.port",
+      toml: (gate) => `[api]\nenabled = ${gate}\nport = 0\n`,
+    },
+    {
+      name: "api.tls required paths",
+      gate: "api.tls.enabled",
+      error: "api.tls.cert_path",
+      toml: (gate) => `[api.tls]\nenabled = ${gate}\nkey_path = "k.key"\n`,
+    },
+    {
+      name: "api.tls file reads behind api.enabled",
+      gate: "api.enabled",
+      error: "api.tls.cert_path",
+      toml: (gate) =>
+        `[api]\nenabled = ${gate}\n[api.tls]\nenabled = true\ncert_path = "missing.pem"\nkey_path = "missing.key"\n`,
+    },
+    {
+      name: "api.tls file reads behind api.tls.enabled",
+      gate: "api.tls.enabled",
+      error: "api.tls.cert_path",
+      toml: (gate) =>
+        `[api.tls]\nenabled = ${gate}\ncert_path = "missing.pem"\nkey_path = "missing.key"\n`,
+    },
+    {
+      name: "studio required fields",
+      gate: "studio.enabled",
+      error: "studio.port",
+      toml: (gate) => `[studio]\nenabled = ${gate}\nport = 0\n`,
+    },
+    {
+      name: "local_smtp required port",
+      gate: "local_smtp.enabled",
+      error: "local_smtp.port",
+      toml: (gate) => `[local_smtp]\nenabled = ${gate}\nport = 0\n`,
+    },
+    {
+      name: "auth required fields",
+      gate: "auth.enabled",
+      error: "auth.site_url",
+      toml: (gate) => `[auth]\nenabled = ${gate}\nsite_url = ""\n`,
+    },
+    {
+      name: "auth signing keys read",
+      gate: "auth.enabled",
+      error: "auth.signing_keys_path",
+      toml: (gate) => `[auth]\nenabled = ${gate}\nsigning_keys_path = "missing.json"\n`,
+    },
+    {
+      name: "auth email template content read",
+      gate: "auth.enabled",
+      error: "auth.email.template.invite.content_path",
+      toml: (gate) =>
+        `[auth]\nenabled = ${gate}\n[auth.email.template.invite]\ncontent_path = "missing.html"\n`,
+    },
+    {
+      name: "auth external provider",
+      gate: "auth.enabled",
+      error: "auth.external.myidp.secret",
+      toml: (gate) =>
+        `[auth]\nenabled = ${gate}\n[auth.external.myidp]\nenabled = true\nclient_id = "client"\n`,
+    },
+    {
+      name: "auth email notification content read",
+      gate: "auth.email.notification.password_changed.enabled",
+      error: "auth.email.notification.password_changed.content_path",
+      toml: (gate) =>
+        `[auth.email.notification.password_changed]\nenabled = ${gate}\ncontent_path = "missing.html"\n`,
+    },
+    {
+      name: "auth.email.smtp required fields",
+      gate: "auth.email.smtp.enabled",
+      error: "auth.email.smtp.host",
+      toml: (gate) => `[auth.email.smtp]\nenabled = ${gate}\n`,
+    },
+    {
+      name: "auth.captcha required fields",
+      gate: "auth.captcha.enabled",
+      error: "auth.captcha.provider",
+      toml: (gate) => `[auth.captcha]\nenabled = ${gate}\n`,
+    },
+    {
+      name: "auth.hook uri",
+      gate: "auth.hook.custom_access_token.enabled",
+      error: "auth.hook.custom_access_token.uri",
+      toml: (gate) => `[auth.hook.custom_access_token]\nenabled = ${gate}\nuri = ""\n`,
+    },
+    {
+      name: "auth.third_party required field",
+      gate: "auth.third_party.firebase.enabled",
+      error: "auth.third_party.firebase.project_id",
+      toml: (gate) => `[auth.third_party.firebase]\nenabled = ${gate}\n`,
+    },
+    {
+      name: "auth.sms provider",
+      gate: "auth.sms.twilio.enabled",
+      error: "auth.sms.twilio.account_sid",
+      toml: (gate) => `[auth.sms.twilio]\nenabled = ${gate}\n`,
+    },
+    {
+      name: "auth.external provider",
+      gate: "auth.external.myidp.enabled",
+      error: "auth.external.myidp.secret",
+      toml: (gate) => `[auth.external.myidp]\nenabled = ${gate}\nclient_id = "client"\n`,
+    },
+    {
+      name: "auth.passkey webauthn",
+      gate: "auth.passkey.enabled",
+      error: "auth.webauthn",
+      toml: (gate) => `[auth.passkey]\nenabled = ${gate}\n`,
+    },
+    {
+      name: "analytics bigquery fields",
+      gate: "analytics.enabled",
+      error: "analytics.gcp_project_id",
+      toml: (gate) => `[analytics]\nenabled = ${gate}\nbackend = "bigquery"\n`,
+    },
+  ];
+
+  it.effect.each(GATED_PRODUCERS)(
+    "gates $name behind $gate: an unset env() warns, a literal true fails",
+    ({ gate, error, toml }) =>
+      Effect.gen(function* () {
+        const unset = yield* validate(tomlFile(`project_id = "demo"\n${toml('"env(GATE_ON)"')}`), {
+          format: "json",
+        });
+        const open = yield* validate(tomlFile(`project_id = "demo"\n${toml("true")}`), {
+          format: "json",
+        });
+
+        expect(payloadOf(unset)).toMatchObject({ valid: true, errors: [] });
+        expect(Reflect.get(payloadOf(unset) ?? {}, "warnings")).toContainEqual(
+          expect.objectContaining({ code: "env_unresolved", key: gate }),
+        );
+        expect(Reflect.get(payloadOf(open) ?? {}, "errors")).toContainEqual(
+          expect.objectContaining({ key: error }),
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("still reports a malformed literal remote project_id", () =>
     Effect.gen(function* () {
       const result = yield* validate(

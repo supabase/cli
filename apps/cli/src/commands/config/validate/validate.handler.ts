@@ -264,11 +264,12 @@ const schemaProblems = (
     }
     return flat.map((issue) => {
       const { path } = issue;
-      const detail =
+      const detail: Pick<ConfigValidationIssue, "reason" | "help" | "reads"> =
         issue.code === "missing_required" && path.length > 0
           ? missingIssue(displayPath(path), "")
           : { reason: issue.reason, help: issue.help };
       return problem(issue.code, {
+        ...(detail.reads === undefined ? {} : { reads: detail.reads }),
         ...(path.length === 0 ? {} : { path }),
         reason: detail.reason,
         ...(detail.help === undefined ? {} : { help: detail.help }),
