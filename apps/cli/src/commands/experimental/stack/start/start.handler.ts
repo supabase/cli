@@ -1106,8 +1106,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           databaseServices: catalogDatabaseServices(requested),
           selection: config.selection,
         },
-        overlay: projectCatalogOverlay(toml, target.projectRoot),
-        ...(migrations === undefined ? {} : { migrations }),
+        ...(migrations === undefined
+          ? {}
+          : { overlay: projectCatalogOverlay(toml, target.projectRoot), migrations }),
       }).pipe(
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(stackError),

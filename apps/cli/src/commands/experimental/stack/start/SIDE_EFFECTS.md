@@ -400,8 +400,9 @@ reset of database data removes the record. A service on an external database has
 
 The first configured startup prepares the database catalog, temporarily runs configured schema-owning
 services, creates the `supabase_functions` schema, which migrations must not recreate, applies the
-database overlay, and runs project migrations and seeds. Membership changes
-apply needed catalog and webhook setup without replaying project migrations or seeds. An unchanged
+database overlay (`roles.sql`, vault, API grants) as `postgres`, like legacy `start`, and runs project
+migrations and seeds. Membership changes apply needed catalog and webhook setup without replaying
+the overlay, project migrations or seeds. An unchanged
 composition reapplies the webhook setting before activation, first creating the
 `supabase_functions` schema when the database lacks it.
 
