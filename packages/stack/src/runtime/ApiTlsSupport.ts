@@ -106,8 +106,9 @@ export const probeApiTls = Effect.fn("ApiTlsSupport.probe")(function* (
     .find((line) => line.length > 0 && !/-task-[^-]+$/u.test(line));
   if (name === undefined) return yield* unreachable("no database container");
   const authority = `${DOCKER_HOST_ALIAS}:${check.port}`;
-  /* Once connected it exits 0 and prints what `readApiTlsCheck` reads. */
-  const script = `exec 3<>/dev/tcp/${DOCKER_HOST_ALIAS}/${check.port} && printf 'GET ${check.path} HTTP/1.0\\r\\nHost: ${authority}\\r\\nConnection: close\\r\\n\\r\\n' >&3 && { IFS= read -r -d '' -t ${readSeconds} reply <&3; printf '%s %s' "$?" "$reply"; }`;
+  /* Once connected it exits 0 and prints what `readApiTlsCheck` reads; a request the listener
+     reset before it was written reads as a close, not a SIGPIPE exit. */
+  const script = `trap '' PIPE; exec 3<>/dev/tcp/${DOCKER_HOST_ALIAS}/${check.port} && if printf 'GET ${check.path} HTTP/1.0\\r\\nHost: ${authority}\\r\\nConnection: close\\r\\n\\r\\n' >&3 2>/dev/null; then IFS= read -r -d '' -t ${readSeconds} reply <&3; printf '%s %s' "$?" "$reply"; else printf '1 '; fi`;
   const output = yield* runRaw(
     spawner,
     target.engine,
