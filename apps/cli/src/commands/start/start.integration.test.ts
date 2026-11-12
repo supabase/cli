@@ -1802,6 +1802,13 @@ describe("start integration", () => {
               "--health-start-interval": "1s",
             });
           }
+          for (const service of ["analytics", "vector"]) {
+            expect(healthFlagsFor(child.spawned, service)).toMatchObject({
+              "--health-interval": "10s",
+              "--health-start-period": "60s",
+              "--health-start-interval": "1s",
+            });
+          }
           expect(healthFlagsFor(child.spawned, "rest")).toEqual({});
         }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
       );
