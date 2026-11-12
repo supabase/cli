@@ -291,7 +291,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
   }
   if (input.db.majorVersion === 13) {
     throw new ConfigValidateError(
-      "Postgres version 13.x is unsupported. To use the CLI, upgrade your project to a newer Postgres version: https://supabase.com/docs/guides/platform/upgrading.",
+      "Postgres version 13.x is unsupported. To use the CLI, upgrade your project to a newer Postgres version, then update db.major_version in your project config: https://supabase.com/docs/guides/platform/upgrading.",
     );
   }
   if (![14, 15, 17].includes(input.db.majorVersion)) {
