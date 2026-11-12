@@ -488,7 +488,7 @@ We're an open-source platform with several components that you can use together 
 - [Vector](https://supabase.com/docs/guides/ai): Integrate your favorite ML models to store, index, and search vector embeddings.
 - [Queues](https://supabase.com/docs/guides/queues): A Postgres-native durable Message Queue system with guaranteed delivery.
 - [Cron](https://supabase.com/docs/guides/cron): Simplify scheduling recurring Jobs with cron syntax and monitoring Job runs inside Postgres.
-- Data APIs: Instant, ready-to-use [REST](https://supabase.com/docs/guides/api) and [GraphQL APIs](https://supabase.com/docs/guides/api).
+- Data APIs: Instant, ready-to-use [REST](https://supabase.com/docs/guides/api) and [GraphQL APIs](https://supabase.com/docs/guides/api) automatically generated from your database's schemas.
 `;
 
 export const VSCODE_EXTENSIONS_TEMPLATE = `{
