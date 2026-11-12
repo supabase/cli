@@ -121,7 +121,7 @@ function removedKeyProblems(
   parsed: ParsedCliConfigDocument,
   format: ReportFormat,
 ): ReadonlyArray<ConfigProblem> {
-  return parsed.removedKeys.map(({ key, path, replacementPath, remote }) => {
+  return parsed.removedKeys.map(({ path, replacementPath, table, remote }) => {
     const scope = remote === undefined ? [] : ["remotes", remote];
     const tomlTable = (segments: ReadonlyArray<string>): string =>
       `[${[...scope, ...segments].map(tomlSegment).join(".")}]`;
@@ -129,7 +129,7 @@ function removedKeyProblems(
       path,
       reason: "removed",
       help:
-        key.startsWith("[") && format === "toml"
+        table && format === "toml"
           ? `rename ${tomlTable(path)} to ${tomlTable(replacementPath)}`
           : `use ${displayPath(replacementPath)} instead`,
       ...(remote === undefined ? {} : { remote }),

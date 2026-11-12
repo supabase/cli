@@ -16,17 +16,14 @@ const removed = (
   replacementLocal: ReadonlyArray<string>,
   table: boolean,
 ): RemovedConfigKey => {
-  const render = (segments: ReadonlyArray<string>): string => {
-    const dotted = [...(remote === undefined ? [] : ["remotes", remote]), ...segments]
-      .map(tomlSegment)
-      .join(".");
-    return table ? `[${dotted}]` : dotted;
-  };
+  const render = (segments: ReadonlyArray<string>): string =>
+    [...(remote === undefined ? [] : ["remotes", remote]), ...segments].map(tomlSegment).join(".");
   return {
     key: render(local),
     replacement: render(replacementLocal),
     path: local,
     replacementPath: replacementLocal,
+    table,
     ...(remote === undefined ? {} : { remote }),
   };
 };

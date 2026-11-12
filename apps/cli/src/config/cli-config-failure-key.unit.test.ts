@@ -97,14 +97,15 @@ describe("cliConfigFailureKey for a removed key", () => {
         format: "toml",
         removedKeys: keys.map((key) => ({
           key,
-          replacement: "[replacement]",
+          replacement: "replacement",
           path: [key],
           replacementPath: ["replacement"],
+          table: true,
         })),
       });
 
-    expect(cliConfigFailureKey(removedKeys(`[${SECRET}]`, "[inbucket]"))).toBe("inbucket");
-    expect(cliConfigFailureKey(removedKeys(`[${SECRET}]`))).toBeUndefined();
+    expect(cliConfigFailureKey(removedKeys(SECRET, "inbucket"))).toBe("inbucket");
+    expect(cliConfigFailureKey(removedKeys(SECRET))).toBeUndefined();
   });
 });
 

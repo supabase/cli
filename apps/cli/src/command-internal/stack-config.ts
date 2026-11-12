@@ -26,6 +26,7 @@ import { CLI_VERSION } from "../shared/cli/version.ts";
 import { decryptSecretMap } from "../shared/config/vault-decrypt.ts";
 import { toEdgeRuntimeSecretsEnv } from "../shared/functions/functions-config.ts";
 import {
+  configLoadFailureSuggestion,
   describeConfigLoadFailure,
   loadResolvedConfigContext,
   resolvePasskeyWebauthn,
@@ -75,11 +76,16 @@ import {
 /** A config error suitable for a stack command's user-facing boundary. */
 export class StackConfigError extends Data.TaggedError("StackConfigError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
 }
+
+/** The remediation a stack config failure carries, for the command error that reports it. */
+export const stackConfigSuggestion = (error: unknown): string | undefined =>
+  error instanceof StackConfigError ? error.suggestion : undefined;
 
 interface StackStartConfig {
   /** The artifact pins every creation of this command carries. */
@@ -290,7 +296,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         Option.fromNullishOr(opts?.projectRef),
       ).pipe(
         Effect.mapError(
-          (cause) => new StackConfigError({ message: describeConfigLoadFailure(cause) }),
+          (cause) =>
+            new StackConfigError({
+              message: describeConfigLoadFailure(cause),
+              suggestion: configLoadFailureSuggestion(cause),
+            }),
         ),
       );
       const { originAt } = resolvedConfig.materialized;

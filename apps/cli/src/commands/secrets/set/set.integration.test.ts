@@ -1143,7 +1143,7 @@ FROM_CONFIG = "config-value"
           Effect.catchTag("CliConfigRemovedKeyError", (error) => Effect.succeed(error.message)),
         );
         expect(message).toBe(
-          "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+          "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
         );
         expect(api.requests).toHaveLength(0);
         expect(out.stdoutText).not.toContain("Finished supabase secrets set.");
