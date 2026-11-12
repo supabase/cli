@@ -21,11 +21,14 @@ interface ListedContainer {
 /* Answers the engine's `ps` with `containers`, keeping only listed ones carrying every filtered
    label, and runs its `exec` scripts with this host's bash, where the stack alias is loopback, so
    the probe reaches the API port as a database container would; a `refusing` engine fails each
-   exec. `commands` records every engine command. */
+   exec, and a `writeAfterReset` engine holds the request until the listener reset the
+   connection, failing the exec with 97 when no reset arrives. `commands` records every engine
+   command. */
 const engineOnHost = (
   containers: string | ReadonlyArray<ListedContainer>,
   commands: Array<ReadonlyArray<string>> = [],
   refusing = false,
+  writeAfterReset = false,
 ) =>
   Effect.gen(function* () {
     const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -56,10 +59,15 @@ const engineOnHost = (
           ChildProcess.make(bash, ["-c", "printf 'Error: container is not running' >&2; exit 1"]),
         );
       const script = command.args.at(-1);
+      const held = writeAfterReset
+        ? `printf() { unset -f printf; IFS= read -r -t 5 -u 3 _; [ $? -eq 1 ] || exit 97; builtin printf "$@"; }; `
+        : "";
       return delegate.spawn(
         ChildProcess.make(bash, [
           "-c",
-          typeof script === "string" ? script.replaceAll(DOCKER_HOST_ALIAS, "127.0.0.1") : "",
+          typeof script === "string"
+            ? `${held}${script.replaceAll(DOCKER_HOST_ALIAS, "127.0.0.1")}`
+            : "",
         ]),
       );
     });
@@ -91,15 +99,16 @@ const tlsProxy = Effect.gen(function* () {
 
 class ApiTlsTestError extends Data.TaggedError("ApiTlsTestError")<{ readonly message: string }> {}
 
-/* A raw listener on loopback that hands each accepted connection, once its request arrived, to
-   `reply`; it never closes what `reply` leaves open until the scope ends. */
-const rawPort = (reply: (socket: Socket) => void) =>
+/* A raw listener on loopback that hands each accepted connection, once its request arrived or on
+   accept, to `reply`; it never closes what `reply` leaves open until the scope ends. */
+const rawPort = (reply: (socket: Socket) => void, onAccept = false) =>
   Effect.gen(function* () {
     const sockets = new Set<Socket>();
     const server = createServer((socket) => {
       sockets.add(socket);
       socket.on("error", () => socket.destroy());
-      socket.once("data", () => reply(socket));
+      if (onAccept) reply(socket);
+      else socket.once("data", () => reply(socket));
     });
     return yield* Effect.acquireRelease(
       Effect.callback<number, ApiTlsTestError>((resume) => {
@@ -138,11 +147,17 @@ const reach = (options: {
   readonly stop: Effect.Effect<unknown, StopError>;
   readonly containers?: string;
   readonly refusing?: boolean;
+  readonly writeAfterReset?: boolean;
   readonly readSeconds?: number;
 }) =>
   Effect.gen(function* () {
     return yield* checkApiTlsReach({
-      spawner: yield* engineOnHost(options.containers ?? "stack-db\n", [], options.refusing),
+      spawner: yield* engineOnHost(
+        options.containers ?? "stack-db\n",
+        [],
+        options.refusing,
+        options.writeAfterReset,
+      ),
       target,
       stack,
       runtime: "test runtime",
@@ -188,17 +203,19 @@ describe.skipIf(bash === undefined && !ci)("start check probe over this host's b
         const foreign = (on: number, detail: string) =>
           `api.tls: the api port ${on} on test runtime isn't answering this stack's start check (${detail}); its services stopped: check what else listens on port ${on}, then start the stack again`;
 
+        const unsupported =
+          "api.tls: unsupported networking on test runtime: containers must reach the api from loopback (the database container's plain request was closed without a reply); its services stopped: turn off `[api.tls]`, or use a runtime whose containers reach this host from loopback (on macOS: Docker Desktop, colima or Podman machine), then start the stack again";
         const closing = yield* rawPort((socket) => socket.end());
-        expect(yield* failed({ port: closing })).toBe(
-          "api.tls: unsupported networking on test runtime: containers must reach the api from loopback (the database container's plain request was closed without a reply); its services stopped: turn off `[api.tls]`, or use a runtime whose containers reach this host from loopback (on macOS: Docker Desktop, colima or Podman machine), then start the stack again",
-        );
+        expect(yield* failed({ port: closing })).toBe(unsupported);
+        const resetting = yield* rawPort((socket) => socket.resetAndDestroy(), true);
+        expect(yield* failed({ port: resetting, writeAfterReset: true })).toBe(unsupported);
         const silent = yield* rawPort(() => undefined);
         expect(yield* failed({ port: silent, readSeconds: 1 })).toBe(
           foreign(silent, "no complete reply within 1 s"),
         );
         /* Unarmed, the readiness path is an unknown route. */
         expect(yield* failed({ port })).toBe(foreign(port, "replied HTTP/1.1 404 Not Found"));
-        expect(stops).toBe(3);
+        expect(stops).toBe(4);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
