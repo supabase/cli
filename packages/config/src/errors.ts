@@ -35,6 +35,12 @@ export class CliConfigRemovedKeyError extends Data.TaggedError("CliConfigRemoved
       ...this.removedKeys.map(({ key, replacement }) => `  ${key}: use ${replacement} instead.`),
     ].join("\n");
   }
+
+  /** The edit that clears this error, for commands that print a remediation next to the message. */
+  get suggestion(): string {
+    const file = this.path.split(/[\\/]/).slice(-2).join("/");
+    return `Update ${file}, then rerun the command.`;
+  }
 }
 
 /** Both `config.json` and `config.jsonc` exist in one project; `paths` lists every conflicting file. */

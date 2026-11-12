@@ -42,6 +42,7 @@ import {
   writeLock,
 } from "@supabase/stack/effect";
 import { planSupabaseComposition } from "@supabase/stack/internal/composition";
+import { normalizeCliError } from "../../../../shared/output/normalize-error.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -342,6 +343,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let hostDestroyed = 0;
   let composed = 0;
   let catalogApplied = 0;
+  const catalogOverlays: Array<boolean> = [];
   let compositionStarts = 0;
   let lifecycle: "stopped" | "running" = "stopped";
   let activations = new Map<string, "eager" | "lazy">();
@@ -498,8 +500,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     get compositionStarts() {
       return compositionStarts;
     },
-    applyCatalog() {
+    get catalogOverlays() {
+      return catalogOverlays;
+    },
+    applyCatalog(overlay: boolean) {
       catalogApplied += 1;
+      catalogOverlays.push(overlay);
     },
     get savedCredentials() {
       return savedCredentials;
@@ -635,7 +641,7 @@ const layers = (
     ciUnsetLayer,
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(StackCatalogSetup, {
-      apply: () => Effect.sync(() => fixture.applyCatalog()),
+      apply: (input) => Effect.sync(() => fixture.applyCatalog(input.overlay !== undefined)),
     }),
     Layer.succeed(DbConnection, { connect: () => Effect.scoped(Effect.succeed(session)) }),
     Layer.succeed(YesFlag, false),
@@ -779,6 +785,29 @@ describe("experimental stack start", () => {
       expect(error.message).toBe(
         `failed to parse environment file: ${path.join(root, "supabase", "functions", ".env")} (unexpected character '-' in variable name)`,
       );
+      expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("fails a removed config key with its replacement as the suggestion", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-removed-key-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "removed-key"\n\n[inbucket]\nenabled = true\n',
+      );
+      const fixture = fakeStack();
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(normalizeCliError(error)).toMatchObject({
+        code: "ExperimentalStackStartError",
+        message: "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
+        suggestion: "Update supabase/config.toml, then rerun the command.",
+      });
       expect(fixture.composed).toBe(0);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -1402,6 +1431,23 @@ describe("experimental stack start", () => {
         expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
         expect(fixture.catalogApplied).toBe(1);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("applies the project overlay once when a later start adds a service", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-overlay-once-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "overlay-once"\n');
+      const fixture = fakeStack();
+
+      yield* stackStart(flags(["storage"])).pipe(Effect.provide(layers(root, fixture)));
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      expect(fixture.members.some(({ service }) => service === "storage")).toBe(true);
+      expect(fixture.catalogOverlays).toEqual([true, false]);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("creates the supabase_functions schema once when restarting a stack without it", () =>

@@ -35,6 +35,7 @@ import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { removeContainer } from "./container-lifecycle.ts";
 import { awaitDockerHealthSettled } from "./health-check.ts";
 import { localDbState } from "./local-db-running.ts";
+import { warnIfPostgres14Deprecated } from "../db-image.ts";
 import { rollbackDatabaseStart } from "./rollback.ts";
 import { backupVolumeExistsError, startDatabase } from "./start-database.ts";
 
@@ -119,6 +120,7 @@ const startLocalDatabaseInScope = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   ) {
     yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
   }
+  yield* warnIfPostgres14Deprecated(config.db.major_version);
   const { timebox, inactivity_timeout: inactivityTimeout } = config.auth.sessions ?? {};
   if (timebox !== undefined) {
     yield* wrapDbConfigParse("auth.sessions.timebox", () => parseDuration(timebox));

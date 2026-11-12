@@ -763,6 +763,36 @@ describe("start integration", () => {
     vi.unstubAllEnvs();
   });
 
+  describe("Postgres 14 deprecation", () => {
+    const alreadyRunning = (args: ReadonlyArray<string>) => {
+      if (args[0] === "container" && args[1] === "inspect") return { stdout: [HEALTHY_STATE] };
+      if (args[0] === "ps") return { stdout: [] };
+      return { exitCode: 0 };
+    };
+
+    it.effect("warns that Postgres 14 is end of life and will lose CLI support", () =>
+      Effect.gen(function* () {
+        const { layer, out } = yield* setup({
+          configContents: 'project_id = "demo"\n[db]\nmajor_version = 14\n',
+          route: alreadyRunning,
+        });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Postgres 14 reached end of life");
+        expect(out.stderrText).toContain("Upgrade your project to Postgres 17");
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
+    it.effect("stays silent on a supported Postgres major", () =>
+      Effect.gen(function* () {
+        const { layer, out } = yield* setup({ route: alreadyRunning });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("Postgres 14");
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+  });
+
   describe("--exclude validation", () => {
     it.effect("warns on stderr for an invalid --exclude value, even when already running", () =>
       Effect.gen(function* () {
@@ -1627,6 +1657,27 @@ describe("start integration", () => {
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
+    it.effect("fails a removed config key with its replacement as the suggestion", () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configContents: 'project_id = "demo"\n\n[inbucket]\nenabled = true\n',
+        });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(normalizeCliError(error)).toMatchObject({
+            code: "StartConfigLoadError",
+            message:
+              "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
+            suggestion: "Update supabase/config.toml, then rerun the command.",
+          });
+        }
+        expect(child.spawned).toEqual([]);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
     it.effect("reports a config.json and config.jsonc conflict without an error-class prefix", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1799,6 +1850,13 @@ describe("start integration", () => {
             expect(healthFlagsFor(child.spawned, service)).toMatchObject({
               "--health-interval": "10s",
               "--health-start-period": "10s",
+              "--health-start-interval": "1s",
+            });
+          }
+          for (const service of ["analytics", "vector"]) {
+            expect(healthFlagsFor(child.spawned, service)).toMatchObject({
+              "--health-interval": "10s",
+              "--health-start-period": "60s",
               "--health-start-interval": "1s",
             });
           }
@@ -3941,6 +3999,38 @@ content_path = "./supabase/templates/custom_notice.html"
     );
   });
 
+  it.live(
+    "gives Logflare a doubled health budget to finish booting",
+    () =>
+      Effect.gen(function* () {
+        const route = defaultRoute();
+        let analyticsInspects = 0;
+        const { layer, out, child } = yield* setup({
+          route: (args) => {
+            if (
+              args[0] === "container" &&
+              args[1] === "inspect" &&
+              (args[2] ?? "").includes("_analytics_")
+            ) {
+              analyticsInspects += 1;
+              if (analyticsInspects <= 2) return { stdout: [STARTING_STATE] };
+            }
+            return route(args);
+          },
+          httpClientLayer: unusedHttpClientLayer,
+        });
+
+        yield* start(flags({ exclude: ["postgrest", "edge-runtime"] })).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Started");
+        expect(rollbackWasAttempted(child.spawned)).toBe(false);
+        expect(analyticsInspects).toBe(3);
+      }).pipe(
+        Effect.provideService(HealthCheckTimeoutSeconds, 1),
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
+      ),
+    10_000,
+  );
+
   // Real time, not `it.effect`/`TestClock`: genuine async I/O deep inside the forked effect
   // (HTTP requests and `resolveDbImage`'s file read) needs real Node
   // event-loop turns to settle, so a virtualized clock would never let the fiber reach the
@@ -5861,6 +5951,22 @@ content_path = "./supabase/templates/custom_notice.html"
             }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
           ),
         ),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("maps SUPABASE_API_DB_POOL to PostgREST's PGRST_DB_POOL", () =>
+      withEnvVar(
+        "SUPABASE_API_DB_POOL",
+        "10",
+        Effect.gen(function* () {
+          const { layer, child } = yield* setup();
+
+          yield* start(flags()).pipe(Effect.provide(layer));
+          const restCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_rest_"),
+          );
+          expect(restCreate?.env["PGRST_DB_POOL"]).toBe("10");
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
       ).pipe(Effect.provide(BunServices.layer)),
     );
 

@@ -21,6 +21,9 @@ extra_search_path = ["public", "extensions"]
 # The maximum number of rows returned from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
+# The maximum number of connections in the local PostgREST database pool. Left unset, the default
+# pool size is unchanged.
+# db_pool = 10
 # Controls whether new tables, views, sequences and functions created in the \`public\` schema by
 # \`postgres\` are reachable through the Data API roles (\`anon\`, \`authenticated\`, \`service_role\`)
 # without explicit GRANTs, matching the cloud default. Set to \`false\` to require explicit GRANTs

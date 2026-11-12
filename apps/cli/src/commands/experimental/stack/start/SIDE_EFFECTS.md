@@ -8,7 +8,10 @@ It creates or resumes the stack for the project and optional `--stack` name, or 
 
 For a new stack or a stopped existing stack, the CLI loads the target project's
 `supabase/config.toml`, supported environment overrides, and project dotenv files. It validates the
-supported configuration before creating service definitions. When every member of the existing
+supported configuration before creating service definitions. A config that uses a removed key
+(for example `inbucket`) fails with exit 1 before any stack is created; the error names the key and
+its replacement and carries the suggestion `Update supabase/config.toml, then rerun the command.`,
+in text and JSON output. When every member of the existing
 composition is running and healthy, or armed to wake and not already starting, start reports its
 current endpoints and returns without reading or applying project configuration. When the database
 is running and every other member is running with any health, starting, or armed to wake, start
@@ -400,8 +403,9 @@ reset of database data removes the record. A service on an external database has
 
 The first configured startup prepares the database catalog, temporarily runs configured schema-owning
 services, creates the `supabase_functions` schema, which migrations must not recreate, applies the
-database overlay, and runs project migrations and seeds. Membership changes
-apply needed catalog and webhook setup without replaying project migrations or seeds. An unchanged
+database overlay (`roles.sql`, vault, API grants) as `postgres`, like legacy `start`, and runs project
+migrations and seeds. Membership changes apply needed catalog and webhook setup without replaying
+the overlay, project migrations or seeds. An unchanged
 composition reapplies the webhook setting before activation, first creating the
 `supabase_functions` schema when the database lacks it.
 

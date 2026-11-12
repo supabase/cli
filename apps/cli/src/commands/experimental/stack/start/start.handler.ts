@@ -71,6 +71,7 @@ import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
 import type { CliConfigMaterialized } from "../../../../config/cli-config-values.service.ts";
 import {
   loadStackConfig,
+  stackConfigSuggestion,
   stackEndpointKey,
   stackMajorVersionKey,
   stackUploadsDir,
@@ -245,6 +246,7 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
           ? { reason: "lock" as const }
           : { reason: "invalid-config" as const, configIssue: "project-config" as const }),
         message: error.message,
+        suggestion: stackConfigSuggestion(error),
         cause: error,
       }),
   ),
@@ -1106,8 +1108,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           databaseServices: catalogDatabaseServices(requested),
           selection: config.selection,
         },
-        overlay: projectCatalogOverlay(toml, target.projectRoot),
-        ...(migrations === undefined ? {} : { migrations }),
+        ...(migrations === undefined
+          ? {}
+          : { overlay: projectCatalogOverlay(toml, target.projectRoot), migrations }),
       }).pipe(
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(stackError),

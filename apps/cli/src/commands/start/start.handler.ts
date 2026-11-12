@@ -91,6 +91,7 @@ import {
   type ResolvedAuthEmail,
 } from "../../command-internal/local-config-values.ts";
 import {
+  configLoadFailureSuggestion,
   describeConfigLoadFailure,
   loadLocalResolvedConfigContext,
   type LocalResolvedConfigContext,
@@ -137,6 +138,7 @@ import {
   rollbackStart,
 } from "../../command-internal/db-bootstrap/rollback.ts";
 import { resolveDbBootstrapConfig } from "../../command-internal/db-bootstrap/bootstrap-config.ts";
+import { warnIfPostgres14Deprecated } from "../../command-internal/db-image.ts";
 import { startDatabase } from "../../command-internal/db-bootstrap/start-database.ts";
 import { START_SERVICES } from "./start.services.ts";
 import {
@@ -146,6 +148,7 @@ import {
 import { ensureImagesCached } from "../../command-internal/db-bootstrap/image-prepull.ts";
 import {
   awaitDockerHealthSettled,
+  HealthCheckTimeoutSeconds,
   healthCheckExecUnavailableWarning,
   waitForHealthyServices,
   type ExecFallbackProbe,
@@ -187,6 +190,9 @@ import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
 
+/** Multiplies the service health budget when Logflare or Vector start; see SIDE_EFFECTS.md. */
+const ANALYTICS_HEALTH_TIMEOUT_FACTOR = 2;
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return Predicate.isObject(value) ? value : undefined;
 }
@@ -205,7 +211,10 @@ const startConfigFailure = (cause: unknown) =>
     ? new StartInvalidConfigError({
         message: `invalid config for ${cause.path}: ${cause.message}`,
       })
-    : new StartConfigLoadError({ message: describeConfigLoadFailure(cause) });
+    : new StartConfigLoadError({
+        message: describeConfigLoadFailure(cause),
+        suggestion: configLoadFailureSuggestion(cause),
+      });
 
 /**
  * Wraps a synchronous config resolver that throws on a malformed value into a typed
@@ -543,6 +552,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const dbTomlValues = yield* checkDbConfig(fs, path, cliSettings.workdir).pipe(
       Effect.withSpan("start.validateDbConfig"),
     );
+    yield* warnIfPostgres14Deprecated(config.db.major_version);
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);
@@ -877,6 +887,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const apiSchemas = config.api.schemas;
     const apiExtraSearchPath = config.api.extra_search_path;
     const apiMaxRows = config.api.max_rows;
+    const apiDbPool = config.api.db_pool;
 
     // `smtp_port`/`pop3_port` have no TOML default, so `?? 0` preserves the "unconfigured" signal
     // `mailpit.service.ts`'s `!== 0` publish guard checks.
@@ -1046,6 +1057,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               schemas: apiSchemas,
               extraSearchPath: apiExtraSearchPath,
               maxRows: apiMaxRows,
+              dbPool: apiDbPool,
               dbUrl: values.dbUrl,
               jwks,
             }),
@@ -1499,8 +1511,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // `rollbackStart` calls would miss a pure fiber interrupt between steps (see the `bringUp`
       // pipe's comment for why `onError`, not `tapError`, is required).
       yield* Effect.gen(function* () {
-        // 9. Bulk health check over every non-Postgres started container, at
-        // the generic 30s service timeout.
+        // 9. Bulk health check over every non-Postgres started container, at the service
+        // timeout (doubled when Logflare or Vector start; see SIDE_EFFECTS.md).
         if (output.format === "text") {
           yield* output.raw(START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
         }
@@ -1534,8 +1546,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           localKongCa === undefined ? effect : effect.pipe(withStorageGatewayFetch(localKongCa));
         // Keep the synthetic value out of project dotenv resolution and container environments.
         configureLoopbackProxyBypass();
+        // Logflare runs its migrations before serving `/health`, and Vector waits on Logflare, so
+        // their readiness needs a longer budget than the other services.
+        const serviceTimeoutSeconds = yield* HealthCheckTimeoutSeconds;
+        const healthTimeoutSeconds =
+          started.has(logflareContainerName) || started.has(vectorContainerName)
+            ? serviceTimeoutSeconds * ANALYTICS_HEALTH_TIMEOUT_FACTOR
+            : serviceTimeoutSeconds;
         const healthResult = yield* withLocalKongCa(
           waitForHealthyServices(spawner, [...started.keys()], {
+            timeoutSeconds: healthTimeoutSeconds,
             postgrest: postgrestGateway,
             edgeRuntime: edgeRuntimeGateway,
             images: started,

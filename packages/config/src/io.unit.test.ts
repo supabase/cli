@@ -286,6 +286,15 @@ describe("config io", () => {
     expect(() => decodeCliConfig({ api: { max_rows: NaN } })).toThrow("Expected a finite number");
   });
 
+  test("decodes an optional api.db_pool of one or more whole connections", () => {
+    expect(decodeCliConfig({}).api.db_pool).toBeUndefined();
+    expect(decodeCliConfig({ api: { db_pool: 1 } }).api.db_pool).toBe(1);
+    expect(() => decodeCliConfig({ api: { db_pool: 0 } })).toThrow("one or more connections");
+    expect(() => decodeCliConfig({ api: { db_pool: 1.5 } })).toThrow(
+      "a whole number of connections",
+    );
+  });
+
   test("only validates the highest-priority enabled sms provider during decode", () => {
     // Providers are validated in a fixed priority order (twilio, twilio_verify, messagebird,
     // textlocal, vonage); only the first enabled one is checked, so a complete, higher-priority
@@ -2593,14 +2602,14 @@ project_id = "stagingrefaaaaaaaaaa"
     {
       name: "[inbucket] whatever its contents",
       toml: "[inbucket]\nenabled = false\n",
-      key: "[inbucket]",
-      replacement: "[local_smtp]",
+      key: "inbucket",
+      replacement: "local_smtp",
     },
     {
       name: "[remotes.*.inbucket]",
       toml: `${stagingRemote}\n[remotes.staging.inbucket]\nport = 33333\n`,
-      key: "[remotes.staging.inbucket]",
-      replacement: "[remotes.staging.local_smtp]",
+      key: "remotes.staging.inbucket",
+      replacement: "remotes.staging.local_smtp",
     },
     {
       name: "a non-empty experimental.orioledb_version",
@@ -2623,20 +2632,20 @@ project_id = "stagingrefaaaaaaaaaa"
     {
       name: "an enabled [auth.external.slack]",
       toml: "[auth.external.slack]\nenabled = true\n",
-      key: "[auth.external.slack]",
-      replacement: "[auth.external.slack_oidc]",
+      key: "auth.external.slack",
+      replacement: "auth.external.slack_oidc",
     },
     {
       name: "a disabled [auth.external.linkedin]",
       toml: "[auth.external.linkedin]\nenabled = false\n",
-      key: "[auth.external.linkedin]",
-      replacement: "[auth.external.linkedin_oidc]",
+      key: "auth.external.linkedin",
+      replacement: "auth.external.linkedin_oidc",
     },
     {
       name: "a remote's [auth.external.linkedin]",
       toml: `${stagingRemote}\n[remotes.staging.auth.external.linkedin]\nenabled = true\n`,
-      key: "[remotes.staging.auth.external.linkedin]",
-      replacement: "[remotes.staging.auth.external.linkedin_oidc]",
+      key: "remotes.staging.auth.external.linkedin",
+      replacement: "remotes.staging.auth.external.linkedin_oidc",
     },
   ])("rejects $name", ({ toml, key, replacement }) =>
     runConfigEffect(
@@ -2656,8 +2665,11 @@ project_id = "stagingrefaaaaaaaaaa"
         );
 
         expect(error.message).toBe(
-          "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+          "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
         );
+        expect(error).toMatchObject({
+          suggestion: "Update supabase/config.toml, then rerun the command.",
+        });
       }),
     ));
 
@@ -2688,13 +2700,16 @@ enabled = false
         expect(error.message).toBe(
           [
             "supabase/config.toml uses config keys that are no longer supported:",
-            "  [inbucket]: use [local_smtp] instead.",
+            "  inbucket: use local_smtp instead.",
             "  experimental.orioledb_version: use db.orioledb_version instead.",
-            "  [auth.external.slack]: use [auth.external.slack_oidc] instead.",
-            "  [remotes.staging.inbucket]: use [remotes.staging.local_smtp] instead.",
-            "  [remotes.staging.auth.external.linkedin]: use [remotes.staging.auth.external.linkedin_oidc] instead.",
+            "  auth.external.slack: use auth.external.slack_oidc instead.",
+            "  remotes.staging.inbucket: use remotes.staging.local_smtp instead.",
+            "  remotes.staging.auth.external.linkedin: use remotes.staging.auth.external.linkedin_oidc instead.",
           ].join("\n"),
         );
+        expect(error).toMatchObject({
+          suggestion: "Update supabase/config.toml, then rerun the command.",
+        });
       }),
     ));
 
@@ -3391,7 +3406,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
         expect(error).toMatchObject({
           _tag: "CliConfigRemovedKeyError",
           removedKeys: [
-            { key: "[inbucket]", replacement: "[local_smtp]" },
+            { key: "inbucket", replacement: "local_smtp" },
             {
               key: "remotes.staging.experimental.orioledb_version",
               replacement: "remotes.staging.db.orioledb_version",

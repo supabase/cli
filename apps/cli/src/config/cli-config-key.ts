@@ -12,6 +12,7 @@ import {
   literalSchemas,
   floatSchemas,
   portSchemas,
+  positiveIntSchemas,
   stringSchemas,
   uintSchemas,
   unsupportedTypeName,
@@ -138,6 +139,12 @@ export const floatCodec = codecFromSchemas({
   kind: "float",
   expected: "a finite number",
   schemas: floatSchemas,
+});
+
+export const positiveIntCodec = codecFromSchemas({
+  kind: "uint",
+  expected: "a positive integer",
+  schemas: positiveIntSchemas,
 });
 
 export const portCodec = codecFromSchemas({

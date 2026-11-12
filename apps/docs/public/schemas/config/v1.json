@@ -154,6 +154,19 @@
             }
           ]
         },
+        "db_pool": {
+          "description": "Maximum number of connections in the local PostgREST database pool. Left unset, the default pool size is unchanged.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "^env\\((.*)\\)$"
+            }
+          ]
+        },
         "auto_expose_new_tables": {
           "description": "Controls whether newly-created tables, views, sequences and functions in the `public` schema by `postgres` are reachable through the Data API roles (`anon`, `authenticated`, `service_role`) without explicit GRANTs. When unset, new entities are auto-exposed, matching the cloud default. Set to `false` to revoke the default Data API privileges so new entities require explicit GRANTs, matching a cloud project with the \"Default privileges for new entities\" toggle turned off.",
           "anyOf": [
@@ -5059,6 +5072,19 @@
                         "anyOf": [
                           {
                             "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^env\\((.*)\\)$"
+                          }
+                        ]
+                      },
+                      "db_pool": {
+                        "description": "Maximum number of connections in the local PostgREST database pool. Left unset, the default pool size is unchanged.",
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 1
                           },
                           {
                             "type": "string",

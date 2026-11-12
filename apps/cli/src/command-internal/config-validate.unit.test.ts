@@ -550,7 +550,13 @@ describe("validateResolvedConfig", () => {
       ).toThrow("Postgres version 12.x is unsupported.");
     });
 
-    it.each([13, 14, 15, 17])("accepts the supported major_version %d", (majorVersion) => {
+    it("rejects the unsupported Postgres 13.x major_version with its dedicated message", () => {
+      expect(() =>
+        validateResolvedConfig(minimalInput({ db: { port: 5432, majorVersion: 13 } })),
+      ).toThrow("Postgres version 13.x is unsupported.");
+    });
+
+    it.each([14, 15, 17])("accepts the supported major_version %d", (majorVersion) => {
       expect(() =>
         validateResolvedConfig(minimalInput({ db: { port: 5432, majorVersion } })),
       ).not.toThrow();
