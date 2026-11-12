@@ -1,7 +1,8 @@
 import { Effect, Option } from "effect";
 import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
 import { DnsResolverFlag, OutputFlag } from "../../command-internal/global-flags.ts";
-import { encodeHtmlSafeJsonIndented } from "../../command-internal/html-safe-json.ts";
+import { Tty } from "../../shared/runtime/tty.service.ts";
+import { renderIssuesText } from "./issues.text.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
@@ -118,8 +119,11 @@ const runIssues = Effect.fn("issues.run")(function* (flags: IssuesFlags) {
   else yield* checked;
   const issues = yield* groupIssues(lints, minimum);
   yield* Effect.annotateCurrentSpan("issues.count", issues.length);
-  if (output.format === "text") yield* output.raw(encodeHtmlSafeJsonIndented({ issues, checks }));
-  else yield* output.success("issues", { issues, checks });
+  if (output.format === "text") {
+    const tty = yield* Effect.serviceOption(Tty);
+    const width = Option.isSome(tty) ? (tty.value.stdoutColumns ?? 80) : 80;
+    yield* output.raw(renderIssuesText(issues, checks, minimum, width));
+  } else yield* output.success("issues", { issues, checks });
   const unavailableRemote =
     target.kind === "linked" && checks.some((check) => check.status === "unavailable");
   const thresholdReached =
