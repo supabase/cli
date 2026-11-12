@@ -1044,7 +1044,27 @@ export const makeContainerRuntime = (options: {
                     )
                     .pipe(Effect.mapError((cause) => errorFor("start", cause)))
                 : undefined;
-              if (!interactive) yield* run(["start", name]);
+              if (!interactive)
+                yield* run(["start", name]).pipe(
+                  // A loaded daemon can start the container yet keep the CLI waiting past its
+                  // timeout, so the container's own state decides whether the start failed.
+                  Effect.catchTag("ContainerError", (failure) =>
+                    failure.kind !== "engine-timeout"
+                      ? Effect.fail(failure)
+                      : run(["inspect", "--format", "{{.State.Status}}", name], {
+                          timeout: "5 seconds",
+                        }).pipe(
+                          Effect.flatMap((status) =>
+                            status === "running"
+                              ? Effect.logWarning(
+                                  `Container ${name} is running although '${failure.message}'`,
+                                )
+                              : Effect.fail(failure),
+                          ),
+                          Effect.catchTag("ContainerError", () => Effect.fail(failure)),
+                        ),
+                  ),
+                );
               const wait: Effect.Effect<number, ContainerError> =
                 attached === undefined
                   ? run(["wait", name], {}).pipe(
