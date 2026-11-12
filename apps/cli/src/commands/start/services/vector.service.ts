@@ -22,6 +22,7 @@ import { withChildTraceEnv, withProcessSpanScoped } from "../../../shared/teleme
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { platformDefaultDockerHost } from "../../../command-internal/hostname.ts";
 import { renderStartVectorYaml } from "../lib/template-render.ts";
+import { ANALYTICS_HEALTH_START_PERIOD_SECONDS } from "./logflare.service.ts";
 import { ambientEnvironment } from "../../../shared/config/cli-config-provider.layer.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -227,6 +228,7 @@ const VECTOR_HEALTHCHECK = {
   intervalSeconds: 10,
   timeoutSeconds: 2,
   retries: 3,
+  startPeriodSeconds: ANALYTICS_HEALTH_START_PERIOD_SECONDS,
 } as const;
 
 /**
@@ -305,7 +307,11 @@ export function buildVectorContainerSpec(input: VectorContainerSpecInput): Start
     entrypoint: "sh",
     cmd: ["-c", buildVectorEntrypointScript(vectorYaml, input.logflareId, { slim })],
     binds: input.dockerSocketPlan.binds,
-    healthcheck: slim ? slimWgetHealthcheck("http://127.0.0.1:9001/health") : VECTOR_HEALTHCHECK,
+    healthcheck: slim
+      ? slimWgetHealthcheck("http://127.0.0.1:9001/health", {
+          startPeriodSeconds: ANALYTICS_HEALTH_START_PERIOD_SECONDS,
+        })
+      : VECTOR_HEALTHCHECK,
     restartPolicy: "unless-stopped",
     securityOpt: input.dockerSocketPlan.securityOpt,
     networkId: input.networkId,
