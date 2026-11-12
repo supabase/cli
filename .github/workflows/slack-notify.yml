@@ -18,7 +18,7 @@ on:
         type: string
         default: ""
       status:
-        description: Notification kind (success | failure | publish-failure | awaiting-approval | declined | sync-conflict)
+        description: Notification kind (success | failure | publish-failure | setup-cli-npm-fallback | awaiting-approval | declined | sync-conflict)
         required: false
         type: string
         default: success
@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: ""
+      setup_cli_npm_fallback:
+        description: Whether the setup-cli smoke test fell back from npm to the GitHub release. Adds a notice to success messages.
+        required: false
+        type: boolean
+        default: false
     secrets:
       SLACK_RELEASE_WEBHOOK:
         required: true
@@ -58,6 +63,7 @@ jobs:
           TAG_PREFIX: ${{ inputs.tag_prefix }}
           NPM_PACKAGE: ${{ inputs.npm_package }}
           PULL_REQUEST: ${{ inputs.pull_request }}
+          SETUP_CLI_NPM_FALLBACK: ${{ inputs.setup_cli_npm_fallback }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           SHA: ${{ github.sha }}
@@ -86,6 +92,9 @@ jobs:
               if [[ -n "$NPM_PACKAGE" ]]; then
                 DETAILS="*npm:* <https://www.npmjs.com/package/${NPM_PACKAGE}/v/${VERSION}|${NPM_PACKAGE}@${VERSION}>\n${DETAILS}"
               fi
+              if [[ "$SETUP_CLI_NPM_FALLBACK" == "true" ]]; then
+                DETAILS="⚠️ *setup-cli smoke test:* installing from npm failed and setup-cli fell back to the GitHub release. See the setup-cli smoke jobs in the workflow run.\n${DETAILS}"
+              fi
               ;;
             failure)
               # version/channel may be empty when the planning job itself failed, so
@@ -109,6 +118,11 @@ jobs:
               HEADER="⚠️ ${PACKAGE} v${VERSION} released, but publishing to supabase.com failed"
               FALLBACK_TEXT="⚠️ ${PACKAGE} v${VERSION} was released, but publishing to supabase.com failed"
               DETAILS="The CLI reference or config schemas pull request in supabase/supabase was not opened or updated. Rerun the *Publish to supabase.com* job.\n*Version:* v${VERSION}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view failed run>"
+              ;;
+            setup-cli-npm-fallback)
+              HEADER="⚠️ ${PACKAGE} v${VERSION} released, but setup-cli fell back from npm"
+              FALLBACK_TEXT="⚠️ ${PACKAGE} v${VERSION} was released, but setup-cli fell back from npm to the GitHub release"
+              DETAILS="Installing from npm failed in the setup-cli smoke test and setup-cli fell back to the GitHub release. See the setup-cli smoke jobs in the workflow run.\n*Version:* v${VERSION}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view run>"
               ;;
             awaiting-approval)
               # The approval itself happens on the workflow run page (Approve button +
