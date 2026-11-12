@@ -1,5 +1,5 @@
 import { hasOptionalSubcommand } from "../shared/output/optional-subcommand-usage.ts";
-import { Option } from "effect";
+import { Context, JsonSchema, Option, Schema } from "effect";
 import { stringify } from "yaml";
 import { GlobalFlag } from "effect/cli";
 import type { Command, Param } from "effect/cli";
@@ -10,6 +10,7 @@ import {
   userGlobalFlagParams,
 } from "./docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
+import { CommandOutputAnnotation } from "../command-internal/command-facts/command-output.ts";
 import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
 import { remoteFlagName } from "../shared/output/target-help.ts";
 import {
@@ -70,6 +71,8 @@ export interface DocsCommand {
   readonly usage?: string;
   readonly subcommands: ReadonlyArray<string>;
   readonly flags: ReadonlyArray<DocsFlag>;
+  /** Draft 2020-12 JSON Schema of the command's `--output-format json` stdout. */
+  readonly json_output_schema?: JsonSchema.JsonSchema;
 }
 
 interface DocsInfo {
@@ -280,6 +283,16 @@ function docsExperimentalFlag(rootFlags: ReadonlyArray<DocsFlag>): DocsFlag {
   };
 }
 
+/** A standalone draft 2020-12 JSON Schema for a command's declared output schema. */
+export function docsJsonOutputSchema(schema: Schema.Top): JsonSchema.JsonSchema {
+  const document = Schema.toJsonSchemaDocument(schema);
+  return {
+    $schema: JsonSchema.META_SCHEMA_URI_DRAFT_2020_12,
+    ...document.schema,
+    ...(Object.keys(document.definitions).length === 0 ? {} : { $defs: document.definitions }),
+  };
+}
+
 export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
   const rootPath = ["supabase"];
   const rootFlagParams: ReadonlyArray<Param.AnyFlag> = [
@@ -432,6 +445,10 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
         .map((child) => [...commandPath, child.name].join("-"))
         .filter((childId) => !DOCS_EXCLUDED.has(childId)),
       flags,
+      ...Option.match(Context.getOption(command.annotations, CommandOutputAnnotation), {
+        onNone: () => ({}),
+        onSome: (contract) => ({ json_output_schema: docsJsonOutputSchema(contract.schema) }),
+      }),
     });
 
     // A non-root command's own global flags (e.g. `seed`'s `--remote`) behave like

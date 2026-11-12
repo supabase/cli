@@ -288,6 +288,23 @@ describe("buildDocsSpec", () => {
     expect(snippetsExamples?.[0]?.response).toBeUndefined();
   });
 
+  it("publishes a declared output schema as json_output_schema", () => {
+    const { byId } = builtSpec();
+    expect(byId.get("supabase-branches-delete")?.json_output_schema).toMatchObject({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: { project_ref: { type: "string" } },
+      required: expect.arrayContaining(["project_ref", "message"]),
+    });
+  });
+
+  it("omits json_output_schema for a command without an output declaration", () => {
+    const { byId } = builtSpec();
+    const command = byId.get("supabase-branches-list");
+    expect(command).toBeDefined();
+    expect(command).not.toHaveProperty("json_output_schema");
+  });
+
   it("documents db query's output formats via the injected flag", () => {
     const { byId } = builtSpec();
     const output = byId.get("supabase-db-query")?.flags.find((flag) => flag.id === "output");
