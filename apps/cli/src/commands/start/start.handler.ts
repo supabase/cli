@@ -137,6 +137,7 @@ import {
   rollbackStart,
 } from "../../command-internal/db-bootstrap/rollback.ts";
 import { resolveDbBootstrapConfig } from "../../command-internal/db-bootstrap/bootstrap-config.ts";
+import { warnIfPostgres14Deprecated } from "../../command-internal/db-image.ts";
 import { startDatabase } from "../../command-internal/db-bootstrap/start-database.ts";
 import { START_SERVICES } from "./start.services.ts";
 import {
@@ -547,6 +548,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const dbTomlValues = yield* checkDbConfig(fs, path, cliSettings.workdir).pipe(
       Effect.withSpan("start.validateDbConfig"),
     );
+    yield* warnIfPostgres14Deprecated(config.db.major_version);
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);

@@ -763,6 +763,36 @@ describe("start integration", () => {
     vi.unstubAllEnvs();
   });
 
+  describe("Postgres 14 deprecation", () => {
+    const alreadyRunning = (args: ReadonlyArray<string>) => {
+      if (args[0] === "container" && args[1] === "inspect") return { stdout: [HEALTHY_STATE] };
+      if (args[0] === "ps") return { stdout: [] };
+      return { exitCode: 0 };
+    };
+
+    it.effect("warns that Postgres 14 is end of life and will lose CLI support", () =>
+      Effect.gen(function* () {
+        const { layer, out } = yield* setup({
+          configContents: 'project_id = "demo"\n[db]\nmajor_version = 14\n',
+          route: alreadyRunning,
+        });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Postgres 14 reached end of life");
+        expect(out.stderrText).toContain("Upgrade your project to Postgres 17");
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
+    it.effect("stays silent on a supported Postgres major", () =>
+      Effect.gen(function* () {
+        const { layer, out } = yield* setup({ route: alreadyRunning });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("Postgres 14");
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+  });
+
   describe("--exclude validation", () => {
     it.effect("warns on stderr for an invalid --exclude value, even when already running", () =>
       Effect.gen(function* () {

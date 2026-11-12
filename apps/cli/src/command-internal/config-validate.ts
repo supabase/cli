@@ -346,7 +346,7 @@ export function invalidIssue(
   return { path, message, code, reason, ...(help === undefined ? {} : { help }) };
 }
 
-const SUPPORTED_POSTGRES_MAJOR_VERSIONS: ReadonlyArray<number> = [13, 14, 15, 17];
+const SUPPORTED_POSTGRES_MAJOR_VERSIONS: ReadonlyArray<number> = [14, 15, 17];
 
 /**
  * Runs every validation branch this module owns and returns each failure in the established
@@ -400,6 +400,15 @@ export function collectConfigValidationIssues(
         "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
         "unsupported Postgres version",
         "Postgres 12 is no longer supported; follow https://supabase.com/docs/guides/database#migrating-between-projects",
+      ),
+    );
+  } else if (input.db.majorVersion === 13) {
+    report(
+      invalidIssue(
+        "db.major_version",
+        "Postgres version 13.x is unsupported. To use the CLI, upgrade your project to Postgres 17, then set db.major_version = 17 in your project config: https://supabase.com/docs/guides/platform/upgrading.",
+        "unsupported Postgres version",
+        "upgrade the project to Postgres 17 and set db.major_version = 17; see https://supabase.com/docs/guides/platform/upgrading",
       ),
     );
   } else if (!SUPPORTED_POSTGRES_MAJOR_VERSIONS.includes(input.db.majorVersion)) {

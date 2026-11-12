@@ -175,7 +175,7 @@ describe("config validate integration", () => {
 
           ✗ db.major_version  unsupported Postgres version
             supabase/config.toml:9:17
-            help: use one of 13, 14, 15, 17
+            help: use one of 14, 15, 17
 
           ✗ auth.external.github.client_id  required when auth.external.github.enabled = true
             supabase/config.toml:11:2
@@ -236,7 +236,7 @@ describe("config validate integration", () => {
               "column": 17,
               "end_column": 19,
               "end_line": 9,
-              "help": "use one of 13, 14, 15, 17",
+              "help": "use one of 14, 15, 17",
               "key": "db.major_version",
               "line": 9,
               "path": "db.major_version",
@@ -321,7 +321,7 @@ describe("config validate integration", () => {
 
           ✗ db.major_version  unsupported Postgres version
             supabase/config.jsonc:8:28
-            help: use one of 13, 14, 15, 17
+            help: use one of 14, 15, 17
 
         ✗ 3 errors in supabase/config.jsonc
         "
