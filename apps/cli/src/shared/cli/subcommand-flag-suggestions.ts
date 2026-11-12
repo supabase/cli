@@ -10,6 +10,8 @@ import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 export interface CliErrorSuggestionContext {
   readonly rootCommand: Command.Command.Any;
   readonly args: ReadonlyArray<string>;
+  /** The root the stack opt-in would select; set only while the legacy backend is active. */
+  readonly stackRootCommand?: Command.Command.Any;
 }
 
 export interface FormattedCliError {
@@ -319,6 +321,19 @@ export function isRemoteFlagMisuse(
   );
 }
 
+/** Names the opt-in when the stack backend's version of the command accepts the rejected flag. */
+function buildStackOptInHint(
+  error: CliError.UnrecognizedOption,
+  context: CliErrorSuggestionContext,
+): string | undefined {
+  if (!context.stackRootCommand || !error.command) return undefined;
+  const command = findCommand(context.stackRootCommand, error.command.slice(1));
+  if (!command || !commandFlagsFor(command).some((flag) => flagMatchesOption(flag, error.option))) {
+    return undefined;
+  }
+  return `${optionToken(error.option)} needs the stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1, or set stack = true under [experimental] in your project config and leave SUPABASE_EXPERIMENTAL_STACK unset.`;
+}
+
 function buildSubcommandFlagHint(
   error: CliError.UnrecognizedOption,
   context: CliErrorSuggestionContext,
@@ -381,6 +396,17 @@ export function formatCliErrorsForDisplay(
         formatted.push({
           _tag: error._tag,
           message: `${error.message}\n\n  Hint: ${hint.hint}`,
+          source: error,
+          changed: true,
+        });
+        continue;
+      }
+      const stackHint = buildStackOptInHint(error, context);
+      if (stackHint) {
+        changed = true;
+        formatted.push({
+          _tag: error._tag,
+          message: `${error.message}\n\n  Hint: ${stackHint}`,
           source: error,
           changed: true,
         });
