@@ -91,6 +91,7 @@ import {
   type ResolvedAuthEmail,
 } from "../../command-internal/local-config-values.ts";
 import {
+  configLoadFailureSuggestion,
   describeConfigLoadFailure,
   loadLocalResolvedConfigContext,
   type LocalResolvedConfigContext,
@@ -209,7 +210,10 @@ const startConfigFailure = (cause: unknown) =>
     ? new StartInvalidConfigError({
         message: `invalid config for ${cause.path}: ${cause.message}`,
       })
-    : new StartConfigLoadError({ message: describeConfigLoadFailure(cause) });
+    : new StartConfigLoadError({
+        message: describeConfigLoadFailure(cause),
+        suggestion: configLoadFailureSuggestion(cause),
+      });
 
 /**
  * Wraps a synchronous config resolver that throws on a malformed value into a typed

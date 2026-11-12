@@ -18,7 +18,7 @@ function scanScope(
   let stripped = scope;
 
   if (Object.hasOwn(scope, "inbucket")) {
-    removedKeys.push({ key: `[${prefix}inbucket]`, replacement: `[${prefix}local_smtp]` });
+    removedKeys.push({ key: `${prefix}inbucket`, replacement: `${prefix}local_smtp` });
   }
 
   const experimental = scope["experimental"];
@@ -41,8 +41,8 @@ function scanScope(
     for (const provider of REMOVED_EXTERNAL_PROVIDERS) {
       if (Object.hasOwn(external, provider)) {
         removedKeys.push({
-          key: `[${prefix}auth.external.${provider}]`,
-          replacement: `[${prefix}auth.external.${provider}_oidc]`,
+          key: `${prefix}auth.external.${provider}`,
+          replacement: `${prefix}auth.external.${provider}_oidc`,
         });
       }
     }
