@@ -355,6 +355,7 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_TELEMETRY_POSTHOG_HOST: "telemetry",
   SUPABASE_TELEMETRY_POSTHOG_KEY: "telemetry",
   SUPABASE_TRACE_FILE: "telemetry",
+  SUPABASE_TYPEGEN: "gen types swift binary",
   SUPABASE_URL: "functions runtime env",
   SUPABASE_USE_SLIM_IMAGES: "image selection",
   SUPABASE_WORKDIR: "global flag",
