@@ -1,5 +1,5 @@
 /**
- * Baseline SQL run via `ExecBatch` against a fresh PG14 (`db.major_version != 13`, `<= 14`) local
+ * Baseline SQL run via `ExecBatch` against a fresh PG14 local
  * database, right after {@link START_DB_GLOBALS_SQL}.
  */
 export const START_DB_INITIAL_SCHEMA_14_SQL = `--
