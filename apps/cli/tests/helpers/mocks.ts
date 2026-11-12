@@ -31,6 +31,7 @@ import {
 } from "../../src/command-internal/command-facts/command-output.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
+import { withCommandTarget } from "../../src/shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
 import { Browser } from "../../src/shared/runtime/browser.service.ts";
 import {
@@ -315,6 +316,20 @@ export function mockOutput(
         );
       }
     });
+  const writeResult = (data: unknown) =>
+    Effect.gen(function* () {
+      const payload = yield* withCommandTarget(data);
+      if (opts.format === "json") {
+        rawChunks.push({ text: `${yield* jsonText(payload)}\n`, stream: "stdout" });
+      } else if (opts.format === "stream-json") {
+        events.push({
+          type: "result",
+          data: payload,
+          timestamp: DateTime.formatIso(DateTime.nowUnsafe()),
+        });
+      }
+      yield* checkResult(payload);
+    });
   return {
     verifyCompletion: <A, E, R>(handler: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
       contract === undefined
@@ -403,23 +418,13 @@ export function mockOutput(
                 : yield* jsonText(event),
           });
         }),
-      result: (data: unknown) =>
-        Effect.gen(function* () {
-          if (opts.format === "json") {
-            rawChunks.push({ text: `${yield* jsonText(data)}\n`, stream: "stdout" });
-          } else if (opts.format === "stream-json") {
-            events.push({
-              type: "result",
-              data,
-              timestamp: DateTime.formatIso(DateTime.nowUnsafe()),
-            });
-          }
-          yield* checkResult(data);
-        }),
+      result: writeResult,
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.gen(function* () {
           messages.push({ type: "success", message, data });
-          yield* checkResult({ ...data, message });
+          if (opts.format === "json" || opts.format === "stream-json") {
+            yield* writeResult({ ...data, message });
+          }
         }),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {

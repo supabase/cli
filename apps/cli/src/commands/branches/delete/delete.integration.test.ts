@@ -345,17 +345,26 @@ describe("branches delete integration", () => {
 });
 
 describe("branches delete JSON output contract", () => {
-  const setupJson = (opts: SetupOpts = {}) => {
-    const out = mockOutput({ format: "json", contract: branchesDeleteOutput });
+  const setupJson = (opts: SetupOpts = {}, format: "json" | "stream-json" = "json") => {
+    const out = mockOutput({ format, contract: branchesDeleteOutput });
     const api = buildApi(opts);
-    const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
     return { out, layer: buildRuntime({ out, api, cliSettings }) };
   };
 
   it.effect("writes one result that matches the declared schema", () => {
     const { out, layer } = setupJson();
     return Effect.gen(function* () {
-      yield* out.verifyCompletion(branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }));
+      yield* out.verifyCompletion(
+        branchesDelete({
+          ...baseFlags,
+          projectRef: Option.some(VALID_REF),
+          name: Option.some(BRANCH_UUID),
+        }),
+      );
       expect(out.messages).toEqual([
         {
           type: "success",
@@ -366,11 +375,44 @@ describe("branches delete JSON output contract", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect.each(["json", "stream-json"] as const)(
+    "includes the linked parent target in the declared %s result without target flags",
+    (format) => {
+      const { out, layer } = setupJson({}, format);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = `${tempRoot.current}/supabase/.temp`;
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        yield* fs.writeFileString(`${tempDir}/project-ref`, VALID_REF);
+
+        yield* out.verifyCompletion(
+          branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }),
+        );
+
+        const payload =
+          format === "json"
+            ? yield* decodeJson(out.stdoutText)
+            : out.events.find((event) => event.type === "result")?.data;
+        expect(payload).toEqual({
+          project_ref: BRANCH_UUID,
+          message: "Deleted preview branch",
+          target: { kind: "linked", project_ref: VALID_REF, environment: "unverified" },
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("reports a failed delete as its own error, not a missing result", () => {
     const { out, layer } = setupJson({ deleteStatus: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        out.verifyCompletion(branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) })),
+        out.verifyCompletion(
+          branchesDelete({
+            ...baseFlags,
+            projectRef: Option.some(VALID_REF),
+            name: Option.some(BRANCH_UUID),
+          }),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
