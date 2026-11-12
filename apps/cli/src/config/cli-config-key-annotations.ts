@@ -12,6 +12,7 @@ import {
   globListCodec,
   boolCodec,
   literalCodec,
+  positiveIntCodec,
   stringCodec,
   type CliConfigCodec,
   type CliConfigKeyContext,
@@ -44,6 +45,7 @@ export const CLI_CONFIG_CODEC_OVERRIDES: Readonly<Record<string, CliConfigCodec<
   "db.seed.sql_paths": globListCodec,
   "db.migrations.schema_paths": globListCodec,
   "edge_runtime.policy": literalCodec(["per_worker", "oneshot"]),
+  "api.db_pool": positiveIntCodec,
   "auth.password_requirements": literalCodec([
     "",
     "letters_digits",

@@ -111,6 +111,12 @@ const NATIVE_REQUIRE_CURRENT_PASSWORD = `secure_password_change = false
 # they signed in with a one-time password, magic link, or recovery link.
 # require_current_password = true`;
 
+/* Only the native template documents `db_pool`. */
+const NATIVE_DB_POOL = `max_rows = 1000
+# The maximum number of connections in the local PostgREST database pool. Left unset, the default
+# pool size is unchanged.
+# db_pool = 10`;
+
 const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
   Effect.map((eject) =>
     eject
@@ -123,6 +129,7 @@ const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
       .replace(SCAFFOLD_EMAIL_SIGNUP_COMMENT, NATIVE_EMAIL_SIGNUP_COMMENT)
       .replace(SCAFFOLD_SMS_SIGNUP_COMMENT, NATIVE_SMS_SIGNUP_COMMENT)
       .replace("secure_password_change = false", NATIVE_REQUIRE_CURRENT_PASSWORD)
+      .replace("max_rows = 1000", NATIVE_DB_POOL)
       .replace("rows returns from", "rows returned from")
       .replace("(SIWS, EIP-4361)", "(SIWS)")
       .replace(
