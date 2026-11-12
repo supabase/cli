@@ -1420,22 +1420,27 @@ describe("idle races through a real listener", () => {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "orchestrator-listener-" });
     const stackId = `listener-${root.split("/").at(-1) ?? "stack"}`;
-    const state = yield* Layer.build(StackNamespace.layer({ root })).pipe(
-      Effect.map((context) => Context.get(context, StackNamespace.Service)),
+    /* The host-wide port registry retries a busy open on the clock, which TestClock never advances. */
+    const network = yield* TestClock.withLive(
+      Effect.gen(function* () {
+        const state = yield* Layer.build(StackNamespace.layer({ root })).pipe(
+          Effect.map((context) => Context.get(context, StackNamespace.Service)),
+        );
+        yield* state.save({
+          id: stackId,
+          identity: { projectRoot: root, branchContext: "test", stackName: stackId },
+          runtime: "native",
+          lifetime: "detached",
+          instances: [],
+          composition: { members: [], dependencies: [] },
+        });
+        return yield* Layer.build(
+          Network.layer({ stackId, runtime: "native" }).pipe(
+            Layer.provide(Layer.succeed(StackNamespace.Service, state)),
+          ),
+        ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
+      }),
     );
-    yield* state.save({
-      id: stackId,
-      identity: { projectRoot: root, branchContext: "test", stackName: stackId },
-      runtime: "native",
-      lifetime: "detached",
-      instances: [],
-      composition: { members: [], dependencies: [] },
-    });
-    const network = yield* Layer.build(
-      Network.layer({ stackId, runtime: "native" }).pipe(
-        Layer.provide(Layer.succeed(StackNamespace.Service, state)),
-      ),
-    ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
     const orchestrator = yield* makeTestOrchestrator();
     const address = yield* Ref.make<{ readonly host: string; readonly port: number } | undefined>(
       undefined,
