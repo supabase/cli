@@ -90,18 +90,19 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                 |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — containers/volumes/networks pruned                                                                                                                              |
-| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                                                                                        |
-| `1`  | another lifecycle command still holds the lock after 10 minutes (`ProjectLifecycleLockBusyError`); `--all` waits for every other lifecycle command                        |
-| `1`  | `config.toml` present but malformed (`StopConfigLoadError`), or a config value is invalid (`CliConfigValueError`, naming its source) — an **absent** file is not an error |
-| `1`  | listing containers failed (`StopListError`)                                                                                                                               |
-| `1`  | stopping one or more containers failed (`StopContainerError`)                                                                                                             |
-| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                                                                                               |
-| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`)                                                                        |
-| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                                                                                                   |
-| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                                                                                           |
+| Code | Condition                                                                                                                                                                                                                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — containers/volumes/networks pruned                                                                                                                                                                                                                                                   |
+| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                                                                                                                                                                                                             |
+| `1`  | a stack-only flag (e.g. `--stack`) is given while the legacy backend is active — fails during flag parsing with `Unrecognized flag: <flag>` plus a `Hint:` naming the opt-in (`SUPABASE_EXPERIMENTAL_STACK=1`, or `stack = true` under `[experimental]`); other unrecognized flags get no hint |
+| `1`  | another lifecycle command still holds the lock after 10 minutes (`ProjectLifecycleLockBusyError`); `--all` waits for every other lifecycle command                                                                                                                                             |
+| `1`  | `config.toml` present but malformed (`StopConfigLoadError`), or a config value is invalid (`CliConfigValueError`, naming its source) — an **absent** file is not an error                                                                                                                      |
+| `1`  | listing containers failed (`StopListError`)                                                                                                                                                                                                                                                    |
+| `1`  | stopping one or more containers failed (`StopContainerError`)                                                                                                                                                                                                                                  |
+| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                                                                                                                                                                                                                    |
+| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`)                                                                                                                                                                                             |
+| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                                                                                                                                                                                                                        |
+| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                                                                                                                                                                                                                |
 
 ## Telemetry Events Fired
 
