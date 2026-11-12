@@ -342,6 +342,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let hostDestroyed = 0;
   let composed = 0;
   let catalogApplied = 0;
+  const catalogOverlays: Array<boolean> = [];
   let compositionStarts = 0;
   let lifecycle: "stopped" | "running" = "stopped";
   let activations = new Map<string, "eager" | "lazy">();
@@ -498,8 +499,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     get compositionStarts() {
       return compositionStarts;
     },
-    applyCatalog() {
+    get catalogOverlays() {
+      return catalogOverlays;
+    },
+    applyCatalog(overlay: boolean) {
       catalogApplied += 1;
+      catalogOverlays.push(overlay);
     },
     get savedCredentials() {
       return savedCredentials;
@@ -635,7 +640,7 @@ const layers = (
     ciUnsetLayer,
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(StackCatalogSetup, {
-      apply: () => Effect.sync(() => fixture.applyCatalog()),
+      apply: (input) => Effect.sync(() => fixture.applyCatalog(input.overlay !== undefined)),
     }),
     Layer.succeed(DbConnection, { connect: () => Effect.scoped(Effect.succeed(session)) }),
     Layer.succeed(YesFlag, false),
@@ -1402,6 +1407,23 @@ describe("experimental stack start", () => {
         expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
         expect(fixture.catalogApplied).toBe(1);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("applies the project overlay once when a later start adds a service", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-overlay-once-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "overlay-once"\n');
+      const fixture = fakeStack();
+
+      yield* stackStart(flags(["storage"])).pipe(Effect.provide(layers(root, fixture)));
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      expect(fixture.members.some(({ service }) => service === "storage")).toBe(true);
+      expect(fixture.catalogOverlays).toEqual([true, false]);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("creates the supabase_functions schema once when restarting a stack without it", () =>
