@@ -1044,7 +1044,35 @@ export const makeContainerRuntime = (options: {
                     )
                     .pipe(Effect.mapError((cause) => errorFor("start", cause)))
                 : undefined;
-              if (!interactive) yield* run(["start", name]);
+              if (!interactive)
+                yield* run(["start", name]).pipe(
+                  // Whether the engine stalled before or after starting the process decides the fix.
+                  Effect.catchTag("ContainerError", (failure) =>
+                    failure.kind !== "engine-timeout"
+                      ? Effect.fail(failure)
+                      : run(
+                          [
+                            "inspect",
+                            "--format",
+                            "status={{.State.Status}} started={{.State.StartedAt}} pid={{.State.Pid}} error={{.State.Error}}",
+                            name,
+                          ],
+                          { timeout: "5 seconds" },
+                        ).pipe(
+                          Effect.orElseSucceed(() => "unavailable"),
+                          Effect.flatMap((state) =>
+                            Effect.fail(
+                              new ContainerError({
+                                operation: failure.operation,
+                                message: `${failure.message}; container state: ${state}`,
+                                cause: failure.cause,
+                                kind: failure.kind,
+                              }),
+                            ),
+                          ),
+                        ),
+                  ),
+                );
               const wait: Effect.Effect<number, ContainerError> =
                 attached === undefined
                   ? run(["wait", name], {}).pipe(
