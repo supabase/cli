@@ -33,7 +33,7 @@ FROM supabase/supavisor:2.10.0 AS supavisor
 
 FROM supabase/gotrue:v2.197.0 AS gotrue
 
-FROM supabase/realtime:v2.157.0 AS realtime
+FROM supabase/realtime:v2.159.0 AS realtime
 
 FROM supabase/storage-api:v1.94.0 AS storage
 
