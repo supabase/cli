@@ -72,6 +72,9 @@ export const genTypesGeneratorLayer = Layer.effect(
       PATH: yield* optionalEnv("PATH"),
       PATHEXT: yield* optionalEnv("PATHEXT"),
       ComSpec: yield* optionalEnv("ComSpec"),
+      SUPABASE_TYPEGEN: yield* optionalEnv("SUPABASE_TYPEGEN"),
+      XDG_CACHE_HOME: yield* optionalEnv("XDG_CACHE_HOME"),
+      HOME: yield* optionalEnv("HOME"),
     };
     return GenTypesGenerator.of({
       generate: Effect.fn("GenTypes.generate")(function* (input: GenTypesGenerateInput) {
