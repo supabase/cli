@@ -477,6 +477,27 @@ jobs:
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
+  # notify-slack posts no success message for beta and next, so a setup-cli npm fallback on those
+  # channels gets a notice of its own.
+  notify-slack-npm-fallback:
+    name: Notify Slack (setup-cli npm fallback)
+    needs: [plan, release]
+    if: >-
+      ${{ !cancelled() &&
+      needs.release.result == 'success' &&
+      needs.plan.outputs.dry_run != 'true' &&
+      needs.release.outputs.setup_cli_npm_fallback == 'true' &&
+      needs.plan.outputs.channel != 'stable' &&
+      needs.plan.outputs.channel != 'maintenance' }}
+    uses: ./.github/workflows/slack-notify.yml
+    with:
+      package: Supabase CLI
+      status: setup-cli-npm-fallback
+      version: ${{ needs.plan.outputs.version }}
+      channel: ${{ needs.plan.outputs.channel }}
+    secrets:
+      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+
   # Pages when the release shipped but the supabase.com publish did not. The docs job's
   # continue-on-error hides its own failures, so its report step exports `failed`; a job that ran
   # without exporting `failed=false` (timeout, crash before the report step) counts as failed.

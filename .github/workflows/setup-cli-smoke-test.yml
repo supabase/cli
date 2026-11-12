@@ -108,6 +108,8 @@ jobs:
           fi
       - name: Record the npm fallback
         if: steps.npm-source.outputs.fallback == 'true'
+        # Best-effort: a failed upload must not fail the release; the warning above still annotates the run.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-fallback-v3-${{ matrix.runner }}
@@ -199,6 +201,8 @@ jobs:
           fi
       - name: Record the npm fallback
         if: steps.npm-source.outputs.fallback == 'true'
+        # Best-effort: a failed upload must not fail the release; the warning above still annotates the run.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-fallback-v3-alpine
@@ -262,5 +266,10 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          count="$(gh api --paginate "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[].name' | grep -c '^npm-fallback-' || true)"
+          # Never exits nonzero: failing here would fail the release.
+          if ! names="$(gh api --paginate "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[].name')"; then
+            echo "::warning::Could not list this run's artifacts, so the setup-cli npm fallback check did not run; check the setup-cli v3 smoke jobs for a fallback warning"
+            exit 0
+          fi
+          count="$(grep -c '^npm-fallback-' <<< "${names}" || true)"
           echo "npm_fallback=$([ "${count}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
