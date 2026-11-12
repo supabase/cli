@@ -67,7 +67,9 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         return {
           id: deleted.value.id,
           deleted,
-          scope: `the containers deleted stack ${deleted.value.id} left behind`,
+          scope: deleted.value.unreadable
+            ? `stack ${deleted.value.id}, whose saved state cannot be read, and its owned data`
+            : `the containers deleted stack ${deleted.value.id} left behind`,
         };
       const detail = Result.isFailure(lookup) ? lookup.failure.message : undefined;
       const target = yield* resolver
@@ -174,7 +176,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         if (!batch) yield* Effect.annotateCurrentSpan({ "stack.prompted": !yes });
         if (output.format === "text")
           yield* output.raw(
-            Option.isSome(deleted)
+            Option.isSome(deleted) && !deleted.value.unreadable
               ? `Removed the containers stack ${id} left behind.\n`
               : `Stack ${id} destroyed.\n`,
           );

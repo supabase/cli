@@ -234,7 +234,7 @@ describe("stack target resolver", () => {
   );
 
   it.effect(
-    "tells the user to remove the directory of a saved stack with an unknown service kind",
+    "names the destroy command for a saved stack with an unknown service kind",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -260,9 +260,7 @@ describe("stack target resolver", () => {
         for (const failure of [byProject, byPrefix]) {
           expect(failure.reason).toBe("invalid-config");
           expect(failure.message).toContain(`Stack ${id} could not be read`);
-          expect(failure.message).toContain(
-            `Remove its directory ${path.join(home, "stacks", id)}`,
-          );
+          expect(failure.message).toContain(`run \`supabase stack destroy --stack-id ${id}\``);
         }
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );

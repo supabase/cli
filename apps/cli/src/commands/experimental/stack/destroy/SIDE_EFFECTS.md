@@ -37,6 +37,17 @@ cleanup holds the lease. The deleted stack's data in the state root's shared
 database volume stays, and containers of other state roots are never touched;
 for a deleted `SUPABASE_HOME`, run destroy with that `SUPABASE_HOME`.
 
+A full `--stack-id` whose saved state cannot be decoded (for example one saved by
+an older CLI before a state format change) is selected the same way, whether or
+not containers remain. After confirmation (`stack <id>, whose saved state cannot
+be read, and its owned data`) destroy, holding the stack's lease, removes its
+labelled containers on each reachable engine, the entries of its data root and its
+registration, then prints `Stack <id> destroyed.`; its data in the shared database
+volume stays, and its port reservations are released when another stack needs them.
+When an engine fails to list its containers, or another process holds
+the lease (for example an owner the older CLI started that still runs), destroy
+fails and leaves everything in place.
+
 After confirmation the command opens each selected handle in turn and destroys its
 entire namespace; a stack that fails to be destroyed does not stop the rest.
 Destruction may start an owner to clean up a stopped namespace. Cleanup failures
@@ -99,10 +110,7 @@ stacks it did destroy in `destroyed_stacks`. Exit 0 on destruction, 1 on invalid
 flags, missing selection, rejected/cancelled confirmation, an unreachable engine,
 or cleanup failure, and 130 on interruption. A saved stack whose state cannot be decoded
 (for example one saved by an older CLI with a service kind this CLI no longer
-knows) fails with an error naming its directory under the state root; removing
-that directory discards the stack. Its leftover containers are then removed
-when a container stack next starts under the same state root or by
-`destroy --stack-id`, and its port reservations are released when another stack
-needs them; its data in the shared database volume is not removed. Standard command telemetry is unchanged, with no custom events.
+knows) is destroyed by its full `--stack-id` as described above; selecting it by
+project or `--stack` fails with an error naming that command. Standard command telemetry is unchanged, with no custom events.
 Telemetry flushes on success and failure to
 `<SUPABASE_HOME or ~/.supabase>/telemetry.json`.

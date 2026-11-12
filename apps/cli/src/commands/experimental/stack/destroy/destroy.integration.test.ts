@@ -208,7 +208,7 @@ describe("stack destroy", () => {
     { timeout: 60_000 },
   );
 
-  it.effect("refuses a stack with an unknown service kind and names its directory", () =>
+  it.effect("destroys a stack with an unknown service kind by its ID", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const statePath = f.path.join(f.locations.stateRoot, f.stack.id, "state.json");
@@ -218,12 +218,13 @@ describe("stack destroy", () => {
         saved.replace('"instances":[]', '"instances":[{"id":"logs","service":"vector"}]'),
       );
 
-      const error = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
+      yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
 
-      expect(error.message).toContain(
-        `Remove its directory ${f.path.join(f.locations.stateRoot, f.stack.id)}`,
+      expect(yield* f.fs.exists(statePath)).toBe(false);
+      expect(f.output.stderrText).toContain(
+        `Permanently destroying stack ${f.stack.id}, whose saved state cannot be read, and its owned data.\n`,
       );
-      expect(yield* f.fs.exists(statePath)).toBe(true);
+      expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
     }).pipe(Effect.provide(live)),
   );
 
@@ -269,6 +270,7 @@ describe("stack destroy", () => {
                   destroy: Effect.sync(() => {
                     destroyed += 1;
                   }),
+                  unreadable: false,
                 })
               : Option.none(),
           ),
@@ -600,6 +602,7 @@ describe("stack destroy", () => {
                     destroy: Effect.sync(() => {
                       removed += 1;
                     }),
+                    unreadable: false,
                   })
                 : Option.none(),
             ),

@@ -44,11 +44,16 @@ import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureKind, isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
 import type { ArtifactSelection } from "./Artifacts.ts";
 import { collectDataConflicts } from "./internal/data-conflicts.ts";
-import { initializedDatabaseIds } from "./internal/database-reuse.ts";
+import { initializedDatabaseIds, recreateStackAdvice } from "./internal/database-reuse.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
-import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
+import {
+  discardUnreadableStack,
+  leftBehindStackIds,
+  reclaimDeletedStack,
+  reclaimStack,
+} from "./Sweep.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import {
   findConflict,
@@ -1088,14 +1093,13 @@ export const find = Effect.fn("Stack.find")(
     const state = yield* stateFor(options.stateRoot);
     const id =
       "id" in options ? options.id : yield* deriveStackId(yield* resolveStackIdentity(options));
-    const path = yield* Path.Path;
     const definition = yield* state.read(id).pipe(
       Effect.catchIf(
         (error) => error.operation === "decode",
         (error) =>
           failure(
             "find",
-            `Stack ${id} could not be read: ${error.message}. Remove its directory ${path.join(options.stateRoot, id)} to discard it. Containers it left behind are removed when a container stack next starts under this state root or when the stack is destroyed by id, and its port reservations are released when another stack needs them; its data in the shared database volume is not removed.`,
+            `Stack ${id} could not be read: ${error.message}; ${recreateStackAdvice(id)}`,
           ),
       ),
     );
@@ -1105,15 +1109,20 @@ export const find = Effect.fn("Stack.find")(
   Effect.mapError((cause) => failure("find", cause)),
 );
 
-/** A stack with no registration that left containers behind; destroying it removes them. */
-export type DeletedStack = Pick<Stack, "id" | "destroy">;
+/**
+ * A stack with no registration that left containers behind, or one whose saved state cannot be
+ * decoded (`unreadable`); destroying it removes those containers, and an unreadable stack's data
+ * root entries and registration too.
+ */
+export type DeletedStack = Pick<Stack, "id" | "destroy"> & { readonly unreadable: boolean };
 
 const engineLabel = (engine: "docker" | "podman") => (engine === "docker" ? "Docker" : "Podman");
 
 /**
  * Selects a stack that is no longer registered while containers labelled with its data root in
- * `stateRoot` remain on Docker or Podman. Destroying it removes only those containers, never the
- * stack's data in the shared database volume.
+ * `stateRoot` remain on Docker or Podman, or a registered stack whose saved state cannot be
+ * decoded. Destroying it removes those containers, and an unreadable stack's data root entries and
+ * registration, never the stack's data in the shared database volume.
  */
 export const findDeleted = Effect.fn("Stack.findDeleted")(
   function* (options: StackLocations & { readonly id: string }) {
@@ -1122,7 +1131,15 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
     >();
     const spawner = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
     const state = yield* stateFor(options.stateRoot);
-    if ((yield* state.read(options.id)) !== undefined) return Option.none<DeletedStack>();
+    const registration = yield* state.read(options.id).pipe(
+      Effect.map((saved) => (saved === undefined ? ("none" as const) : ("registered" as const))),
+      Effect.catchIf(
+        (error) => error.operation === "decode",
+        () => Effect.succeed("unreadable" as const),
+      ),
+    );
+    if (registration === "registered") return Option.none<DeletedStack>();
+    const unreadable = registration === "unreadable";
     const probes = yield* Effect.forEach(
       ["docker", "podman"] as const,
       (engine) =>
@@ -1153,20 +1170,35 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
           ]
         : [],
     );
-    if (matched.length === 0) {
+    /* An unreadable stack loses its data on discard, so every engine must be listable first. */
+    if (unreadable ? unlisted !== undefined : matched.length === 0) {
       if (unlisted === undefined) return Option.none<DeletedStack>();
       return yield* failure("find", unlisted.message, unlisted.kind);
     }
-    const destroy = Effect.gen(function* () {
-      for (const { target } of matched) {
-        const refusal = Match.value(
-          yield* reclaimDeletedStack({
+    const reclaims = unreadable
+      ? [
+          discardUnreadableStack({
+            state,
+            stateRoot: options.stateRoot,
+            id: options.id,
+            engineTargets: probes.flatMap(({ outcome }) =>
+              Result.isSuccess(outcome) && Option.isSome(outcome.success)
+                ? [outcome.success.value.target]
+                : [],
+            ),
+          }),
+        ]
+      : matched.map(({ target }) =>
+          reclaimDeletedStack({
             state,
             stateRoot: options.stateRoot,
             id: options.id,
             engineTarget: target,
           }),
-        ).pipe(
+        );
+    const destroy = Effect.gen(function* () {
+      for (const reclaim of reclaims) {
+        const refusal = Match.value(yield* reclaim).pipe(
           Match.when("reclaimed", () => undefined),
           Match.when("held", () => ({
             message: "Another process holds this stack's lease; run destroy again",
@@ -1190,7 +1222,7 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
       Effect.mapError((cause) => failure("destroy", cause)),
       Effect.provideContext(services),
     );
-    return Option.some<DeletedStack>({ id: options.id, destroy });
+    return Option.some<DeletedStack>({ id: options.id, destroy, unreadable });
   },
   Effect.mapError((cause) => failure("find", cause)),
 );

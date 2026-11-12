@@ -690,7 +690,7 @@ it.live("finds a deleted stack only by the containers left in its own state root
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.live("names the directory of a saved stack whose state cannot be decoded", () =>
+it.live("names the destroy command for a saved stack whose state cannot be decoded", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-unreadable-" });
@@ -714,26 +714,61 @@ it.live("names the directory of a saved stack whose state cannot be decoded", ()
 
     expect(failure.operation).toBe("find");
     expect(failure.message).toContain(`Stack ${stack.id} could not be read`);
-    expect(failure.message).toContain(`Remove its directory ${options.stateRoot}/${stack.id}`);
+    expect(failure.message).toContain(`run \`supabase stack destroy --stack-id ${stack.id}\``);
     expect(yield* fs.exists(statePath)).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.live("removes nothing for a stack whose registration is unreadable", () =>
+it.live("destroys a stack whose saved state cannot be decoded only once asked", () =>
   Effect.gen(function* () {
     const { fs, locations, containers } = yield* deletedStackRoot();
-    yield* fs.makeDirectory(`${locations.stateRoot}/${deletedId}`);
-    yield* fs.writeFileString(`${locations.stateRoot}/${deletedId}/state.json`, "{broken");
+    const nativeId = "c".repeat(64);
+    for (const id of [deletedId, nativeId]) {
+      yield* fs.makeDirectory(`${locations.stateRoot}/${id}/data/db`, { recursive: true });
+      yield* fs.writeFileString(`${locations.stateRoot}/${id}/data/db/PG_VERSION`, "17");
+      yield* fs.writeFileString(`${locations.stateRoot}/${id}/state.json`, "{broken");
+    }
     const engine = engineStub(containers);
-
-    const failure = yield* findDeleted({ ...locations, id: deletedId }).pipe(
-      Effect.provide(engine.layer),
-      Effect.flip,
+    const unreadable = (id: string) =>
+      findDeleted({ ...locations, id }).pipe(
+        Effect.provide(engine.layer),
+        Effect.map(Option.getOrThrow),
+      );
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: locations.stateRoot })),
     );
 
-    expect(failure.operation).toBe("find");
-    expect(engine.remaining("docker")).toEqual(containers);
-    expect(engine.remaining("podman")).toEqual(containers);
+    const denied = engineStub(containers, { podman: "permission denied while trying to connect" });
+    const refused = yield* findDeleted({ ...locations, id: deletedId }).pipe(
+      Effect.provide(denied.layer),
+      Effect.flip,
+    );
+    expect(refused.message, "an engine that cannot be listed").toContain("Unable to list Podman");
+    expect(denied.remaining("docker")).toEqual(containers);
+
+    const deleted = yield* unreadable(deletedId);
+    expect(deleted.unreadable).toBe(true);
+    expect(engine.remaining("docker"), "finding removes nothing").toEqual(containers);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* state.acquireLease(deletedId);
+        expect((yield* Effect.flip(deleted.destroy)).message).toContain("holds this stack's lease");
+      }),
+    );
+    expect(yield* fs.exists(`${locations.stateRoot}/${deletedId}/state.json`)).toBe(true);
+    expect(yield* fs.exists(`${locations.stateRoot}/${deletedId}/data/db/PG_VERSION`)).toBe(true);
+    expect(engine.remaining("docker"), "a held lease removes nothing").toEqual(containers);
+
+    yield* deleted.destroy;
+    yield* (yield* unreadable(nativeId)).destroy;
+    const kept = containers.filter(({ id }) => id !== "deleted");
+    expect(engine.remaining("docker")).toEqual(kept);
+    expect(engine.remaining("podman")).toEqual(kept);
+    for (const id of [deletedId, nativeId]) {
+      expect(yield* fs.exists(`${locations.stateRoot}/${id}/state.json`)).toBe(false);
+      expect(yield* fs.readDirectory(`${locations.stateRoot}/${id}/data`)).toEqual([]);
+      expect(Option.isNone(yield* find({ stateRoot: locations.stateRoot, id }))).toBe(true);
+    }
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

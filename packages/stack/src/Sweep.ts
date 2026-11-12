@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Layer, Schema } from "effect";
+import { Context, DateTime, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 import { sweepTimeout } from "./HostProcess.ts";
 import { StackIdSchema } from "./identity/StackId.ts";
@@ -99,6 +99,53 @@ export const reclaimDeletedStack = Effect.fn("Sweep.reclaimDeletedStack")(functi
       if ((yield* state.read(id)) !== undefined) return "registered" as const;
       const dataRoot = yield* StackNamespace.stackDataRootLabel(options.stateRoot, id);
       yield* Owner.sweepContainers({ id }, dataRoot, options.engineTarget);
+      return "reclaimed" as const;
+    }),
+  ).pipe(Effect.timeout(sweepTimeout));
+  yield* Effect.annotateCurrentSpan({ "sweep.outcome": outcome });
+  return outcome;
+});
+
+/**
+ * Discards a stack whose saved state cannot be decoded, holding its lease meanwhile: removes its
+ * containers on each of `engineTargets`, its data root entries, and its registration. The data in
+ * the shared database volume stays. Returns `held` when another process holds the lease,
+ * `registered` when the state became readable, and otherwise `reclaimed`.
+ */
+export const discardUnreadableStack = Effect.fn("Sweep.discardUnreadableStack")(function* (options: {
+  readonly state: StackNamespace.Interface;
+  readonly stateRoot: string;
+  readonly id: string;
+  readonly engineTargets: ReadonlyArray<EngineTarget>;
+}) {
+  const { state, id } = options;
+  const outcome = yield* Effect.scoped(
+    Effect.gen(function* () {
+      if (!(yield* holdLease(state, id))) return "held" as const;
+      const saved = yield* state
+        .read(id)
+        .pipe(Effect.catchIf((error) => error.operation === "decode", () => Effect.void));
+      if (saved !== undefined) return "registered" as const;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dataRoot = yield* StackNamespace.stackDataRootLabel(options.stateRoot, id);
+      for (const engineTarget of options.engineTargets)
+        yield* Owner.sweepContainers({ id }, dataRoot, engineTarget);
+      const root = yield* StackNamespace.resolveStackDataRoot(options.stateRoot, id);
+      yield* fs.readDirectory(root).pipe(
+        Effect.flatMap((names) =>
+          Effect.forEach(
+            names,
+            (name) => fs.remove(path.join(root, name), { recursive: true, force: true }),
+            { discard: true },
+          ),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new StackNamespace.NamespaceError({ operation: "cleanup", message: cause.message, cause }),
+        ),
+      );
+      yield* state.remove(id);
       return "reclaimed" as const;
     }),
   ).pipe(Effect.timeout(sweepTimeout));
