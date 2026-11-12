@@ -250,6 +250,7 @@ describe("buildVectorContainerSpec", () => {
       intervalSeconds: 10,
       timeoutSeconds: 2,
       retries: 3,
+      startPeriodSeconds: 60,
     });
     expect(spec.restartPolicy).toBe("unless-stopped");
     expect(spec.networkId).toBe("supabase_network_proj");
@@ -297,6 +298,7 @@ describe("buildVectorContainerSpec", () => {
       "--spider",
       "http://127.0.0.1:9001/health",
     ]);
+    expect(spec.healthcheck?.startPeriodSeconds).toBe(60);
   });
 });
 
