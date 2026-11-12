@@ -24,6 +24,7 @@ import {
   uintCodec,
   literalCodec,
   makeCliConfigKey,
+  floatCodec,
   portCodec,
   stringCodec,
   type CliConfigKey,
@@ -78,6 +79,7 @@ const codecForLeaf = (segments: ReadonlyArray<string>, node: SchemaAST.AST) => {
       return boolCodec;
     case "Number": {
       const last = segments[segments.length - 1] ?? "";
+      if (last === "cpus") return floatCodec;
       return last === "port" || last.endsWith("_port") ? portCodec : uintCodec;
     }
     case "String":

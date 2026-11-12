@@ -43,6 +43,11 @@ const samplePair = (key: AnyCliConfigKey): readonly [Sample, Sample] => {
         { env: "7", typed: 7 },
         { env: "8", typed: 8 },
       ];
+    case "float":
+      return [
+        { env: "1.5", typed: 1.5 },
+        { env: "2.5", typed: 2.5 },
+      ];
     case "port":
       return [
         { env: "6001", typed: 6001 },

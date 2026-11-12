@@ -305,6 +305,7 @@ const comparable = (
     pin: creation.pin,
     endpoints: withSharedApiPort(creation, sharedPort),
     config,
+    container: creation.container,
   };
 };
 

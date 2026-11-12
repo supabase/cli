@@ -10,7 +10,7 @@ export const SUGGEST_DOCKER_START =
 
 /** Remediation hint shown when the OOM killer kills a container. */
 export const SUGGEST_CONTAINER_MEMORY_LIMIT =
-  "The container ran out of memory and was killed. Raise the memory allocated to your container runtime (Docker Desktop: Settings > Resources), or free up memory on the host, and try again.";
+  "The container ran out of memory and was killed. Raise the memory allocated to your container runtime (Docker Desktop: Settings > Resources), raise `memory` in `[local.services.<service>.container]` if you set one, or free up memory on the host, and try again.";
 
 /** Docker CLI wordings for a daemon that cannot be reached, shared by every daemon-down matcher. */
 export const DOCKER_DAEMON_CONNECTION_FAILURE_PATTERN =

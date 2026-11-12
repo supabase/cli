@@ -33,6 +33,13 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly kind?: StackFailureKind;
 }> {}
 
+/** Resource limits for a service's container; native processes ignore them. */
+export const ContainerResources = Schema.Struct({
+  memoryBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  cpus: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThan(0))),
+});
+export interface ContainerResources extends Schema.Schema.Type<typeof ContainerResources> {}
+
 interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
@@ -59,6 +66,8 @@ interface ContainerSpec {
   readonly stopSignal?: "SIGINT" | "SIGTERM";
   /** `uid:gid` the container runs as, overriding the image's own user. */
   readonly user?: string;
+  /** Memory (with swap pinned to the same value, so it cannot exceed it) and CPU limits. */
+  readonly resources?: ContainerResources;
 }
 
 export interface ContainerProcess {
@@ -770,6 +779,10 @@ export const makeContainerRuntime = (options: {
         "image.name": image,
         ...(spec.service === undefined ? {} : { "container.service": spec.service }),
         "container.ports": spec.ports ?? [],
+        ...(spec.resources?.memoryBytes === undefined
+          ? {}
+          : { "container.memory_bytes": spec.resources.memoryBytes }),
+        ...(spec.resources?.cpus === undefined ? {} : { "container.cpus": spec.resources.cpus }),
       });
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
@@ -863,6 +876,15 @@ export const makeContainerRuntime = (options: {
         ]),
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.stopSignal === undefined ? [] : ["--stop-signal", spec.stopSignal]),
+        ...(spec.resources?.memoryBytes === undefined
+          ? []
+          : [
+              "--memory",
+              String(spec.resources.memoryBytes),
+              "--memory-swap",
+              String(spec.resources.memoryBytes),
+            ]),
+        ...(spec.resources?.cpus === undefined ? [] : ["--cpus", String(spec.resources.cpus)]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
         image,

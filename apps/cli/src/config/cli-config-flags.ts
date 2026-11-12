@@ -88,6 +88,8 @@ const baseFlag = <X>(
     case "uint":
     case "port":
       return parsedFlag(Flag.Int(name), codec, name, path);
+    case "float":
+      return parsedFlag(Flag.String(name), codec, name, path);
     case "literal":
       return parsedFlag(Flag.Literals(name, codec.literals ?? []), codec, name, path);
     case "string":

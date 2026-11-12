@@ -10,6 +10,7 @@ import {
   globEntries,
   globListSchemas,
   literalSchemas,
+  floatSchemas,
   portSchemas,
   stringSchemas,
   uintSchemas,
@@ -82,7 +83,7 @@ export interface CliConfigSources {
   readonly context: CliConfigKeyContext;
 }
 
-type CliConfigCodecKind = "bool" | "uint" | "port" | "string" | "commaList" | "literal";
+type CliConfigCodecKind = "bool" | "uint" | "float" | "port" | "string" | "commaList" | "literal";
 
 export interface CliConfigCodec<X> {
   readonly kind: CliConfigCodecKind;
@@ -131,6 +132,12 @@ export const uintCodec = codecFromSchemas({
   kind: "uint",
   expected: "a non-negative integer",
   schemas: uintSchemas,
+});
+
+export const floatCodec = codecFromSchemas({
+  kind: "float",
+  expected: "a finite number",
+  schemas: floatSchemas,
 });
 
 export const portCodec = codecFromSchemas({

@@ -83,7 +83,7 @@ export const CLI_CONFIG_ENV_NAME_PATHS: Readonly<Record<string, ReadonlyArray<st
 /** Schema sections whose keys take no `SUPABASE_*` override, with the reason. */
 export const CLI_CONFIG_NO_ENV_SECTIONS: Readonly<Record<string, string>> = {
   local:
-    "local stack service versions are pinned in the config file and supabase/supabase.lock only",
+    "local stack service versions and container limits are set in the config file (versions also in supabase/supabase.lock) only",
 };
 
 /** Removed `SUPABASE_*` config overrides with the key and variable that replace them; a non-empty value fails config resolution. */
