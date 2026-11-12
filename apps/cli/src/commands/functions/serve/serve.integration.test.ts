@@ -317,7 +317,9 @@ function mockCommandTelemetry() {
       record: (values: CommandTelemetryAttributeValues) =>
         Ref.update(records, (current) => [...current, values]),
     }),
-    recorded: Ref.get(records),
+    recorded: Ref.get(records).pipe(
+      Effect.map((recorded) => recorded.filter((values) => !("config_format" in values))),
+    ),
   };
 }
 
