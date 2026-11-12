@@ -286,6 +286,15 @@ describe("config io", () => {
     expect(() => decodeCliConfig({ api: { max_rows: NaN } })).toThrow("Expected a finite number");
   });
 
+  test("decodes an optional api.db_pool of one or more whole connections", () => {
+    expect(decodeCliConfig({}).api.db_pool).toBeUndefined();
+    expect(decodeCliConfig({ api: { db_pool: 1 } }).api.db_pool).toBe(1);
+    expect(() => decodeCliConfig({ api: { db_pool: 0 } })).toThrow("one or more connections");
+    expect(() => decodeCliConfig({ api: { db_pool: 1.5 } })).toThrow(
+      "a whole number of connections",
+    );
+  });
+
   test("only validates the highest-priority enabled sms provider during decode", () => {
     // Providers are validated in a fixed priority order (twilio, twilio_verify, messagebird,
     // textlocal, vonage); only the first enabled one is checked, so a complete, higher-priority

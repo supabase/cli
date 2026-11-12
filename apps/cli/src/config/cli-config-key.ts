@@ -11,6 +11,7 @@ import {
   globListSchemas,
   literalSchemas,
   portSchemas,
+  positiveIntSchemas,
   stringSchemas,
   uintSchemas,
   unsupportedTypeName,
@@ -131,6 +132,12 @@ export const uintCodec = codecFromSchemas({
   kind: "uint",
   expected: "a non-negative integer",
   schemas: uintSchemas,
+});
+
+export const positiveIntCodec = codecFromSchemas({
+  kind: "uint",
+  expected: "a positive integer",
+  schemas: positiveIntSchemas,
 });
 
 export const portCodec = codecFromSchemas({

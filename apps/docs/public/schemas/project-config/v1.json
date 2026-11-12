@@ -34,6 +34,11 @@
           "description": "The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests.",
           "default": 1000
         },
+        "db_pool": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of connections in the local PostgREST database pool. Left unset, the default pool size is unchanged."
+        },
         "auto_expose_new_tables": {
           "type": "boolean",
           "description": "Controls whether newly-created tables, views, sequences and functions in the `public` schema by `postgres` are reachable through the Data API roles (`anon`, `authenticated`, `service_role`) without explicit GRANTs. When unset, new entities are auto-exposed, matching the cloud default. Set to `false` to revoke the default Data API privileges so new entities require explicit GRANTs, matching a cloud project with the \"Default privileges for new entities\" toggle turned off."
