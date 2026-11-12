@@ -690,6 +690,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       schemas: validatedConfig.api.schemas.join(","),
                       extraSearchPath: validatedConfig.api.extra_search_path.join(","),
                       maxRows: validatedConfig.api.max_rows,
+                      ...(validatedConfig.api.db_pool === undefined
+                        ? {}
+                        : { dbPool: validatedConfig.api.db_pool }),
                       ...(validatedConfig.api.external_url === undefined
                         ? {}
                         : { externalApiUrl: validatedConfig.api.external_url }),

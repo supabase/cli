@@ -33,6 +33,7 @@ import {
   ComputeUploadFailedError,
   InvalidComputeExcludeError,
   MissingComputeExposureError,
+  UnknownComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { computePush } from "./push.handler.ts";
 import { computePushCommand } from "./push.command.ts";
@@ -62,6 +63,10 @@ const deployRequest = Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
         size: Schema.String,
         exposure: Schema.String,
+        secrets_scope: Schema.Union([
+          Schema.String,
+          Schema.Array(Schema.Struct({ secret_name: Schema.String })),
+        ]),
         instances: Schema.Finite,
       }),
       context_upload_id: Schema.String,
@@ -79,6 +84,8 @@ function flags(overrides: Partial<ComputePushFlags> = {}): ComputePushFlags {
     noWait: false,
     remote: Option.none(),
     projectRef: Option.none(),
+    secretsScope: Option.none(),
+    secretsScopeCustom: Option.none(),
     ...overrides,
   };
 }
@@ -161,6 +168,7 @@ describe("compute push", () => {
                 runtime: "node",
                 size: "2gb-1vcpu",
                 exposure: "public",
+                secrets_scope: "all",
                 instances: 1,
               },
               context_upload_id: UPLOAD_ID,
@@ -345,6 +353,7 @@ describe("compute push", () => {
         expect(attributes.spec).toEqual({
           size: "2gb-1vcpu",
           exposure: "public",
+          secrets_scope: "all",
           instances: 1,
         });
         expect(attributes.context_upload_id).toBe(UPLOAD_ID);
@@ -373,6 +382,9 @@ describe("compute push", () => {
         );
         expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.exposure).toBe(
           "private",
+        );
+        expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope).toBe(
+          "all",
         );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -504,6 +516,7 @@ describe("compute push", () => {
           runtime: "node",
           size: "4gb-2vcpu",
           exposure: "public",
+          secrets_scope: "all",
           instances: 3,
         });
       }).pipe(Effect.provide(layer));
@@ -764,6 +777,98 @@ describe("compute push", () => {
         expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.exposure).toBe(
           "private",
         );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reads the compute secrets_scope defined on config", () =>
+    Effect.gen(function* () {
+      const repo = yield* project({
+        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsecrets_scope = "none"`,
+      });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
+
+      return yield* Effect.gen(function* () {
+        yield* push();
+
+        const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+        expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope).toBe(
+          "none",
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reads the compute secrets_scope defined on config as array", () =>
+    Effect.gen(function* () {
+      const repo = yield* project({
+        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsecrets_scope = ["STRIPE_KEY", "ANTHROPIC_KEY"]`,
+      });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
+
+      return yield* Effect.gen(function* () {
+        yield* push();
+
+        const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+        expect(
+          (yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope,
+        ).toStrictEqual([{ secret_name: "STRIPE_KEY" }, { secret_name: "ANTHROPIC_KEY" }]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("lets --secrets-scope overrided the defined secrets_scope", () =>
+    Effect.gen(function* () {
+      const repo = yield* project({
+        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsecrets_scope = "all"`,
+      });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
+
+      return yield* Effect.gen(function* () {
+        yield* push({ secretsScope: Option.some("supabase") });
+
+        const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+        expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope).toBe(
+          "supabase",
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("lets --secrets-scope overrided the defined secrets_scope as array", () =>
+    Effect.gen(function* () {
+      const repo = yield* project({
+        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsecrets_scope = "all"`,
+      });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
+
+      return yield* Effect.gen(function* () {
+        yield* push({ secretsScopeCustom: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]) });
+
+        const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+        expect(
+          (yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope,
+        ).toStrictEqual([{ secret_name: "STRIPE_KEY" }, { secret_name: "ANTHROPIC_KEY" }]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("refuses an invalid secrets_scope defined on config", () =>
+    Effect.gen(function* () {
+      const repo = yield* project({
+        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsecrets_scope = "meow"`,
+      });
+      const { layer, http } = setupPush({ workdir: repo.dir, routes: routes() });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* push().pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(UnknownComputeSecretsScopeError);
+        expect(error).toMatchObject({
+          detail: expect.stringContaining("meow"),
+          suggestion: expect.stringContaining("all, supabase, none"),
+        });
+        expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -1088,6 +1193,7 @@ describe("compute push", () => {
           runtime: "node",
           size: "2gb-1vcpu",
           exposure: "public",
+          secrets_scope: "all",
           instances: 3,
         });
         // Every value came from config, so nothing was inferred from the files.

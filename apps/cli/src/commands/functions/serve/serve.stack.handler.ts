@@ -294,7 +294,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const remoteKeys =
     refreshedJwks === undefined ? [] : yield* Schema.decodeEffect(JwkArray)(refreshedJwks);
   const jwks = yield* Schema.encodeEffect(JwksDocument)({ keys: [...remoteKeys, ...localKeys] });
-  const databaseUrl = (yield* database.credentials({ from: "runtime" })).databaseUrl;
+  const databaseUrl = (yield* database.credentials({ from: "runtime" })).functionsDatabaseUrl;
   if (databaseUrl === undefined) return yield* invalidConfig("The database has no runtime URL.");
   const apiSource = [...members, ...instances].find(
     (instance) =>

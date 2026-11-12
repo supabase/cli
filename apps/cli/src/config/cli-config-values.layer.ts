@@ -28,7 +28,7 @@ import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { escapeControlCharacters } from "../shared/output/escape-control-characters.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { PropConfigKey } from "../shared/telemetry/event-catalog.ts";
+import { PropConfigFormat, PropConfigKey } from "../shared/telemetry/event-catalog.ts";
 import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 import { CLI_CONFIG_FAMILIES, CLI_CONFIG_REMOVED_ENV_NAMES } from "./cli-config-key-annotations.ts";
 import {
@@ -232,6 +232,18 @@ const materializedWrite = (
   return key.normalize === undefined ? declared : key.toDocument(picked.value);
 };
 
+const cliConfigFileFormat = (filePath: string) =>
+  filePath.endsWith(".jsonc") ? "jsonc" : filePath.endsWith(".json") ? "json" : "toml";
+
+const recordConfigFormat = (filePath: string | undefined) =>
+  filePath === undefined
+    ? Effect.void
+    : recordCommandTelemetry({ [PropConfigFormat]: cliConfigFileFormat(filePath) });
+
+const failedConfigFilePath = (
+  error: Effect.Error<ReturnType<typeof parseCliConfigDocumentFile>>,
+): string | undefined => ("path" in error ? error.path : undefined);
+
 export const cliConfigValuesLayer = Layer.effect(
   CliConfigValues,
   Effect.gen(function* () {
@@ -302,7 +314,8 @@ export const cliConfigValuesLayer = Layer.effect(
         : yield* Cache.get(
             target.validation ? validationParsedDocuments : parsedDocuments,
             target.workdir,
-          );
+          ).pipe(Effect.tapError((error) => recordConfigFormat(failedConfigFilePath(error))));
+      yield* recordConfigFormat(parsed?.path);
       const notices = !target.validation;
       for (const deprecatedPath of notices ? (parsed?.deprecatedPaths ?? []) : []) {
         yield* printOnce(deprecatedKeyLine(deprecatedPath));
