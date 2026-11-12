@@ -6,6 +6,7 @@ import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import {
   INIT_GITIGNORE_TEMPLATE,
+  INIT_README_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
   VSCODE_EXTENSIONS_TEMPLATE,
   VSCODE_SCHEMA_TRUST_TEMPLATE,
@@ -261,8 +262,20 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
   yield* fs.writeFileString(gitignorePath, INIT_GITIGNORE_TEMPLATE, { mode: INIT_FILE_MODE });
 });
 
+const ensureSupabaseReadme = Effect.fnUntraced(function* (supabaseDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const readmePath = path.join(supabaseDir, "README.md");
+  if (yield* fs.exists(readmePath)) {
+    return;
+  }
+
+  yield* fs.writeFileString(readmePath, INIT_README_TEMPLATE, { mode: INIT_FILE_MODE });
+});
+
 /**
- * Scaffolds the local project files (config.toml, .gitignore, optional IDE
+ * Scaffolds the local project files (config.toml, .gitignore, README.md, optional IDE
  * settings). This owns the mechanical filesystem work only — it does not
  * decide how an already-initialized project is reported. When a
  * `config.json`, `config.jsonc` or `config.toml` already exists and `force` is
@@ -303,6 +316,7 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
     yield* fs.remove(jsonConfigPath, { force: true });
   }
   yield* ensureSupabaseGitignore(options.cwd);
+  yield* ensureSupabaseReadme(supabaseDir);
 
   // Requires text mode (json/stream-json stay payload-only and never scaffold
   // IDE settings as an undisclosed side effect) and an interactive stdout,

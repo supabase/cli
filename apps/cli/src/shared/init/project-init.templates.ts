@@ -443,6 +443,54 @@ export const INIT_GITIGNORE_TEMPLATE = `# Supabase
 .env.*.local
 `;
 
+export const INIT_README_TEMPLATE = `# Supabase directory
+
+[![Made with Supabase](https://supabase.com/badge-made-with-supabase.svg)](https://supabase.com)
+
+This directory holds your [Supabase project configuration](https://supabase.com/docs/guides/local-development/cli/config). \`supabase init\` created it, and it
+is meant to be committed to git.
+
+## What is here
+
+- \`config.toml\`: configuration for the local stack and the linked project.
+- \`.gitignore\`: keeps local CLI state out of git.
+- \`.temp/\`: CLI state, such as the linked project. Git-ignored.
+
+These appear as you use them:
+
+- \`migrations/\`: database migrations, applied in order. Created by \`supabase migration new <name>\`.
+- \`seed.sql\`: seed data loaded by \`supabase db reset\`. You create this file.
+- \`functions/\`: Edge Functions. Created by \`supabase functions new <name>\`.
+
+## Common commands
+
+- \`supabase start\`: start the full local stack in containers.
+- \`supabase migration new <name>\`: create an empty migration file.
+- \`supabase db reset\`: reset the local database to your migrations, then run \`seed.sql\`.
+- \`supabase link\`: link this directory to a hosted project.
+- \`supabase db push\`: apply your local migrations to the linked project.
+- \`supabase gen types\`: generate types from your Postgres schema.
+
+Run \`supabase --help\` for everything else, or see
+https://supabase.com/docs/guides/local-development.
+
+## What is Supabase?
+
+Supabase helps you build a complete backend platform, from your database to application logic. And you can start for free!
+
+We're an open-source platform with several components that you can use together or separately:
+
+- [Postgres database](https://supabase.com/docs/guides/database/overview): Every project is a **full Postgres database**, the world's most trusted relational database.
+- [Authentication](https://supabase.com/docs/guides/auth): Add user sign ups and logins, securing your data with Row Level Security.
+- [Edge Functions](https://supabase.com/docs/guides/functions): Author, deploy, and monitor serverless functions distributed globally at the edge, close to your users.
+- [Storage](https://supabase.com/docs/guides/storage): Store, organize, and serve large files, from videos to images.
+- [Realtime](https://supabase.com/docs/guides/realtime): Build multiplayer experiences with realt-ime data synchronization.
+- [Vector](https://supabase.com/docs/guides/ai): Integrate your favorite ML models to store, index, and search vector embeddings.
+- [Queues](https://supabase.com/docs/guides/queues): A Postgres-native durable Message Queue system with guaranteed delivery.
+- [Cron](https://supabase.com/docs/guides/cron): Simplify scheduling recurring Jobs with cron syntax and monitoring Job runs inside Postgres.
+- Data APIs: Instant, ready-to-use [REST](https://supabase.com/docs/guides/api) and [GraphQL APIs](https://supabase.com/docs/guides/api).
+`;
+
 export const VSCODE_EXTENSIONS_TEMPLATE = `{
   "recommendations": ["denoland.vscode-deno"]
 }

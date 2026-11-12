@@ -20,6 +20,7 @@
 | `supabase/config.jsonc`   | -      | removed (if present) when `--force` is set, so the fresh `config.toml` is the file that loads                           |
 | `supabase/config.toml`    | TOML   | always on success; created from the default template, or the stack-opt-in template when `SUPABASE_EXPERIMENTAL_STACK=1` |
 | `supabase/.gitignore`     | text   | when inside a git repo and the template is not already present                                                          |
+| `supabase/README.md`      | text   | when the file does not already exist; an existing file is kept, including with `--force`                                |
 | `.vscode/settings.json`   | JSON   | when interactive VS Code setup is accepted, or when `--with-vscode-settings` / `--with-vscode-workspace` is set         |
 | `.vscode/extensions.json` | JSON   | when interactive VS Code setup is accepted, or when `--with-vscode-settings` / `--with-vscode-workspace` is set         |
 | `.idea/deno.xml`          | XML    | when interactive IntelliJ setup is accepted, or when `--with-intellij-settings` is set                                  |
