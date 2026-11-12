@@ -385,7 +385,7 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("reports every bad remote and still validates the healthy ones", () =>
+  it.effect("reports every bad remote project_id and still validates every remote block", () =>
     Effect.gen(function* () {
       const result = yield* validate(
         tomlFile(
@@ -396,11 +396,8 @@ describe("config validate integration", () => {
 
       const data = payloadOf(result);
       expect(data).toMatchObject({
-        remotes: ["c"],
-        skipped_remotes: [
-          { name: "a", reason: "invalid project_id" },
-          { name: "b", reason: "invalid project_id" },
-        ],
+        remotes: ["a", "b", "c"],
+        complete: true,
       });
       expect(Reflect.get(data ?? {}, "errors")).toMatchObject([
         { code: "remote_project_id", key: "remotes.a.project_id", remote: "a" },
@@ -433,7 +430,6 @@ describe("config validate integration", () => {
 
       const data = payloadOf(result) ?? {};
       expect(Reflect.get(data, "remotes")).toContain("b");
-      expect(Reflect.get(data, "skipped_remotes")).toBeUndefined();
       expect(Reflect.get(data, "errors")).toMatchObject([
         { code: "remote_project_id", remote: "b", reason: "same project_id as remotes.a]b" },
         { code: "invalid_value", remote: "b", key: "remotes.b.api.max_rows" },
@@ -754,19 +750,99 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("skips a remote whose project_id is an unset env() reference and warns instead", () =>
+  it.effect(
+    "warns instead of failing for a remote whose project_id is an unset env() reference",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile('project_id = "demo"\n[remotes.prod]\nproject_id = "env(UNSET_REF)"\n'),
+        );
+
+        expect(result.exitCode).toBeUndefined();
+        expect(result.stdout).toContain("⚠ project_id  UNSET_REF is not set");
+        expect(result.stdout).toContain("[remote: prod]");
+        expect(result.stdout).toContain("Checked remotes: prod");
+        expect(result.stdout).not.toContain("✗");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("validates a remote block whose project_id is unusable", () =>
     Effect.gen(function* () {
       const result = yield* validate(
-        tomlFile('project_id = "demo"\n[remotes.prod]\nproject_id = "env(UNSET_REF)"\n'),
+        tomlFile(
+          'project_id = "demo"\n[remotes.c]\nproject_id = "env(CPID)"\n[remotes.c.api]\nport = "zz"\n[remotes.c.db]\nmajor_version = 99\n',
+        ),
+        { format: "json" },
       );
 
-      expect(result.exitCode).toBeUndefined();
-      expect(result.stdout).toContain("⚠ project_id  UNSET_REF is not set");
-      expect(result.stdout).toContain("[remote: prod]");
-      expect(result.stdout).toContain(
-        "Skipped remotes: prod (project_id is an unset env() reference)",
+      const data = payloadOf(result) ?? {};
+      expect(Reflect.get(data, "valid")).toBe(false);
+      expect(Reflect.get(data, "remotes")).toEqual(["c"]);
+      expect(Reflect.get(data, "errors")).toMatchObject([
+        { remote: "c", key: "remotes.c.api.port" },
+        { remote: "c", key: "remotes.c.db.major_version" },
+      ]);
+      expect(Reflect.get(data, "warnings")).toMatchObject([
+        { code: "env_unresolved", remote: "c" },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("drops a cross-key check that reads an unresolved reference and warns about it", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.mfa.totp]\nenroll_enabled = true\nverify_enabled = "env(VERIFY_TOTP)"\n',
+        ),
+        { format: "json" },
       );
-      expect(result.stdout).not.toContain("✗");
+
+      const data = payloadOf(result) ?? {};
+      expect(Reflect.get(data, "errors")).toEqual([]);
+      expect(Reflect.get(data, "warnings")).toMatchObject([
+        { code: "env_unresolved", key: "auth.mfa.totp.verify_enabled" },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keeps a cross-key error that reads no unresolved reference", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.mfa.totp]\nenroll_enabled = true\n[auth.mfa.phone]\nverify_enabled = "env(VERIFY_PHONE)"\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { key: "auth.mfa.totp.enroll_enabled" },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not warn about an env() list item its owning key's override replaces", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[api]\nschemas = ["env(UNSET_SCHEMA)"]\n'),
+        { format: "json", env: { SUPABASE_API_SCHEMAS: "public" } },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("warns about an env() under a pruned table whose gate the document enables", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.email.smtp]\nenabled = true\npass = "env(SMTP_PASS)"\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
+        { code: "env_unresolved", key: "auth.email.smtp.pass" },
+      ]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -865,6 +941,24 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("quotes the empty choice of a codec enum", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[auth]\npassword_requirements = "nope"\n'),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        {
+          code: "invalid_enum",
+          key: "auth.password_requirements",
+          reason:
+            'expected one of "", letters_digits, lower_upper_letters_digits, lower_upper_letters_digits_symbols',
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("fails an undecryptable env override of a key whose file value is an unset env()", () =>
     Effect.gen(function* () {
       const result = yield* validate(
@@ -921,6 +1015,21 @@ describe("config validate integration", () => {
         expect.objectContaining({ line: 3 }),
       );
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect.each(["email", "sms"])(
+    "names auth.%s.enabled by the spelling the document uses",
+    (provider) =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile(`project_id = "demo"\n[auth.${provider}]\nenabled = "invalid"\n`),
+          { format: "json" },
+        );
+
+        expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+          { key: `auth.${provider}.enabled`, line: 3 },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("reports a present key with a bad value once, not also as missing", () =>

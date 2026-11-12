@@ -202,6 +202,24 @@ function locateProblem(
   );
 }
 
+/** Problems carry the canonical `enable_signup`; name the key by the spelling the document uses. */
+function inDocumentSpelling(item: ConfigProblem, document: CliConfigDocumentScan): ConfigProblem {
+  const { path } = item;
+  if (item.code === "deprecated_key" || path?.length !== 3 || path[0] !== "auth") return item;
+  if ((path[1] !== "email" && path[1] !== "sms") || path[2] !== "enable_signup") return item;
+  const preferred = ["auth", path[1], "enabled"];
+  const written = document.locate(
+    item.remote === undefined ? preferred : ["remotes", item.remote, ...preferred],
+    "key",
+  );
+  return written?.exact === true ? { ...item, path: preferred } : item;
+}
+
+function locatedProblem(item: ConfigProblem, document: CliConfigDocumentScan): ConfigProblem {
+  const spelled = inDocumentSpelling(item, document);
+  return { ...spelled, location: locateProblem(spelled, document) };
+}
+
 function deprecatedKeyProblems(parsed: ParsedCliConfigDocument): ReadonlyArray<ConfigProblem> {
   return parsed.deprecatedPaths.map((dotted) => {
     const split = splitRemotePath(dotted.split("."));
@@ -260,7 +278,9 @@ const schemaProblems = (
 
 function invalidValueProblem(error: CliConfigValueError, file: string): ConfigProblem {
   const fromEnv = error.tier === "shell" || error.tier === "projectEnv" || error.tier === "flag";
-  const unquotedExpected = error.expected?.replaceAll('"', "");
+  const unquotedExpected = error.expected?.replace(/"([^",]*)"/g, (quoted, choice: string) =>
+    choice === "" ? quoted : choice,
+  );
   const reason =
     unquotedExpected !== undefined
       ? `expected ${unquotedExpected}`
@@ -298,6 +318,7 @@ function semanticProblem(
   const path = issue.segments ?? issue.path.split(".");
   const fromEnv = origin.tier === "shell" || origin.tier === "projectEnv";
   return problem(code, {
+    derived: true as const,
     ...(issue.path === "" ? {} : { path }),
     reason: issue.reason,
     ...(fromEnv
@@ -411,7 +432,6 @@ export const configValidate = Effect.fn("config.validate")(function* () {
       file: display,
       format: reportFormat(display, format),
       remotes: [],
-      skippedRemotes: [],
       stoppedAt,
       problems: problems.map((item) => ({
         ...item,
@@ -608,12 +628,8 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         file,
         format,
         remotes: [],
-        skippedRemotes: [],
         stoppedAt: base.stop,
-        problems: [...notices, ...base.problems].map((item) => ({
-          ...item,
-          location: locateProblem(item, document),
-        })),
+        problems: [...notices, ...base.problems].map((item) => locatedProblem(item, document)),
       } satisfies ValidateReport;
       return yield* emit(report);
     }
@@ -671,20 +687,7 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         };
       }).pipe(Effect.withSpan("config.validate.env"));
 
-    const failedRemotes = new Map(
-      (base.resolved?.remoteFailures ?? [])
-        .filter((failure) => failure.kind === "invalid")
-        .map((failure) => [failure.remote, failure]),
-    );
-    const skippedRemotes = remoteNames
-      .filter((name) => failedRemotes.has(name))
-      .map((name) => ({
-        name,
-        reason: unresolvedProjectIdRemotes.has(name)
-          ? "project_id is an unset env() reference"
-          : "invalid project_id",
-      }));
-    const checkedRemotes = remoteNames.filter((name) => !failedRemotes.has(name));
+    const checkedRemotes = remoteNames;
     const remotePasses = yield* Effect.forEach(checkedRemotes, (name) => pass(name), {
       concurrency: 1,
     }).pipe(Effect.withSpan("config.validate.remotes"));
@@ -731,10 +734,11 @@ export const configValidate = Effect.fn("config.validate")(function* () {
 
     const isGateOpen = (reference: EnvReference, context: string | undefined): boolean => {
       const owner = passes.get(context)?.resolved;
-      return (
-        nearestEnabledGate([owner?.materialized.config, owner?.loaded.document], reference.path) !==
-        false
-      );
+      const fellBack = owner?.pruned.some((path) => path.every((s, i) => s === reference.path[i]));
+      const configs = fellBack
+        ? [owner?.loaded.document]
+        : [owner?.materialized.config, owner?.loaded.document];
+      return nearestEnabledGate(configs, reference.path) !== false;
     };
     const isRelevantIn = (reference: EnvReference, context: string | undefined): boolean =>
       CLI_CONFIG_OPTIONAL_ENV_PATHS[displayPath(reference.path)] === undefined &&
@@ -748,10 +752,11 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         ...(remote === undefined ? {} : { remote }),
       });
     const isOverridden = (reference: EnvReference, context: string | undefined): boolean => {
-      const origin = passes
-        .get(context)
-        ?.resolved?.materialized.originAt(displayPath(reference.path));
-      return origin?.tier === "shell" || origin?.tier === "projectEnv" || origin?.tier === "flag";
+      const materialized = passes.get(context)?.resolved?.materialized;
+      return reference.path.some((_, index) => {
+        const origin = materialized?.originAt(displayPath(reference.path.slice(0, index + 1)));
+        return origin?.tier === "shell" || origin?.tier === "projectEnv" || origin?.tier === "flag";
+      });
     };
     const envWarnings = unresolved.flatMap((reference) => {
       const warns = (context: string | undefined) =>
@@ -775,17 +780,13 @@ export const configValidate = Effect.fn("config.validate")(function* () {
         .map((name) => envWarning(reference, name));
     });
     const document = scanCliConfigDocument(parsed.rawText, parsed.format);
-    const located = [...kept, ...envWarnings].map((item) => ({
-      ...item,
-      location: locateProblem(item, document),
-    }));
+    const located = [...kept, ...envWarnings].map((item) => locatedProblem(item, document));
 
     const remoteStop = remotePasses.find((item) => item.stop !== undefined)?.stop;
     return yield* emit({
       file,
       format,
       remotes: checkedRemotes,
-      skippedRemotes,
       ...(remoteStop === undefined ? {} : { stoppedAt: remoteStop }),
       problems: located,
     });

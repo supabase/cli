@@ -118,6 +118,12 @@ describe("locateCliConfigKey (toml)", () => {
 });
 
 describe("locateCliConfigKey (jsonc)", () => {
+  test("locates the last of a duplicated key, as the parser keeps", () => {
+    const source = '{ "api": { "port": 1, "port": 2 } }';
+    const location = locateCliConfigKey(source, "json", ["api", "port"], "value");
+    expect(location).toMatchObject({ line: 1, column: source.lastIndexOf("2") + 1 });
+  });
+
   const jsonc = [
     "﻿// comment",
     "{",

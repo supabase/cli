@@ -63,6 +63,15 @@ describe("flattenSchemaIssues", () => {
     expect(flat[2]?.help).toBe("use one of fast, slow");
   });
 
+  it("quotes an empty enum choice", () => {
+    const [issue] = flattenSchemaIssues(
+      schemaError(Schema.Struct({ mode: Schema.Literals(["", "letters"]) }), { mode: "x" }),
+    );
+
+    expect(issue?.reason).toBe('expected one of "", letters');
+    expect(issue?.help).toBe('use one of "", letters');
+  });
+
   it("returns nothing for a cause that is not a schema error", () => {
     expect(flattenSchemaIssues(new Error("boom"))).toEqual([]);
   });

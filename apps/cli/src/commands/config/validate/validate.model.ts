@@ -34,6 +34,8 @@ export interface ConfigProblem {
   readonly location?: CliConfigLocation;
   /** The value comes from the environment, so the config file has no location for it. */
   readonly external?: true;
+  /** A cross-key check raised this from other keys' values, not from the value at `path`. */
+  readonly derived?: true;
 }
 
 /** Splits a `remotes.<name>.…` path into the remote and the path inside it. */
@@ -133,10 +135,26 @@ export function envReferences(document: unknown): ReadonlyArray<EnvReference> {
   return found;
 }
 
+/** Whether a cross-key check that reports `path` reads `reference`: an enclosing `enabled` gate, an MFA factor's `verify_enabled`, or a third-party provider's `enabled`. */
+function readsKey(path: ReadonlyArray<string>, reference: ReadonlyArray<string>): boolean {
+  const last = reference.at(-1);
+  if (last === "enabled" && atOrBelow(path, reference.slice(0, -1))) return true;
+  const [root, group, factor, key] = path;
+  if (root === "auth" && group === "mfa" && key === "enroll_enabled") {
+    return reference.join("\0") === ["auth", "mfa", factor, "verify_enabled"].join("\0");
+  }
+  return (
+    path.join(".") === "auth.third_party" &&
+    last === "enabled" &&
+    reference.length === 4 &&
+    atOrBelow(reference, path)
+  );
+}
+
 /**
  * Drops value-level errors that sit at or below a key whose `env(NAME)` reference could not be
  * resolved, since the literal reference text is what fails, and names the references that caused a
- * drop. Errors about the key itself, and values an env variable supplied, always stay.
+ * drop. A cross-key (`derived`) error also goes when a key its check reads is unresolved. Errors about the key itself, and values an env variable supplied, always stay.
  */
 export function withoutUnresolvedEnvErrors(
   problems: ReadonlyArray<ConfigProblem>,
@@ -156,8 +174,10 @@ export function withoutUnresolvedEnvErrors(
       return true;
     }
     const { path } = problem;
-    const owners = unresolvedFor(problem.remote).filter((reference) =>
-      atOrBelow(path, reference.path),
+    const owners = unresolvedFor(problem.remote).filter(
+      (reference) =>
+        atOrBelow(path, reference.path) ||
+        (problem.derived === true && readsKey(path, reference.path)),
     );
     for (const reference of owners) {
       blamed.push({

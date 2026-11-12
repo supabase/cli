@@ -45,7 +45,7 @@
 | `1`  | a `[remotes.*]` block has an invalid or duplicate `project_id`                                                                |
 | `1`  | no project config found, `--workdir` is not a directory, or `-o/--output` was passed (generic error envelope in JSON mode)    |
 
-Telemetry records a run that reports problems as a successful command, because the exit code is set after the handler succeeds.
+Telemetry records a run that exits 1 as a failed command classified as a user-actionable `invalid_config` error (`ConfigValidateProblemsError`), because the exit code is set after the handler succeeds rather than by a raised error.
 
 ## Run order and stops
 
@@ -59,7 +59,7 @@ stdout is one report: every problem in file order, each as `<key>  <reason>` wit
 
 ### `--output-format json`
 
-`{"schema_version":1,"valid","complete","stopped_at"?,"file","format","remotes":[],"skipped_remotes"?,"errors":[],"warnings":[],"message"}`. Each entry has `code`, `severity`, `reason` and, when known, `key`, `path`, `remote`, `file`, `help`, `line`, `column`, `end_line`, `end_column`. Codes: `syntax`, `file_conflict`, `schema_version`, `removed_key`, `unknown_key`, `invalid_type`, `invalid_enum`, `invalid_value`, `missing_required`, `remote_project_id`, `env_file`, `removed_env`, `env_unresolved`, `deprecated_key`, `shadowed_file`, `unrecognized_schema`. It never contains source text or configured values. Failures before a report exists (no config, bad `--workdir`, `-o`) use the generic `{"_tag":"Error",...}` envelope.
+`{"schema_version":1,"valid","complete","stopped_at"?,"file","format","remotes":[],"errors":[],"warnings":[],"message"}`. Each entry has `code`, `severity`, `reason` and, when known, `key`, `path`, `remote`, `file`, `help`, `line`, `column`, `end_line`, `end_column`. Codes: `syntax`, `file_conflict`, `schema_version`, `removed_key`, `unknown_key`, `invalid_type`, `invalid_enum`, `invalid_value`, `missing_required`, `remote_project_id`, `env_file`, `removed_env`, `env_unresolved`, `deprecated_key`, `shadowed_file`, `unrecognized_schema`. It never contains source text or configured values. Failures before a report exists (no config, bad `--workdir`, `-o`) use the generic `{"_tag":"Error",...}` envelope.
 
 ### `--output-format stream-json`
 
@@ -69,5 +69,5 @@ Same structured result as `json`, delivered as an NDJSON `result` event.
 
 - No config or project file is created or changed and no Management API call is made. The CLI still writes `telemetry.json`, and the global update notice that follows every command can fetch the latest release tag and write `cli-latest` and print a notice on stderr; this command does not change that behaviour.
 - Every `[remotes.<name>]` block is validated merged over the base config, whatever the linked project is.
-- An unresolved `env(NAME)` is a warning when its nearest `enabled` gate is not `false` (or the key is an optional placeholder `supabase init` writes), and value errors (type, enum, value, missing) it causes at or below that key are not reported; unknown-key, removed-key and `SUPABASE_*`-sourced errors still are. A remote whose `project_id` is an unset `env()` reference is skipped with a warning, and a reference a `SUPABASE_*` variable overrides is not reported. A base reference a remote inherits is checked against that remote's own gates. A `remotes` key or `remotes.<name>` entry that is not a table is an `invalid_type` error. An error whose value a `SUPABASE_*` variable supplies names the variable and carries no file location.
+- An unresolved `env(NAME)` is a warning when its nearest `enabled` gate is not `false` (or the key is an optional placeholder `supabase init` writes), and value errors (type, enum, value, missing) it causes at or below that key, and cross-key checks that read it (an `enabled` gate, an MFA factor's `verify_enabled`), are not reported; unknown-key, removed-key and `SUPABASE_*`-sourced errors still are. A remote whose `project_id` is an unset `env()` reference or invalid is still validated, with the `project_id` problem reported alongside; a reference a `SUPABASE_*` variable overrides is not reported. A base reference a remote inherits is checked against that remote's own gates. A `remotes` key or `remotes.<name>` entry that is not a table is an `invalid_type` error. An error whose value a `SUPABASE_*` variable supplies names the variable and carries no file location.
 - `-o/--output` is rejected in favour of `--output-format`.

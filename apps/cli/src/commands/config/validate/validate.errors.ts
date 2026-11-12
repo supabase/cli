@@ -31,3 +31,12 @@ export class ConfigValidateOutputFlagUnsupportedError extends Data.TaggedError(
     return actionability.provideFlags;
   }
 }
+
+/** The config has problems; classifies the exit-code-1 run that reports them without failing the command. */
+export class ConfigValidateProblemsError extends Data.TaggedError("ConfigValidateProblemsError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}

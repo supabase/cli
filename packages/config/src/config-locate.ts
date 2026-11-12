@@ -296,7 +296,7 @@ function childOf(node: Node, segment: string): { entry: Node; value: Node } | un
     return value === undefined ? undefined : { entry: value, value };
   }
   if (node.type !== "object") return undefined;
-  const entry = node.children?.find((property) => property.children?.[0]?.value === segment);
+  const entry = node.children?.findLast((property) => property.children?.[0]?.value === segment);
   const value = entry?.children?.[1];
   return entry === undefined || value === undefined ? undefined : { entry, value };
 }

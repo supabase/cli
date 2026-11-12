@@ -63,7 +63,7 @@ function classify(message: string): Omit<FlatSchemaIssue, "path"> {
   }
   const choices = ENUM_MESSAGE.exec(message)?.[1]
     ?.split(" | ")
-    .map((item) => item.slice(1, -1));
+    .map((item) => (item.length === 2 ? item : item.slice(1, -1)));
   if (choices !== undefined) {
     const list = choices.join(", ");
     return { code: "invalid_enum", reason: `expected one of ${list}`, help: `use one of ${list}` };

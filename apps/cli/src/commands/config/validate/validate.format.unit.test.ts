@@ -23,7 +23,6 @@ const report = (problems: ReadonlyArray<ConfigProblem>, extra: Partial<ValidateR
     file: "supabase/config.toml",
     format: "toml",
     remotes: [],
-    skippedRemotes: [],
     problems,
     ...extra,
   }) satisfies ValidateReport;
@@ -63,15 +62,13 @@ describe("validateReport", () => {
     expect(text).toContain("  ✗ api.port  bad\n    help: fix it\n");
   });
 
-  it("labels remote problems and lists checked and skipped remotes", () => {
+  it("labels remote problems and lists checked remotes", () => {
     const text = render([problem({ path: ["db", "port"], remote: "staging" })], {
       remotes: ["staging"],
-      skippedRemotes: [{ name: "prod", reason: "no project id" }],
     });
 
     expect(text).toContain("[remote: staging]");
     expect(text).toContain("Checked remotes: staging");
-    expect(text).toContain("Skipped remotes: prod (no project id)");
   });
 
   it("reports a valid file with a warning count", () => {

@@ -46,7 +46,6 @@ export interface ValidateReport {
   readonly file: string;
   readonly format: "toml" | "json" | "jsonc";
   readonly remotes: ReadonlyArray<string>;
-  readonly skippedRemotes: ReadonlyArray<{ readonly name: string; readonly reason: string }>;
   readonly problems: ReadonlyArray<ConfigProblem>;
   readonly stoppedAt?: StopStage;
 }
@@ -141,12 +140,6 @@ export function validateReport(
   if (report.remotes.length > 0) {
     out.push(`  ${style.dim(`Checked remotes: ${report.remotes.map(safe).join(", ")}`)}`);
   }
-  if (report.skippedRemotes.length > 0) {
-    const skipped = report.skippedRemotes.map(
-      ({ name, reason }) => `${safe(name)} (${safe(reason)})`,
-    );
-    out.push(`  ${style.dim(`Skipped remotes: ${skipped.join(", ")}`)}`);
-  }
   if (report.stoppedAt !== undefined) {
     out.push(
       "",
@@ -191,7 +184,6 @@ export function validateJsonPayload(report: ValidateReport) {
     file: report.file,
     format: report.format,
     remotes: report.remotes,
-    ...(report.skippedRemotes.length === 0 ? {} : { skipped_remotes: report.skippedRemotes }),
     errors: errors.map(payloadProblem),
     warnings: warningsOf(report).map(payloadProblem),
   };

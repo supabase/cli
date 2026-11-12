@@ -25,6 +25,23 @@ describe("reportableUnknownCliConfigKeys", () => {
     ).toEqual([]);
   });
 
+  it("flags an unknown child of a document-only table", () => {
+    expect(
+      reportableUnknownCliConfigKeys({
+        auth: { passkey: { enabld: true }, webauthn: { rp_id: "x", rp_idd: "y" } },
+      }).map(({ path }) => path.join(".")),
+    ).toEqual(["auth.passkey.enabld", "auth.webauthn.rp_idd"]);
+  });
+
+  it("accepts every registered child of a document-only table", () => {
+    expect(
+      reportableUnknownCliConfigKeys({
+        db: { password: "x" },
+        auth: { passkey: { enabled: true }, webauthn: { rp_id: "x", rp_origins: [] } },
+      }),
+    ).toEqual([]);
+  });
+
   it("offers document-only tables as siblings of an unknown auth key", () => {
     const [found] = reportableUnknownCliConfigKeys({ auth: { passkeys: { enabled: true } } });
 

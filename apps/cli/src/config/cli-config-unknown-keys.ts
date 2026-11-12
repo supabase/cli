@@ -14,13 +14,36 @@ export interface ReportableUnknownCliConfigKey {
 const withoutRemote = (key: ReadonlyArray<string>): ReadonlyArray<string> =>
   key[0] === "remotes" ? key.slice(2) : key;
 
-/** Unknown-key reports stop at the first unknown table, so a document-only table such as `auth.passkey` arrives whole. */
-const isDocumentOnlyKey = (key: ReadonlyArray<string>): boolean => {
-  const dotted = key.join(".");
-  return [...cliConfigDocumentOnlyPaths].some(
-    (known) => known === dotted || known.startsWith(`${dotted}.`) || dotted.startsWith(`${known}.`),
-  );
-};
+const documentKeySegments: ReadonlyArray<ReadonlyArray<string>> = [
+  ...cliConfigDocumentOnlyPaths,
+].map((known) => known.split("."));
+
+const startsWith = (key: ReadonlyArray<string>, prefix: ReadonlyArray<string>): boolean =>
+  prefix.length <= key.length && prefix.every((segment, index) => key[index] === segment);
+
+/** Unknown-key reports stop at the first unknown table, so a document-only table such as `auth.passkey` arrives whole and its children are checked here. */
+function unknownWithinDocumentOnly(
+  document: unknown,
+  path: ReadonlyArray<string>,
+): ReadonlyArray<ReportableUnknownCliConfigKey> | undefined {
+  const local = withoutRemote(path);
+  if (!documentKeySegments.some((known) => startsWith(known, local) || startsWith(local, known))) {
+    return undefined;
+  }
+  const value = getDocumentValue(document, path);
+  const declared = documentKeySegments.filter((known) => startsWith(known, local));
+  if (declared.every((known) => known.length === local.length) || !isDocumentRecord(value)) {
+    return [];
+  }
+  const knownKeys = [
+    ...new Set(declared.flatMap((known) => known.slice(local.length, local.length + 1))),
+  ];
+  return Object.keys(value).flatMap((name) => {
+    const child = [...path, name];
+    if (knownKeys.includes(name)) return unknownWithinDocumentOnly(document, child) ?? [];
+    return [{ path: child, knownKeys }];
+  });
+}
 
 /** Custom `[auth.external.<name>]` providers have no schema entry, but `start` reads them from the raw document. */
 const isCustomAuthProvider = (rawDocument: unknown, key: ReadonlyArray<string>): boolean => {
@@ -44,19 +67,17 @@ const documentOnlySiblings = (key: ReadonlyArray<string>): ReadonlyArray<string>
   });
 };
 
-/** Unknown keys the CLI ignores and should flag, minus document-only tables and custom auth providers. */
+/** Unknown keys the CLI ignores and should flag, minus custom auth providers. */
 export function reportableUnknownCliConfigKeys(
   document: unknown,
 ): ReadonlyArray<ReportableUnknownCliConfigKey> {
   return findUnknownCliConfigKeys(document)
-    .filter(
-      ({ path }) =>
-        !isDocumentOnlyKey(withoutRemote(path)) && !isCustomAuthProvider(document, path),
-    )
-    .map(({ path, knownKeys }) => ({
-      path,
-      knownKeys: [...new Set([...knownKeys, ...documentOnlySiblings(path)])],
-    }));
+    .filter(({ path }) => !isCustomAuthProvider(document, path))
+    .flatMap(({ path, knownKeys }) => {
+      const nested = unknownWithinDocumentOnly(document, path);
+      if (nested !== undefined) return nested;
+      return [{ path, knownKeys: [...new Set([...knownKeys, ...documentOnlySiblings(path)])] }];
+    });
 }
 
 function editDistance(left: string, right: string): number {
