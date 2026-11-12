@@ -35,7 +35,7 @@ model (see the CLI-1324 plan's "Critical architectural finding" for why).
 The `start-secrets` removal is a hygiene step (`cleanupStartSecrets`,
 `command-internal/start-secrets-cleanup.ts`). Only Edge Runtime's own
 JWT/service-role-key/secret env artifacts (`shared/functions/serve.ts`'s
-`writeDockerEnvFile`/`writeDockerMultilineEnvScript`) still
+`writeDockerEnvFile`) still
 land on host disk this way, because that container's bring-up shells out to the docker
 CLI directly rather than a struct call over the Docker Engine API; without this cleanup that
 directory would survive `stop` indefinitely. (Kong's TLS/`kong.yml`, Postgres's pgsodium

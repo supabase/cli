@@ -852,65 +852,29 @@ const writeDockerEnvFile = Effect.fn("functions.serve.writeDockerEnvFile")(funct
   return { path: pathname };
 });
 
-const writeDockerMultilineEnvScript = Effect.fn("functions.serve.writeDockerMultilineEnvScript")(
-  function* (
-    { fs, path }: { readonly fs: FileSystem.FileSystem; readonly path: Path.Path },
-    env: ReadonlyArray<readonly [string, string]>,
-    containerDir: string,
-    dir: string,
-  ) {
-    // Self-healing — see the matching comment in `writeDockerEnvFile`. Runs
-    // unconditionally, before the length check, so a stale directory from an
-    // earlier invocation that needed multiline secrets is still reclaimed.
-    yield* fs
-      .remove(dir, { recursive: true, force: true })
-      .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
-
-    if (env.length === 0) {
-      return undefined;
-    }
-
-    yield* fs
-      .makeDirectory(dir, { recursive: true, mode: 0o700 })
-      .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
-    const scriptName = "multiline-env.sh";
-    const pathname = path.join(dir, scriptName);
-    const envDir = path.join(containerDir, "values");
-    const hostEnvDir = path.join(dir, "values");
-    // Names are validated by `validateDockerMultilineEnvNames` before this runs.
-    const script = env
-      .map(([name], index) => {
-        const valueFile = `env-${index}`;
-        const valuePath = path.join(envDir, valueFile).replaceAll("\\", "/");
-        return `${name}="$(cat ${valuePath}; printf x)"
+/* In the `docker cp` archive, not a bind: Docker Desktop fails `docker cp` on a bind source
+   that was deleted and recreated (supabase/cli#7603). */
+function dockerMultilineEnvFiles(
+  env: ReadonlyArray<readonly [string, string]>,
+  containerDir: string,
+) {
+  if (env.length === 0) {
+    return undefined;
+  }
+  const files: Record<string, string> = {};
+  // Names are validated by `validateDockerMultilineEnvNames` before this runs.
+  const script = env
+    .map(([name, value], index) => {
+      const valuePath = `${containerDir}/values/env-${index}`;
+      files[valuePath] = value;
+      return `${name}="$(cat ${valuePath}; printf x)"
 export ${name}="\${${name}%x}"`;
-      })
-      .join("\n");
-    yield* fs
-      .makeDirectory(hostEnvDir, { recursive: true, mode: 0o700 })
-      .pipe(Effect.mapError((error) => nativePlatformFailure(error, hostEnvDir)));
-    // The value files hold secret env values, so keep them owner-only.
-    yield* Effect.all(
-      env.map(([, value], index) => {
-        const valuePath = path.join(hostEnvDir, `env-${index}`);
-        return fs
-          .writeFileString(valuePath, value, { mode: 0o600 })
-          .pipe(Effect.mapError((error) => nativePlatformFailure(error, valuePath)));
-      }),
-      { concurrency: "unbounded" },
-    );
-    yield* fs
-      .writeFileString(pathname, script, { mode: 0o600 })
-      .pipe(Effect.mapError((error) => nativePlatformFailure(error, pathname)));
-
-    return {
-      // `Z`: private SELinux relabel of this CLI-staged dir (supabase/cli#5989);
-      // single-consumer bind, no-op without SELinux.
-      bind: `${dir}:${containerDir}:ro,Z`,
-      scriptPath: path.join(containerDir, scriptName).replaceAll("\\", "/"),
-    };
-  },
-);
+    })
+    .join("\n");
+  const scriptPath = `${containerDir}/multiline-env.sh`;
+  files[scriptPath] = script;
+  return { files, scriptPath };
+}
 
 function partitionDockerEnvEntries(env: Readonly<Record<string, string>>) {
   const singleLine: Record<string, string> = {};
@@ -1574,8 +1538,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       containerId,
     );
     // A single directory-wide `rm` (not per-file cleanup closures) covers the
-    // whole staging-write window below, including a mid-write failure
-    // between two `writeDocker*` calls, not just the final docker steps.
+    // whole staging-write window below, not just the final docker steps.
     const fs = yield* FileSystem.FileSystem;
     const removeRuntimeArtifacts = fs
       .remove(stagingDir, { recursive: true, force: true })
@@ -1708,18 +1671,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
         catch: nativeFailure,
       });
+      /* Drops the `multiline-env` dir older CLIs bind-mounted. */
+      yield* removeRuntimeArtifacts;
       const dockerEnvFile = yield* writeDockerEnvFile(
         { fs, path },
         singleLineDockerEnv,
         path.join(stagingDir, "env"),
       );
       const multilineEnvDir = "/root/.supabase/multiline-env";
-      const dockerMultilineEnvScript = yield* writeDockerMultilineEnvScript(
-        { fs, path },
-        multilineDockerEnv,
-        multilineEnvDir,
-        path.join(stagingDir, "multiline-env"),
-      );
+      const dockerMultilineEnv = dockerMultilineEnvFiles(multilineDockerEnv, multilineEnvDir);
 
       const labels = dockerProjectLabels(projectId);
       const serveMainFile = `${serveMainDir}/index.ts`;
@@ -1739,7 +1699,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
       // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
       const serveMainArchive = yield* Effect.tryPromise({
-        try: () => containerArchiveBytes({ [serveMainFile]: serveMainTemplate }),
+        try: () =>
+          containerArchiveBytes({
+            ...dockerMultilineEnv?.files,
+            [serveMainFile]: serveMainTemplate,
+          }),
         catch: nativeFailure,
       });
       const containerProjectRoot = toDockerPath(input.projectRoot, path);
@@ -1767,7 +1731,6 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         "--label",
         `${dockerWorkdirLabel}=${input.projectRoot}`,
         ...binds.flatMap((bind) => ["-v", formatDockerBind(bind)]),
-        ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
         ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
         ...(input.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
         ...(input.inspectMode === undefined
@@ -1777,7 +1740,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         "sh",
         input.image,
         "-c",
-        buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
+        buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnv?.scriptPath),
       ];
 
       // The container must exist for `docker cp` to have a target, and must not be running

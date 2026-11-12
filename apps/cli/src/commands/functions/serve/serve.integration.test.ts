@@ -134,7 +134,7 @@ vi.mock("../../../shared/functions/functions-docker.ts", () =>
     import("effect"),
     import("@effect/platform-bun"),
     import("../../../command-internal/docker-registry.ts"),
-  ]).then(([actual, { Effect, FileSystem, Path }, { BunServices }, { getRegistryImageUrl }]) => ({
+  ]).then(([actual, { Effect, FileSystem }, { BunServices }, { getRegistryImageUrl }]) => ({
     ...actual,
     ensureDockerNetwork: (networkMode: string, projectId: string) =>
       Effect.sync(() => {
@@ -157,41 +157,15 @@ vi.mock("../../../shared/functions/functions-docker.ts", () =>
     runChildProcess: (command: string, args: ReadonlyArray<string>, options?: unknown) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const envFile = args.flatMap((value, index) =>
           args[index - 1] === "--env-file" ? [value] : [],
         )[0];
-        const multilineEnvDir = args
-          .flatMap((value, index) => (args[index - 1] === "-v" ? [value] : []))
-          .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
-          ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
         const enrichedOptions =
-          envFile === undefined && multilineEnvDir === undefined
+          envFile === undefined
             ? options
             : {
                 ...(typeof options === "object" && options !== null ? options : {}),
-                ...(envFile === undefined
-                  ? {}
-                  : { envFileContents: yield* fs.readFileString(envFile) }),
-                ...(multilineEnvDir === undefined
-                  ? {}
-                  : {
-                      multilineEnvScript: yield* fs.readFileString(
-                        path.join(multilineEnvDir, "multiline-env.sh"),
-                      ),
-                      multilineEnvFiles: Object.fromEntries(
-                        yield* Effect.forEach(
-                          (yield* fs.readDirectory(path.join(multilineEnvDir, "values"))).filter(
-                            (name) => name.startsWith("env-"),
-                          ),
-                          (name) =>
-                            Effect.map(
-                              fs.readFileString(path.join(multilineEnvDir, "values", name)),
-                              (contents): readonly [string, string] => [name, contents],
-                            ),
-                        ),
-                      ),
-                    }),
+                envFileContents: yield* fs.readFileString(envFile),
               };
         deployMockState.runCalls.push({ command, args: [...args], options: enrichedOptions });
         const result = deployMockState.runHandler?.(command, args, options) ?? {
@@ -1098,7 +1072,7 @@ describe("functions serve integration", () => {
     },
   );
 
-  it.live("mounts multiline env values without placing their contents in docker argv", () => {
+  it.live("copies multiline env values into the container without a bind or argv", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
         throw new Error(`unexpected process: ${command}`);
@@ -1118,29 +1092,8 @@ describe("functions serve integration", () => {
       throw new Error(`unexpected docker args: ${args.join(" ")}`);
     };
 
-    let multilineEnvDirWhenLogsStarted: string | undefined;
-    let multilineEnvDirExistedWhenLogsStarted = false;
     const childSpawner = mockDockerLogSpawner([
-      {
-        exitCode: 1,
-        stderr: "error running container: exit 1",
-        onSpawn: () =>
-          Effect.gen(function* () {
-            const fs = yield* FileSystem.FileSystem;
-            const dockerRun = deployMockState.runCalls.find(
-              (call) => call.command === "docker" && call.args[0] === "create",
-            );
-            if (dockerRun === undefined) {
-              throw new Error("expected docker create call before docker logs spawn");
-            }
-            multilineEnvDirWhenLogsStarted = extractFlagValues(dockerRun.args, "-v")
-              .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
-              ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
-            multilineEnvDirExistedWhenLogsStarted =
-              multilineEnvDirWhenLogsStarted !== undefined &&
-              (yield* fs.exists(multilineEnvDirWhenLogsStarted));
-          }).pipe(Effect.provide(BunServices.layer), Effect.orDie),
-      },
+      { exitCode: 1, stderr: "error running container: exit 1" },
     ]);
 
     const multilineValue = ["-----BEGIN KEY-----", "EOF_ENV_0", "line-3", "-----END KEY-----"].join(
@@ -1148,7 +1101,6 @@ describe("functions serve integration", () => {
     );
 
     return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* writeCliConfig(['project_id = "test-project"', ""].join("\n"));
       yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
@@ -1176,40 +1128,41 @@ describe("functions serve integration", () => {
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 
-      const multilineBind = extractFlagValues(dockerRun.args, "-v").find((value) =>
-        value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
+      expect(
+        extractFlagValues(dockerRun.args, "-v").some((bind) =>
+          bind.includes("/root/.supabase/multiline-env"),
+        ),
+      ).toBe(false);
+
+      const cp = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "cp",
       );
-      expect(multilineBind).toBeDefined();
-      if (multilineBind === undefined) {
-        throw new Error("expected multiline env bind");
+      const stdin =
+        cp !== undefined && Predicate.hasProperty(cp.options, "stdin")
+          ? cp.options.stdin
+          : undefined;
+      const isCpArchiveStream = (value: unknown): value is Stream.Stream<Uint8Array> =>
+        Stream.isStream(value);
+      if (!isCpArchiveStream(stdin)) return yield* Effect.die("docker cp stdin was not a stream");
+      const archiveBytes = (yield* Stream.runCollect(stdin))[0];
+      if (!(archiveBytes instanceof Uint8Array)) {
+        return yield* Effect.die("docker cp stdin did not contain archive bytes");
       }
-
-      const script =
-        Predicate.hasProperty(dockerRun.options, "multilineEnvScript") &&
-        Predicate.isString(dockerRun.options.multilineEnvScript)
-          ? dockerRun.options.multilineEnvScript
-          : undefined;
-      const files =
-        Predicate.hasProperty(dockerRun.options, "multilineEnvFiles") &&
-        isStringRecord(dockerRun.options.multilineEnvFiles)
-          ? dockerRun.options.multilineEnvFiles
-          : undefined;
-
-      expect(script).toBeDefined();
-      expect(files).toBeDefined();
+      const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
+      const readEntry = (name: string) => {
+        const file = files.get(name);
+        return file === undefined ? Effect.void : Effect.promise(() => file.text());
+      };
+      const script = yield* readEntry("root/.supabase/multiline-env/multiline-env.sh");
       expect(script).toContain(
         'MULTILINE_SECRET="$(cat /root/.supabase/multiline-env/values/env-0; printf x)"',
       );
       expect(script).toContain('export MULTILINE_SECRET="${MULTILINE_SECRET%x}"');
       expect(script).not.toContain(multilineValue);
       expect(script).not.toContain("EOF_ENV_0");
-      expect(files?.["env-0"]).toBe(multilineValue);
-      expect(multilineEnvDirWhenLogsStarted).toBeDefined();
-      if (multilineEnvDirWhenLogsStarted === undefined) {
-        throw new Error("expected multiline env dir when docker logs started");
-      }
-      expect(multilineEnvDirExistedWhenLogsStarted).toBe(true);
-      expect(yield* fs.exists(multilineEnvDirWhenLogsStarted)).toBe(false);
+      expect(yield* readEntry("root/.supabase/multiline-env/values/env-0")).toBe(multilineValue);
+      expect(files.has("root/index.ts")).toBe(true);
+      expect(dockerRun.args.at(-1)).toContain(". /root/.supabase/multiline-env/multiline-env.sh\n");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -1234,13 +1187,6 @@ describe("functions serve integration", () => {
         }
         throw new Error(`unexpected docker args: ${args.join(" ")}`);
       };
-
-      const childSpawner = mockDockerLogSpawner([
-        {
-          exitCode: 1,
-          stderr: "error running container: exit 1",
-        },
-      ]);
 
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1273,25 +1219,27 @@ describe("functions serve integration", () => {
           "stale secret\n",
         );
 
+        let staleDirExistedAfterBringUp: boolean | undefined;
+        const childSpawner = mockDockerLogSpawner([
+          {
+            exitCode: 1,
+            stderr: "error running container: exit 1",
+            onSpawn: () =>
+              fs.exists(staleMultilineEnvDir).pipe(
+                Effect.map((exists) => {
+                  staleDirExistedAfterBringUp = exists;
+                }),
+                Effect.orDie,
+              ),
+          },
+        ]);
         const { layer } = setupServe({ childSpawner });
 
         const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
         expect(error).toBeInstanceOf(Error);
 
+        expect(staleDirExistedAfterBringUp).toBe(false);
         expect(yield* fs.exists(staleMultilineEnvDir)).toBe(false);
-
-        const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "create",
-        );
-        expect(dockerRun).toBeDefined();
-        if (dockerRun === undefined) {
-          throw new Error("expected docker create call");
-        }
-        expect(
-          extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
-          ),
-        ).toBe(false);
       }).pipe(Effect.provide(BunServices.layer));
     },
   );
