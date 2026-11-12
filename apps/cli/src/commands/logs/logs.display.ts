@@ -1,39 +1,10 @@
+import { wrapTerminalText as wrapLogsText } from "../../shared/output/wrap-terminal-text.ts";
 import type { Schema } from "effect";
 import { renderTablewriter } from "../../command-internal/tabular-output.ts";
 import { stringWidth } from "../../command-internal/string-width.ts";
 import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
 
 const clean = (text: string) => stripControlSequences(text).replaceAll("\t", "    ");
-
-export function wrapLogsText(text: string, width: number): string {
-  const limit = Math.max(2, Math.floor(width));
-  return clean(text)
-    .split("\n")
-    .map((line) => {
-      const lines: string[] = [];
-      let current = "";
-      let used = 0;
-      for (const token of line.match(/\S+\s*|\s+/gu) ?? []) {
-        if (used > 0 && used + stringWidth(token) > limit) {
-          lines.push(current);
-          current = "";
-          used = 0;
-        }
-        for (const character of token) {
-          const size = stringWidth(character);
-          if (used > 0 && used + size > limit) {
-            lines.push(current);
-            current = "";
-            used = 0;
-          }
-          current += character;
-          used += size;
-        }
-      }
-      return [...lines, current].join("\n");
-    })
-    .join("\n");
-}
 
 const queryValue = (value: Schema.Json | undefined): string =>
   value === undefined ? "" : typeof value === "string" ? clean(value) : JSON.stringify(value);
