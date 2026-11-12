@@ -1671,13 +1671,16 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
         catch: nativeFailure,
       });
-      /* Drops the `multiline-env` dir older CLIs bind-mounted. */
-      yield* removeRuntimeArtifacts;
       const dockerEnvFile = yield* writeDockerEnvFile(
         { fs, path },
         singleLineDockerEnv,
         path.join(stagingDir, "env"),
       );
+      /* Drops the `multiline-env` dir older CLIs bind-mounted. */
+      const legacyMultilineEnvDir = path.join(stagingDir, "multiline-env");
+      yield* fs
+        .remove(legacyMultilineEnvDir, { recursive: true, force: true })
+        .pipe(Effect.mapError((error) => nativePlatformFailure(error, legacyMultilineEnvDir)));
       const multilineEnvDir = "/root/.supabase/multiline-env";
       const dockerMultilineEnv = dockerMultilineEnvFiles(multilineDockerEnv, multilineEnvDir);
 

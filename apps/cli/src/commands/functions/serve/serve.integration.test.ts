@@ -1101,6 +1101,7 @@ describe("functions serve integration", () => {
     );
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* writeCliConfig(['project_id = "test-project"', ""].join("\n"));
       yield* writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
@@ -1163,6 +1164,17 @@ describe("functions serve integration", () => {
       expect(yield* readEntry("root/.supabase/multiline-env/values/env-0")).toBe(multilineValue);
       expect(files.has("root/index.ts")).toBe(true);
       expect(dockerRun.args.at(-1)).toContain(". /root/.supabase/multiline-env/multiline-env.sh\n");
+      expect(
+        yield* fs.exists(
+          path.join(
+            tempRoot.current,
+            "supabase",
+            ".temp",
+            "start-secrets",
+            "supabase_edge_runtime_test-project",
+          ),
+        ),
+      ).toBe(false);
     }).pipe(Effect.provide(BunServices.layer));
   });
 
