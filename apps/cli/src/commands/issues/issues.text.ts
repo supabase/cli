@@ -3,13 +3,31 @@ import { escapeControlCharacters } from "../../shared/output/escape-control-char
 import { wrapTerminalText } from "../../shared/output/wrap-terminal-text.ts";
 import type { CheckCoverage, Issue, IssueSeverity } from "./issues.format.ts";
 
+function renderIssueFields(issue: Issue, width: number): string {
+  const fields: ReadonlyArray<readonly [string, string]> = [
+    ["Severity", issue.severity],
+    ["Category", issue.category],
+    ["Issue", issue.title || issue.id],
+    ["Affected", String(issue.affected.length)],
+  ];
+  return fields
+    .map(([label, value]) => {
+      const content = wrapTerminalText(escapeControlCharacters(value), width - 2)
+        .split("\n")
+        .map((line) => `  ${line}`)
+        .join("\n");
+      return `${label}:\n${content}`;
+    })
+    .join("\n");
+}
+
 export function renderIssuesText(
   issues: ReadonlyArray<Issue>,
   checks: ReadonlyArray<CheckCoverage>,
   minimum: IssueSeverity,
   columns: number,
 ): string {
-  const width = Number.isFinite(columns) && columns >= 45 ? Math.floor(columns) : 80;
+  const width = Number.isFinite(columns) && columns >= 20 ? Math.floor(columns) : 80;
   const severityWidth = Math.max(
     "Severity".length,
     ...issues.map((issue) => issue.severity.length),
@@ -28,27 +46,29 @@ export function renderIssuesText(
     issues.length === 0
       ? `No issues match --severity ${minimum}.`
       : `${issues.length} ${issues.length === 1 ? "issue" : "issues"} (${minimum} or higher).`;
-  const table =
+  const findings =
     issues.length === 0
       ? ""
-      : renderTablewriter(
-          ["Severity", "Category", "Issue", "Affected"],
-          issues.map((issue) => [
-            issue.severity,
-            issue.category,
-            wrapTerminalText(escapeControlCharacters(issue.title || issue.id), titleWidth),
-            String(issue.affected.length),
-          ]),
-          (value) => String(value),
-        );
+      : titleWidth < "Issue".length
+        ? issues.map((issue) => renderIssueFields(issue, width)).join("\n\n") + "\n"
+        : renderTablewriter(
+            ["Severity", "Category", "Issue", "Affected"],
+            issues.map((issue) => [
+              issue.severity,
+              issue.category,
+              wrapTerminalText(escapeControlCharacters(issue.title || issue.id), titleWidth),
+              String(issue.affected.length),
+            ]),
+            (value) => String(value),
+          );
   const coverage = checks.map((check) =>
     wrap(`${check.type}: ${check.status}${check.reason === undefined ? "" : ` — ${check.reason}`}`),
   );
   const incomplete = checks.some((check) => check.status === "unavailable")
-    ? "Some checks are unavailable; results are incomplete.\n"
+    ? `${wrap("Some checks are unavailable; results are incomplete.")}\n`
     : "";
   const hint = wrap(
     "Use --output-format json for affected resources, evidence, and remediation links.",
   );
-  return `${summary}\n${table}\nChecks\n${coverage.join("\n")}\n${incomplete}\n${hint}\n`;
+  return `${wrap(summary)}\n${findings}\nChecks\n${coverage.join("\n")}\n${incomplete}\n${hint}\n`;
 }
