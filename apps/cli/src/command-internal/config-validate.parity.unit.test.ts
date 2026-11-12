@@ -140,6 +140,13 @@ const scenarios: ReadonlyArray<ParityScenario> = [
     message: "Missing required field in config: db.major_version",
   },
   {
+    name: "db.major_version unsupported (13)",
+    toml: ["[db]", "major_version = 13"],
+    overrides: { db: { major_version: 13 } },
+    message:
+      "Postgres version 13.x is unsupported. To use the CLI, upgrade your project to Postgres 17, then set db.major_version = 17 in your project config: https://supabase.com/docs/guides/platform/upgrading.",
+  },
+  {
     name: "db.major_version unsupported (16)",
     toml: ["[db]", "major_version = 16"],
     overrides: { db: { major_version: 16 } },
