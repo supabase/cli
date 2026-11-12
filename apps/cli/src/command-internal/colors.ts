@@ -23,8 +23,12 @@ export interface ColorStream {
  *    TTYs (it also covers `TERM=dumb`) and absent on piped streams.
  *
  * Node's `FORCE_COLOR` is not honored — only the `CLICOLOR*` pair.
+ *
+ * Exported so a renderer can also gate non-color terminal affordances (e.g. Unicode box-drawing
+ * glyphs) on the same signal, since a colour-capable TTY is also the terminal class that renders
+ * them correctly.
  */
-function supportsColor(stream: ColorStream): boolean {
+export function supportsColor(stream: ColorStream): boolean {
   const env = ambientEnvironment();
   if ((env["NO_COLOR"] ?? "") !== "") return false;
   const clicolorForce = env["CLICOLOR_FORCE"] ?? "";

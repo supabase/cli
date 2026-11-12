@@ -54,6 +54,7 @@ import { stopCommand } from "../commands/stop/stop.command.ts";
 import { storageCommand } from "../commands/storage/storage.command.ts";
 import { testCommand } from "../commands/test/test.command.ts";
 import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
+import { tracesCommand } from "../commands/traces/traces.command.ts";
 import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
@@ -202,6 +203,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       storageCommand,
       telemetryCommand,
       testCommand,
+      tracesCommand,
       unlinkCommand,
       vanitySubdomainsCommand,
       whoamiCommand,
