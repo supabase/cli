@@ -29,7 +29,7 @@ import {
 } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
-import { CommandTarget } from "./command-target.service.ts";
+import { withCommandTarget } from "./command-target.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { type PlanGateEntitlement, upgradeHint } from "./normalize-error.ts";
@@ -50,21 +50,6 @@ const encodeJson = (value: unknown) =>
 const readMachineErrorContext = Effect.fnUntraced(function* () {
   const context = yield* Effect.serviceOption(MachineErrorContext);
   return Option.isSome(context) ? yield* context.value.get : {};
-});
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-};
-
-/** Adds the announced target to a plain-object result; arrays, scalars and an own `target` stay. */
-const withCommandTarget = Effect.fnUntraced(function* (data: unknown) {
-  if (!isPlainObject(data) || data.target !== undefined) return data;
-  const cell = yield* Effect.serviceOption(CommandTarget);
-  if (Option.isNone(cell)) return data;
-  const target = yield* cell.value.json;
-  return Option.isSome(target) ? { ...data, target: target.value } : data;
 });
 
 function formatTaskMessage(message: string | undefined): string | undefined {

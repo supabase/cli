@@ -1,8 +1,11 @@
 import { Context, Effect, Option, Schema } from "effect";
 import type { Command } from "effect/cli";
 
-/** How a fact is enforced: by the compiler, by a render-time check, by a runtime gate, or not at all. */
-export type FactCheck = "compiler" | "render" | "runtime" | "none";
+/**
+ * How a fact is checked: by the compiler, a render-time check, a runtime gate, opted-in tests,
+ * a production observer that reports without enforcing, or not at all.
+ */
+export type FactCheck = "compiler" | "render" | "runtime" | "test" | "report-only" | "none";
 
 /** A command fact stored under one `Context` key on `Command.annotations`, serialized for the catalog. */
 export interface CommandFact {
@@ -26,3 +29,19 @@ export const registerFact = <I, A extends T, T, E>(
       ),
   };
 };
+
+/** Registers an annotation key whose catalog value `serialize` derives, such as a schema's JSON Schema. */
+export const registerDerivedFact = <I, A>(
+  key: Context.Key<I, A>,
+  options: {
+    readonly serialize: (value: A) => unknown;
+    readonly checked: ReadonlyArray<FactCheck>;
+  },
+): CommandFact => ({
+  id: key.key,
+  checked: options.checked,
+  read: (command) =>
+    Option.map(Context.getOption(command.annotations, key), (value) =>
+      Effect.sync(() => options.serialize(value)),
+    ),
+});

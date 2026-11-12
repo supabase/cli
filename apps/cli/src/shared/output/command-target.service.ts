@@ -56,6 +56,18 @@ export class CommandTarget extends Context.Service<CommandTarget, CommandTargetS
 export const announceTarget = (rendered: RenderedTarget) =>
   CommandTarget.use((cell) => cell.announce(rendered));
 
+/** Adds the announced target to a plain-object result; arrays, scalars and an own `target` stay. */
+export const withCommandTarget = Effect.fnUntraced(function* (data: unknown) {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  const prototype = Object.getPrototypeOf(data);
+  if (prototype !== Object.prototype && prototype !== null) return data;
+  if ("target" in data && data.target !== undefined) return data;
+  const cell = yield* Effect.serviceOption(CommandTarget);
+  if (Option.isNone(cell)) return data;
+  const target = yield* cell.value.json;
+  return Option.isSome(target) ? { ...data, target: target.value } : data;
+});
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 

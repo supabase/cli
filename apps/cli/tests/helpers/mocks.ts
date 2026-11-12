@@ -25,8 +25,13 @@ import {
 } from "../../src/shared/config/project-link-state.service.ts";
 import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 import { CliProjectContext } from "../../src/shared/config/cli-project-context.service.ts";
+import {
+  type CommandOutputContract,
+  resultIssue,
+} from "../../src/command-internal/command-facts/command-output.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
+import { withCommandTarget } from "../../src/shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
 import { Browser } from "../../src/shared/runtime/browser.service.ts";
 import {
@@ -228,9 +233,23 @@ export function mockProcessControl(
   };
 }
 
+/** A result write that breaks the output contract passed to `mockOutput`. */
+export class OutputContractViolation extends Schema.TaggedError<OutputContractViolation>()(
+  "OutputContractViolation",
+  {
+    reason: Schema.Literals(["invalid-result", "duplicate-result", "missing-result"]),
+    detail: Schema.String,
+  },
+) {}
+
+/**
+ * With `contract` set in json or stream-json format, an invalid or duplicate result write dies with
+ * `OutputContractViolation`, and `verifyCompletion` also requires a result after success.
+ */
 export function mockOutput(
   opts: {
     format?: OutputFormat;
+    contract?: CommandOutputContract;
     interactive?: boolean;
     confirmRelogin?: boolean;
     confirmLogout?: boolean;
@@ -275,7 +294,61 @@ export function mockOutput(
   const promptSelectResponses = [...(opts.promptSelectResponses ?? [])];
   const promptPasswordResponses = [...(opts.promptPasswordResponses ?? [])];
   const promptConfirmResponses = [...(opts.promptConfirmResponses ?? [])];
+  const contract =
+    opts.format === "json" || opts.format === "stream-json" ? opts.contract : undefined;
+  let resultWrites = 0;
+  const checkResult = (payload: unknown) =>
+    Effect.gen(function* () {
+      if (contract === undefined) return;
+      resultWrites++;
+      if (resultWrites > 1) {
+        return yield* Effect.die(
+          new OutputContractViolation({
+            reason: "duplicate-result",
+            detail: `result written ${resultWrites} times`,
+          }),
+        );
+      }
+      const issue = resultIssue(contract, yield* jsonText(payload));
+      if (Option.isSome(issue)) {
+        return yield* Effect.die(
+          new OutputContractViolation({ reason: "invalid-result", detail: issue.value }),
+        );
+      }
+    });
+  const writeResult = (data: unknown) =>
+    Effect.gen(function* () {
+      const payload = yield* withCommandTarget(data);
+      if (opts.format === "json") {
+        rawChunks.push({ text: `${yield* jsonText(payload)}\n`, stream: "stdout" });
+      } else if (opts.format === "stream-json") {
+        events.push({
+          type: "result",
+          data: payload,
+          timestamp: DateTime.formatIso(DateTime.nowUnsafe()),
+        });
+      }
+      yield* checkResult(payload);
+    });
   return {
+    verifyCompletion: <A, E, R>(handler: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      contract === undefined
+        ? Effect.die(new Error("verifyCompletion needs a contract and json or stream-json format"))
+        : Effect.suspend(() => {
+            const before = resultWrites;
+            return handler.pipe(
+              Effect.tap(() =>
+                resultWrites === before
+                  ? Effect.die(
+                      new OutputContractViolation({
+                        reason: "missing-result",
+                        detail: "handler succeeded without writing a result",
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            );
+          }),
     layer: Layer.succeed(Output, {
       format: opts.format ?? "text",
       interactive: opts.interactive ?? (opts.format ?? "text") === "text",
@@ -345,21 +418,13 @@ export function mockOutput(
                 : yield* jsonText(event),
           });
         }),
-      result: (data: unknown) =>
-        Effect.gen(function* () {
-          if (opts.format === "json") {
-            rawChunks.push({ text: `${yield* jsonText(data)}\n`, stream: "stdout" });
-          } else if (opts.format === "stream-json") {
-            events.push({
-              type: "result",
-              data,
-              timestamp: DateTime.formatIso(DateTime.nowUnsafe()),
-            });
-          }
-        }),
+      result: writeResult,
       success: (message: string, data?: Record<string, unknown>) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           messages.push({ type: "success", message, data });
+          if (opts.format === "json" || opts.format === "stream-json") {
+            yield* writeResult({ ...data, message });
+          }
         }),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
