@@ -36,7 +36,7 @@ describe("CLI feature routing", () => {
             env: { SUPABASE_EXPERIMENTAL_STACK: undefined, SUPABASE_WORKDIR: undefined },
           };
           const hint =
-            "Hint: --runtime needs the stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1, or add stack = true under [experimental] in supabase/config.toml.";
+            "Hint: --runtime needs the stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1, or set stack = true under [experimental] in your project config and leave SUPABASE_EXPERIMENTAL_STACK unset.";
 
           const text = yield* runSupabaseEffect(["start", "--runtime", "native"], options);
           expect(text.exitCode).toBe(1);
