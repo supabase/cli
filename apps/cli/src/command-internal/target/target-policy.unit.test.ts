@@ -25,6 +25,7 @@ const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: Permiss
 
 /** Non-GET operations a leaf may call without hosted-mutation consent, with the reason. */
 const CONSENT_FREE_OPERATIONS: ReadonlyMap<string, string> = new Map([
+  ["v2-run-project-advisors", "runs read-only checks without changing project configuration"],
   [
     "v1-create-login-role",
     "mints a short-lived login role for the connection; revisit when connection setup asks for consent",

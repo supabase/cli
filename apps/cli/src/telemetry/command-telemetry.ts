@@ -28,7 +28,7 @@ import {
   classifyCliErrorActionability,
   unknownProcessControlledFailureActionability,
 } from "../shared/telemetry/error-actionability.ts";
-import { DbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.ts";
+import { DbAdvisorsFailOnError } from "../command-internal/advisors/advisors.errors.ts";
 import { DbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
 import {
   EventCommandExecuted,

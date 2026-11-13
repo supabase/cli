@@ -4,7 +4,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
   statusCodeActionability,
-} from "../../../shared/telemetry/error-actionability.ts";
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * Tagged errors for `db advisors`, one per failure path. Message text is an

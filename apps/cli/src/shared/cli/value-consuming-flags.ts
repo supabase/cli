@@ -80,6 +80,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "source",
   "sql",
   "status",
+  "severity",
   "sub",
   ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
   "tail",

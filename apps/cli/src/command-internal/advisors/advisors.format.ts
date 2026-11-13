@@ -6,8 +6,8 @@
  * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
-import { encodeHtmlSafeJsonIndented } from "../../../command-internal/html-safe-json.ts";
-import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
+import { encodeHtmlSafeJsonIndented } from "../html-safe-json.ts";
+import { makeLevelEnum } from "../fail-on.ts";
 
 /** Lowest severity first. */
 const ADVISORS_ALLOWED_LEVELS = ["info", "warn", "error"] as const;

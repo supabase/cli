@@ -1,3 +1,4 @@
+import { wrapTerminalText as wrapLogsText } from "../../shared/output/wrap-terminal-text.ts";
 import { hasGatewayLogs } from "../../command-internal/logs/local-sources.ts";
 import { logEvent, markerText } from "../../command-internal/stack-log-events.ts";
 import { Clock, Effect, FileSystem, Option, Path, Result, Schema, Stream } from "effect";
@@ -21,7 +22,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { encodeHtmlSafeJsonIndented } from "../../command-internal/html-safe-json.ts";
-import { renderLogsRows, renderLogsSources, wrapLogsText } from "./logs.display.ts";
+import { renderLogsRows, renderLogsSources } from "./logs.display.ts";
 import { hostedSources, severityServices } from "./logs.catalog.ts";
 import { logsWindow } from "./logs.format.ts";
 import { LogsInputError } from "./logs.errors.ts";

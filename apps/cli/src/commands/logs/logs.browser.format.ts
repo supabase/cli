@@ -1,8 +1,9 @@
+import { wrapTerminalText as wrapLogsText } from "../../shared/output/wrap-terminal-text.ts";
 import { dim, inverse, type ColorStream } from "../../command-internal/colors.ts";
 import { DateTime, type Schema } from "effect";
 import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
 import { stringWidth } from "../../command-internal/string-width.ts";
-import { renderLogsRows, wrapLogsText } from "./logs.display.ts";
+import { renderLogsRows } from "./logs.display.ts";
 
 const browserHeaderRows = (state: BrowserState) =>
   state.context === undefined && state.filters === undefined ? 2 : 4;

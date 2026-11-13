@@ -1,6 +1,7 @@
+import { wrapTerminalText as wrapLogsText } from "../../shared/output/wrap-terminal-text.ts";
 import { describe, expect, it } from "vitest";
 import { stringWidth } from "../../command-internal/string-width.ts";
-import { renderLogsRows, renderLogsSources, wrapLogsText } from "./logs.display.ts";
+import { renderLogsRows, renderLogsSources } from "./logs.display.ts";
 
 describe("readable logs output", () => {
   for (const width of [80, 120]) {
