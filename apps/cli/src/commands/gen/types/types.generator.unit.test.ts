@@ -65,10 +65,11 @@ describe("declaredOptions", () => {
     expect(
       declaredOptions(swift, {
         "swift-access-control": "public",
+        "swift-typegen-source": "main",
         "detect-one-to-one-relationships": false,
         unknown: true,
       }),
-    ).toEqual({ "swift-access-control": "public" });
+    ).toEqual({ "swift-access-control": "public", "swift-typegen-source": "main" });
     expect(
       declaredOptions(typescript, {
         "swift-access-control": "public",

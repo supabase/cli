@@ -99,6 +99,88 @@ const withFakeDart = <A, E, R>(
     return yield* body({ cwd, bin });
   }).pipe(Effect.provide(BunServices.layer));
 
+/** A stand-in `supabase-typegen` that echoes its arguments and its stdin. */
+const FAKE_TYPEGEN_BINARY = `#!/bin/sh
+printf 'supabase-typegen args: %s\\n' "$*"
+cat
+`;
+
+const SWIFT_VERSION = "3.0.0-alpha.1";
+/** The pinned commit; the driver caches the binary it builds under this SHA. */
+const SWIFT_REVISION = "0123456789abcdef0123456789abcdef01234567";
+
+/** Pins supabase-swift the way a SwiftPM `Package.resolved` does. */
+const PACKAGE_RESOLVED = JSON.stringify({
+  pins: [
+    {
+      identity: "supabase-swift",
+      kind: "remoteSourceControl",
+      location: "https://github.com/supabase/supabase-swift",
+      state: { revision: SWIFT_REVISION, version: SWIFT_VERSION },
+    },
+  ],
+  version: 3,
+});
+
+const withFakeSupabaseTypegen = <A, E, R>(
+  body: (context: {
+    readonly cwd: string;
+    readonly install: (directory: string) => Effect.Effect<string>;
+  }) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fs.realPath(
+      yield* fs.makeTempDirectoryScoped({ prefix: "gen-types-swift-" }),
+    );
+    const install = (directory: string) =>
+      Effect.gen(function* () {
+        const binary = path.join(directory, "supabase-typegen");
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(binary, FAKE_TYPEGEN_BINARY);
+        yield* fs.chmod(binary, 0o755);
+        return binary;
+      }).pipe(Effect.orDie);
+    return yield* body({ cwd, install });
+  }).pipe(Effect.provide(BunServices.layer));
+
+const expectFakeSupabaseTypegenOutput = (output: string) => {
+  expect(output).toContain("supabase-typegen args: --access-control internal\n");
+  expect(output).toContain('"version":1');
+};
+
+describe.skipIf(process.platform === "win32")("genTypesGeneratorLayer for --lang swift", () => {
+  it.effect("runs the cached binary under XDG_CACHE_HOME for the pinned commit", () =>
+    withFakeSupabaseTypegen(({ cwd, install }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(`${cwd}/Package.resolved`, PACKAGE_RESOLVED);
+        yield* install(`${cwd}/cache/supabase/typegen/${SWIFT_REVISION}`);
+        const output = yield* generate("swift").pipe(
+          Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin", XDG_CACHE_HOME: `${cwd}/cache` })),
+        );
+        expectFakeSupabaseTypegenOutput(output);
+      }),
+    ),
+  );
+
+  it.effect("runs the cached binary under HOME when XDG_CACHE_HOME is unset", () =>
+    withFakeSupabaseTypegen(({ cwd, install }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const caches = process.platform === "darwin" ? "Library/Caches" : ".cache";
+        yield* fs.writeFileString(`${cwd}/Package.resolved`, PACKAGE_RESOLVED);
+        yield* install(`${cwd}/home/${caches}/supabase/typegen/${SWIFT_REVISION}`);
+        const output = yield* generate("swift").pipe(
+          Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin", HOME: `${cwd}/home` })),
+        );
+        expectFakeSupabaseTypegenOutput(output);
+      }),
+    ),
+  );
+});
+
 describe.skipIf(process.platform === "win32")(
   "genTypesGeneratorLayer with a real subprocess",
   () => {
