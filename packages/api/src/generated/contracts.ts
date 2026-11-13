@@ -3531,7 +3531,6 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   saml_external_url: Schema.Union([Schema.String, Schema.Null]),
   saml_allow_encrypted_assertions: Schema.Union([Schema.Boolean, Schema.Null]),
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
-  external_email_magic_link_disabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
     Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Null]),
@@ -8728,7 +8727,6 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.optionalKey(
     Schema.Union([Schema.Boolean, Schema.Null]),
   ),
-  external_email_magic_link_disabled: Schema.optionalKey(Schema.Boolean),
   security_captcha_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   security_captcha_provider: Schema.optionalKey(
     Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Null]),
@@ -9706,7 +9704,6 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   saml_external_url: Schema.Union([Schema.String, Schema.Null]),
   saml_allow_encrypted_assertions: Schema.Union([Schema.Boolean, Schema.Null]),
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
-  external_email_magic_link_disabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
     Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Null]),
@@ -12332,7 +12329,6 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           "notebook_sort_invalid",
           "organization_invitation_email_delivery_failed",
           "organization_invitations_partially_failed",
-          "organization_inviter_email_missing",
           "organization_role_name_invalid",
           "organization_role_not_entitled",
           "pagination_cursor_invalid",
@@ -21177,7 +21173,6 @@ export const operationDefinitions = {
         "saml_enabled",
         "saml_external_url",
         "security_sb_forwarded_for_enabled",
-        "external_email_magic_link_disabled",
         "security_captcha_enabled",
         "security_captcha_provider",
         "security_captcha_secret",
