@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { type CliConfigTableRuleIssue, tableRuleFilter } from "./lib/table-rule.ts";
 
 const tags = ["local"];
 
@@ -98,6 +99,17 @@ const defaultEntry = Schema.Struct({
 
 const entry = Schema.optionalKey(serviceEntry);
 
+/** One issue per `[local.services.*]` entry whose version is invalid; paths are relative to the services table. */
+export function cliConfigServiceVersionIssues(value: {
+  readonly [key: string]: { readonly version?: string } | undefined;
+}): ReadonlyArray<CliConfigTableRuleIssue> {
+  return Object.entries(value).flatMap(([key, serviceEntry]) => {
+    const version = serviceEntry?.version;
+    const message = version === undefined ? undefined : versionIssue(key, version);
+    return message === undefined ? [] : [{ path: [key, "version"], message }];
+  });
+}
+
 const services = Schema.Struct({
   default: Schema.optionalKey(defaultEntry),
   database: entry,
@@ -118,20 +130,7 @@ const services = Schema.Struct({
       "Per-service settings for the local stack, keyed by service: version specifiers and container resource limits.",
     tags,
   })
-  .check(
-    Schema.makeFilter(
-      (value: { readonly [key: string]: { readonly version?: string } | undefined }) => {
-        for (const [key, entry] of Object.entries(value)) {
-          const version = entry?.version;
-          const issue = version === undefined ? undefined : versionIssue(key, version);
-          if (issue !== undefined) {
-            return { path: [key, "version"], issue };
-          }
-        }
-        return undefined;
-      },
-    ),
-  );
+  .check(tableRuleFilter((value) => cliConfigServiceVersionIssues(value).slice(0, 1)));
 
 /** `[local]` — settings for the local stack only; hosted commands never read it. */
 export const local = Schema.Struct({

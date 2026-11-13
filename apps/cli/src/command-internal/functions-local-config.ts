@@ -36,7 +36,7 @@ export const functionsLocalConfigLoader: FunctionsLocalConfigLoader = {
           : undefined,
         projectEnvValues: context.projectEnvValues,
         // `context.projectId` is the id built for Docker naming/labels; `validated.projectId`
-        // exists only to feed `validateResolvedConfig`'s emptiness check.
+        // exists only to feed the `project_id` config check unit's emptiness check.
         projectId: context.projectId,
         denoVersion: validated.edgeRuntimeDenoVersion,
       };

@@ -32,7 +32,7 @@ import {
   resolvePasskeyWebauthn,
 } from "./resolved-config-context.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
-import { resolveSmtpEnabled } from "./smtp-enabled.ts";
+import { smtpOn } from "./local-config-helpers.ts";
 import { parseDuration } from "./duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
 import { ramInBytes } from "./size-units.ts";
@@ -44,7 +44,6 @@ import {
 } from "./stack-lock.ts";
 
 import {
-  resolveJwtSecret,
   resolveConfiguredSigningKeys,
   resolveAuthExternalProviders,
 } from "./local-config-values.ts";
@@ -55,6 +54,7 @@ import {
   apiTlsPairErrorMessage,
   resolveApiTlsPath,
   resolveEmailTemplatePaths,
+  resolveJwtSecret,
   validateApiTlsPresence,
 } from "./config-validate.ts";
 import {
@@ -331,7 +331,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         validatedConfig.auth,
         validatedConfig.local_smtp,
         {
-          smtpEnabled: resolveSmtpEnabled(resolvedConfig),
+          smtpEnabled: smtpOn(
+            resolvedConfig.materialized.config,
+            resolvedConfig.loaded.document ?? {},
+          ),
           authExternalUrl,
           apiExternalUrl: validatedConfig.api.external_url,
           externalProviders,

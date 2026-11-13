@@ -13,11 +13,17 @@ import type { CliConfigTier } from "./cli-config-key.ts";
  */
 export class CliConfigValueError extends Data.TaggedError("CliConfigValueError")<{
   readonly path: string;
+  /** The key's path segments, for keys whose segments may contain `.`; `path` is these joined. */
+  readonly segments?: ReadonlyArray<string>;
   readonly tier: CliConfigTier;
   readonly message: string;
   readonly source?: string;
   readonly envName?: string;
   readonly flag?: string;
+  /** What a valid value is, as in "expected …"; absent for failures that are not a codec rejection. */
+  readonly expected?: string;
+  /** How a codec rejected the value; absent for failures that are not a codec rejection. */
+  readonly kind?: "type" | "enum" | "value";
   /** Per-entry decode failures, merged when several keys fail in one load. */
   readonly issues?: ReadonlyArray<string>;
 }> {

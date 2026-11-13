@@ -134,6 +134,8 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
             : Effect.fail(
                 new CliConfigLoadError({
                   message: `failed to read environment file: ${displayPath}`,
+                  file: displayPath,
+                  fileFailure: "read",
                 }),
               ),
         ),
@@ -143,7 +145,11 @@ export const loadCliProjectEnvFiles = Effect.fn("CliConfigEnv.load")(function* (
       const parsed = yield* Effect.try({
         try: () => parseDotEnv(content.value),
         catch: () =>
-          new CliConfigLoadError({ message: `failed to parse environment file: ${displayPath}` }),
+          new CliConfigLoadError({
+            message: `failed to parse environment file: ${displayPath}`,
+            file: displayPath,
+            fileFailure: "parse",
+          }),
       });
       for (const [key, value] of Object.entries(parsed)) {
         if (Object.hasOwn(values, key)) continue;

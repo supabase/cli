@@ -28,6 +28,7 @@ import {
   classifyCliErrorActionability,
   unknownProcessControlledFailureActionability,
 } from "../shared/telemetry/error-actionability.ts";
+import { ConfigValidateProblemsError } from "../commands/config/validate/validate.errors.ts";
 import { DbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.ts";
 import { DbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
 import {
@@ -69,13 +70,11 @@ import {
   type CommandTelemetryAttributeValues,
 } from "./command-telemetry-attributes.ts";
 
-/**
- * Classifies a command that succeeded its Effect but recorded a nonzero exit code through
- * ProcessControl. `db lint`/`db advisors` do this in machine mode after a `--fail-on` trigger, to
- * keep the JSON payload on stdout intact, so their telemetry derives from the same typed error
- * their text mode raises.
- */
+/** Classifies a command that records a nonzero exit code through ProcessControl instead of failing: `db lint`/`db advisors` after a machine-mode `--fail-on` trigger, and `config validate` when it reports problems. */
 function processControlledFailureActionability(command: string): CliErrorActionability {
+  if (command === "config validate") {
+    return classifyCliErrorActionability(new ConfigValidateProblemsError({ message: "" }));
+  }
   if (command === "db lint") {
     return classifyCliErrorActionability(new DbLintFailOnError({ message: "" }));
   }
