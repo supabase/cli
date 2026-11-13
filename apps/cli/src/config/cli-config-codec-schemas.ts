@@ -94,6 +94,23 @@ export const positiveIntSchemas = integerSchemas(
 
 export const portSchemas = integerSchemas(parsePort, MAX_PORT);
 
+const parseFloatText = (raw: string) => {
+  const value = Number(raw);
+  return raw.trim() === "" || !Number.isFinite(value) ? undefined : value;
+};
+
+const floatFromString = Schema.String.pipe(
+  Schema.decodeTo(Schema.Finite, {
+    decode: parsed(parseFloatText),
+    encode: SchemaGetter.transform((value: number) => String(value)),
+  }),
+);
+
+export const floatSchemas: CliConfigCodecSchemas<number> = {
+  fromString: floatFromString,
+  fromDocument: Schema.Union([floatFromString, Schema.Finite]),
+};
+
 export const stringSchemas: CliConfigCodecSchemas<string> = {
   fromString: Schema.String,
   fromDocument: Schema.String,
