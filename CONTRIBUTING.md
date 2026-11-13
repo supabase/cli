@@ -89,8 +89,8 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 ```text
 .
 |-- apps/
-|   |-- cli/   # Published Supabase CLI package
-|   `-- docs/  # Next.js docs site generated from the CLI
+|   |-- cli/      # Published Supabase CLI package
+|   `-- cli-e2e/  # CLI compatibility tests
 |-- packages/
 |   |-- api/                  # Typed Supabase Management API client
 |   |-- config/               # Supabase config schema and generated types
@@ -107,7 +107,6 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/cli`     | Main `supabase` package. Contains command handlers, runtime services, auth, output, telemetry, and docs generation scripts.            |
 | `apps/cli-e2e` | Compatibility e2e test suite. Record-and-replay harness for testing the TypeScript CLI against real Supabase Management API responses. |
-| `apps/docs`    | Internal docs site built with Next.js and generated from the CLI docs sources.                                                         |
 
 ## Packages
 

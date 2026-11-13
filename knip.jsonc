@@ -52,10 +52,6 @@
       // TODO(CLI-2424): spawned through a node_modules/.bin path in scripts/publish-docs-spec.ts.
       "ignoreDependencies": ["prettier"],
     },
-    "apps/docs": {
-      // Next.js convention file that knip's Next.js plugin does not list.
-      "entry": ["mdx-components.tsx"],
-    },
     "packages/config": {
       // Run from workflow steps; declared for the same cross-workspace reason as apps/cli.
       "entry": ["scripts/*.ts"],

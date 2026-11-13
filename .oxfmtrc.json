@@ -4,8 +4,7 @@
     "apps/cli/src/shared/feedback/database.types.ts",
     "packages/stack/src/functions/generated/",
     "apps/cli-e2e/fixtures/",
-    "apps/docs/content/docs/commands/",
-    "apps/docs/public/",
+    "apps/cli/schemas/",
     "**/testdata/"
   ]
 }
