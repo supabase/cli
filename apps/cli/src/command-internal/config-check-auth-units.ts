@@ -107,8 +107,9 @@ export const authSigningKeys: CliConfigCheckUnit = {
   scope: ["auth"],
   kind: "file",
   run: Effect.fnUntraced(function* (view, io) {
+    if (!authOn(view)) return [];
     const signingKeysPath = nonEmpty(view.get(SIGNING_KEYS_PATH));
-    if (!authOn(view) || signingKeysPath === undefined) return [];
+    if (signingKeysPath === undefined) return [];
     const result = yield* Effect.result(readSigningKeys(io, view.workdir, signingKeysPath));
     return Result.isFailure(result)
       ? [
@@ -144,8 +145,9 @@ export const DB_SIGNING_KEYS_UNIT: CliConfigCheckUnit = {
   scope: ["auth"],
   kind: "file",
   run: Effect.fnUntraced(function* (view, io) {
+    if (!authOn(view)) return [];
     const signingKeysPath = nonEmpty(view.get(SIGNING_KEYS_PATH));
-    if (!authOn(view) || signingKeysPath === undefined) return [];
+    if (signingKeysPath === undefined) return [];
     const path = yield* Path.Path;
     const read = yield* readText(io, resolveSigningKeysPath(path, view.workdir, signingKeysPath));
     const fail = (message: string) => [
@@ -729,6 +731,12 @@ export const authSignedKeys: CliConfigCheckUnit = {
       anon_key: str(view.get(["auth", "anon_key"])),
       service_role_key: str(view.get(["auth", "service_role_key"])),
     };
+    if (
+      nonEmpty(configured.anon_key) !== undefined &&
+      nonEmpty(configured.service_role_key) !== undefined
+    ) {
+      return [];
+    }
     const jwtSecret = jwtSecretOrDefault(view);
     const signingKeysPath = nonEmpty(view.get(SIGNING_KEYS_PATH));
     let signingKey: Jwk | undefined;

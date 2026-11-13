@@ -8,7 +8,6 @@ import {
   authJwtSecret,
   authMfa,
   authPasskeyEnabled,
-  authSignedKeys,
   authSigningKeys,
   authSiteUrl,
   authSmsProvider,
@@ -43,7 +42,10 @@ import {
   studioPort,
 } from "./config-check-platform-units.ts";
 
-/** Every check unit, in the order `start` and the local-stack resolvers run them. */
+/**
+ * Every check unit, in the order `start` and the local-stack resolvers run them. Their final
+ * anon/service_role key generation stands in for `authSignedKeys`, which only `config validate` runs.
+ */
 export const LOCAL_CHECK_ORDER: ReadonlyArray<CliConfigCheckUnit> = [
   apiTlsFiles,
   dbRootKey,
@@ -83,7 +85,6 @@ export const LOCAL_CHECK_ORDER: ReadonlyArray<CliConfigCheckUnit> = [
   authSmsProvider,
   authExternalBooleans,
   authExternalRequired,
-  authSignedKeys,
 ];
 
 /** The units the `db` config reader runs, in its order. */

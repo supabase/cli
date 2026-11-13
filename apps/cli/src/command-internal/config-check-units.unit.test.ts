@@ -1,10 +1,10 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
-import { cliConfigSmtpIssues } from "@supabase/config/internal";
+import { cliConfigSmtpIssues, decodeCliConfigWithoutTableRules } from "@supabase/config/internal";
 import { Effect, Result, Schema } from "effect";
 
-import { DB_SIGNING_KEYS_UNIT } from "./config-check-auth-units.ts";
+import { authSignedKeys, DB_SIGNING_KEYS_UNIT } from "./config-check-auth-units.ts";
 import {
   makeCliConfigUnitIo,
   runConfigUnitsFirst,
@@ -407,7 +407,12 @@ describe("config check unit scopes", () => {
       Effect.gen(function* () {
         const io = yield* makeCliConfigUnitIo("local");
         const units = [
-          ...new Set([...LOCAL_CHECK_ORDER, DB_SIGNING_KEYS_UNIT, ...VALIDATE_ONLY_UNITS]),
+          ...new Set([
+            ...LOCAL_CHECK_ORDER,
+            authSignedKeys,
+            DB_SIGNING_KEYS_UNIT,
+            ...VALIDATE_ONLY_UNITS,
+          ]),
         ];
         const observed = new Map<string, Array<Segments>>();
         for (const { config, document } of [richFixture(), maximalFixture()]) {
@@ -461,7 +466,7 @@ const unknownAt = (
 });
 
 const unitById = (id: string): CliConfigCheckUnit => {
-  const unit = [...LOCAL_CHECK_ORDER, ...VALIDATE_ONLY_UNITS].find(
+  const unit = [...LOCAL_CHECK_ORDER, authSignedKeys, ...VALIDATE_ONLY_UNITS].find(
     (candidate) => candidate.id === id,
   );
   if (unit === undefined) throw new Error(`no unit ${id}`);
@@ -472,7 +477,11 @@ describe("counting units", () => {
   const run = (id: string, view: CountingCliConfigView) =>
     Effect.gen(function* () {
       const io = yield* makeCliConfigUnitIo("local");
-      return yield* unitById(id).run(view, io, undefined);
+      const unit = unitById(id);
+      const entries = unit.entries === undefined ? [undefined] : unit.entries(view);
+      const findings = [];
+      for (const entry of entries) findings.push(...(yield* unit.run(view, io, entry)));
+      return findings;
     }).pipe(Effect.provide(BunServices.layer));
 
   const twoProviders = decodeConfig({
@@ -549,6 +558,28 @@ describe("counting units", () => {
     Effect.gen(function* () {
       for (const id of ["auth.sms.provider", "auth.sms.table"]) {
         expect(yield* run(id, twilioThenVonage)).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect("sms reports a missing credential on the first enabled provider only", () =>
+    Effect.gen(function* () {
+      const decoded = decodeCliConfigWithoutTableRules({
+        project_id: "test",
+        ...auth({
+          sms: {
+            twilio: { enabled: true, account_sid: "a", message_service_sid: "m" },
+            vonage: { enabled: true },
+          },
+        }),
+      });
+      if (decoded._tag !== "Success") throw new Error("fixture does not decode");
+      const view = untrackedCliConfigView({ config: decoded.value, workdir: WORKDIR });
+      for (const id of ["auth.sms.provider", "auth.sms.table"]) {
+        const findings = yield* run(id, view);
+        expect(findings.map((finding) => finding.path.join("."))).toEqual([
+          "auth.sms.twilio.auth_token",
+        ]);
       }
     }),
   );

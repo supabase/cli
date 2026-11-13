@@ -512,7 +512,8 @@ export const resolveStartAuthDurations = Effect.fnUntraced(function* (
 /**
  * Fails with the first config error, in the order {@link LOCAL_CHECK_ORDER} runs the checks:
  * `api.tls` file reads, `db.root_key`, `auth.jwt_secret`, signing keys and email content files,
- * then the value and requirement checks, then anon/service_role key generation.
+ * then the value and requirement checks, then anon/service_role key generation, which is the
+ * signed-key check.
  */
 export const resolveLocalConfigValues = Effect.fnUntraced(function* (
   config: CliConfig,

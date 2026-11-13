@@ -1123,6 +1123,23 @@ describe("config validate integration", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("warns, not errors, on an unset signing_keys_path nothing needs", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile(
+            'project_id = "demo"\n[auth]\nenabled = false\nanon_key = "anon"\nservice_role_key = "service"\nsigning_keys_path = "env(UNUSED_KEYS)"\n',
+          ),
+          { resolveEnv: true, format: "json" },
+        );
+
+        expect(result.exitCode).toBeUndefined();
+        expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toEqual([]);
+        expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
+          { key: "auth.signing_keys_path" },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("reports a variable set to an empty value", () =>
       Effect.gen(function* () {
         const result = yield* validate(

@@ -35,7 +35,10 @@ import {
   type CountingCliConfigView,
   type Segments,
 } from "../../../command-internal/config-check-core.ts";
-import { authDurationUnits } from "../../../command-internal/config-check-auth-units.ts";
+import {
+  authDurationUnits,
+  authSignedKeys,
+} from "../../../command-internal/config-check-auth-units.ts";
 import { LOCAL_CHECK_ORDER } from "../../../command-internal/config-check-units.ts";
 import { VALIDATE_ONLY_UNITS } from "./validate.units.ts";
 import type { ConfigValidationIssueCode } from "../../../command-internal/config-validate.ts";
@@ -599,7 +602,7 @@ const trackedView = (
 };
 
 const UNIT_GROUPS = [
-  { units: [...LOCAL_CHECK_ORDER, ...authDurationUnits], rank: 0 },
+  { units: [...LOCAL_CHECK_ORDER, authSignedKeys, ...authDurationUnits], rank: 0 },
   { units: VALIDATE_ONLY_UNITS, rank: 1 },
 ] as const;
 
