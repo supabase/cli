@@ -92,9 +92,19 @@ const reportPruned = (debug: boolean, label: string, stdout: string) =>
     process.stderr.write(`${label} [${parsePrunedNames(stdout).join(" ")}]\n`);
   });
 
+const isConcurrentPruneRejection = (output: {
+  readonly exitCode: number;
+  readonly stderr: string;
+}) => output.exitCode !== 0 && /a prune operation is already running/iu.test(output.stderr);
+
+/** How long one prune waits for other stacks' prunes before giving up. */
+const CONCURRENT_PRUNE_WAIT = "60 seconds";
+
 /**
  * Docker runs one prune at a time per daemon and rejects concurrent ones, even with different
- * label filters, so stacks stopping at the same moment wait for each other's prune.
+ * label filters, so stacks stopping at the same moment wait for each other's prune. A large
+ * container or volume prune can hold the daemon's prune lock for tens of seconds, so the wait is
+ * bounded by elapsed time rather than an attempt count.
  */
 const pruneWaitingForConcurrentPrune = Effect.fn("DockerRemoveAll.prune")(function* (
   spawner: Spawner,
@@ -109,18 +119,26 @@ const pruneWaitingForConcurrentPrune = Effect.fn("DockerRemoveAll.prune")(functi
       }),
     ),
     Effect.repeat({
-      while: (output) =>
-        output.exitCode !== 0 && /a prune operation is already running/iu.test(output.stderr),
-      schedule: Schedule.spaced("250 millis").pipe(Schedule.jittered),
-      times: 40,
+      while: isConcurrentPruneRejection,
+      schedule: Schedule.min([
+        Schedule.exponential("250 millis"),
+        Schedule.spaced("2 seconds"),
+      ]).pipe(Schedule.jittered, Schedule.upTo({ duration: CONCURRENT_PRUNE_WAIT })),
     }),
   );
+  const stillBlocked = isConcurrentPruneRejection(result);
   yield* Effect.annotateCurrentSpan({
     "docker.prune.kind": args[0] ?? "",
     "docker.prune.attempts": attempts,
     "docker.prune.exit_code": result.exitCode,
+    "docker.prune.concurrent_wait_exhausted": stillBlocked,
   });
-  return result;
+  return stillBlocked
+    ? {
+        ...result,
+        stderr: `${result.stderr.trim()} (still running after retrying for up to ${CONCURRENT_PRUNE_WAIT}, ${attempts} attempts)`,
+      }
+    : result;
 });
 
 const pruneFailureMessage = (kind: string, stderr: string) => {
