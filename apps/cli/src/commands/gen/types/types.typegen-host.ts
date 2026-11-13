@@ -16,7 +16,7 @@ export interface TypegenHostOptions {
   /** Where out-of-process tools run: the directory the command was invoked from. */
   readonly cwd: string;
   /**
-   * What the registry's drivers read: the Windows tool lookup and the Swift binary resolution.
+   * What the registry's drivers read: the Windows tool lookup and the Swift binary cache.
    * The child inherits the full environment.
    */
   readonly env: Readonly<Record<string, string | undefined>>;

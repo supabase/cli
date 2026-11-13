@@ -100,7 +100,7 @@ const withFakeDart = <A, E, R>(
   }).pipe(Effect.provide(BunServices.layer));
 
 /** A stand-in `supabase-typegen` that echoes its arguments and its stdin. */
-const FAKE_SUPABASE_TYPEGEN = `#!/bin/sh
+const FAKE_TYPEGEN_BINARY = `#!/bin/sh
 printf 'supabase-typegen args: %s\\n' "$*"
 cat
 `;
@@ -140,7 +140,7 @@ const withFakeSupabaseTypegen = <A, E, R>(
       Effect.gen(function* () {
         const binary = path.join(directory, "supabase-typegen");
         yield* fs.makeDirectory(directory, { recursive: true });
-        yield* fs.writeFileString(binary, FAKE_SUPABASE_TYPEGEN);
+        yield* fs.writeFileString(binary, FAKE_TYPEGEN_BINARY);
         yield* fs.chmod(binary, 0o755);
         return binary;
       }).pipe(Effect.orDie);
@@ -153,18 +153,6 @@ const expectFakeSupabaseTypegenOutput = (output: string) => {
 };
 
 describe.skipIf(process.platform === "win32")("genTypesGeneratorLayer for --lang swift", () => {
-  it.effect("runs the binary SUPABASE_TYPEGEN names", () =>
-    withFakeSupabaseTypegen(({ cwd, install }) =>
-      Effect.gen(function* () {
-        const binary = yield* install(`${cwd}/tools`);
-        const output = yield* generate("swift").pipe(
-          Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin", SUPABASE_TYPEGEN: binary })),
-        );
-        expectFakeSupabaseTypegenOutput(output);
-      }),
-    ),
-  );
-
   it.effect.skipIf(!hasSwiftReleaseAsset)(
     "runs the cached release binary under XDG_CACHE_HOME for the pinned version",
     () =>
