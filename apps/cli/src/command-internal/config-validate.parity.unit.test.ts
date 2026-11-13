@@ -9,7 +9,7 @@ import { withEnvVar, mockCommandSettings } from "../../tests/helpers/command-moc
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { readDbConfig } from "./db-config.read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
-import { collectLocalConfigIssues, resolveLocalConfigValues } from "./local-config-values.ts";
+import { resolveLocalConfigValues, resolveStartAuthDurations } from "./local-config-values.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
@@ -19,7 +19,7 @@ const stringifyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
  * pipelines — D (`readDbConfig`, Effect/raw-TOML) and L (`resolveLocalConfigValues`,
  * `@supabase/config`-decoded) — and asserts they fail with the same error-message substring,
- * since both route through the single `validateResolvedConfig`. A third caller, the
+ * since both run the shared units in `config-check-units.ts`. A third caller, the
  * storage-credentials resolver (S), shares the `api.port`/`api.tls` presence branches and the
  * `auth.jwt_secret`/`auth.service_role_key` resolution; its own describe block below drives
  * that pipeline.
@@ -79,28 +79,6 @@ function failsWithL(
       resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
     );
     expect(error.message).toContain(message);
-  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
-}
-
-/** Drives the collecting pipeline and asserts its first issue is the one the throwing pipeline fails with. */
-function collectsFirstWithL(
-  overrides: Record<string, unknown>,
-  message: string,
-  document?: Readonly<Record<string, unknown>>,
-) {
-  return Effect.gen(function* () {
-    const issues = yield* collectLocalConfigIssues(
-      baseConfig(overrides),
-      WORKDIR,
-      document,
-      undefined,
-    );
-    const config = baseConfig(overrides);
-    const thrown = yield* Effect.flip(
-      resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
-    );
-    expect(issues[0]?.message).toContain(message);
-    expect(issues[0]?.message).toBe(thrown.message);
   }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 }
 
@@ -343,28 +321,298 @@ const scenarios: ReadonlyArray<ParityScenario> = [
 ];
 
 // Explicitly skipped (only one caller runs the branch, or the branch isn't exercised the same
-// way by both — see the module header in `config-validate.ts` for the full out-of-scope list):
+// way by both — see `config-check-units.ts` for the per-pipeline orders):
 // - `remotes[*].project_id` — D-only, never part of the shared validator
-// (`ConfigValidationInput` has no field for it).
+// (it is a validate-only unit).
 // - `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections. `api.tls`
 // presence is D-skipped for the same reason but is shared with S via
 // `validateApiTlsPresence` — see the S block below.
-describe("validateResolvedConfig cross-caller parity (D vs L)", () => {
+describe("config check units cross-caller parity (D vs L)", () => {
   for (const scenario of scenarios) {
     it.effect(`${scenario.name}: D and L fail with the same message`, () =>
       Effect.gen(function* () {
         yield* failsWithD(scenario.toml, scenario.message);
         yield* failsWithL(scenario.overrides, scenario.message, scenario.document);
-        yield* collectsFirstWithL(scenario.overrides, scenario.message, scenario.document);
       }),
     );
   }
 
-  it.effect("a valid config collects no issues", () =>
+  it.effect(
+    "two errors: D reports the first in its order (db.major_version before function slug)",
+    () => failsWithD(["[db]", "major_version = 12", "[functions.1bad]"], "Postgres version 12.x"),
+  );
+
+  it.effect(
+    "two errors: D reports db.port where L reports the unreadable signing keys file first",
+    () =>
+      Effect.gen(function* () {
+        yield* failsWithD(
+          ["[db]", "port = 0", "[auth]", 'signing_keys_path = "./nope.json"'],
+          "Missing required field in config: db.port",
+        );
+        yield* failsWithL(
+          { db: { port: 0 }, auth: { signing_keys_path: "./nope.json" } },
+          "failed to read signing keys",
+        );
+      }),
+  );
+
+  it.effect(
+    "two errors: L reports the first in its order (jwt_secret before db.major_version)",
+    () =>
+      failsWithL(
+        { auth: { jwt_secret: "short" }, db: { major_version: 12 } },
+        "Invalid config for auth.jwt_secret",
+      ),
+  );
+});
+
+interface GoldenScenario {
+  readonly name: string;
+  readonly toml: ReadonlyArray<string>;
+  readonly overrides: Record<string, unknown>;
+  readonly document?: Readonly<Record<string, unknown>>;
+  readonly files?: Readonly<Record<string, string>>;
+  /** D's exact first error; `undefined` when D accepts the config. */
+  readonly D: string | undefined;
+  /** L's exact first error; `undefined` when L accepts the config or the schema rejects it before any unit runs. */
+  readonly L: string | undefined;
+}
+
+const MESSAGE_AUTH = { enabled: true, site_url: "http://localhost:3000" };
+
+const golden: ReadonlyArray<GoldenScenario> = [
+  {
+    name: "passkey flag that is not a boolean",
+    toml: ["[auth.passkey]", 'enabled = "maybe"'],
+    overrides: { auth: MESSAGE_AUTH },
+    document: { auth: { passkey: { enabled: "maybe" } } },
+    D: 'Invalid auth.passkey.enabled in supabase/config.toml: "maybe" is not true or false.',
+    L: 'Invalid config for auth.passkey.enabled: "maybe" is not a valid boolean',
+  },
+  {
+    name: "passkey without a webauthn section",
+    toml: ["[auth.passkey]", "enabled = true"],
+    overrides: { auth: MESSAGE_AUTH },
+    document: { auth: { passkey: { enabled: true } } },
+    D: "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+    L: "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+  },
+  {
+    name: "webauthn without rp_id",
+    toml: ["[auth.passkey]", "enabled = true", "[auth.webauthn]", 'rp_origins = ["http://x.test"]'],
+    overrides: { auth: MESSAGE_AUTH },
+    document: {
+      auth: { passkey: { enabled: true }, webauthn: { rp_origins: ["http://x.test"] } },
+    },
+    D: "Missing required field in config: auth.webauthn.rp_id",
+    L: "Missing required field in config: auth.webauthn.rp_id",
+  },
+  {
+    name: "webauthn without rp_origins",
+    toml: ["[auth.passkey]", "enabled = true", "[auth.webauthn]", 'rp_id = "localhost"'],
+    overrides: { auth: MESSAGE_AUTH },
+    document: { auth: { passkey: { enabled: true }, webauthn: { rp_id: "localhost" } } },
+    D: "Missing required field in config: auth.webauthn.rp_origins",
+    L: "Missing required field in config: auth.webauthn.rp_origins",
+  },
+  {
+    name: "twilio enabled without account_sid",
+    toml: ["[auth.sms.twilio]", "enabled = true"],
+    overrides: {},
+    D: "Missing required field in config: auth.sms.twilio.account_sid",
+    L: undefined,
+  },
+  {
+    name: "vonage enabled without api_key",
+    toml: ["[auth.sms.vonage]", "enabled = true", 'from = "f"'],
+    overrides: {},
+    D: "Missing required field in config: auth.sms.vonage.api_key",
+    L: undefined,
+  },
+  {
+    name: "built-in external provider enabled without client_id",
+    toml: ["[auth.external.github]", "enabled = true"],
+    overrides: {},
+    D: "Missing required field in config: auth.external.github.client_id",
+    L: undefined,
+  },
+  {
+    name: "built-in external provider enabled without secret",
+    toml: ["[auth.external.github]", "enabled = true", 'client_id = "c"'],
+    overrides: {},
+    D: "Missing required field in config: auth.external.github.secret",
+    L: undefined,
+  },
+  {
+    name: "apple enabled without client_id",
+    toml: ["[auth.external.apple]", "enabled = true"],
+    overrides: {},
+    D: "Missing required field in config: auth.external.apple.client_id",
+    L: undefined,
+  },
+  {
+    name: "TLS cert that does not exist",
+    toml: ["[api.tls]", "enabled = true", 'cert_path = "nope.crt"', 'key_path = "nope.key"'],
+    overrides: { api: { tls: { enabled: true, cert_path: "nope.crt", key_path: "nope.key" } } },
+    D: undefined,
+    L: "failed to read TLS cert: ENOENT: no such file or directory, open '<workdir>/supabase/nope.crt'",
+  },
+  {
+    name: "db.root_key that is not a string",
+    toml: ["[db]", "root_key = 5"],
+    overrides: {},
+    document: { db: { root_key: 5 } },
+    D: 'Invalid db.root_key in supabase/config.toml: "<redacted>" is not a string.',
+    L: "failed to parse config:\ndb.root_key: expected a table",
+  },
+  {
+    name: "analytics.backend outside the enum",
+    toml: ["[analytics]", 'backend = "nope"'],
+    overrides: {},
+    D: 'Invalid analytics.backend in supabase/config.toml: "nope" is not one of "postgres", "bigquery".',
+    L: undefined,
+  },
+  {
+    name: "bigquery analytics without a project id",
+    toml: ["[analytics]", "enabled = true", 'backend = "bigquery"'],
+    overrides: { analytics: { enabled: true, backend: "bigquery" } },
+    D: "Missing required field in config: analytics.gcp_project_id",
+    L: "Missing required field in config: analytics.gcp_project_id",
+  },
+  {
+    name: "a signing key the key generation rejects",
+    toml: ["[auth]", 'signing_keys_path = "keys.json"'],
+    overrides: { auth: { signing_keys_path: "keys.json" } },
+    files: {
+      "supabase/keys.json": '[{"kty":"EC","crv":"P-256","x":"a","y":"b","d":"c","kid":"k"}]',
+    },
+    D: undefined,
+    L: "failed to convert JWK to private key: failed to decode x coordinate: illegal base64 data at input byte 0",
+  },
+  {
+    name: "auth.email.max_frequency that is not a duration",
+    toml: ["[auth.email]", 'max_frequency = "5x"'],
+    overrides: { auth: { email: { max_frequency: "5x" } } },
+    D: undefined,
+    L: 'invalid config for auth.email.max_frequency: time: unknown unit in duration "5x"',
+  },
+  {
+    name: "auth.sms.max_frequency that is not a duration",
+    toml: ["[auth.sms]", 'max_frequency = "5x"'],
+    overrides: { auth: { sms: { max_frequency: "5x" } } },
+    D: undefined,
+    L: 'invalid config for auth.sms.max_frequency: time: unknown unit in duration "5x"',
+  },
+  {
+    name: "auth.sessions.timebox that is not a duration",
+    toml: ["[auth.sessions]", 'timebox = "5x"'],
+    overrides: { auth: { sessions: { timebox: "5x" } } },
+    D: undefined,
+    L: 'invalid config for auth.sessions.timebox: time: unknown unit in duration "5x"',
+  },
+  {
+    name: "auth.sessions.inactivity_timeout that is not a duration",
+    toml: ["[auth.sessions]", 'inactivity_timeout = "5x"'],
+    overrides: { auth: { sessions: { inactivity_timeout: "5x" } } },
+    D: undefined,
+    L: 'invalid config for auth.sessions.inactivity_timeout: time: unknown unit in duration "5x"',
+  },
+  {
+    name: "auth.mfa.phone.max_frequency that is not a duration",
+    toml: ["[auth.mfa.phone]", 'max_frequency = "5x"'],
+    overrides: { auth: { mfa: { phone: { max_frequency: "5x" } } } },
+    D: undefined,
+    L: 'invalid config for auth.mfa.phone.max_frequency: time: unknown unit in duration "5x"',
+  },
+];
+
+const firstErrors = (scenario: GoldenScenario) =>
+  Effect.gen(function* () {
+    const dir = yield* withConfig(scenario.toml.join("\n"));
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const [file, content] of Object.entries(scenario.files ?? {})) {
+      yield* fs.writeFileString(path.join(dir, file), content);
+    }
+    const d = yield* Effect.flip(readD(dir)).pipe(
+      Effect.map((error) => error.message),
+      Effect.orElseSucceed(() => undefined),
+    );
+    const config = yield* Effect.try({
+      try: () => baseConfig(scenario.overrides),
+      catch: () => undefined,
+    }).pipe(Effect.orElseSucceed(() => undefined));
+    const l =
+      config === undefined
+        ? undefined
+        : yield* resolveLocalConfigValues(config, "127.0.0.1", dir, scenario.document).pipe(
+            Effect.andThen(resolveStartAuthDurations(config, dir, scenario.document)),
+            Effect.flip,
+            Effect.map((error) => error.message.replaceAll(dir, "<workdir>")),
+            Effect.orElseSucceed(() => undefined),
+            Effect.provide([BunServices.layer, BunCrypto.layer]),
+          );
+    return { d, l };
+  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+
+describe("config check units first-error text, pinned per pipeline", () => {
+  for (const scenario of golden) {
+    it.effect(`${scenario.name}`, () =>
+      Effect.gen(function* () {
+        const { d, l } = yield* firstErrors(scenario);
+
+        expect(d).toBe(scenario.D);
+        expect(l).toBe(scenario.L);
+      }),
+    );
+  }
+
+  it.effect("two errors: D reports db.major_version 12 before the function slug, verbatim", () =>
     Effect.gen(function* () {
-      const issues = yield* collectLocalConfigIssues(baseConfig(), WORKDIR, undefined, undefined);
-      expect(issues).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      const { d } = yield* firstErrors({
+        name: "",
+        toml: ["[db]", "major_version = 12", "[functions.1bad]"],
+        overrides: {},
+        D: undefined,
+        L: undefined,
+      });
+
+      expect(d).toBe(
+        "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+      );
+    }),
+  );
+
+  it.effect("two errors: D reports db.port first and L the unreadable signing keys, verbatim", () =>
+    Effect.gen(function* () {
+      const { d, l } = yield* firstErrors({
+        name: "",
+        toml: ["[db]", "port = 0", "[auth]", 'signing_keys_path = "./nope.json"'],
+        overrides: { db: { port: 0 }, auth: { signing_keys_path: "./nope.json" } },
+        D: undefined,
+        L: undefined,
+      });
+
+      expect(d).toBe("Missing required field in config: db.port");
+      expect(l).toBe(
+        "failed to read signing keys: ENOENT: no such file or directory, open '<workdir>/supabase/nope.json'",
+      );
+    }),
+  );
+
+  it.effect("two errors: L reports the short jwt_secret before db.major_version, verbatim", () =>
+    Effect.gen(function* () {
+      const { l } = yield* firstErrors({
+        name: "",
+        toml: ["[db]", "major_version = 12", "[auth]", 'jwt_secret = "short"'],
+        overrides: { auth: { jwt_secret: "short" }, db: { major_version: 12 } },
+        D: undefined,
+        L: undefined,
+      });
+
+      expect(l).toBe("Invalid config for auth.jwt_secret. Must be at least 16 characters");
+    }),
   );
 });
 

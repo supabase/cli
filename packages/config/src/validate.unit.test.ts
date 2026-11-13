@@ -130,22 +130,4 @@ describe("validateCliConfig provider switch alias", () => {
         expect(config.auth.email.enable_signup).toBe(true);
       }),
     ));
-
-  test("reports every schema issue only when allIssues is set", () =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        const document = { api: { port: "x" }, studio: { port: "y" } };
-        const countIssues = (exit: Exit.Exit<unknown, Schema.SchemaError>) => {
-          if (Exit.isSuccess(exit)) return 0;
-          const error = Cause.findErrorOption(exit.cause);
-          const issue = Option.isSome(error) ? error.value.issue : undefined;
-          return issue?._tag === "Composite" ? issue.issues.length : 1;
-        };
-        const first = yield* Effect.exit(validateCliConfig(document));
-        const all = yield* Effect.exit(validateCliConfig(document, { allIssues: true }));
-
-        expect(countIssues(first)).toBe(1);
-        expect(countIssues(all)).toBeGreaterThan(1);
-      }),
-    ));
 });

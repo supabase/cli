@@ -24,6 +24,10 @@ const report = (problems: ReadonlyArray<ConfigProblem>, extra: Partial<ValidateR
     format: "toml",
     remotes: [],
     problems,
+    mode: "default",
+    deferred: [],
+    unknownValues: 0,
+    complete: true,
     ...extra,
   }) satisfies ValidateReport;
 
@@ -87,6 +91,57 @@ describe("validateReport", () => {
     );
   });
 
+  it("adds one info line in default mode when values or checks wait on env()", () => {
+    const text = render([], { unknownValues: 3, deferred: [{ check: "a", waitsOn: ["x"] }] });
+
+    expect(text).toContain(
+      "  3 values come from env() and 1 check was not run; run with --resolve-env to check them\n",
+    );
+  });
+
+  it("names only the values when no check was deferred", () => {
+    expect(render([], { unknownValues: 1 })).toContain(
+      "  1 value comes from env(); run with --resolve-env to check them\n",
+    );
+  });
+
+  it("uses singular and plural forms in the info line", () => {
+    const check = { check: "a", waitsOn: ["x"] };
+    expect(render([], { unknownValues: 1, deferred: [check] })).toContain(
+      "  1 value comes from env() and 1 check was not run;",
+    );
+    expect(render([], { unknownValues: 2, deferred: [check, check] })).toContain(
+      "  2 values come from env() and 2 checks were not run;",
+    );
+  });
+
+  it("adds no info line when nothing is unknown", () => {
+    expect(render([])).not.toContain("--resolve-env");
+  });
+
+  it("counts the checks that waited on unset variables under --resolve-env", () => {
+    const text = render([], {
+      mode: "resolve-env",
+      unknownValues: 1,
+      deferred: [
+        { check: "a", waitsOn: ["x"] },
+        { check: "b", remote: "staging", waitsOn: ["y"] },
+      ],
+    });
+
+    expect(text).toContain("2 checks were not run because they wait on unset or empty variables");
+    expect(text).not.toContain("run with --resolve-env");
+  });
+
+  it("says the report is incomplete when the engine could not check a whole table", () => {
+    const text = render([problem({ path: ["local", "services", "auth", "version"] })], {
+      complete: false,
+    });
+
+    expect(text).toContain("The report is incomplete");
+    expect(render([problem({ path: ["api"] })])).not.toContain("incomplete");
+  });
+
   it("neutralises control characters in a problem subject", () => {
     const text = render([problem({ path: ["a\u001b[31mb"] })]);
 
@@ -135,6 +190,8 @@ describe("validateJsonPayload", () => {
       file: "supabase/config.toml",
       format: "toml",
       remotes: ["staging"],
+      unknown_values: 0,
+      deferred: [],
       errors: [
         {
           code: "invalid_type",
@@ -155,6 +212,36 @@ describe("validateJsonPayload", () => {
       ],
     });
     expect(JSON.stringify(payload)).not.toContain("hunter2");
+  });
+
+  it("lists the deferred checks and unknown values, and marks a partial run incomplete", () => {
+    const payload = validateJsonPayload(
+      report([], {
+        unknownValues: 2,
+        complete: false,
+        deferred: [{ check: "auth.captcha", remote: "staging", waitsOn: ["auth.captcha.secret"] }],
+      }),
+    );
+
+    expect(payload).toMatchObject({
+      complete: false,
+      unknown_values: 2,
+      deferred: [{ check: "auth.captcha", remote: "staging", waits_on: ["auth.captcha.secret"] }],
+    });
+  });
+
+  it("keys a problem written in the base block without the remote prefix", () => {
+    const payload = validateJsonPayload(
+      report([
+        problem({ path: ["auth", "site_url"], remote: "prod", inBase: true }),
+        problem({ path: ["auth", "enabled"], remote: "prod" }),
+      ]),
+    );
+
+    expect(payload.errors.map((error) => error.key)).toEqual([
+      "auth.site_url",
+      "remotes.prod.auth.enabled",
+    ]);
   });
 
   it("marks a stopped run incomplete", () => {

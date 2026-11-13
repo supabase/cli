@@ -7,22 +7,22 @@ import { definedEnv } from "../../tests/helpers/config-env-pins.ts";
 import { configValuesLayer } from "../../tests/helpers/config-values-layer.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
-import { resolveSmtpEnabled } from "./smtp-enabled.ts";
+import { smtpOn } from "./local-config-helpers.ts";
 
 const smtpEnabled = (config: string, shell: Record<string, string> = {}) =>
   Effect.gen(function* () {
-    const root = yield* createStackConfigProject(config, { prefix: "supabase-smtp-enabled-" });
+    const root = yield* createStackConfigProject(config, { prefix: "supabase-smtp-on-" });
     const resolvedConfig = yield* CliConfigValues.use((values) =>
       values.load({ workdir: root, projectRef: Option.none() }),
     ).pipe(Effect.provide(configValuesLayer()));
-    return resolveSmtpEnabled(resolvedConfig);
+    return smtpOn(resolvedConfig.materialized.config, resolvedConfig.loaded.document ?? {});
   }).pipe(
     Effect.provide(BunServices.layer),
     (effect) => withConfigEnv(definedEnv(shell), effect),
     Effect.scoped,
   );
 
-describe("resolveSmtpEnabled", () => {
+describe("smtpOn", () => {
   it.live("is off when [auth.email.smtp] is absent", () =>
     Effect.gen(function* () {
       expect(yield* smtpEnabled('project_id = "p"\n')).toBe(false);

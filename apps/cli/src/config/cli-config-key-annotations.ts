@@ -160,15 +160,6 @@ const SMS_PROVIDER_SECTIONS: ReadonlySet<string> = new Set([
   "vonage",
 ]);
 
-/** Keys whose `env(NAME)` reference may stay unset without harm, with the reason; `supabase init` writes these. */
-export const CLI_CONFIG_OPTIONAL_ENV_PATHS: Readonly<Record<string, string>> = {
-  "studio.openai_api_key": "Studio treats the key as optional",
-  "experimental.s3_host": "only read when S3 storage is configured",
-  "experimental.s3_region": "only read when S3 storage is configured",
-  "experimental.s3_access_key": "only read when S3 storage is configured",
-  "experimental.s3_secret_key": "only read when S3 storage is configured",
-};
-
 /** Optional schema sections whose env overrides apply while the section is absent, with the reason. */
 export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
   "auth.sessions":

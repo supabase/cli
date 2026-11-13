@@ -6,72 +6,62 @@ import {
   DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
-import {
-  defaultJwtSecret,
-  defaultPublishableKey,
-  defaultSecretKey,
-} from "../shared/stack-constants.ts";
-import { Data, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { defaultPublishableKey, defaultSecretKey } from "../shared/stack-constants.ts";
+import { Effect, Option, Schema } from "effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 
-import { CliConfigValueError } from "../config/cli-config.errors.ts";
 import {
   resolveRemoteJwks,
   resolveThirdPartyIssuerUrl,
   thirdPartyIssuerUrlUnchecked,
   toPublicJwk,
 } from "../shared/auth/jwks.ts";
-import {
-  actionability,
-  type CliErrorActionabilityDeclaration,
-  ErrorActionabilityFingerprintId,
-  ErrorActionabilityId,
-} from "../shared/telemetry/error-actionability.ts";
 import { resolveApiExternalUrl } from "./api-url.ts";
-import { configFileName } from "./config-advice.ts";
 import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import {
-  apiTlsCertReadErrorMessage,
-  apiTlsKeyReadErrorMessage,
-  type AnalyticsInput,
-  type ApiInput,
-  type AuthInput,
-  type CaptchaInput,
-  collectAuthExternalProviderIssues,
-  collectAuthSmsProviderIssues,
-  collectConfigValidationIssues,
-  ConfigValidateError,
-  type ConfigValidationInput,
-  type ConfigValidationIssue,
-  invalidIssue,
-  missingApiTlsPath,
-  type DbInput,
-  emailContentPathReadErrorMessage,
-  type ExperimentalInput,
-  fsErrorCause,
-  type HookInput,
-  type LocalSmtpInput,
-  type MfaFactorInput,
-  type PasskeyInput,
-  resolveApiTlsPath,
-  resolveEmailTemplateContentPath,
-  resolveSigningKeysPath,
-  signingKeysDecodeErrorMessage,
-  signingKeysReadErrorMessage,
-  type SmtpInput,
-  type StudioInput,
-  type ThirdPartyInput,
-  validateAuthExternalProviders,
-  validateAuthSmsProviders,
-  validateResolvedConfig,
-} from "./config-validate.ts";
-import { parseBoolLiteral } from "../shared/config/config-bool.ts";
+  makeCliConfigUnitIo,
+  runConfigUnitsFirst,
+  untrackedCliConfigView,
+  type CliConfigUnitIo,
+} from "./config-check-core.ts";
+import { authDurationUnits } from "./config-check-auth-units.ts";
+import { LOCAL_CHECK_ORDER } from "./config-check-units.ts";
 import {
-  DEFAULT_SIGNING_KEY,
-  generateAsymmetricLocalJwt,
-  generateLocalJwt,
-  type Jwk,
-} from "./local-jwt.ts";
+  authExternalProviderNames,
+  HOOK_TYPE_ORDER,
+  rawOrigins,
+  readSigningKeys,
+} from "./local-config-helpers.ts";
+import {
+  ConfigValidateError,
+  narrowConfigEnum,
+  rawUnmodeledBool,
+  resolveJwtSecret,
+  resolveSignedKey,
+  thrownError,
+} from "./config-validate.ts";
+import { DEFAULT_SIGNING_KEY, type Jwk } from "./local-jwt.ts";
+
+interface CaptchaInput {
+  readonly enabled: boolean;
+  readonly provider: string | undefined;
+  readonly secret: string | undefined;
+}
+
+interface SmtpInput {
+  readonly enabled: boolean;
+  readonly host: string;
+  readonly port: number;
+  readonly user: string;
+  readonly pass: string;
+  readonly adminEmail: string;
+}
+
+interface ThirdPartyInput {
+  readonly provider: "firebase" | "auth0" | "cognito" | "clerk" | "workos";
+  readonly requiredField: string;
+  readonly cognitoUserPoolRegion?: string;
+}
 
 /**
  * Resolves local-dev config values (URLs, ports, keys) from the effective config the
@@ -138,118 +128,7 @@ function apiUrlWithPath(apiExternalUrl: string, path: string): string {
   return `${apiExternalUrl}${path}`;
 }
 
-/**
- * Thrown by {@link resolveLocalConfigValues} when `auth.jwt_secret` is configured but too
- * short to sign with. Validated at config-load time, before any command renders output.
- */
-export class InvalidJwtSecretError extends Data.Error<{ readonly message: string }> {
-  static readonly [ErrorActionabilityFingerprintId] = "InvalidJwtSecretError";
-  constructor() {
-    super({ message: "Invalid config for auth.jwt_secret. Must be at least 16 characters" });
-    this.name = "InvalidJwtSecretError";
-  }
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
-
-/** Minimum `auth.jwt_secret` length. */
-const MIN_JWT_SECRET_LENGTH = 16;
-
-/**
- * A failure that is not one of this module's config errors (a signing-key error, an unsupported
- * algorithm), keeping the original error's name and message and no actionability.
- */
-class LocalConfigValuesError extends Data.Error<{ readonly message: string }> {
-  constructor(message: string, name = "Error") {
-    super({ message });
-    /* Keeps the wrapped error's name (as a non-enumerable own property) and message. */
-    if (name !== "Error") Reflect.defineProperty(this, "name", { value: name, writable: true });
-  }
-}
-
-const thrownError = (cause: unknown) =>
-  cause instanceof ConfigValidateError ||
-  cause instanceof InvalidJwtSecretError ||
-  cause instanceof CliConfigValueError
-    ? cause
-    : cause instanceof Error
-      ? new LocalConfigValuesError(cause.message, cause.name)
-      : new LocalConfigValuesError(String(cause));
-
 const attempt = <A>(thunk: () => A) => Effect.try({ try: thunk, catch: thrownError });
-
-interface IssueMeta {
-  readonly reason: string;
-  readonly help?: string;
-  readonly code?: ConfigValidationIssue["code"];
-}
-
-type Reads = ReadonlyArray<ReadonlyArray<string>>;
-
-const issueFrom = (
-  path: string,
-  message: string,
-  meta: IssueMeta,
-  reads?: Reads,
-): ConfigValidationIssue => ({
-  ...invalidIssue(path, message, meta.reason, meta.help, meta.code),
-  ...(reads === undefined ? {} : { reads }),
-});
-
-const readingKey = (
-  issues: ReadonlyArray<ConfigValidationIssue>,
-  key: ReadonlyArray<string>,
-): ReadonlyArray<ConfigValidationIssue> =>
-  issues.map((issue) => ({ ...issue, reads: [...(issue.reads ?? []), key] }));
-
-const SIGNED_KEY_ISSUE: IssueMeta = {
-  reason: "could not be generated",
-  help: "set the key explicitly, or fix the signing keys configuration",
-};
-
-const CONTENT_PATH_ISSUE: IssueMeta = {
-  reason: "content_path is not a readable file inside the project",
-  help: "point content_path at an existing file under the project root",
-};
-
-/** Without a collector `effect` runs unchanged; with one a failure is recorded at `path`, declaring the config keys the read runs behind in `reads`, and `fallback` stands in. */
-const collecting = <A, E extends { readonly message: string }, R>(
-  collector: Array<ConfigValidationIssue> | undefined,
-  path: string,
-  effect: Effect.Effect<A, E, R>,
-  fallback: A,
-  meta: IssueMeta,
-  reads?: Reads,
-): Effect.Effect<A, E, R> =>
-  collector === undefined
-    ? effect
-    : effect.pipe(
-        Effect.catch((error: E) => {
-          collector.push(issueFrom(path, error.message, meta, reads));
-          return Effect.succeed(fallback);
-        }),
-      );
-
-/** Narrows a configured string to one of `allowed`, failing with the codec wording otherwise. */
-export const narrowConfigEnum = <const T extends string>(
-  path: string,
-  configured: string,
-  allowed: ReadonlyArray<T>,
-): T => {
-  const match = allowed.find((candidate) => candidate === configured);
-  if (match === undefined) {
-    throw new CliConfigValueError({
-      path,
-      tier: "config",
-      expected: `one of ${allowed.join(", ")}`,
-      message: `Invalid config for ${path}: "${configured}" must be one of ${allowed
-        .map((value) => `"${value}"`)
-        .join(", ")}`,
-    });
-  }
-  return match;
-};
 
 /** Narrows an unknown value to a plain object. */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -294,88 +173,9 @@ export function resolveAuthCaptcha(
     : undefined;
 }
 
-/**
- * Resolves the signing secret from the effective `auth.jwt_secret`: empty falls back to
- * {@link defaultJwtSecret}, shorter than {@link MIN_JWT_SECRET_LENGTH} throws
- * {@link InvalidJwtSecretError}.
- */
-export function resolveJwtSecret(configured: string | undefined): string {
-  if (configured === undefined || configured.length === 0) return defaultJwtSecret;
-  if (configured.length < MIN_JWT_SECRET_LENGTH) {
-    throw new InvalidJwtSecretError();
-  }
-  return configured;
-}
-
 function resolveOpaqueKey(configured: string | undefined, fallback: string): string {
   return configured !== undefined && configured.length > 0 ? configured : fallback;
 }
-
-function resolveSignedKey(
-  configured: string | undefined,
-  jwtSecret: string,
-  signingKey: Jwk | undefined,
-  role: "anon" | "service_role",
-): string {
-  if (configured !== undefined && configured.length > 0) return configured;
-  return signingKey !== undefined
-    ? generateAsymmetricLocalJwt(signingKey, role)
-    : generateLocalJwt(jwtSecret, role);
-}
-
-/** JWK fields, matching {@link Jwk}. */
-const JwkSchema = Schema.Struct({
-  kty: Schema.String,
-  kid: Schema.optionalKey(Schema.String),
-  use: Schema.optionalKey(Schema.String),
-  key_ops: Schema.optionalKey(Schema.Array(Schema.String)),
-  alg: Schema.optionalKey(Schema.String),
-  ext: Schema.optionalKey(Schema.Boolean),
-  n: Schema.optionalKey(Schema.String),
-  e: Schema.optionalKey(Schema.String),
-  d: Schema.optionalKey(Schema.String),
-  p: Schema.optionalKey(Schema.String),
-  q: Schema.optionalKey(Schema.String),
-  dp: Schema.optionalKey(Schema.String),
-  dq: Schema.optionalKey(Schema.String),
-  qi: Schema.optionalKey(Schema.String),
-  crv: Schema.optionalKey(Schema.String),
-  x: Schema.optionalKey(Schema.String),
-  y: Schema.optionalKey(Schema.String),
-});
-const decodeJwks = Schema.decodeUnknownEffect(Schema.Array(JwkSchema));
-
-/**
- * Reads and JSON-decodes `signingKeysPath` into an array of {@link Jwk}, keeping a leading BOM
- * (no BOM stripping). Callers must only invoke this when auth is enabled.
- */
-const readSigningKeysFile = Effect.fnUntraced(function* (workdir: string, signingKeysPath: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const absolutePath = resolveSigningKeysPath(path, workdir, signingKeysPath);
-
-  const contents = yield* fs.readFile(absolutePath).pipe(
-    Effect.map((bytes) => new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)),
-    Effect.mapError(
-      (cause) => new ConfigValidateError(signingKeysReadErrorMessage(fsErrorCause(cause))),
-    ),
-  );
-
-  const parsed = yield* Effect.try({
-    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
-    try: (): unknown => JSON.parse(contents),
-    catch: (cause) => new ConfigValidateError(signingKeysDecodeErrorMessage(cause)),
-  });
-  const jwks = yield* decodeJwks(parsed).pipe(
-    Effect.mapError((cause) => new ConfigValidateError(signingKeysDecodeErrorMessage(cause))),
-  );
-  // `Jwk.key_ops` is mutable (required for Node's `createPrivateKey`/`JsonWebKey` input), so
-  // it's copied into a fresh array rather than widening the schema's readonly output type.
-  return jwks.map((jwk) => ({
-    ...jwk,
-    key_ops: jwk.key_ops === undefined ? undefined : [...jwk.key_ops],
-  })) satisfies ReadonlyArray<Jwk>;
-});
 
 /**
  * Returns the parsed signing keys only when auth is enabled and a path is configured;
@@ -386,49 +186,17 @@ const readSigningKeysFile = Effect.fnUntraced(function* (workdir: string, signin
 export const resolveConfiguredSigningKeys = Effect.fnUntraced(function* (
   config: CliConfig,
   workdir: string,
+  io?: CliConfigUnitIo,
 ) {
   const signingKeysPath = config.auth.signing_keys_path;
-  return config.auth.enabled && signingKeysPath !== undefined && signingKeysPath.length > 0
-    ? yield* readSigningKeysFile(workdir, signingKeysPath)
-    : undefined;
-});
-
-/**
- * Confirms `api.tls.cert`/`.key` are readable when both are configured; the "exactly one set"
- * check lives in `validateResolvedConfig`. Unlike {@link readSigningKeysFile}'s
- * `signing_keys_path`, both paths join with the `supabase/` dir without an absolute-path guard.
- */
-const readApiTlsFiles = Effect.fnUntraced(function* (
-  workdir: string,
-  certPath: string | undefined,
-  keyPath: string | undefined,
-) {
-  if (certPath === undefined || certPath.length === 0) return;
-  if (keyPath === undefined || keyPath.length === 0) return;
-
-  yield* readApiTlsFile("cert", workdir, certPath);
-  yield* readApiTlsFile("key", workdir, keyPath);
-});
-
-const readApiTlsFile = Effect.fnUntraced(function* (
-  kind: "cert" | "key",
-  workdir: string,
-  configured: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  yield* fs
-    .readFile(resolveApiTlsPath(path, workdir, configured))
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new ConfigValidateError(
-            kind === "cert"
-              ? apiTlsCertReadErrorMessage(fsErrorCause(cause))
-              : apiTlsKeyReadErrorMessage(fsErrorCause(cause)),
-          ),
-      ),
-    );
+  if (!config.auth.enabled || signingKeysPath === undefined || signingKeysPath.length === 0) {
+    return undefined;
+  }
+  return yield* readSigningKeys(
+    io ?? (yield* makeCliConfigUnitIo("local")),
+    workdir,
+    signingKeysPath,
+  );
 });
 
 /**
@@ -496,73 +264,6 @@ export function resolveAuthEmail(
   return { ...email, template, notification };
 }
 
-/**
- * Reads each template/notification's content file, run only when auth is enabled. Every
- * template is checked unconditionally; a notification only when it's itself enabled. The
- * `content`-vs-`content_path` exclusivity and path resolution live in
- * `resolveEmailTemplateContentPath`; this only performs the read once a path comes back.
- */
-const readAuthEmailTemplateContent = Effect.fnUntraced(function* (
-  email: ResolvedAuthEmail,
-  workdir: string,
-  collector?: Array<ConfigValidationIssue>,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const readEntry = (
-    section: "template" | "notification",
-    name: string,
-    tmpl: ResolvedAuthEmailTemplate,
-  ) =>
-    Effect.gen(function* () {
-      const path = yield* resolveEmailTemplateContentPath({
-        section,
-        name,
-        contentPath: tmpl.content_path,
-        contentPresent: tmpl.content_present,
-        base: workdir,
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof ConfigValidateError ? cause : thrownError(fsErrorCause(cause)),
-        ),
-      );
-      if (path === undefined) return;
-      yield* fs
-        .readFile(path)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ConfigValidateError(
-                emailContentPathReadErrorMessage(section, name, fsErrorCause(cause)),
-              ),
-          ),
-        );
-    });
-  for (const [name, tmpl] of Object.entries(email.template)) {
-    yield* collecting(
-      collector,
-      `auth.email.template.${name}.content_path`,
-      readEntry("template", name, tmpl),
-      undefined,
-      CONTENT_PATH_ISSUE,
-      [["auth", "enabled"]],
-    );
-  }
-  for (const [name, tmpl] of Object.entries(email.notification)) {
-    if (!tmpl.enabled) continue;
-    yield* collecting(
-      collector,
-      `auth.email.notification.${name}.content_path`,
-      readEntry("notification", name, tmpl),
-      undefined,
-      CONTENT_PATH_ISSUE,
-      [
-        ["auth", "enabled"],
-        ["auth", "email", "notification", name, "enabled"],
-      ],
-    );
-  }
-});
-
 /** The effective `db.settings`, never `undefined` so callers can read fields directly. */
 export function resolveDbSettingsEnvOverrides(
   settings: CliConfig["db"]["settings"],
@@ -576,16 +277,6 @@ export function resolveAuthExternalUrl(
 ): string | undefined {
   return asString(asRecord(document?.["auth"])?.["external_url"]);
 }
-
-/** Hook-type iteration order for {@link resolveAuthHooks}'s output. */
-const HOOK_TYPE_ORDER = [
-  "mfa_verification_attempt",
-  "password_verification_attempt",
-  "custom_access_token",
-  "send_sms",
-  "send_email",
-  "before_user_created",
-] as const;
 
 /** camelCase key {@link resolveAuthHooks} exposes per {@link HOOK_TYPE_ORDER} entry, matching `gotrue.service.ts`'s env-input field names. */
 const HOOK_TYPE_TO_CAMEL = {
@@ -674,12 +365,6 @@ export function resolveGotruePasskeyWebauthn(
   return { passkeyEnabled, webauthn };
 }
 
-/** A raw or `env(...)`-resolved `rp_origins` string is comma-split, not dropped. */
-function rawOrigins(raw: unknown): Array<string> | undefined {
-  if (Array.isArray(raw)) return raw.filter((item): item is string => typeof item === "string");
-  return typeof raw === "string" ? strToArr(raw) : undefined;
-}
-
 /** The effective `auth.web3`. */
 export function resolveGotrueWeb3(web3: CliConfig["auth"]["web3"]): CliConfig["auth"]["web3"] {
   return web3;
@@ -754,35 +439,6 @@ export interface ResolvedAuthExternalProvider {
   readonly emailOptional: boolean;
 }
 
-/**
- * Weakly coerces an unmodeled document value (no `@supabase/config` schema, e.g. custom
- * `auth.external` providers, `auth.passkey`/`auth.webauthn`) to a bool, since an `env(VAR)`
- * substitution there skips normal type coercion and leaves a literal `"true"`/`"false"`
- * string. A number coerces via truthiness (`!= 0`); an unparsable string or any other type
- * throws rather than silently defaulting to `false`.
- */
-export function rawUnmodeledBool(value: unknown, dottedFieldPath: string): boolean {
-  if (value === undefined) return false;
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  const raw = typeof value === "string" ? value : String(value);
-  const parsed = typeof value === "string" ? parseBoolLiteral(value) : undefined;
-  if (parsed === undefined) {
-    throw new CliConfigValueError({
-      path: dottedFieldPath,
-      tier: "config",
-      expected: "a boolean",
-      message: `Invalid config for ${dottedFieldPath}: "${raw}" is not a valid boolean`,
-    });
-  }
-  return parsed;
-}
-
-/** Comma-splits a string, with the empty string as `[]`. */
-function strToArr(value: string): Array<string> {
-  return value.length === 0 ? [] : value.split(",");
-}
-
 function resolveExternalProvider(
   name: string,
   provider: ValueOf<CliConfig["auth"]["external"]> | undefined,
@@ -805,6 +461,18 @@ function resolveExternalProvider(
   };
 }
 
+/** The provider names `auth.external` resolves: document keys and `apple` that have a decoded or record entry; never throws. */
+export function listAuthExternalProviderNames(
+  authDocument: Readonly<Record<string, unknown>> | undefined,
+  external: CliConfig["auth"]["external"],
+): ReadonlyArray<string> {
+  const externalDoc = asRecord(authDocument?.["external"]);
+  const decoded = new Map(Object.entries(external));
+  return authExternalProviderNames(Object.keys(externalDoc ?? {})).filter(
+    (name) => decoded.has(name) || asRecord(externalDoc?.[name]) !== undefined,
+  );
+}
+
 /**
  * Resolves `auth.external.<name>` entries, iterating the effective document's provider names
  * (not just the schema's fixed ~19) since custom providers decode with no schema at all.
@@ -814,54 +482,39 @@ function resolveExternalProvider(
 export function resolveAuthExternalProviders(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   external: CliConfig["auth"]["external"],
-  failures?: Array<ConfigValidationIssue>,
 ): Record<string, ResolvedAuthExternalProvider> {
   const externalDoc = asRecord(authDocument?.["external"]);
-
+  const decoded = new Map(Object.entries(external));
   const result: Record<string, ResolvedAuthExternalProvider> = {};
-  const decodedProviders = new Map(Object.entries(external));
-  const providerNames = new Set([...Object.keys(externalDoc ?? {}), "apple"]);
-  for (const name of providerNames) {
-    const provider = decodedProviders.get(name);
+  for (const name of listAuthExternalProviderNames(authDocument, external)) {
+    const provider = decoded.get(name);
     const rawProvider = provider === undefined ? asRecord(externalDoc?.[name]) : undefined;
-    if (provider === undefined && rawProvider === undefined) continue;
-    if (failures === undefined) {
-      result[name] = resolveExternalProvider(name, provider, rawProvider);
-      continue;
-    }
-    try {
-      result[name] = resolveExternalProvider(name, provider, rawProvider);
-    } catch (cause) {
-      failures.push(
-        invalidIssue(
-          `auth.external.${name}`,
-          cause instanceof Error ? cause.message : String(cause),
-          "expected booleans for enabled, skip_nonce_check and email_optional",
-          "use true or false",
-          "invalid_type",
-        ),
-      );
-    }
+    result[name] = resolveExternalProvider(name, provider, rawProvider);
   }
   return result;
 }
 
+/** Fails on the first malformed auth duration; only `start` runs this, so `stop` and `status` accept them. */
+export const resolveStartAuthDurations = Effect.fnUntraced(function* (
+  config: CliConfig,
+  workdir: string,
+  document?: Readonly<Record<string, unknown>>,
+  configPath?: string,
+) {
+  const io = yield* makeCliConfigUnitIo("local");
+  yield* runConfigUnitsFirst(
+    authDurationUnits,
+    untrackedCliConfigView({ config, document, workdir, configPath }),
+    io,
+  );
+});
+
 /**
- * @throws when `project_id` is an explicit empty string. Checked first: the sanitized workdir
- * basename is the default, so a workdir whose basename sanitizes to `""` fails even with no
- * `project_id` key at all.
- * @throws {InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
- * @throws when a configured `api.tls` cert/key file can't be read — see
- * {@link readApiTlsFiles}.
- * @throws when `auth.signing_keys_path` is set, auth is enabled, and the file is missing,
- * malformed, or its first key uses an unsupported algorithm — see
- * {@link resolveConfiguredSigningKeys} and {@link generateAsymmetricLocalJwt}.
- * @throws when an email template's `content` is present without `content_path`, or a
- * configured `content_path` file can't be read — see {@link readAuthEmailTemplateContent}.
- * @throws {ConfigValidateError} for every other validation branch, deferred to a single call
- * to {@link validateResolvedConfig} at the end of this function.
+ * Fails with the first config error, in the order {@link LOCAL_CHECK_ORDER} runs the checks:
+ * `api.tls` file reads, `db.root_key`, `auth.jwt_secret`, signing keys and email content files,
+ * then the value and requirement checks, then anon/service_role key generation.
  */
-export const resolveLocalConfigValues = (
+export const resolveLocalConfigValues = Effect.fnUntraced(function* (
   config: CliConfig,
   hostname: string,
   workdir: string,
@@ -872,368 +525,48 @@ export const resolveLocalConfigValues = (
   document?: Readonly<Record<string, unknown>>,
   /** The loaded config file's path, so messages name it; `undefined` reads as `config.toml`. */
   configPath?: string,
-) => resolveLocalConfigValuesWith(config, hostname, workdir, document, configPath);
-
-/** Reports every config validation and config-file read failure instead of stopping at the first. */
-export const collectLocalConfigIssues = Effect.fn("LocalConfig.collectIssues")(function* (
-  config: CliConfig,
-  workdir: string,
-  document: Readonly<Record<string, unknown>> | undefined,
-  configPath: string | undefined,
 ) {
-  const issues: Array<ConfigValidationIssue> = [];
-  yield* resolveLocalConfigValuesWith(
-    config,
-    "127.0.0.1",
-    workdir,
-    document,
-    configPath,
-    issues,
-  ).pipe(
-    Effect.catch((error: { readonly message: string }) =>
-      Effect.sync(() => {
-        issues.push(
-          invalidIssue(
-            "",
-            error.message,
-            "could not be checked",
-            "check the files and settings this config section reads",
-          ),
-        );
-      }),
-    ),
+  const io = yield* makeCliConfigUnitIo("local");
+  yield* runConfigUnitsFirst(
+    LOCAL_CHECK_ORDER,
+    untrackedCliConfigView({ config, document, workdir, configPath }),
+    io,
   );
-  return issues;
-});
 
-const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
-  config: CliConfig,
-  hostname: string,
-  workdir: string,
-  document: Readonly<Record<string, unknown>> | undefined,
-  configPath: string | undefined,
-  collector?: Array<ConfigValidationIssue>,
-) {
   const resolvedProjectId = config.project_id ?? "";
-
-  const apiTlsEnabled = config.api.tls.enabled;
-  const apiEnabled = config.api.enabled;
-  const apiTlsCertPath = config.api.tls.cert_path;
-  const apiTlsKeyPath = config.api.tls.key_path;
-  if (apiEnabled && apiTlsEnabled) {
-    if (collector === undefined) {
-      yield* readApiTlsFiles(workdir, apiTlsCertPath, apiTlsKeyPath);
-    } else if (missingApiTlsPath(apiTlsCertPath, apiTlsKeyPath) === undefined) {
-      for (const [kind, key, configured] of [
-        ["cert", "api.tls.cert_path", apiTlsCertPath],
-        ["key", "api.tls.key_path", apiTlsKeyPath],
-      ] as const) {
-        if (configured === undefined || configured.length === 0) continue;
-        yield* collecting(
-          collector,
-          key,
-          readApiTlsFile(kind, workdir, configured),
-          undefined,
-          {
-            reason: `${kind === "cert" ? "certificate" : "private key"} file is not readable`,
-            help: "point it at an existing file, relative to the supabase/ directory",
-          },
-          [
-            ["api", "enabled"],
-            ["api", "tls", "enabled"],
-          ],
-        );
-      }
-    }
-  }
   const apiPort = config.api.port;
-  const apiExternalUrl = yield* collecting(
-    collector,
-    "api.external_url",
-    attempt(() =>
-      resolveApiExternalUrl(
-        {
-          external_url: config.api.external_url,
-          port: apiPort,
-          tls: { enabled: apiTlsEnabled },
-        },
-        hostname,
-      ),
-    ),
-    "",
+  const apiExternalUrl = resolveApiExternalUrl(
     {
-      reason: "not a valid URL",
-      help: "use a full URL such as https://api.example.com",
+      external_url: config.api.external_url,
+      port: apiPort,
+      tls: { enabled: config.api.tls.enabled },
     },
+    hostname,
   );
   const dbPort = config.db.port;
-  const majorVersion = config.db.major_version;
-  // `db.root_key` isn't modeled in `@supabase/config`'s schema, so it's read off the document.
-  // The resolved value is written verbatim into `/etc/postgresql-custom/pgsodium_root.key`.
+  const studioPort = config.studio.port;
+  const mailpitPort = config.local_smtp.port;
   const rawRootKey = asRecord(document?.["db"])?.["root_key"];
-  const rootKeyMessage = "failed to parse config:\ndb.root_key: expected a table";
-  if (rawRootKey !== undefined && typeof rawRootKey !== "string") {
-    if (collector === undefined) return yield* new ConfigValidateError(rootKeyMessage);
-    collector.push(
-      invalidIssue(
-        "db.root_key",
-        rootKeyMessage,
-        "expected a string",
-        "set root_key to a string",
-        "invalid_type",
-      ),
-    );
-  }
   const rootKey =
     typeof rawRootKey !== "string" || rawRootKey.length === 0
       ? POSTGRES_DEFAULT_ROOT_KEY
       : rawRootKey;
-  const storageBucketNames =
-    config.storage.buckets !== undefined ? Object.keys(config.storage.buckets) : [];
-  const studioEnabled = config.studio.enabled;
-  const studioPort = config.studio.port;
-  const studioApiUrl = config.studio.api_url;
-  const mailpitEnabled = config.local_smtp.enabled;
-  const mailpitPort = config.local_smtp.port;
-  const jwtSecret = yield* collecting(
-    collector,
-    "auth.jwt_secret",
-    attempt(() => resolveJwtSecret(config.auth.jwt_secret)),
-    defaultJwtSecret,
-    {
-      reason: "too short",
-      help: `use at least ${MIN_JWT_SECRET_LENGTH} characters`,
-    },
+  const jwtSecret = yield* attempt(() => resolveJwtSecret(config.auth.jwt_secret));
+  const analyticsBackend = yield* attempt(() =>
+    narrowConfigEnum("analytics.backend", config.analytics.backend, ["postgres", "bigquery"]),
   );
   const signingKeysPath = config.auth.signing_keys_path;
-  // The signing-keys file read only runs when auth is enabled, so a disabled auth section
-  // never opens/parses `signing_keys_path`, even a stale or missing one. JWT-secret validation
-  // and anon/service_role key generation run unconditionally either way.
-  const authEnabled = config.auth.enabled;
-  const siteUrl = config.auth.site_url;
-  const authDocument = asRecord(document?.["auth"]);
-  const captchaInput = resolveAuthCaptcha(config.auth.captcha);
   // A disabled-auth config with a configured path must still sign asymmetrically with the
   // default key, not fall back to symmetric HS256.
   const signingKey =
     signingKeysPath !== undefined && signingKeysPath.length > 0
-      ? ((yield* collecting(
-          collector,
-          "auth.signing_keys_path",
-          resolveConfiguredSigningKeys(config, workdir),
-          undefined,
-          {
-            reason: "signing keys file is missing, unreadable or invalid",
-            help: "point signing_keys_path at a JSON array of JWKs, relative to the supabase/ directory",
-          },
-          [["auth", "enabled"]],
-        )) ?? [DEFAULT_SIGNING_KEY])[0]
+      ? ((yield* resolveConfiguredSigningKeys(config, workdir, io)) ?? [DEFAULT_SIGNING_KEY])[0]
       : undefined;
-  // This block only accumulates the inputs passkey/webauthn/hook/mfa/email/smtp/third_party
-  // validation needs; the checks themselves run once, later, in the `validateResolvedConfig`
-  // call below (sms/external run separately after it).
-  let authInput: AuthInput | undefined;
-  if (authEnabled) {
-    const passkeyDoc = asRecord(authDocument?.["passkey"]);
-    const webauthnDoc = asRecord(authDocument?.["webauthn"]);
-    const passkeyEnabled =
-      passkeyDoc !== undefined &&
-      (yield* collecting(
-        collector,
-        "auth.passkey.enabled",
-        attempt(() => rawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled")),
-        false,
-        { reason: "expected a boolean", help: "use true or false", code: "invalid_type" },
-        [["auth", "enabled"]],
-      ));
-    const rpId = asString(webauthnDoc?.["rp_id"]);
-    const rpOrigins = rawOrigins(webauthnDoc?.["rp_origins"]);
-    const passkey: PasskeyInput | undefined = passkeyEnabled
-      ? { webauthnPresent: webauthnDoc !== undefined, rpId, rpOrigins }
-      : undefined;
-
-    const resolvedHooks = resolveAuthHooks(config.auth.hook);
-    const hooks: Array<HookInput> = HOOK_TYPE_ORDER.filter(
-      (hookType) => resolvedHooks[HOOK_TYPE_TO_CAMEL[hookType]].enabled,
-    ).map((hookType) => {
-      const resolved = resolvedHooks[HOOK_TYPE_TO_CAMEL[hookType]];
-      return { type: hookType, uri: resolved.uri, secrets: resolved.secrets };
-    });
-
-    const resolvedMfa = config.auth.mfa;
-    const mfa: ReadonlyArray<MfaFactorInput> = [
-      {
-        label: "totp",
-        enrollEnabled: resolvedMfa.totp.enroll_enabled,
-        verifyEnabled: resolvedMfa.totp.verify_enabled,
-      },
-      {
-        label: "phone",
-        enrollEnabled: resolvedMfa.phone.enroll_enabled,
-        verifyEnabled: resolvedMfa.phone.verify_enabled,
-      },
-      {
-        label: "web_authn",
-        enrollEnabled: resolvedMfa.web_authn.enroll_enabled,
-        verifyEnabled: resolvedMfa.web_authn.verify_enabled,
-      },
-    ];
-
-    yield* readAuthEmailTemplateContent(
-      resolveAuthEmail(config.auth.email, authDocument),
-      workdir,
-      collector,
-    );
-
-    const resolvedSmtp = resolveAuthEmailSmtp(authDocument);
-    const smtp: SmtpInput | undefined =
-      resolvedSmtp === undefined
-        ? undefined
-        : {
-            enabled: resolvedSmtp.enabled,
-            host: resolvedSmtp.host,
-            port: resolvedSmtp.port,
-            user: resolvedSmtp.user,
-            pass: resolvedSmtp.pass,
-            adminEmail: resolvedSmtp.adminEmail,
-          };
-
-    authInput = {
-      siteUrl: siteUrl ?? "",
-      captcha: captchaInput,
-      passkey,
-      hooks,
-      mfa,
-      smtp,
-      thirdParty: yield* collecting(
-        collector,
-        "auth.third_party",
-        attempt(() => resolveThirdPartyProviders(config.auth.third_party)),
-        [],
-        { reason: "invalid third-party provider settings" },
-        [["auth", "enabled"]],
-      ),
-    };
-  }
-  const functionSlugs = Object.keys(config.functions);
-  const denoVersion = config.edge_runtime.deno_version;
-
-  const analyticsEnabled = config.analytics.enabled;
-  const analyticsBackend = yield* collecting(
-    collector,
-    "analytics.backend",
-    attempt(() =>
-      narrowConfigEnum("analytics.backend", config.analytics.backend, ["postgres", "bigquery"]),
-    ),
-    "postgres" as const,
-    {
-      reason: "expected one of postgres, bigquery",
-      help: "use postgres or bigquery",
-      code: "invalid_enum",
-    },
+  const anonKey = yield* attempt(() =>
+    resolveSignedKey(config.auth.anon_key, jwtSecret, signingKey, "anon"),
   );
-  const gcpProjectId = config.analytics.gcp_project_id;
-  const gcpProjectNumber = config.analytics.gcp_project_number;
-  const gcpJwtPath = config.analytics.gcp_jwt_path;
-
-  // The webhooks check isn't "the user disabled a feature": an omitted `enabled` key in a
-  // present `[experimental.webhooks]` section is rejected too — the section exists only so it
-  // can be turned on, never explicitly off. This hinges on section presence, which the
-  // schema's decode-time default erases (`experimental.webhooks` always decodes to
-  // `{ enabled: false }` even when absent), so this reads the document instead.
-  const experimentalDocument = asRecord(document?.["experimental"]);
-  const webhooksPresent = asRecord(experimentalDocument?.["webhooks"]) !== undefined;
-  const webhooksEnabled = config.experimental.webhooks?.enabled === true;
-  const pgdeltaFormatOptions = config.experimental.pgdelta?.format_options ?? "";
-
-  // Every pure validation check runs in one place, here, rather than interleaved with this
-  // function's 3 I/O reads (signing keys, api.tls cert/key, email content).
-  const apiInput: ApiInput = {
-    enabled: apiEnabled,
-    port: apiPort,
-    tls: { enabled: apiTlsEnabled, certPath: apiTlsCertPath, keyPath: apiTlsKeyPath },
-  };
-  const dbInput: DbInput = { port: dbPort, majorVersion };
-  const studioInput: StudioInput = {
-    enabled: studioEnabled,
-    port: studioPort,
-    apiUrl: studioApiUrl,
-  };
-  const localSmtpInput: LocalSmtpInput = { enabled: mailpitEnabled, port: mailpitPort };
-  const analyticsInput: AnalyticsInput = {
-    enabled: analyticsEnabled,
-    backend: analyticsBackend,
-    gcpProjectId: gcpProjectId ?? "",
-    gcpProjectNumber: gcpProjectNumber ?? "",
-    gcpJwtPath: gcpJwtPath ?? "",
-  };
-  const experimentalInput: ExperimentalInput = {
-    webhooksPresent,
-    webhooksEnabled,
-    pgdeltaFormatOptions,
-  };
-
-  const input: ConfigValidationInput = {
-    projectId: resolvedProjectId,
-    api: apiInput,
-    db: dbInput,
-    storageBucketNames,
-    studio: studioInput,
-    localSmtp: localSmtpInput,
-    auth: authInput,
-    functionSlugs,
-    edgeRuntimeDenoVersion: denoVersion,
-    analytics: analyticsInput,
-    experimental: experimentalInput,
-    configFileName: configPath === undefined ? undefined : configFileName(configPath),
-  };
-  if (collector === undefined) {
-    yield* attempt(() => validateResolvedConfig(input));
-    if (authEnabled) {
-      yield* attempt(() => validateAuthSmsProviders(resolveAuthSms(config.auth.sms)));
-      yield* attempt(() =>
-        validateAuthExternalProviders(
-          resolveAuthExternalProviders(authDocument, config.auth.external),
-        ),
-      );
-    }
-  } else {
-    collector.push(...collectConfigValidationIssues(input));
-    if (authEnabled) {
-      const externalFailures: Array<ConfigValidationIssue> = [];
-      const external = resolveAuthExternalProviders(
-        authDocument,
-        config.auth.external,
-        externalFailures,
-      );
-      collector.push(
-        ...readingKey(
-          [
-            ...collectAuthSmsProviderIssues(resolveAuthSms(config.auth.sms)),
-            ...externalFailures,
-            ...collectAuthExternalProviderIssues(external),
-          ],
-          ["auth", "enabled"],
-        ),
-      );
-    }
-  }
-
-  const anonKey = yield* collecting(
-    collector,
-    "auth.anon_key",
-    attempt(() => resolveSignedKey(config.auth.anon_key, jwtSecret, signingKey, "anon")),
-    "",
-    SIGNED_KEY_ISSUE,
-  );
-  const serviceRoleKey = yield* collecting(
-    collector,
-    "auth.service_role_key",
-    attempt(() =>
-      resolveSignedKey(config.auth.service_role_key, jwtSecret, signingKey, "service_role"),
-    ),
-    "",
-    SIGNED_KEY_ISSUE,
+  const serviceRoleKey = yield* attempt(() =>
+    resolveSignedKey(config.auth.service_role_key, jwtSecret, signingKey, "service_role"),
   );
 
   return {
@@ -1243,7 +576,7 @@ const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
     studioPort,
     rootKey,
     openaiApiKey: config.studio.openai_api_key,
-    authSiteUrl: siteUrl,
+    authSiteUrl: config.auth.site_url,
     authJwtIssuer: config.auth.jwt_issuer,
     authJwtExpiry: config.auth.jwt_expiry,
     authAdditionalRedirectUrls: config.auth.additional_redirect_urls,
@@ -1270,15 +603,13 @@ const resolveLocalConfigValuesWith = Effect.fnUntraced(function* (
     storageS3AccessKeyId: DEFAULT_S3_ACCESS_KEY_ID,
     storageS3SecretAccessKey: DEFAULT_S3_SECRET_ACCESS_KEY,
     storageS3Region: DEFAULT_S3_REGION,
-    analyticsEnabled,
+    analyticsEnabled: config.analytics.enabled,
     analyticsBackend,
-    gcpProjectId: gcpProjectId ?? "",
-    gcpProjectNumber: gcpProjectNumber ?? "",
-    gcpJwtPath: gcpJwtPath ?? "",
-    // Sanitized here, not in `input.projectId` above: `validateResolvedConfig`'s check is
-    // presence-only and must see the raw value to reject an explicit `project_id = ""`.
+    gcpProjectId: config.analytics.gcp_project_id ?? "",
+    gcpProjectNumber: config.analytics.gcp_project_number ?? "",
+    gcpJwtPath: config.analytics.gcp_jwt_path ?? "",
     projectId: sanitizeProjectId(resolvedProjectId),
-    edgeRuntimeDenoVersion: denoVersion,
+    edgeRuntimeDenoVersion: config.edge_runtime.deno_version,
   } satisfies LocalConfigValues;
 });
 

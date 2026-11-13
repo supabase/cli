@@ -1,3 +1,4 @@
+import type { DeferredCheck } from "./validate.engine.ts";
 import { escapeControlCharacters } from "../../../shared/output/escape-control-characters.ts";
 
 import { displayPath, type ConfigProblem } from "./validate.model.ts";
@@ -23,21 +24,13 @@ export const PLAIN_REPORT_STYLE: ReportStyle = {
   code: plain,
 };
 
-export type StopStage =
-  | "syntax"
-  | "schema_version"
-  | "file_conflict"
-  | "env_file"
-  | "removed_env"
-  | "schema_limit";
+export type StopStage = "syntax" | "schema_version" | "file_conflict" | "env_file";
 
 const STOP_LABELS: Readonly<Record<StopStage, string>> = {
   syntax: "the syntax check",
   schema_version: "the schema version check",
   file_conflict: "the config file check",
   env_file: "loading the env files",
-  removed_env: "resolving the environment variables",
-  schema_limit: "the schema check, which hit its limit on dependent failures",
 };
 
 const PAYLOAD_VERSION = 1;
@@ -48,6 +41,12 @@ export interface ValidateReport {
   readonly remotes: ReadonlyArray<string>;
   readonly problems: ReadonlyArray<ConfigProblem>;
   readonly stoppedAt?: StopStage;
+  readonly mode: "default" | "resolve-env";
+  readonly deferred: ReadonlyArray<DeferredCheck>;
+  /** How many `env()` values the run could not use. */
+  readonly unknownValues: number;
+  /** False when the engine had to treat a whole table as unknown. */
+  readonly complete: boolean;
 }
 
 const errorsOf = (report: ValidateReport) =>
@@ -109,6 +108,24 @@ function renderProblem(
   return out;
 }
 
+function envNotice(report: ValidateReport): string | undefined {
+  const checks = report.deferred.length;
+  if (report.mode === "resolve-env") {
+    return checks === 0
+      ? undefined
+      : `${plural(checks, "check")} ${checks === 1 ? "was" : "were"} not run because ${checks === 1 ? "it waits" : "they wait"} on unset or empty variables`;
+  }
+  const values = report.unknownValues;
+  if (values === 0 && checks === 0) return undefined;
+  const parts = [
+    ...(values > 0
+      ? [`${plural(values, "value")} ${values === 1 ? "comes" : "come"} from env()`]
+      : []),
+    ...(checks > 0 ? [`${plural(checks, "check")} ${checks === 1 ? "was" : "were"} not run`] : []),
+  ];
+  return `${parts.join(" and ")}; run with --resolve-env to check them`;
+}
+
 const countsLabel = (errors: number, warnings: number): string =>
   [
     ...(errors > 0 ? [plural(errors, "error")] : []),
@@ -137,6 +154,13 @@ export function validateReport(
       `${style.red("✗")} ${style.bold(`${countsLabel(errors.length, warnings.length)} in ${file}`)}`,
     );
   }
+  const notice = envNotice(report);
+  if (notice !== undefined) out.push(`  ${style.dim(notice)}`);
+  if (!report.complete && report.stoppedAt === undefined) {
+    out.push(
+      `  ${style.dim("The report is incomplete: some checks could not run, so more problems may remain")}`,
+    );
+  }
   if (report.remotes.length > 0) {
     out.push(`  ${style.dim(`Checked remotes: ${report.remotes.map(safe).join(", ")}`)}`);
   }
@@ -155,7 +179,7 @@ function payloadProblem(problem: ConfigProblem) {
   const key =
     path === undefined
       ? undefined
-      : problem.remote === undefined
+      : problem.remote === undefined || problem.inBase === true
         ? path
         : `remotes.${problem.remote}.${path}`;
   const { location } = problem;
@@ -179,11 +203,17 @@ export function validateJsonPayload(report: ValidateReport) {
   return {
     schema_version: PAYLOAD_VERSION,
     valid: errors.length === 0,
-    complete: report.stoppedAt === undefined,
+    complete: report.stoppedAt === undefined && report.complete,
     ...(report.stoppedAt === undefined ? {} : { stopped_at: report.stoppedAt }),
     file: report.file,
     format: report.format,
     remotes: report.remotes,
+    unknown_values: report.unknownValues,
+    deferred: report.deferred.map((item) => ({
+      check: item.check,
+      ...(item.remote === undefined ? {} : { remote: item.remote }),
+      waits_on: item.waitsOn,
+    })),
     errors: errors.map(payloadProblem),
     warnings: warningsOf(report).map(payloadProblem),
   };

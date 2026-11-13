@@ -1,5 +1,4 @@
 import { CLI_CONFIG_SCHEMA_URL, type CliConfigValueOrigin } from "@supabase/config";
-import { CliConfigParseError } from "@supabase/config/effect";
 import {
   decodeMergedCliConfig,
   ENV_CAPTURE_REGEX,
@@ -22,8 +21,6 @@ import {
 } from "effect";
 
 import { readLinkSnapshot, readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
-import { collectDotenvPrivateKeys } from "../shared/config/vault-decrypt.ts";
-import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { escapeControlCharacters } from "../shared/output/escape-control-characters.ts";
@@ -32,16 +29,14 @@ import { PropConfigFormat, PropConfigKey } from "../shared/telemetry/event-catal
 import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 import { CLI_CONFIG_FAMILIES, CLI_CONFIG_REMOVED_ENV_NAMES } from "./cli-config-key-annotations.ts";
 import {
-  cloneDocumentRecord,
   collectEnvReferences,
   documentLeafPaths,
   getDocumentValue,
   isDocumentRecord,
   pruneDocumentPaths,
   sameDocumentValue,
-  setDocumentValue,
 } from "./cli-config-document.ts";
-import { MAX_PRUNE_ROUNDS } from "./cli-config-validation.ts";
+import { loadCliConfigEnvLookup } from "./cli-config-env-lookup.ts";
 import { cliConfigFailureKey } from "./cli-config-failure-key.ts";
 import { CliConfigFlagInputs, cliConfigFlagConflictError } from "./cli-config-flags.ts";
 import {
@@ -50,21 +45,16 @@ import {
   describeCliConfigOrigin,
   lookupCliConfigEnv,
   pickCliConfigKey,
-  type CliConfigKeyOrigin,
   type CliConfigSources,
-  type CliConfigValue,
 } from "./cli-config-key.ts";
 import {
   cliConfigFamilyEnvNames,
-  cliConfigFamilyKey,
   cliConfigRegistry,
   cliRemoteProjectIdEnvName,
-  staticCliConfigFamilyNames,
-  type AnyCliConfigKey,
 } from "./cli-config-keys.ts";
+import { cliConfigFamilyNames, runCliConfigRegistryPass } from "./cli-config-registry-pass.ts";
 import { reportableUnknownCliConfigKeys } from "./cli-config-unknown-keys.ts";
-import { flattenSchemaIssues } from "./cli-config-schema-issues.ts";
-import { cliConfigRemoteFailures, selectCliConfigRemote } from "./cli-config-remote.ts";
+import { cliConfigRemoteFailure, selectCliConfigRemote } from "./cli-config-remote.ts";
 import {
   CliConfigValues,
   type CliConfigMaterialized,
@@ -79,8 +69,6 @@ class LoadKey extends Data.Class<{
   readonly ignoreConfigFile: boolean;
   readonly tolerateUnreadableLinkedRef: boolean;
   readonly tolerateInvalid: boolean;
-  readonly validation: boolean;
-  readonly remoteName: string | undefined;
 }> {}
 
 const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfigDocument => ({
@@ -127,62 +115,6 @@ const documentEnvNames = (rawDocument: Record<string, unknown>): ReadonlySet<str
   return names;
 };
 
-/** A config-tier value the schema would reject as written: `"TRUE"`, `0` for a bool, `"a,b"` for a list. */
-const needsCoercion = (key: AnyCliConfigKey, written: unknown, raw: unknown): boolean =>
-  key.codec.kind !== "string" && !sameDocumentValue(written, raw);
-
-/** An `env(NAME)` value, or a list holding one. */
-const isEnvReference = (raw: unknown): boolean =>
-  Array.isArray(raw)
-    ? raw.some(isEnvReference)
-    : typeof raw === "string" && ENV_CAPTURE_REGEX.test(raw);
-
-const declaredWrite = (
-  key: AnyCliConfigKey,
-  picked: CliConfigValue<unknown>,
-  raw: unknown,
-): unknown => {
-  const written = key.toDocument(picked.unnormalized ?? picked.value);
-  switch (picked.origin.tier) {
-    case "flag":
-    case "shell":
-    case "projectEnv":
-      return written;
-    case "config":
-      return key.secret === true || isEnvReference(raw) || needsCoercion(key, written, raw)
-        ? written
-        : undefined;
-    case "default":
-      return undefined;
-  }
-};
-
-/** The coerced config-tier value a file-only view needs, or `undefined` when the file value decodes as written. */
-const fileWrite = (key: AnyCliConfigKey, sources: CliConfigSources): unknown => {
-  const raw = sources.config(key.segments)?.value;
-  if (raw === undefined || key.secret === true) return undefined;
-  const picked = pickCliConfigKey(key, sources, { configOnly: true });
-  if (Result.isFailure(picked) || picked.success.origin.tier !== "config") return undefined;
-  const written = key.toDocument(picked.success.unnormalized ?? picked.success.value);
-  return isEnvReference(raw) || needsCoercion(key, written, raw) ? written : undefined;
-};
-
-/** The origin the decode would record for a resolved `env()` reference, which a pre-resolved path no longer gets. */
-const envOrigin = (
-  key: AnyCliConfigKey,
-  raw: unknown,
-  lookup: (name: string) => string | undefined,
-): CliConfigValueOrigin | undefined => {
-  const names = new Set<string>();
-  for (const item of Array.isArray(raw) ? raw : [raw]) {
-    const name = typeof item === "string" ? ENV_CAPTURE_REGEX.exec(item)?.[1] : undefined;
-    if (name !== undefined && lookup(name) !== undefined) names.add(name);
-  }
-  return names.size === 0
-    ? undefined
-    : { path: [...key.segments], source: "environment", envVariables: [...names] };
-};
-
 const withEnvOrigins = <T extends { readonly valueOrigins?: ReadonlyArray<CliConfigValueOrigin> }>(
   loaded: T,
   injected: ReadonlyArray<CliConfigValueOrigin>,
@@ -195,42 +127,6 @@ const withEnvOrigins = <T extends { readonly valueOrigins?: ReadonlyArray<CliCon
           (origin) => injected.find((env) => sameDocumentValue(env.path, origin.path)) ?? origin,
         ),
       };
-
-const withoutRemotes = (document: Record<string, unknown>): Record<string, unknown> => {
-  const { remotes: _remotes, ...rest } = document;
-  return rest;
-};
-
-/** The path to delete so a decode issue at `path` stops recurring: the key itself, the array holding it, or the deepest table that exists above an absent key. */
-const prunableSegments = (
-  draft: Record<string, unknown>,
-  path: ReadonlyArray<string>,
-  missingKey: boolean,
-): ReadonlyArray<string> => {
-  const target = missingKey ? path.slice(0, -1) : path;
-  let node: unknown = draft;
-  const kept: Array<string> = [];
-  for (const segment of target) {
-    if (!isDocumentRecord(node)) break;
-    if (!Object.hasOwn(node, segment)) break;
-    kept.push(segment);
-    node = node[segment];
-  }
-  return kept;
-};
-
-const materializedWrite = (
-  key: AnyCliConfigKey,
-  picked: CliConfigValue<unknown>,
-  declared: unknown,
-): unknown => {
-  if (picked.origin.tier === "default") {
-    return key.materializeDefault === true || key.normalize !== undefined
-      ? key.toDocument(picked.value)
-      : undefined;
-  }
-  return key.normalize === undefined ? declared : key.toDocument(picked.value);
-};
 
 const cliConfigFileFormat = (filePath: string) =>
   filePath.endsWith(".jsonc") ? "jsonc" : filePath.endsWith(".json") ? "json" : "toml";
@@ -294,33 +190,20 @@ export const cliConfigValuesLayer = Layer.effect(
       },
     );
 
-    const validationParsedDocuments = yield* Cache.makeWith(
-      (workdir: string) =>
-        withPlatform(
-          parseCliConfigDocumentFile(workdir, { search: false, tolerateRemovedKeys: true }),
-        ),
-      {
-        capacity: 8,
-        timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
-      },
-    );
-
     const loadResolvedConfig = Effect.fn("CliConfigValues.load")(function* (target: LoadKey) {
       const [conflict] = flagInputs.conflicts;
       if (conflict !== undefined) return yield* cliConfigFlagConflictError(conflict);
 
       const parsed = target.ignoreConfigFile
         ? null
-        : yield* Cache.get(
-            target.validation ? validationParsedDocuments : parsedDocuments,
-            target.workdir,
-          ).pipe(Effect.tapError((error) => recordConfigFormat(failedConfigFilePath(error))));
+        : yield* Cache.get(parsedDocuments, target.workdir).pipe(
+            Effect.tapError((error) => recordConfigFormat(failedConfigFilePath(error))),
+          );
       yield* recordConfigFormat(parsed?.path);
-      const notices = !target.validation;
-      for (const deprecatedPath of notices ? (parsed?.deprecatedPaths ?? []) : []) {
+      for (const deprecatedPath of parsed?.deprecatedPaths ?? []) {
         yield* printOnce(deprecatedKeyLine(deprecatedPath));
       }
-      if (parsed !== null && notices) {
+      if (parsed !== null) {
         const displayPath = (filePath: string) =>
           path.relative(target.workdir, filePath).replaceAll("\\", "/");
         const used = displayPath(parsed.path);
@@ -343,20 +226,14 @@ export const cliConfigValuesLayer = Layer.effect(
       }
       const rawDocument = parsed?.rawDocument ?? {};
 
-      const shell = yield* readShellEnvironment({
-        names: [
+      const { shell, projectEnv, dotenvPrivateKeys } = yield* withPlatform(
+        loadCliConfigEnvLookup(target.workdir, [
           ...registryEnvNames,
           ...Object.keys(CLI_CONFIG_REMOVED_ENV_NAMES),
           "DOTENV_PRIVATE_KEY",
           ...documentEnvNames(rawDocument),
-        ],
-        namesWithPrefix: ["DOTENV_PRIVATE_KEY"],
-      });
-      const projectEnv = yield* withPlatform(loadCliProjectEnvFiles(target.workdir, { shell }));
-      const valueReferences = new Set<string>();
-      collectEnvReferences(Object.values(projectEnv.values), valueReferences);
-      collectEnvReferences([...shell.entries().values()], valueReferences);
-      yield* shell.load(valueReferences);
+        ]),
+      );
 
       const targetRef = Option.getOrElse(target.projectRef, () => "");
       const linkedRef = Option.isNone(target.projectRef)
@@ -413,15 +290,9 @@ export const cliConfigValuesLayer = Layer.effect(
       }
 
       const remotes = parsed?.rawDocument?.["remotes"];
-      const remoteFailures = isDocumentRecord(remotes)
-        ? cliConfigRemoteFailures(remotes, lookupEnv)
-        : [];
-      const [firstRemoteFailure] = remoteFailures;
-      if (firstRemoteFailure !== undefined && !target.validation) {
-        return yield* new CliConfigLoadError({
-          message: firstRemoteFailure.message,
-          remote: firstRemoteFailure.remote,
-        });
+      if (isDocumentRecord(remotes)) {
+        const failure = cliConfigRemoteFailure(remotes, lookupEnv);
+        if (failure !== undefined) return yield* new CliConfigLoadError({ message: failure });
       }
 
       const merged =
@@ -429,7 +300,6 @@ export const cliConfigValuesLayer = Layer.effect(
           ? null
           : yield* mergeParsedCliConfig(parsed, {
               selectRemote: (candidates) =>
-                target.remoteName ??
                 selectCliConfigRemote(candidates, target.projectRef, lookupEnv),
             });
 
@@ -439,12 +309,7 @@ export const cliConfigValuesLayer = Layer.effect(
         "config.env_withheld": Option.isSome(foreignLinkedRef),
       });
 
-      const document =
-        target.validation &&
-        merged?.appliedRemote === undefined &&
-        isDocumentRecord(merged?.document)
-          ? withoutRemotes(merged.document)
-          : merged?.document;
+      const document = merged?.document;
       const remoteLeaves = new Set(merged?.remoteLeafPaths.map((leaf) => leaf.join(".")));
       const localLeaves = documentLeafPaths(merged?.rawDocument ?? {});
       const appliedRemote = merged?.appliedRemote;
@@ -452,11 +317,6 @@ export const cliConfigValuesLayer = Layer.effect(
       const configAtSegments = (segments: ReadonlyArray<string>) =>
         getDocumentValue(document, segments);
       const configAt = (configPath: string) => configAtSegments(configPath.split("."));
-      const dotenvPrivateKeys = collectDotenvPrivateKeys({
-        ...projectEnv.values,
-        ...Object.fromEntries(shell.entries()),
-      });
-
       const sources: CliConfigSources = {
         flags: (flagPath) => flagInputs.assignments.get(flagPath),
         shell: shellFor,
@@ -489,88 +349,45 @@ export const cliConfigValuesLayer = Layer.effect(
         context: { workdir: target.workdir, projectRef: target.projectRef, path, configAt },
       };
 
-      const familyNames: ResolvedCliConfig["familyNames"] = (id) => {
-        const family = cliConfigRegistry.families.find((candidate) => candidate.id === id);
-        if (family === undefined) return [];
-        const table = getDocumentValue(document, family.prefix.split("."));
-        return [
-          ...new Set([
-            ...staticCliConfigFamilyNames(family),
-            ...(isDocumentRecord(table) ? Object.keys(table) : []),
-          ]),
-        ];
-      };
+      const familyNames: ResolvedCliConfig["familyNames"] = (id) =>
+        cliConfigFamilyNames(document, id);
 
-      const enumerated = new Map<string, AnyCliConfigKey>(
-        cliConfigRegistry.keys
-          .filter((key) => key.document !== false)
-          .map((key): [string, AnyCliConfigKey] => [key.path, key]),
-      );
-      for (const family of cliConfigRegistry.families) {
-        for (const entry of familyNames(family.id)) {
-          for (const field of family.fields) {
-            const key = cliConfigFamilyKey(family, entry, field.name);
-            if (key !== undefined) enumerated.set(key.path, key);
-          }
-        }
-      }
-
-      const declaredDraft = cloneDocumentRecord(document);
-      const materializedDraft = cloneDocumentRecord(declaredDraft);
-      const fileDraft = cloneDocumentRecord(document);
-      const origins = new Map<string, CliConfigKeyOrigin>();
+      const pass = runCliConfigRegistryPass(isDocumentRecord(document) ? document : {}, sources);
+      const { origins } = pass;
+      const declaredDraft = pass.declared;
+      const materializedDraft = pass.materialized;
+      const fileDraft = pass.file;
+      const declaredResolved = pass.resolved.declared;
+      const materializedResolved = pass.resolved.materialized;
+      const fileResolved = pass.resolved.file;
+      const declaredEnvOrigins = pass.envOrigins.declared;
+      const materializedEnvOrigins = pass.envOrigins.materialized;
+      const fileEnvOrigins = pass.envOrigins.file;
       const invalid: Array<CliConfigValueError> = [];
       const entryFailures: Array<CliConfigValueError> = [];
       const overrideWarnings: Array<string> = [];
-      const declaredResolved: Array<ReadonlyArray<string>> = [];
-      const materializedResolved: Array<ReadonlyArray<string>> = [];
-      const fileResolved: Array<ReadonlyArray<string>> = [];
-      const declaredEnvOrigins: Array<CliConfigValueOrigin> = [];
-      const materializedEnvOrigins: Array<CliConfigValueOrigin> = [];
-      const fileEnvOrigins: Array<CliConfigValueOrigin> = [];
-      for (const key of enumerated.values()) {
-        const raw = sources.config(key.segments)?.value;
-        const configOrigin = envOrigin(key, raw, lookupEnv);
-        const fileValue = fileWrite(key, sources);
-        if (fileValue !== undefined) {
-          setDocumentValue(fileDraft, key.segments, fileValue);
-          fileResolved.push(key.segments);
-          if (configOrigin !== undefined) fileEnvOrigins.push(configOrigin);
+      pass.failures.forEach((failure) => {
+        if (target.tolerateInvalid) {
+          invalid.push(failure);
+          const segments = failure.segments ?? [];
+          pruneDocumentPaths(declaredDraft, [segments], document);
+          pruneDocumentPaths(materializedDraft, [segments], document);
+        } else {
+          entryFailures.push(failure);
         }
-        const picked = pickCliConfigKey(key, sources);
-        if (Result.isFailure(picked)) {
-          if (target.tolerateInvalid) {
-            invalid.push(picked.failure);
-            pruneDocumentPaths(declaredDraft, [key.segments], document);
-            pruneDocumentPaths(materializedDraft, [key.segments], document);
-          } else if (picked.failure.issues === undefined) {
-            return yield* picked.failure;
-          } else {
-            entryFailures.push(picked.failure);
-          }
-          continue;
-        }
-        const { origin } = picked.success;
-        origins.set(key.path, origin);
-        if (origin.tier === "shell" || origin.tier === "projectEnv") {
-          if (appliedRemote !== undefined && remoteLeaves.has(key.path)) {
+      });
+      const unexplained = entryFailures.find((failure) => failure.issues === undefined);
+      if (unexplained !== undefined) return yield* unexplained;
+      if (appliedRemote !== undefined) {
+        for (const [keyPath, origin] of origins) {
+          if (
+            (origin.tier === "shell" || origin.tier === "projectEnv") &&
+            remoteLeaves.has(keyPath)
+          ) {
             overrideWarnings.push(
-              `${describeCliConfigOrigin(origin, sources.context)} overrides ${key.path} in [remotes.${appliedRemote}].`,
+              `${describeCliConfigOrigin(origin, sources.context)} overrides ${keyPath} in [remotes.${appliedRemote}].`,
             );
           }
-        }
-        const fromConfig = origin.tier === "config" ? configOrigin : undefined;
-        const declared = declaredWrite(key, picked.success, raw);
-        if (declared !== undefined) {
-          setDocumentValue(declaredDraft, key.segments, declared);
-          declaredResolved.push(key.segments);
-          if (fromConfig !== undefined) declaredEnvOrigins.push(fromConfig);
-        }
-        const materialized = materializedWrite(key, picked.success, declared);
-        if (materialized !== undefined) {
-          setDocumentValue(materializedDraft, key.segments, materialized);
-          materializedResolved.push(key.segments);
-          if (fromConfig !== undefined) materializedEnvOrigins.push(fromConfig);
         }
       }
       const [firstFailure] = entryFailures;
@@ -594,56 +411,16 @@ export const cliConfigValuesLayer = Layer.effect(
         if (value !== undefined) envValues[name] = value;
       }
 
-      const allIssues = target.validation ? ({ allIssues: true } as const) : {};
       const mergedForDecode = merged ?? emptyMergedDocument(target.workdir, path.sep);
-      const schemaFailures: Array<CliConfigParseError> = [];
-      const pruned: Array<ReadonlyArray<string>> = [];
-      let pruneLimitReached = false;
-      const decode = (
-        draft: Record<string, unknown>,
-        resolvedPaths: ReadonlyArray<ReadonlyArray<string>>,
-        reportFailures: boolean,
-      ) =>
-        Effect.gen(function* () {
-          let cleared = false;
-          for (let round = 0; ; round++) {
-            const result = yield* withPlatform(
-              decodeMergedCliConfig(mergedForDecode, {
-                envValues,
-                cliCompat: true,
-                document: draft,
-                resolvedPaths,
-                ...allIssues,
-              }),
-            ).pipe(Effect.result);
-            if (Result.isSuccess(result)) return result.success;
-            const error = result.failure;
-            if (!target.validation || !(error instanceof CliConfigParseError) || cleared) {
-              return yield* error;
-            }
-            if (round >= MAX_PRUNE_ROUNDS) {
-              if (reportFailures) schemaFailures.push(error);
-              pruneLimitReached = true;
-              cleared = true;
-              for (const key of Object.keys(draft)) delete draft[key];
-              continue;
-            }
-            const targets = flattenSchemaIssues(error.cause)
-              .map((issue) =>
-                prunableSegments(draft, issue.path, issue.code === "missing_required"),
-              )
-              .filter((segments) => segments.length > 0);
-            if (targets.length === 0) return yield* error;
-            if (reportFailures) schemaFailures.push(error);
-            for (const segments of targets) {
-              if (!pruned.some((known) => sameDocumentValue(known, segments)))
-                pruned.push(segments);
-            }
-            pruneDocumentPaths(draft, targets, document);
-          }
-        });
       const loaded = withEnvOrigins(
-        yield* decode(declaredDraft, declaredResolved, true),
+        yield* withPlatform(
+          decodeMergedCliConfig(mergedForDecode, {
+            envValues,
+            cliCompat: true,
+            document: declaredDraft,
+            resolvedPaths: declaredResolved,
+          }),
+        ),
         declaredEnvOrigins,
       );
       const fileDeclared = withPlatform(
@@ -652,11 +429,17 @@ export const cliConfigValuesLayer = Layer.effect(
           cliCompat: true,
           document: fileDraft,
           resolvedPaths: fileResolved,
-          ...allIssues,
         }),
       ).pipe(Effect.map((decoded) => withEnvOrigins(decoded, fileEnvOrigins)));
       const materializedLoaded = withEnvOrigins(
-        yield* decode(materializedDraft, materializedResolved, false),
+        yield* withPlatform(
+          decodeMergedCliConfig(mergedForDecode, {
+            envValues,
+            cliCompat: true,
+            document: materializedDraft,
+            resolvedPaths: materializedResolved,
+          }),
+        ),
         materializedEnvOrigins,
       );
 
@@ -688,7 +471,7 @@ export const cliConfigValuesLayer = Layer.effect(
           return picked.success;
         }).pipe(tracksConfigFailureKey);
 
-      if (notices) for (const message of overrideWarnings) yield* warnOnce(message);
+      for (const message of overrideWarnings) yield* warnOnce(message);
       if (Option.isSome(debugLogger)) {
         for (const [originPath, origin] of origins) {
           if (origin.tier === "default") continue;
@@ -707,12 +490,6 @@ export const cliConfigValuesLayer = Layer.effect(
         materialized,
         origins,
         invalid,
-        remoteFailures: target.validation ? remoteFailures : [],
-        schemaFailures,
-        get pruneLimitReached() {
-          return pruneLimitReached;
-        },
-        pruned,
         familyNames,
         declares: (configPath) => configAt(configPath) !== undefined,
         withheldEnv,
@@ -745,7 +522,6 @@ export const cliConfigValuesLayer = Layer.effect(
     const invalidate = Effect.all([
       Cache.invalidateAll(cache),
       Cache.invalidateAll(parsedDocuments),
-      Cache.invalidateAll(validationParsedDocuments),
     ]).pipe(Effect.asVoid);
 
     return CliConfigValues.of({
@@ -757,9 +533,7 @@ export const cliConfigValuesLayer = Layer.effect(
             projectRef: target.projectRef,
             ignoreConfigFile: target.ignoreConfigFile === true,
             tolerateUnreadableLinkedRef: target.tolerateUnreadableLinkedRef === true,
-            tolerateInvalid: target.tolerateInvalid === true || target.validation === true,
-            validation: target.validation === true,
-            remoteName: target.remoteName,
+            tolerateInvalid: target.tolerateInvalid === true,
           }),
         ).pipe(tracksConfigFailureKey),
       writeThrough: (write) => Effect.ensuring(write, invalidate),

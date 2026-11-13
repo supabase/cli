@@ -284,9 +284,8 @@ function parseCliConfig(
   format: ConfigFormat,
   path: string,
   appliedRemote: string | undefined,
-  allIssues?: true,
 ): Effect.Effect<CliConfig, CliConfigParseError> {
-  return validateCliConfig(document, allIssues === true ? { allIssues } : undefined).pipe(
+  return validateCliConfig(document).pipe(
     Effect.mapError(
       (cause) =>
         new CliConfigParseError({
@@ -528,8 +527,6 @@ export interface DecodeMergedCliConfigOptions {
   readonly document?: Record<string, unknown>;
   /** Paths whose values are already resolved: the decode keeps them verbatim instead of expanding `env()` again. */
   readonly resolvedPaths?: ReadonlyArray<ReadonlyArray<string>>;
-  /** Report every schema issue instead of stopping at the first. */
-  readonly allIssues?: true;
 }
 
 export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(function* (
@@ -583,7 +580,6 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
     merged.format,
     merged.path,
     merged.appliedRemote,
-    options.allIssues,
   );
 
   const localPathKeys = new Set(collectLeafPaths(merged.rawDocument).map(pathKey));

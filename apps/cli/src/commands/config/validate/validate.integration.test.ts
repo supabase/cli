@@ -2,9 +2,9 @@ import { inspect } from "node:util";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, Predicate } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Predicate } from "effect";
 
-import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { pinnedConfigProvider } from "../../../../tests/helpers/config-env-pins.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -12,6 +12,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { CliEnvNameSource } from "../../../shared/config/cli-config-provider.layer.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { configValidate } from "./validate.handler.ts";
@@ -22,6 +23,7 @@ interface RunOptions {
   readonly format?: OutputFormat;
   readonly outputFlag?: "json";
   readonly env?: Readonly<Record<string, string>>;
+  readonly resolveEnv?: boolean;
 }
 
 const writeFile = Effect.fnUntraced(function* (relative: string, text: string) {
@@ -49,10 +51,14 @@ const validate = Effect.fnUntraced(function* (
       OutputFlag,
       options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
     ),
-    configValuesLayer({ env: options.env }),
+    Layer.effect(ConfigProvider.ConfigProvider, pinnedConfigProvider(options.env)),
+    Layer.succeed(CliEnvNameSource, () => Object.keys(options.env ?? {})),
     BunServices.layer,
   );
-  const outcome = yield* configValidate().pipe(Effect.provide(layer), Effect.result);
+  const outcome = yield* configValidate({ resolveEnv: options.resolveEnv === true }).pipe(
+    Effect.provide(layer),
+    Effect.result,
+  );
   return {
     stdout: out.stdoutText,
     stderr: out.stderrText,
@@ -121,7 +127,9 @@ describe("config validate integration", () => {
     Effect.gen(function* () {
       const text = yield* validate(tomlFile(renderCliConfigTemplate("demo", false)));
       expect(text.failure).toBeUndefined();
-      expect(text.stdout).toBe("✓ supabase/config.toml is valid\n");
+      expect(text.stdout).toBe(
+        "✓ supabase/config.toml is valid\n  7 values come from env(); run with --resolve-env to check them\n",
+      );
       expect(text.stderr).toBe("");
       expect(text.exitCode).toBeUndefined();
       expect(text.flushed).toBe(true);
@@ -136,6 +144,8 @@ describe("config validate integration", () => {
         file: "supabase/config.toml",
         format: "toml",
         remotes: [],
+        unknown_values: 7,
+        deferred: [],
         errors: [],
         warnings: [],
       });
@@ -185,14 +195,11 @@ describe("config validate integration", () => {
             supabase/config.toml:11:2
             help: set secret, or set enabled = false
 
-          ⚠ auth.email.smtp.pass  SMTP_PASS is not set, so this key gets the literal text "env(SMTP_PASS)"
-            supabase/config.toml:19:8
-            help: set SMTP_PASS in your shell or supabase/.env (SUPABASE_ENV=<name> also reads supabase/.env.<name>)
-
           ✗ api.max_rows  expected a non-negative integer  [remote: staging]
             supabase/config.toml:26:12
 
-        ✗ 6 errors, 1 warning in supabase/config.toml
+        ✗ 6 errors in supabase/config.toml
+          1 value comes from env() and 2 checks were not run; run with --resolve-env to check them
           Checked remotes: staging
         "
       `);
@@ -207,6 +214,20 @@ describe("config validate integration", () => {
       expect(payloadOf(result)).toMatchInlineSnapshot(`
         {
           "complete": true,
+          "deferred": [
+            {
+              "check": "auth.email.smtp.pass",
+              "waits_on": [
+                "auth.email.smtp.pass",
+              ],
+            },
+            {
+              "check": "auth.email.smtp.table.pass",
+              "waits_on": [
+                "auth.email.smtp.pass",
+              ],
+            },
+          ],
           "errors": [
             {
               "code": "unknown_key",
@@ -286,21 +307,9 @@ describe("config validate integration", () => {
             "staging",
           ],
           "schema_version": 1,
+          "unknown_values": 1,
           "valid": false,
-          "warnings": [
-            {
-              "code": "env_unresolved",
-              "column": 8,
-              "end_column": 24,
-              "end_line": 19,
-              "help": "set SMTP_PASS in your shell or supabase/.env (SUPABASE_ENV=<name> also reads supabase/.env.<name>)",
-              "key": "auth.email.smtp.pass",
-              "line": 19,
-              "path": "auth.email.smtp.pass",
-              "reason": "SMTP_PASS is not set, so this key gets the literal text "env(SMTP_PASS)"",
-              "severity": "warning",
-            },
-          ],
+          "warnings": [],
         }
       `);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -335,7 +344,6 @@ describe("config validate integration", () => {
         tomlFile(
           `project_id = "demo"\n[api]\nmax_rows = "lots"\n[db]\nmajor_version = 16\nport = 54322\n[auth.captcha]\nenabled = true\nprovider = "turnstile"\n`,
         ),
-        { env: { SUPABASE_STUDIO_PORT: "nope" } },
       );
 
       const data = payloadOf(
@@ -344,7 +352,6 @@ describe("config validate integration", () => {
       expect(data).toMatchObject({ valid: true });
       expect(result.stdout).toContain("api.max_rows");
       expect(result.stdout).toContain("db.major_version  unsupported Postgres version");
-      expect(result.stdout).toContain("studio.port");
       expect(result.stdout).toContain(
         "auth.captcha.secret  required when auth.captcha.enabled = true",
       );
@@ -419,7 +426,7 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("still validates a duplicate remote and names a bracketed original", () =>
+  it.effect("still validates a duplicate remote and quotes a bracketed original", () =>
     Effect.gen(function* () {
       const result = yield* validate(
         tomlFile(
@@ -431,33 +438,12 @@ describe("config validate integration", () => {
       const data = payloadOf(result) ?? {};
       expect(Reflect.get(data, "remotes")).toContain("b");
       expect(Reflect.get(data, "errors")).toMatchObject([
-        { code: "remote_project_id", remote: "b", reason: "same project_id as remotes.a]b" },
+        {
+          code: "remote_project_id",
+          remote: "b",
+          reason: 'same project_id as remotes."a]b"',
+        },
         { code: "invalid_value", remote: "b", key: "remotes.b.api.max_rows" },
-      ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("does not warn about an unset env() under a disabled section it also fails", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile('project_id = "demo"\n[api]\nenabled = false\nmax_rows = "env(UNSET_ROWS)"\n'),
-        { format: "json" },
-      );
-
-      expect(payloadOf(result)).toMatchObject({ valid: true, warnings: [] });
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("does not warn about a remote project_id env() its own override replaces", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile('project_id = "demo"\n[remotes.prod]\nproject_id = "env(UNSET_REF)"\n'),
-        { format: "json", env: { SUPABASE_REMOTES_PROD_PROJECT_ID: "nope" } },
-      );
-
-      expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toEqual([]);
-      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
-        { code: "remote_project_id", remote: "prod" },
       ]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -469,6 +455,7 @@ describe("config validate integration", () => {
       yield* fs.makeDirectory(path.join(tempRoot.current, "supabase", ".env"), { recursive: true });
       const result = yield* validate(tomlFile('project_id = "demo"\n[db]\nmajor_version = 16\n'), {
         format: "json",
+        resolveEnv: true,
       });
 
       expect(payloadOf(result)).toMatchObject({
@@ -558,60 +545,6 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("warns about an unset env() reference in an enabled section", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile(
-          'project_id = "demo"\n[auth.email.smtp]\nenabled = true\nhost = "h"\nport = 25\nuser = "u"\npass = "env(SMTP_PASS)"\nadmin_email = "a@b.dev"\n',
-        ),
-      );
-
-      expect(result.exitCode).toBeUndefined();
-      expect(result.stdout).toContain(
-        '⚠ auth.email.smtp.pass  SMTP_PASS is not set, so this key gets the literal text "env(SMTP_PASS)"',
-      );
-      expect(result.stdout).toContain(
-        "help: set SMTP_PASS in your shell or supabase/.env (SUPABASE_ENV=<name> also reads supabase/.env.<name>)",
-      );
-      expect(result.stdout).toContain("✓ supabase/config.toml is valid · 1 warning");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("warns about a reference in a table that is enabled by default", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile('project_id = "demo"\n[auth]\nsite_url = "env(SITE_URL)"\n'),
-      );
-
-      expect(result.stdout).toContain("⚠ auth.site_url  SITE_URL is not set");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("warns for a remote reference under a section the base enables", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile(
-          'project_id = "demo"\n[auth.external.github]\nenabled = true\nclient_id = "c"\nsecret = "s"\n[remotes.prod]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.prod.auth.external.github]\nsecret = "env(GH_SECRET)"\n',
-        ),
-      );
-
-      expect(result.stdout).toContain("⚠ auth.external.github.secret  GH_SECRET is not set");
-      expect(result.stdout).toContain("[remote: prod]");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("stays quiet about unset references in a disabled table and optional keys", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile(
-          'project_id = "demo"\n[auth.external.github]\nenabled = false\nsecret = "env(GITHUB_SECRET)"\n[studio]\nopenai_api_key = "env(OPENAI_API_KEY)"\n',
-        ),
-      );
-
-      expect(result.stdout).toBe("✓ supabase/config.toml is valid\n");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.effect("does not let an unset base reference hide a remote's own error", () =>
     Effect.gen(function* () {
       const result = yield* validate(
@@ -633,9 +566,10 @@ describe("config validate integration", () => {
         tomlFile(
           'project_id = "demo"\n[api]\nschemas = ["env(UNSET_SCHEMA)", "hunter2-do-not-print"]\n',
         ),
+        { resolveEnv: true },
       );
 
-      expect(result.stdout).toContain("api.schemas.0  UNSET_SCHEMA is not set");
+      expect(result.stdout).toContain("UNSET_SCHEMA is not set. It is used at 3:");
       expect(reportedTexts(result)).not.toContain("hunter2-do-not-print");
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -649,19 +583,6 @@ describe("config validate integration", () => {
 
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { code: "unknown_key", key: "api.prot" },
-      ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("keeps an invalid SUPABASE_* override of a key holding an unresolved reference", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile('project_id = "demo"\n[db]\nport = "env(UNSET_DB_PORT)"\n'),
-        { format: "json", env: { SUPABASE_DB_PORT: "abc" } },
-      );
-
-      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
-        { code: "invalid_value", key: "db.port" },
       ]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -685,28 +606,13 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect(
-    "warns, not fails, when a remote enables a section whose base keys are unresolved",
-    () =>
-      Effect.gen(function* () {
-        const result = yield* validate(
-          tomlFile(
-            'project_id = "demo"\n[api.tls]\nenabled = false\ncert_path = "env(UNSET_CERT)"\nkey_path = "env(UNSET_KEY)"\n[remotes.prod]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.prod.api.tls]\nenabled = true\n',
-          ),
-        );
-
-        expect(result.exitCode).toBeUndefined();
-        expect(result.stdout).toContain("⚠ api.tls.cert_path  UNSET_CERT is not set");
-        expect(result.stdout).toContain("⚠ api.tls.key_path  UNSET_KEY is not set");
-        expect(result.stdout).toContain("[remote: prod]");
-        expect(result.stdout).not.toContain("✗");
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.effect("names the real env file and failure kind when a root .env cannot be parsed", () =>
     Effect.gen(function* () {
       yield* writeFile(".env", "!bad-line-do-not-print\n");
-      const result = yield* validate(tomlFile('project_id = "demo"\n'), { format: "json" });
+      const result = yield* validate(tomlFile('project_id = "demo"\n'), {
+        format: "json",
+        resolveEnv: true,
+      });
 
       expect(payloadOf(result)).toMatchObject({ complete: false, stopped_at: "env_file" });
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
@@ -714,25 +620,6 @@ describe("config validate integration", () => {
       ]);
       expect(reportedTexts(result)).not.toContain("bad-line-do-not-print");
     }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
-    "points a semantic error from a SUPABASE_* override at the variable, not the file",
-    () =>
-      Effect.gen(function* () {
-        const result = yield* validate(
-          tomlFile('project_id = "demo"\n[db]\nmajor_version = 17\n'),
-          { env: { SUPABASE_DB_MAJOR_VERSION: "16" } },
-        );
-
-        expect(result.exitCode).toBe(1);
-        expect(result.stdout).toContain("db.major_version  unsupported Postgres version");
-        expect(result.stdout).toContain(
-          "help: SUPABASE_DB_MAJOR_VERSION (shell) sets this value, not supabase/config.toml; fix or unset it there",
-        );
-        expect(result.stdout).not.toContain("supabase/config.toml:");
-        expect(result.stdout).not.toContain("major_version = 17");
-      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("locates a key under a table whose name contains a dot", () =>
@@ -748,22 +635,6 @@ describe("config validate integration", () => {
         expect.objectContaining({ code: "invalid_type", line: 7, column: 10 }),
       );
     }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
-    "warns instead of failing for a remote whose project_id is an unset env() reference",
-    () =>
-      Effect.gen(function* () {
-        const result = yield* validate(
-          tomlFile('project_id = "demo"\n[remotes.prod]\nproject_id = "env(UNSET_REF)"\n'),
-        );
-
-        expect(result.exitCode).toBeUndefined();
-        expect(result.stdout).toContain("⚠ project_id  UNSET_REF is not set");
-        expect(result.stdout).toContain("[remote: prod]");
-        expect(result.stdout).toContain("Checked remotes: prod");
-        expect(result.stdout).not.toContain("✗");
-      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("validates a remote block whose project_id is unusable", () =>
@@ -782,26 +653,7 @@ describe("config validate integration", () => {
         { remote: "c", key: "remotes.c.api.port" },
         { remote: "c", key: "remotes.c.db.major_version" },
       ]);
-      expect(Reflect.get(data, "warnings")).toMatchObject([
-        { code: "env_unresolved", remote: "c" },
-      ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("drops a cross-key check that reads an unresolved reference and warns about it", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile(
-          'project_id = "demo"\n[auth.mfa.totp]\nenroll_enabled = true\nverify_enabled = "env(VERIFY_TOTP)"\n',
-        ),
-        { format: "json" },
-      );
-
-      const data = payloadOf(result) ?? {};
-      expect(Reflect.get(data, "errors")).toEqual([]);
-      expect(Reflect.get(data, "warnings")).toMatchObject([
-        { code: "env_unresolved", key: "auth.mfa.totp.verify_enabled" },
-      ]);
+      expect(Reflect.get(data, "warnings")).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -816,32 +668,6 @@ describe("config validate integration", () => {
 
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { key: "auth.mfa.totp.enroll_enabled" },
-      ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("does not warn about an env() list item its owning key's override replaces", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile('project_id = "demo"\n[api]\nschemas = ["env(UNSET_SCHEMA)"]\n'),
-        { format: "json", env: { SUPABASE_API_SCHEMAS: "public" } },
-      );
-
-      expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("warns about an env() under a pruned table whose gate the document enables", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile(
-          'project_id = "demo"\n[auth.email.smtp]\nenabled = true\npass = "env(SMTP_PASS)"\n',
-        ),
-        { format: "json" },
-      );
-
-      expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
-        { code: "env_unresolved", key: "auth.email.smtp.pass" },
       ]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -861,18 +687,7 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("keeps the error a SUPABASE_* override of an unresolved gate leaves in place", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile('project_id = "demo"\n[api]\nenabled = "env(ENABLE_API)"\nport = 0\n'),
-        { format: "json", env: { SUPABASE_API_ENABLED: "true" } },
-      );
-
-      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([{ key: "api.port" }]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("keeps a remote's own error when the base copy is suppressed", () =>
+  it.effect("keeps a remote's own error when the base value is unknown", () =>
     Effect.gen(function* () {
       const result = yield* validate(
         tomlFile(
@@ -882,24 +697,9 @@ describe("config validate integration", () => {
       );
 
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
-        { key: "remotes.prod.auth.site_url", remote: "prod" },
+        { key: "auth.site_url", remote: "prod" },
       ]);
     }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect.each(["auth.hook.custom_access_token", "api.tls", "auth.email.smtp"])(
-    "warns about an unset env() on the %s enabled flag itself",
-    (path) =>
-      Effect.gen(function* () {
-        const result = yield* validate(
-          tomlFile(`project_id = "demo"\n[${path}]\nenabled = "env(FLAG_ON)"\n`),
-          { format: "json" },
-        );
-
-        expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
-          { code: "env_unresolved", key: `${path}.enabled` },
-        ]);
-      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   const GATED_PRODUCERS: ReadonlyArray<{
@@ -966,13 +766,6 @@ describe("config validate integration", () => {
         `[auth]\nenabled = ${gate}\n[auth.email.template.invite]\ncontent_path = "missing.html"\n`,
     },
     {
-      name: "auth external provider",
-      gate: "auth.enabled",
-      error: "auth.external.myidp.secret",
-      toml: (gate) =>
-        `[auth]\nenabled = ${gate}\n[auth.external.myidp]\nenabled = true\nclient_id = "client"\n`,
-    },
-    {
       name: "auth email notification content read",
       gate: "auth.email.notification.password_changed.enabled",
       error: "auth.email.notification.password_changed.content_path",
@@ -1030,8 +823,8 @@ describe("config validate integration", () => {
   ];
 
   it.effect.each(GATED_PRODUCERS)(
-    "gates $name behind $gate: an unset env() warns, a literal true fails",
-    ({ gate, error, toml }) =>
+    "defers $name when $gate is an env() reference, and reports it when the gate is true",
+    ({ error, toml }) =>
       Effect.gen(function* () {
         const unset = yield* validate(tomlFile(`project_id = "demo"\n${toml('"env(GATE_ON)"')}`), {
           format: "json",
@@ -1040,10 +833,8 @@ describe("config validate integration", () => {
           format: "json",
         });
 
-        expect(payloadOf(unset)).toMatchObject({ valid: true, errors: [] });
-        expect(Reflect.get(payloadOf(unset) ?? {}, "warnings")).toContainEqual(
-          expect.objectContaining({ code: "env_unresolved", key: gate }),
-        );
+        expect(payloadOf(unset)).toMatchObject({ valid: true, errors: [], warnings: [] });
+        expect(Reflect.get(payloadOf(unset) ?? {}, "deferred")).not.toEqual([]);
         expect(Reflect.get(payloadOf(open) ?? {}, "errors")).toContainEqual(
           expect.objectContaining({ key: error }),
         );
@@ -1060,33 +851,6 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { code: "remote_project_id", remote: "prod", line: 3 },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("reports an invalid env-sourced remote project_id as external, not at the file", () =>
-    Effect.gen(function* () {
-      const files = tomlFile(
-        'project_id = "demo"\n[remotes.prod]\nproject_id = "abcdefghijklmnopqrst"\n',
-      );
-      const json = yield* validate(files, {
-        format: "json",
-        env: { SUPABASE_REMOTES_PROD_PROJECT_ID: "nope" },
-      });
-      const text = yield* validate(files, {
-        env: { SUPABASE_REMOTES_PROD_PROJECT_ID: "nope" },
-      });
-
-      const errors = Reflect.get(payloadOf(json) ?? {}, "errors");
-      expect(errors).toMatchObject([
-        {
-          code: "remote_project_id",
-          remote: "prod",
-          help: expect.stringContaining("SUPABASE_REMOTES_PROD_PROJECT_ID"),
-        },
-      ]);
-      expect(errors).not.toMatchObject([{ line: expect.anything() }]);
-      expect(text.stdout).toContain("SUPABASE_REMOTES_PROD_PROJECT_ID");
-      expect(text.stdout).not.toMatch(/config\.toml:\d/);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1128,23 +892,6 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("reports a codec enum failure from the environment as invalid_enum, unquoted", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(tomlFile('project_id = "demo"\n'), {
-        format: "json",
-        env: { SUPABASE_EDGE_RUNTIME_POLICY: "sideways" },
-      });
-
-      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
-        {
-          code: "invalid_enum",
-          key: "edge_runtime.policy",
-          reason: "expected one of per_worker, oneshot",
-        },
-      ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.effect("quotes the empty choice of a codec enum", () =>
     Effect.gen(function* () {
       const result = yield* validate(
@@ -1160,22 +907,6 @@ describe("config validate integration", () => {
             'expected one of "", letters_digits, lower_upper_letters_digits, lower_upper_letters_digits_symbols',
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("fails an undecryptable env override of a key whose file value is an unset env()", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(
-        tomlFile(
-          'project_id = "demo"\n[auth.captcha]\nenabled = true\nprovider = "hcaptcha"\nsecret = "env(UNSET_CAPTCHA_SECRET)"\n',
-        ),
-        { format: "json", env: { SUPABASE_AUTH_CAPTCHA_SECRET: "encrypted:abcd" } },
-      );
-
-      expect(payloadOf(result)).toMatchObject({ valid: false });
-      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toContainEqual(
-        expect.objectContaining({ key: "auth.captcha.secret" }),
-      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1291,42 +1022,6 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect(
-    "stays quiet about an unresolved reference when a SUPABASE_* variable supplies the value",
-    () =>
-      Effect.gen(function* () {
-        const result = yield* validate(
-          tomlFile('project_id = "demo"\n[db]\nport = "env(UNSET_DB_PORT)"\n'),
-          { env: { SUPABASE_DB_PORT: "5432" } },
-        );
-
-        expect(result.stdout).toBe("✓ supabase/config.toml is valid\n");
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect("reports a removed env variable as an incomplete run", () =>
-    Effect.gen(function* () {
-      const result = yield* validate(tomlFile('project_id = "demo"\n'), {
-        format: "json",
-        env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "15" },
-      });
-
-      expect(payloadOf(result)).toMatchObject({
-        valid: false,
-        complete: false,
-        stopped_at: "removed_env",
-      });
-      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
-        { code: "removed_env" },
-      ]);
-
-      const text = yield* validate(tomlFile('project_id = "demo"\n'), {
-        env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "15" },
-      });
-      expect(text.stdout).toContain("Stopped after resolving the environment variables.");
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.effect("locates keys in a TOML file that starts with a byte order mark", () =>
     Effect.gen(function* () {
       const result = yield* validate(
@@ -1340,20 +1035,199 @@ describe("config validate integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("attributes an invalid SUPABASE_* variable to the variable, not a line", () =>
+  it.effect("does not treat an env() reference as a value of the wrong type", () =>
     Effect.gen(function* () {
-      const result = yield* validate(tomlFile('project_id = "demo"\n[db]\nport = 54322\n'), {
-        env: { SUPABASE_DB_PORT: "abc" },
-      });
-
-      expect(result.stdout).toContain("  ✗ db.port  expected a port (0-65535)");
-      expect(result.stdout).toContain(
-        "help: SUPABASE_DB_PORT (shell) sets this value, not supabase/config.toml; fix or unset it there",
+      const result = yield* validate(
+        tomlFile('project_id = "demo"\n[api]\nport = "env(API_PORT)"\n'),
       );
-      expect(result.stdout).not.toContain("abc");
-      expect(result.stdout).not.toContain("port = 54322");
+
+      expect(result.exitCode).toBeUndefined();
+      expect(result.stdout).toContain("✓ supabase/config.toml is valid");
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it.effect("says how many values and checks the env() references left unchecked", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.captcha]\nenabled = true\nprovider = "turnstile"\nsecret = "env(CAPTCHA_SECRET)"\n',
+        ),
+      );
+
+      expect(result.stdout).toMatch(
+        /\n  1 value comes from env\(\) and \d+ checks? w(as|ere) not run; run with --resolve-env to check them\n/,
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("lists the deferred checks and unknown values in the JSON payload", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.captcha]\nenabled = true\nprovider = "turnstile"\nsecret = "env(CAPTCHA_SECRET)"\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(payloadOf(result)).toMatchObject({ valid: true, complete: true, unknown_values: 1 });
+      expect(Reflect.get(payloadOf(result) ?? {}, "deferred")).toContainEqual({
+        check: expect.any(String),
+        waits_on: ["auth.captcha.secret"],
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reports a base error once, not again for every remote", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[api]\nmax_rows = "lots"\n[remotes.a]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.b]\nproject_id = "bbcdefghijklmnopqrst"\n',
+        ),
+        { format: "json" },
+      );
+
+      const errors = Reflect.get(payloadOf(result) ?? {}, "errors");
+      expect(errors).toHaveLength(1);
+      expect(errors).toMatchObject([{ key: "api.max_rows", line: 3 }]);
+      expect(errors[0]).not.toHaveProperty("remote");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("locates a problem a remote causes in that remote", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[remotes.a]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.a.db]\nmajor_version = 99\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+        { remote: "a", key: "remotes.a.db.major_version", line: 5 },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  describe("--resolve-env", () => {
+    const OPTIONAL_TWICE =
+      'project_id = "demo"\n[studio]\nopenai_api_key = "env(OPENAI)"\n[experimental]\ns3_access_key = "env(OPENAI)"\n';
+
+    it.effect(
+      "names a missing variable and every place it is used, as a warning when unneeded",
+      () =>
+        Effect.gen(function* () {
+          const result = yield* validate(tomlFile(OPTIONAL_TWICE), { resolveEnv: true });
+
+          expect(result.exitCode).toBeUndefined();
+          expect(result.stdout).toContain(
+            "⚠ studio.openai_api_key  OPENAI is not set. It is used at 3:18, 5:17",
+          );
+          expect(result.stdout).toContain("✓ supabase/config.toml is valid · 1 warning");
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("reports a variable set to an empty value", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          { ...tomlFile(OPTIONAL_TWICE), "supabase/.env": "OPENAI=\n" },
+          { resolveEnv: true, format: "json" },
+        );
+
+        expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
+          { code: "env_empty", key: "studio.openai_api_key" },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("lets an empty shell variable mask a value in a .env file", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          { ...tomlFile(OPTIONAL_TWICE), "supabase/.env": "OPENAI=from-file\n" },
+          { resolveEnv: true, format: "json", env: { OPENAI: "" } },
+        );
+
+        expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
+          { code: "env_empty" },
+        ]);
+        expect(reportedTexts(result)).not.toContain("from-file");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("accepts variables the shell and the selected .env.<name> file supply", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          {
+            ...tomlFile(
+              'project_id = "demo"\n[studio]\nopenai_api_key = "env(FROM_SHELL)"\n[experimental]\ns3_access_key = "env(FROM_STAGING)"\n',
+            ),
+            "supabase/.env.staging": "FROM_STAGING=value\n",
+          },
+          {
+            resolveEnv: true,
+            env: { FROM_SHELL: "value", SUPABASE_ENV: "staging" },
+          },
+        );
+
+        expect(result.stdout).toBe("✓ supabase/config.toml is valid\n");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("makes an unset variable an error when a check needs it", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile(
+            'project_id = "demo"\n[auth.captcha]\nenabled = true\nprovider = "turnstile"\nsecret = "env(CAPTCHA_SECRET)"\n',
+          ),
+          { resolveEnv: true, format: "json" },
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+          { code: "env_unset", key: "auth.captcha.secret", line: 5 },
+        ]);
+        expect(Reflect.get(payloadOf(result) ?? {}, "deferred")).not.toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("makes an unset variable an error when it feeds a number key", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile('project_id = "demo"\n[api]\nport = "env(API_PORT)"\n'),
+          { resolveEnv: true, format: "json" },
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
+          { code: "env_unset", key: "api.port" },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("checks a set value like a literal and never prints it", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(
+          tomlFile('project_id = "demo"\n[api]\nport = "env(API_PORT)"\n'),
+          { resolveEnv: true, env: { API_PORT: "hunter2-not-a-port" } },
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toContain("api.port  expected");
+        expect(reportedTexts(result)).not.toContain("hunter2-not-a-port");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("passes a fresh init project with warnings only", () =>
+      Effect.gen(function* () {
+        const result = yield* validate(tomlFile(renderCliConfigTemplate("demo", false)), {
+          resolveEnv: true,
+          format: "json",
+        });
+
+        expect(result.exitCode).toBeUndefined();
+        expect(payloadOf(result)).toMatchObject({ valid: true, errors: [], deferred: [] });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
 
   describe("secrets never print", () => {
     const SECRET = "hunter2-do-not-print";

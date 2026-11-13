@@ -6154,7 +6154,7 @@ content_path = "./supabase/templates/custom_notice.html"
           "pg-functions://postgres/auth/custom-access-token-hook",
           Effect.gen(function* () {
             // A pg-functions URI needs no `secrets` (unlike http/https, validated by
-            // `validateResolvedConfig`), keeping this scenario focused on the
+            // the config check units), keeping this scenario focused on the
             // enabled/uri override reaching GoTrue.
             const { layer, child } = yield* setup({
               configContents:

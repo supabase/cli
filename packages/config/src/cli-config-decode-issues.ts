@@ -1,9 +1,9 @@
-import { Schema, SchemaIssue } from "effect";
+import { SchemaIssue } from "effect";
 
 type SchemaIssueCode = "invalid_type" | "invalid_enum" | "invalid_value" | "missing_required";
 
-/** One leaf of a schema decode failure; `reason` and `help` never quote the offending input. */
-export interface FlatSchemaIssue {
+/** One leaf of a decode failure; `reason` and `help` never quote the offending input. */
+export interface CliConfigDecodeIssue {
   readonly path: ReadonlyArray<string>;
   readonly code: SchemaIssueCode;
   readonly reason: string;
@@ -49,7 +49,7 @@ const leafMessage: SchemaIssue.LeafHook = (leaf) => {
 
 const ENUM_MESSAGE = /^Expected ((?:"[^"]*"(?: \| )?)+)$/;
 
-function classify(message: string): Omit<FlatSchemaIssue, "path"> {
+function classify(message: string): Omit<CliConfigDecodeIssue, "path"> {
   if (message.startsWith(TAG)) {
     const [, code, reason] = message.split(TAG);
     if (code === "missing_required") {
@@ -76,13 +76,13 @@ const segmentOf = (segment: PropertyKey | { readonly key: PropertyKey }): string
   String(typeof segment === "object" ? segment.key : segment);
 
 /** Every leaf a schema decode failure reports, with its key path. */
-export function flattenSchemaIssues(cause: unknown): ReadonlyArray<FlatSchemaIssue> {
-  if (!Schema.isSchemaError(cause)) return [];
-  const { issues } = SchemaIssue.makeFormatterStandardSchemaV1({ leafHook: leafMessage })(
-    cause.issue,
+export function flattenCliConfigDecodeIssues(
+  issue: SchemaIssue.Issue,
+): ReadonlyArray<CliConfigDecodeIssue> {
+  return SchemaIssue.makeFormatterStandardSchemaV1({ leafHook: leafMessage })(issue).issues.map(
+    (entry) => ({
+      path: (entry.path ?? []).map(segmentOf),
+      ...classify(entry.message),
+    }),
   );
-  return issues.map((issue) => ({
-    path: (issue.path ?? []).map(segmentOf),
-    ...classify(issue.message),
-  }));
 }

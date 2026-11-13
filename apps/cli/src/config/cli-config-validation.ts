@@ -1,5 +1,6 @@
 import {
   decodeCliConfigDocumentForValidationEffect,
+  decodeCliConfigWithoutTableRules as decodeDocumentWithoutTableRules,
   type DecodeCliConfigDocumentForValidationEffectOptions,
 } from "@supabase/config/internal";
 
@@ -14,5 +15,6 @@ export const decodeCliConfigDocumentForValidation = (
   options: CliConfigValidationOptions,
 ) => decodeCliConfigDocumentForValidationEffect(document, { ...options, cliCompat: true });
 
-/** How many times a validation load deletes failing keys and decodes again before it gives up. */
-export const MAX_PRUNE_ROUNDS = 5;
+/** Decodes a document with leaf rules only and the CLI's own list coercion, collecting every issue. */
+export const decodeCliConfigWithoutTableRules = (document: unknown) =>
+  decodeDocumentWithoutTableRules(document, { cliCompat: true });
