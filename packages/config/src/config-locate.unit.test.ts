@@ -276,6 +276,15 @@ describe("locateCliConfigKey inline-table keys", () => {
     expect(location?.exact).toBe(true);
     expect(source.slice((location?.column ?? 0) - 1, (location?.endColumn ?? 0) - 1)).toBe("0");
   });
+
+  test.each([
+    ["the closing brace on its own line", "api = { port = 0\n}\n"],
+    ["a trailing comment before the newline", "api = { port = 0 # c\n}\n"],
+  ])("locates a key exactly with %s", (_label, source) => {
+    const location = locateCliConfigKey(source, "toml", ["api", "port"], "value");
+
+    expect(location).toMatchObject({ line: 1, column: 16, endColumn: 17, exact: true });
+  });
 });
 
 describe("locateCliConfigKey inline arrays of tables", () => {

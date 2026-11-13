@@ -434,7 +434,16 @@ sql_paths = ["env(SQL)", 42]
 [api]
 schemas = ["env(S)", 42]
 `);
-        expect(labels(schemas.problems)).toEqual(["base:api.schemas.1:invalid_type"]);
+        expect(labels(schemas.problems)).toEqual(["base:api.schemas:invalid_value"]);
+
+        const literal = yield* run(`project_id = "demo"
+
+[api]
+schemas = ["a", 42]
+`);
+        expect(literal.problems).toMatchObject(
+          schemas.problems.map(({ path, code, reason }) => ({ path, code, reason })),
+        );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
 
@@ -480,7 +489,7 @@ enabled = "env(FLAG)"
 [api]
 schemas = ["env(SCHEMA)", 42]
 `);
-        expect(labels(invalid.problems)).toEqual(["base:api.schemas.1:invalid_type"]);
+        expect(labels(invalid.problems)).toEqual(["base:api.schemas:invalid_value"]);
 
         const valid = yield* run(`project_id = "demo"
 

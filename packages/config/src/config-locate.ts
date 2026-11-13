@@ -217,7 +217,7 @@ function inlineTableEntries(source: string, table: Span): ReadonlyArray<InlineEn
   if (source[table.start] !== "{") return undefined;
   const limit = table.end - 1;
   const entries: Array<InlineEntry> = [];
-  let cursor = skipInlineWhitespace(source, table.start + 1);
+  let cursor = skipArrayFiller(source, table.start + 1, limit);
   while (cursor < limit) {
     const keys: Array<string> = [];
     const keyStart = cursor;
@@ -239,8 +239,8 @@ function inlineTableEntries(source: string, table: Span): ReadonlyArray<InlineEn
       key: { start: keyStart, end: keyEnd },
       value: { start: valueStart, end: valueEnd },
     });
-    cursor = skipInlineWhitespace(source, valueEnd);
-    if (source[cursor] === ",") cursor = skipInlineWhitespace(source, cursor + 1);
+    cursor = skipArrayFiller(source, valueEnd, limit);
+    if (source[cursor] === ",") cursor = skipArrayFiller(source, cursor + 1, limit);
   }
   return entries;
 }

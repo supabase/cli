@@ -11,7 +11,7 @@ import {
   type CliConfigLocation,
   type ParsedCliConfigDocument,
 } from "@supabase/config/internal";
-import { Effect, Exit, Option, Path } from "effect";
+import { Effect, Exit, Option, Path, Result } from "effect";
 
 import {
   cloneDocumentRecord,
@@ -20,7 +20,7 @@ import {
   setDocumentValue,
 } from "../../../config/cli-config-document.ts";
 import type { CliConfigEnvLookup } from "../../../config/cli-config-env-lookup.ts";
-import type { CliConfigSources } from "../../../config/cli-config-key.ts";
+import { pickCliConfigKey, type CliConfigSources } from "../../../config/cli-config-key.ts";
 import { isEncryptedSecret } from "../../../shared/config/vault-decrypt.ts";
 import {
   runCliConfigRegistryPass,
@@ -259,13 +259,13 @@ interface ArrayLiterals {
   readonly document: Record<string, unknown>;
   readonly standIns: ReadonlySet<string>;
   readonly items: ReadonlyArray<unknown>;
-  readonly codec: AnyCliConfigKey["codec"] | undefined;
+  readonly key: AnyCliConfigKey | undefined;
 }
 
 const arrayLiterals = (
   copy: Record<string, unknown>,
   path: Segments,
-  codec: AnyCliConfigKey["codec"] | undefined,
+  key: AnyCliConfigKey | undefined,
 ): ArrayLiterals | undefined => {
   const current = getDocumentValue(copy, path);
   if (!Array.isArray(current)) return undefined;
@@ -277,7 +277,7 @@ const arrayLiterals = (
   });
   const document: Record<string, unknown> = {};
   setDocumentValue(document, path, items);
-  return { path, document, standIns, items: current, codec };
+  return { path, document, standIns, items: current, key };
 };
 
 interface SourceMaps {
@@ -445,11 +445,7 @@ const prepareContext = (input: AnalyzeInput) => {
     markUnknown(status, group.path, "env", group.names);
     const probe = standIn?.(group.names[0] ?? "");
     if (probe === undefined && inCopy) {
-      const literals = arrayLiterals(
-        copy,
-        group.path,
-        registryKeys.get(group.path.join("."))?.codec,
-      );
+      const literals = arrayLiterals(copy, group.path, registryKeys.get(group.path.join(".")));
       if (literals !== undefined) arrays.push(literals);
     }
     if (probe !== undefined) {
@@ -495,6 +491,26 @@ const makeReport = (input: AnalyzeInput, into: Array<DecodeProblem>): Report => 
   };
 };
 
+const registrySources = (
+  input: AnalyzeInput,
+  read: (segments: Segments) => unknown,
+): CliConfigSources => ({
+  flags: () => undefined,
+  shell: () => undefined,
+  projectEnv: () => undefined,
+  config: (segments) => {
+    const value = read(segments);
+    return value === undefined ? undefined : { value, origin: { path: segments, source: "local" } };
+  },
+  dotenvPrivateKeys: input.env?.dotenvPrivateKeys ?? [],
+  context: {
+    workdir: input.workdir,
+    projectRef: Option.none(),
+    path: input.pathService,
+    configAt: (path) => read(path.split(".")),
+  },
+});
+
 /** Reports each value that fails its own check, marks it unknown and drops it, until the registry pass is clean. */
 const dropFailingValues = (
   copy: Record<string, unknown>,
@@ -502,24 +518,7 @@ const dropFailingValues = (
   input: AnalyzeInput,
   report: Report,
 ) => {
-  const sources = (): CliConfigSources => ({
-    flags: () => undefined,
-    shell: () => undefined,
-    projectEnv: () => undefined,
-    config: (segments) => {
-      const value = getDocumentValue(copy, segments);
-      return value === undefined
-        ? undefined
-        : { value, origin: { path: segments, source: "local" } };
-    },
-    dotenvPrivateKeys: input.env?.dotenvPrivateKeys ?? [],
-    context: {
-      workdir: input.workdir,
-      projectRef: Option.none(),
-      path: input.pathService,
-      configAt: (path) => getDocumentValue(copy, path.split(".")),
-    },
-  });
+  const sources = () => registrySources(input, (segments) => getDocumentValue(copy, segments));
 
   let pass = runCliConfigRegistryPass(copy, sources(), { configOnly: true });
   for (;;) {
@@ -608,16 +607,27 @@ export const analyzeContext = (input: AnalyzeInput): ContextResult => {
   const { document, copy, status, arrays } = prepareContext(input);
   const decodeProblems: Array<DecodeProblem> = [];
   const report = makeReport(input, decodeProblems);
-  for (const { path, document: literals, standIns, items, codec } of arrays) {
-    if (codec !== undefined) {
-      items.forEach((item, index) => {
-        if (standIns.has(String(index)) || codec.fromConfig([item]) !== undefined) return;
-        report(
-          [...path, String(index)],
-          false,
-          codecProblem({ expected: codec.expected, kind: "type" }),
-        );
-      });
+  for (const { path, document: literals, standIns, items, key } of arrays) {
+    if (key !== undefined) {
+      const known = items.filter((_, index) => !standIns.has(String(index)));
+      const bad = items.some(
+        (item, index) => !standIns.has(String(index)) && key.codec.fromConfig([item]) === undefined,
+      );
+      if (!bad) continue;
+      const result = pickCliConfigKey(
+        key,
+        registrySources(input, (segments) => (keyOf(segments) === keyOf(path) ? known : undefined)),
+        { configOnly: true },
+      );
+      report(
+        path,
+        false,
+        codecProblem(
+          Result.isFailure(result)
+            ? result.failure
+            : { expected: key.codec.expected, kind: "type" },
+        ),
+      );
       continue;
     }
     const result = decodeCliConfigWithoutTableRules(literals);

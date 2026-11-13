@@ -262,7 +262,7 @@ const remoteProjectIdDuplicates = countingUnit({
   },
 });
 
-/** Checks only `config validate` runs: the table rules and the remote project ids. */
+/** Checks `config validate` adds to the local ones: table rules, remote project ids and the `db` path's bucket size limits. */
 export const VALIDATE_ONLY_UNITS: ReadonlyArray<CliConfigCheckUnit> = [
   storageBucketFileSizeLimits,
   ...smtpTableUnits,
