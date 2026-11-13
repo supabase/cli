@@ -648,7 +648,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       // The memory string is schema-validated, so `ramInBytes` cannot throw here.
       const withContainerLimits = (creation: ServiceCreationType): ServiceCreationType => {
         const container = validatedConfig.local?.services?.[creation.service]?.container;
-        return container === undefined
+        return container?.memory === undefined && container?.cpus === undefined
           ? creation
           : {
               ...creation,

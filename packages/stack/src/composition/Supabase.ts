@@ -296,6 +296,7 @@ const comparable = (
   creation: ServiceCreationInput,
   sharedPort: number | undefined,
   compared: ReadonlySet<string>,
+  containerized: boolean,
 ) => {
   const managed = managedInputs(creation.service);
   const config: Record<string, unknown> = Object.fromEntries(
@@ -305,7 +306,8 @@ const comparable = (
     pin: creation.pin,
     endpoints: withSharedApiPort(creation, sharedPort),
     config,
-    container: creation.container,
+    // The native runtime ignores container limits, so a limit edit is no change there.
+    container: containerized ? creation.container : undefined,
   };
 };
 
@@ -316,6 +318,7 @@ const compareCreation = (
   sharedPort: number | undefined,
   memberKinds: ReadonlySet<ServiceCreation["service"]>,
   initializedData: boolean,
+  containerized: boolean,
 ): CreationChange => {
   const overridable = overridableInputs[requested.service] ?? [];
   // Without its supplying member, the composition keeps the project's own value of an input.
@@ -327,12 +330,14 @@ const compareCreation = (
       .filter(([, source]) => !memberKinds.has(source))
       .map(([input]) => input),
   ]);
-  const requestedComparable = comparable(requested, sharedPort, compared);
+  const requestedComparable = comparable(requested, sharedPort, compared, containerized);
   const paths = [
     ...new Set(
-      differences(comparable(saved, undefined, compared), requestedComparable, "").map((path) =>
-        path.startsWith("pin.") ? "pin" : path,
-      ),
+      differences(
+        comparable(saved, undefined, compared, containerized),
+        requestedComparable,
+        "",
+      ).map((path) => (path.startsWith("pin.") ? "pin" : path)),
     ),
   ];
   const isEndpointPath = (path: string) => path === "endpoints" || path.startsWith("endpoints.");
@@ -407,7 +412,7 @@ const sharedApiPortFor = (
 
 /** Compares each saved instance of a requested kind with its request, without changing state. */
 export const planSupabaseComposition = (
-  saved: Pick<SavedStack, "instances" | "composition">,
+  saved: Pick<SavedStack, "instances" | "composition" | "runtime">,
   requested: ReadonlyArray<ServiceCreationInput>,
   options: PlanInputs = {},
 ): ReadonlyArray<PlannedInstance> => {
@@ -431,6 +436,7 @@ export const planSupabaseComposition = (
               sharedPort,
               memberKinds,
               options.initializedDatabases?.has(id) ?? true,
+              saved.runtime !== "native",
             ),
           },
         ];
@@ -510,7 +516,7 @@ const endpointRewrite = (
  * second instance beside the stopped one.
  */
 export const planEndpointReplan = (
-  saved: Pick<SavedStack, "instances" | "composition">,
+  saved: Pick<SavedStack, "instances" | "composition" | "runtime">,
   requested: ReadonlyArray<ServiceCreationInput>,
   initializedDatabases?: ReadonlySet<string>,
 ): EndpointReplan | undefined => {

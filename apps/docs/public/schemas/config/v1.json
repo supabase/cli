@@ -4482,16 +4482,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4519,16 +4519,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4556,16 +4556,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4593,16 +4593,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4630,16 +4630,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4667,16 +4667,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4704,16 +4704,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4741,16 +4741,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4778,16 +4778,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4815,16 +4815,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4852,16 +4852,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",
@@ -4889,16 +4889,16 @@
                   "properties": {
                     "memory": {
                       "type": "string",
-                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+                      "description": "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
                       "examples": ["512MiB", "1GiB"]
                     },
                     "cpus": {
-                      "description": "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+                      "description": "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
                       "examples": [0.5, 1, 2],
                       "anyOf": [
                         {
                           "type": "number",
-                          "exclusiveMinimum": 0
+                          "minimum": 0.01
                         },
                         {
                           "type": "string",

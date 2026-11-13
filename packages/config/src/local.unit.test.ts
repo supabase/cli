@@ -86,10 +86,14 @@ describe("[local.services]", () => {
   test.each([
     ["an unknown unit", 'memory = "12XB"', /"auth"\]\["container"\]\["memory"\]/u],
     ["no number", 'memory = "MiB"', /"auth"\]\["container"\]\["memory"\]/u],
-    ["a zero size", 'memory = "0"', /at least 1 byte/u],
-    ["an unrepresentable size", 'memory = "8PiB"', /less than 8 PiB/u],
-    ["an overflowing size", `memory = "${"9".repeat(309)}"`, /less than 8 PiB/u],
-    ["zero cpus", "cpus = 0", /greater than 0[\s\S]*"auth"\]\["container"\]\["cpus"\]/u],
+    ["a size below Docker's minimum", 'memory = "5MiB"', /at least 6MiB/u],
+    ["an unrepresentable size", 'memory = "8PiB"', /less than 8PiB/u],
+    ["an overflowing size", `memory = "${"9".repeat(309)}"`, /less than 8PiB/u],
+    [
+      "cpus below Docker's minimum",
+      "cpus = 0.009",
+      /at least 0.01[\s\S]*"auth"\]\["container"\]\["cpus"\]/u,
+    ],
     ["negative cpus", "cpus = -1", /"auth"\]\["container"\]\["cpus"\]/u],
     ["string cpus", 'cpus = "2"', /"auth"\]\["container"\]\["cpus"\]/u],
   ])("rejects a container with %s", (_name, line, message) => {

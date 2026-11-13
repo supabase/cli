@@ -47,7 +47,8 @@ const flags = {
   eager: true,
 };
 
-const config = (database: string, auth: string) => `
+/** Writes each service's container table body; `undefined` leaves the table out. */
+const config = (database: string, auth: string | undefined) => `
 project_id = "stack-start-container-limits"
 
 [api]
@@ -80,9 +81,7 @@ enabled = false
 [local.services.database.container]
 ${database}
 
-[local.services.auth.container]
-${auth}
-`;
+${auth === undefined ? "" : `[local.services.auth.container]\n${auth}\n`}`;
 
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
 
@@ -152,7 +151,7 @@ const limits = (memoryMiB: number, cpus: number) => ({
 
 describe("experimental stack start container limits", () => {
   it.live(
-    "applies configured limits to each service, keeps them across restarts, and reports edits as drift",
+    "applies configured limits to each service, keeps them across restarts, and reports limit edits as drift",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -160,10 +159,7 @@ describe("experimental stack start container limits", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-limits-" });
         const configPath = path.join(root, "supabase", "config.toml");
         yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
-        yield* fs.writeFileString(
-          configPath,
-          config('memory = "768MiB"\ncpus = 1.5', 'memory = "256MiB"\ncpus = 0.5'),
-        );
+        yield* fs.writeFileString(configPath, config('memory = "768MiB"\ncpus = 1.5', undefined));
         const stateRoot = path.join(root, "stacks");
         const cacheRoot = path.join(root, "cache");
         yield* Effect.ensuring(
@@ -192,12 +188,14 @@ describe("experimental stack start container limits", () => {
 
             const stackId = yield* start;
             expect(yield* serviceLimits(stackId, "database")).toEqual(limits(768, 1.5));
-            expect(yield* serviceLimits(stackId, "auth")).toEqual(limits(256, 0.5));
+            expect(yield* serviceLimits(stackId, "auth")).toEqual(limits(0, 0));
 
             yield* stop(stackId);
             expect(yield* start).toBe(stackId);
             expect(yield* serviceLimits(stackId, "database")).toEqual(limits(768, 1.5));
-            expect(yield* serviceLimits(stackId, "auth")).toEqual(limits(256, 0.5));
+
+            yield* fs.writeFileString(configPath, config('memory = "768MiB"\ncpus = 1.5', ""));
+            expect(yield* drift).toMatchObject({ config_drift: { status: "unchanged" } });
 
             yield* fs.writeFileString(
               configPath,
@@ -209,8 +207,7 @@ describe("experimental stack start container limits", () => {
                 paths: expect.arrayContaining([
                   "services.database.container.memoryBytes",
                   "services.database.container.cpus",
-                  "services.auth.container.memoryBytes",
-                  "services.auth.container.cpus",
+                  "services.auth.container",
                 ]),
               },
             });

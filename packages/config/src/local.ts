@@ -40,27 +40,31 @@ function sizeInBytes(text: string): number | undefined {
     : Math.trunc(Number(amount) * (sizeUnits[(match?.[2] ?? "").toLowerCase()] ?? 1));
 }
 
+/** The smallest limits Docker accepts. */
+const minMemoryBytes = 6 * 1024 ** 2;
+const minCpus = 0.01;
+
 const memory = Schema.String.annotate({
   description:
-    "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). Swap is limited to the same amount.",
+    "Memory limit for the service container, as a size such as `512MiB` or `1GiB` (1024-based, case-insensitive; a bare number is bytes). At least `6MiB`; swap is disabled.",
   examples: ["512MiB", "1GiB"],
   tags,
 }).check(
   Schema.isPattern(sizePattern, { message: "must be a size such as 512MiB or 1GiB" }),
   Schema.makeFilter((value: string) => {
     const bytes = sizeInBytes(value);
-    return bytes === undefined || (bytes >= 1 && Number.isSafeInteger(bytes))
+    return bytes === undefined || (bytes >= minMemoryBytes && Number.isSafeInteger(bytes))
       ? undefined
-      : "must be at least 1 byte and less than 8 PiB";
+      : "must be at least 6MiB and less than 8PiB";
   }),
 );
 
 const cpus = Schema.Finite.annotate({
   description:
-    "CPU limit for the service container, in CPUs; fractions are allowed (for example `0.5`).",
+    "CPU limit for the service container, in CPUs; fractions down to `0.01` are allowed (for example `0.5`).",
   examples: [0.5, 1, 2],
   tags,
-}).check(Schema.isGreaterThan(0, { message: "must be greater than 0" }));
+}).check(Schema.isGreaterThanOrEqualTo(minCpus, { message: "must be at least 0.01" }));
 
 const container = Schema.Struct({
   memory: Schema.optionalKey(memory),

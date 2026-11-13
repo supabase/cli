@@ -34,9 +34,10 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
 }> {}
 
 /** Resource limits for a service's container; native processes ignore them. */
+/** Container limits, bounded below by the smallest values Docker accepts. */
 export const ContainerResources = Schema.Struct({
-  memoryBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
-  cpus: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThan(0))),
+  memoryBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(6 * 1024 ** 2))),
+  cpus: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0.01))),
 });
 export interface ContainerResources extends Schema.Schema.Type<typeof ContainerResources> {}
 
