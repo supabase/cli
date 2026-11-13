@@ -21,7 +21,14 @@ import {
 import type { ProvidedContext } from "vitest";
 import { startPgMock } from "../src/server/pg-mock.ts";
 import { startReplayServer } from "../src/server/replay-server.ts";
-import { ACCESS_TOKEN, isRecording, ORG_ID, PROJECT_REF, STAGING_URL } from "../src/tests/env.ts";
+import {
+  ACCESS_TOKEN,
+  E2E_CONCURRENCY,
+  isRecording,
+  ORG_ID,
+  PROJECT_REF,
+  STAGING_URL,
+} from "../src/tests/env.ts";
 import {
   cleanupProjectsByName,
   createTestProject,
@@ -67,6 +74,7 @@ const globalSetup = Effect.fn("E2eSetup.globalSetup")(function* (provide: Provid
     pgMock,
     record: isRecording,
     stagingUrl: STAGING_URL,
+    slots: E2E_CONCURRENCY,
   });
   provide("replayServerUrl", server.url);
 
