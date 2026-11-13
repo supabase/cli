@@ -3,6 +3,7 @@ import { Writable } from "node:stream";
 import { beforeEach, vi } from "vitest";
 import {
   Cause,
+  ConfigProvider,
   Deferred,
   Effect,
   Exit,
@@ -418,6 +419,39 @@ describe("Output", () => {
         expect(result).toBe("good input");
       }).pipe(Effect.provide(layer));
     });
+
+    it.effect.each([
+      { stdinIsTty: true, term: "xterm-256color", prefilled: true },
+      { stdinIsTty: false, term: "xterm-256color", prefilled: false },
+      { stdinIsTty: true, term: "dumb", prefilled: false },
+    ])(
+      "promptText prefills an interactive terminal and shows a placeholder elsewhere (stdin TTY $stdinIsTty, TERM $term)",
+      ({ stdinIsTty, term, prefilled }) => {
+        mockClack.text.mockImplementation(
+          (opts: { initialValue?: string; placeholder?: string }) => {
+            expect(opts.initialValue).toBe(prefilled ? "/work/" : undefined);
+            expect(opts.placeholder).toBe(prefilled ? undefined : "/work/");
+            return Promise.resolve("edited value");
+          },
+        );
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const result = yield* out.promptText("Enter value", { initialValue: "/work/" });
+          expect(result).toBe("edited value");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              textOutputLayer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(mockTty({ stdinIsTty, stdoutIsTty: true }), mockStdio().layer),
+                ),
+              ),
+              ConfigProvider.layer(ConfigProvider.fromUnknown({ TERM: term })),
+            ),
+          ),
+        );
+      },
+    );
 
     it.effect("raw and rawBytes write unframed through the stdio sink", () => {
       const mock = mockStdio();

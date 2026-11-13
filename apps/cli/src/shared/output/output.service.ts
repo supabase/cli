@@ -52,7 +52,12 @@ interface OutputShape {
   readonly task: (message: string) => Effect.Effect<OutputTask>;
   readonly promptText: (
     message: string,
-    opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
+    opts?: {
+      validate?: (v: string) => string | undefined;
+      defaultValue?: string;
+      /* Editable starting text on an interactive terminal, a placeholder elsewhere. */
+      initialValue?: string;
+    },
   ) => Effect.Effect<string, NonInteractiveError>;
   readonly promptPassword: (message: string) => Effect.Effect<string, NonInteractiveError>;
   readonly promptConfirm: (
