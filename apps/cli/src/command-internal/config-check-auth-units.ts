@@ -4,12 +4,14 @@ import { Effect, Path, Result } from "effect";
 import { defaultJwtSecret } from "../shared/stack-constants.ts";
 import {
   countingUnit,
+  fieldEntries,
   finding,
   invalid,
   missing,
   nonEmpty,
   num,
   readText,
+  splitFieldEntry,
   str,
   syncUnit,
   thrown,
@@ -186,31 +188,47 @@ export const authPasskeyEnabled = syncUnit({
   },
 });
 
+const WEBAUTHN_GATE = ["auth", "passkey", "enabled"] as const;
+const webauthnRequired = (view: CliConfigView): boolean => authOn(view) && passkeyOn(view);
+
 export const authWebauthn = syncUnit({
   id: "auth.webauthn",
   scope: ["auth"],
   kind: "requirement",
+  check: (view) =>
+    webauthnRequired(view) && !view.has(["auth", "webauthn"])
+      ? [
+          missing(["auth", "webauthn"], WEBAUTHN_GATE, {
+            message:
+              "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+            help: "add an [auth.webauthn] section, or set auth.passkey.enabled = false",
+          }),
+        ]
+      : [],
+});
+
+export const authWebauthnRpId = syncUnit({
+  id: "auth.webauthn.rp_id",
+  scope: ["auth"],
+  kind: "requirement",
+  check: (view) =>
+    webauthnRequired(view) &&
+    view.has(["auth", "webauthn"]) &&
+    nonEmpty(view.written(["auth", "webauthn", "rp_id"])) === undefined
+      ? [missing(["auth", "webauthn", "rp_id"], WEBAUTHN_GATE)]
+      : [],
+});
+
+export const authWebauthnRpOrigins = syncUnit({
+  id: "auth.webauthn.rp_origins",
+  scope: ["auth"],
+  kind: "requirement",
   check: (view) => {
-    if (!authOn(view) || !passkeyOn(view)) return [];
-    const gate = ["auth", "passkey", "enabled"] as const;
-    if (!view.has(["auth", "webauthn"])) {
-      return [
-        missing(["auth", "webauthn"], gate, {
-          message:
-            "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
-          help: "add an [auth.webauthn] section, or set auth.passkey.enabled = false",
-        }),
-      ];
-    }
-    const findings: Array<CliConfigUnitFinding> = [];
-    if (nonEmpty(view.written(["auth", "webauthn", "rp_id"])) === undefined) {
-      findings.push(missing(["auth", "webauthn", "rp_id"], gate));
-    }
+    if (!webauthnRequired(view) || !view.has(["auth", "webauthn"])) return [];
     const origins = rawOrigins(view.written(["auth", "webauthn", "rp_origins"]));
-    if (origins === undefined || origins.length === 0) {
-      findings.push(missing(["auth", "webauthn", "rp_origins"], gate));
-    }
-    return findings;
+    return origins === undefined || origins.length === 0
+      ? [missing(["auth", "webauthn", "rp_origins"], WEBAUTHN_GATE)]
+      : [];
   },
 });
 
@@ -348,6 +366,7 @@ export const emailContentUnit = (section: "template" | "notification"): CliConfi
     const at = [...base, "content_path"] as const;
     const reason = "content_path is not a readable file inside the project";
     const help = "point content_path at an existing file under the project root";
+    if (!io.filesAllowed()) return [];
     const resolved = yield* Effect.result(
       resolveEmailTemplateContentPath({
         section,
@@ -411,22 +430,30 @@ export const authCaptchaProvider = syncUnit({
   },
 });
 
-export const authCaptcha = syncUnit({
-  id: "auth.captcha",
+const CAPTCHA_GATE = ["auth", "captcha", "enabled"] as const;
+
+export const authCaptchaProviderRequired = syncUnit({
+  id: "auth.captcha.provider_required",
   scope: ["auth"],
   kind: "requirement",
-  check: (view) => {
-    const gate = ["auth", "captcha", "enabled"] as const;
-    const provider = nonEmpty(view.get(["auth", "captcha", "provider"]));
-    if (!authOn(view) || view.get(gate) !== true) return [];
-    if (provider !== undefined && provider !== "hcaptcha" && provider !== "turnstile") return [];
-    const findings: Array<CliConfigUnitFinding> = [];
-    if (provider === undefined) findings.push(missing(["auth", "captcha", "provider"], gate));
-    if (nonEmpty(view.get(["auth", "captcha", "secret"])) === undefined) {
-      findings.push(missing(["auth", "captcha", "secret"], gate));
-    }
-    return findings;
-  },
+  check: (view) =>
+    authOn(view) &&
+    view.get(CAPTCHA_GATE) === true &&
+    nonEmpty(view.get(["auth", "captcha", "provider"])) === undefined
+      ? [missing(["auth", "captcha", "provider"], CAPTCHA_GATE)]
+      : [],
+});
+
+export const authCaptchaSecret = syncUnit({
+  id: "auth.captcha.secret",
+  scope: ["auth"],
+  kind: "requirement",
+  check: (view) =>
+    authOn(view) &&
+    view.get(CAPTCHA_GATE) === true &&
+    nonEmpty(view.get(["auth", "captcha", "secret"])) === undefined
+      ? [missing(["auth", "captcha", "secret"], CAPTCHA_GATE)]
+      : [],
 });
 
 export const SMTP_FIELDS = ["host", "port", "user", "pass", "admin_email"] as const;
@@ -457,9 +484,10 @@ const thirdPartyUnit = (
     base: ReturnType<typeof thirdPartyBase>,
     gate: Segments,
   ) => ReadonlyArray<CliConfigUnitFinding>,
+  idSuffix = "",
 ) =>
   syncUnit({
-    id: `auth.third_party.${provider}`,
+    id: `auth.third_party.${provider}${idSuffix}`,
     scope: ["auth"],
     kind: "requirement",
     check: (view) => {
@@ -485,12 +513,16 @@ export const thirdPartyUnits = [
     requiredField(view, base, gate, "firebase", "project_id"),
   ),
   thirdPartyUnit("auth0", (view, base, gate) => requiredField(view, base, gate, "auth0", "tenant")),
-  thirdPartyUnit("aws_cognito", (view, base, gate) => {
-    const poolId = requiredField(view, base, gate, "cognito", "user_pool_id");
-    return poolId.length > 0
-      ? poolId
-      : requiredField(view, base, gate, "cognito", "user_pool_region");
-  }),
+  thirdPartyUnit(
+    "aws_cognito",
+    (view, base, gate) => requiredField(view, base, gate, "cognito", "user_pool_id"),
+    ".user_pool_id",
+  ),
+  thirdPartyUnit(
+    "aws_cognito",
+    (view, base, gate) => requiredField(view, base, gate, "cognito", "user_pool_region"),
+    ".user_pool_region",
+  ),
   thirdPartyUnit("clerk", (view, base, gate) => {
     const domain = str(view.get([...base, "domain"])) ?? "";
     if (domain.length === 0) return requiredField(view, base, gate, "clerk", "domain");
@@ -561,17 +593,23 @@ export const firstEnabledSmsProvider = (
   return undefined;
 };
 
+export const SMS_FIELD_ENTRIES: ReadonlyArray<string> = SMS_PROVIDER_REQUIRED_FIELDS.flatMap(
+  ([name, fields]) => fieldEntries([name], fields),
+);
+
 export const authSmsProvider = countingUnit({
   id: "auth.sms.provider",
   scope: ["auth"],
-  check: (view) => {
+  entries: () => SMS_FIELD_ENTRIES,
+  check: (view, entry) => {
     if (!authOn(view)) return [];
+    const [name, field] = splitFieldEntry(entry);
     const provider = firstEnabledSmsProvider(view);
-    if (provider === undefined) return [];
-    const gate = ["auth", "sms", provider[0], "enabled"];
-    return provider[1]
-      .filter((field) => (str(view.get(["auth", "sms", provider[0], field])) ?? "").length === 0)
-      .map((field) => missing(["auth", "sms", provider[0], field], gate));
+    if (provider?.[0] !== name) return [];
+    const gate = ["auth", "sms", name, "enabled"];
+    return (str(view.get(["auth", "sms", name, field])) ?? "").length === 0
+      ? [missing(["auth", "sms", name, field], gate)]
+      : [];
   },
 });
 
@@ -639,22 +677,14 @@ export const authExternalRequired = syncUnit({
   id: "auth.external.required",
   scope: ["auth"],
   kind: "requirement",
-  entries: externalNames,
-  check: (view, name) => {
+  entries: (view) => fieldEntries(externalNames(view), ["client_id", "secret"]),
+  check: (view, entry) => {
+    const [name, field] = splitFieldEntry(entry);
+    if (field === "secret" && (name === "apple" || name === "google")) return [];
     if (!authOn(view) || !externalEnabled(view, name)) return [];
-    const gate = ["auth", "external", name, "enabled"];
-    const findings: Array<CliConfigUnitFinding> = [];
-    if ((externalText(view, name, "client_id") ?? "").length === 0) {
-      findings.push(missing(["auth", "external", name, "client_id"], gate));
-    }
-    if (
-      name !== "apple" &&
-      name !== "google" &&
-      (externalText(view, name, "secret") ?? "").length === 0
-    ) {
-      findings.push(missing(["auth", "external", name, "secret"], gate));
-    }
-    return findings;
+    return (externalText(view, name, field) ?? "").length === 0
+      ? [missing(["auth", "external", name, field], ["auth", "external", name, "enabled"])]
+      : [];
   },
 });
 
@@ -672,7 +702,7 @@ const jwtSecretOrDefault = (view: CliConfigView): string => {
 };
 
 const signedKeyFindings = (
-  view: CliConfigView,
+  configured: Readonly<Record<"anon_key" | "service_role_key", string | undefined>>,
   jwtSecret: string,
   signingKey: Jwk | undefined,
 ): ReadonlyArray<CliConfigUnitFinding> => {
@@ -682,7 +712,7 @@ const signedKeyFindings = (
     ["service_role_key", "service_role"],
   ] as const) {
     try {
-      resolveSignedKey(str(view.get(["auth", key])), jwtSecret, signingKey, role);
+      resolveSignedKey(configured[key], jwtSecret, signingKey, role);
     } catch (cause) {
       findings.push(thrown(["auth", key], cause, SIGNED_KEY_ISSUE.reason, SIGNED_KEY_ISSUE.help));
     }
@@ -695,6 +725,10 @@ export const authSignedKeys: CliConfigCheckUnit = {
   scope: ["auth"],
   kind: "file",
   run: Effect.fnUntraced(function* (view, io) {
+    const configured = {
+      anon_key: str(view.get(["auth", "anon_key"])),
+      service_role_key: str(view.get(["auth", "service_role_key"])),
+    };
     const jwtSecret = jwtSecretOrDefault(view);
     const signingKeysPath = nonEmpty(view.get(SIGNING_KEYS_PATH));
     let signingKey: Jwk | undefined;
@@ -707,6 +741,6 @@ export const authSignedKeys: CliConfigCheckUnit = {
         signingKey = DEFAULT_SIGNING_KEY;
       }
     }
-    return signedKeyFindings(view, jwtSecret, signingKey);
+    return signedKeyFindings(configured, jwtSecret, signingKey);
   }),
 };

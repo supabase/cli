@@ -19,6 +19,7 @@ import {
   externalNames,
   externalText,
   firstEnabledSmsProvider,
+  SMS_FIELD_ENTRIES,
   SMTP_FIELDS,
   smtpField,
 } from "../../../command-internal/config-check-auth-units.ts";
@@ -27,6 +28,7 @@ import {
   finding,
   invalid,
   missing,
+  splitFieldEntry,
   str,
   syncUnit,
   type CliConfigCheckUnit,
@@ -53,6 +55,7 @@ const tableRuleFindings = (
 const smtpTableUnits = SMTP_FIELDS.map((field) =>
   syncUnit({
     id: `auth.email.smtp.table.${field}`,
+    twin: `auth.email.smtp.${field}`,
     scope: SMTP_PATH,
     kind: "requirement",
     check: (view) =>
@@ -88,18 +91,24 @@ const smtpTableUnits = SMTP_FIELDS.map((field) =>
 
 const smsTableRule = countingUnit({
   id: "auth.sms.table",
+  twin: "auth.sms.provider",
   scope: ["auth", "sms"],
-  check: (view) => {
+  entries: () => SMS_FIELD_ENTRIES,
+  check: (view, entry) => {
+    const [name, field] = splitFieldEntry(entry);
     const provider = firstEnabledSmsProvider(view);
-    if (provider === undefined) return [];
-    const [name, fields] = provider;
+    if (provider?.[0] !== name) return [];
+    // The rule reports the first empty field, so the others get a non-empty placeholder to keep this entry to its own field.
     return tableRuleFindings(
       ["auth", "sms"],
       cliConfigSmsProviderIssues({
         [name]: {
           enabled: true,
           ...Object.fromEntries(
-            fields.map((field) => [field, str(view.get(["auth", "sms", name, field]))]),
+            provider[1].map((other) => [
+              other,
+              other === field ? str(view.get(["auth", "sms", name, other])) : "-",
+            ]),
           ),
         },
       }),
@@ -114,6 +123,7 @@ const SCHEMA_PROVIDERS: ReadonlySet<string> = new Set(EXTERNAL_PROVIDER_IDS);
 const externalTableUnits = (["client_id", "secret"] as const).map((field) =>
   syncUnit({
     id: `auth.external.table.${field}`,
+    twin: "auth.external.required",
     scope: (name) => ["auth", "external", name],
     kind: "requirement",
     entries: (view) => externalNames(view).filter((name) => SCHEMA_PROVIDERS.has(name)),
@@ -206,6 +216,7 @@ const remoteProjectIdDuplicates = countingUnit({
   scope: ["remotes"],
   check: (view) => {
     const seen = new Map<string, string>();
+    const findings: Array<CliConfigUnitFinding> = [];
     let unsettled: Segments | undefined;
     for (const name of remoteNames(view)) {
       const at = ["remotes", name, "project_id"];
@@ -215,7 +226,7 @@ const remoteProjectIdDuplicates = countingUnit({
       }
       const other = earlierRemoteWithProjectId(seen, name, str(view.written(at)));
       if (other !== undefined) {
-        return [
+        findings.push(
           invalid(
             at,
             `duplicate project_id for [remotes.${tomlSegment(name)}] and [remotes.${tomlSegment(other)}]`,
@@ -223,12 +234,12 @@ const remoteProjectIdDuplicates = countingUnit({
             "give every remote its own project_id",
             "remote_project_id",
           ),
-        ];
+        );
       }
     }
-    // Reading the first unknown id records the dependency, so a validator defers this check.
-    if (unsettled !== undefined) view.written(unsettled);
-    return [];
+    // Reading the first unknown id records the dependency, so a validator defers this check unless known duplicates already settle it.
+    if (findings.length === 0 && unsettled !== undefined) view.written(unsettled);
+    return findings;
   },
 });
 

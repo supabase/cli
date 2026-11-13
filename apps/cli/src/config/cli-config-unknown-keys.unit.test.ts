@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { cliConfigDocumentOnlyPaths } from "./cli-config-keys.ts";
+import { setDocumentValue } from "./cli-config-document.ts";
 import { reportableUnknownCliConfigKeys, suggestCliConfigKey } from "./cli-config-unknown-keys.ts";
 
 describe("reportableUnknownCliConfigKeys", () => {
@@ -40,6 +42,14 @@ describe("reportableUnknownCliConfigKeys", () => {
         auth: { passkey: { enabled: true }, webauthn: { rp_id: "x", rp_origins: [] } },
       }),
     ).toEqual([]);
+  });
+
+  it("never warns about a registered document-only key, at the root or in a remote", () => {
+    const base: Record<string, unknown> = {};
+    for (const path of cliConfigDocumentOnlyPaths) setDocumentValue(base, path.split("."), "x");
+    const remote = structuredClone(base);
+
+    expect(reportableUnknownCliConfigKeys({ ...base, remotes: { staging: remote } })).toEqual([]);
   });
 
   it("offers document-only tables as siblings of an unknown auth key", () => {

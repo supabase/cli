@@ -12,6 +12,7 @@ import {
   thrown,
   type CliConfigCheckUnit,
   type CliConfigUnitFinding,
+  type CliConfigView,
 } from "./config-check-core.ts";
 import {
   apiTlsCertReadErrorMessage,
@@ -208,29 +209,35 @@ export const storageBucketNames = syncUnit({
         ],
 });
 
-export const studio = syncUnit({
-  id: "studio",
+export const studioPort = syncUnit({
+  id: "studio.port",
+  scope: ["studio"],
+  kind: "requirement",
+  check: (view) =>
+    view.get(["studio", "enabled"]) === true && view.get(["studio", "port"]) === 0
+      ? [missing(["studio", "port"], ["studio", "enabled"])]
+      : [],
+});
+
+export const studioApiUrl = syncUnit({
+  id: "studio.api_url",
   scope: ["studio"],
   kind: "requirement",
   check: (view) => {
     if (view.get(["studio", "enabled"]) !== true) return [];
-    const findings: Array<CliConfigUnitFinding> = [];
-    if (view.get(["studio", "port"]) === 0) {
-      findings.push(missing(["studio", "port"], ["studio", "enabled"]));
-    }
     try {
       parseUrl(str(view.get(["studio", "api_url"])) ?? "");
+      return [];
     } catch (cause) {
-      findings.push(
+      return [
         invalid(
           ["studio", "api_url"],
           `Invalid config for studio.api_url: ${messageOf(cause)}`,
           "not a valid URL",
           "use a full URL such as http://127.0.0.1:54321",
         ),
-      );
+      ];
     }
-    return findings;
   },
 });
 
@@ -284,49 +291,65 @@ export const edgeRuntimeDenoVersion = syncUnit({
   },
 });
 
+const bigqueryEnabled = (view: CliConfigView): boolean => {
+  const backend = nonEmpty(view.get(["analytics", "backend"]));
+  return view.get(["analytics", "enabled"]) === true && backend === "bigquery";
+};
+
 export const analytics = syncUnit({
   id: "analytics",
-  scope: ["analytics"],
+  scope: ["analytics", "backend"],
   kind: "requirement",
   check: (view) => {
     const backend = nonEmpty(view.get(["analytics", "backend"]));
-    if (backend !== undefined && backend !== "postgres" && backend !== "bigquery") {
-      return [
-        invalid(
-          ["analytics", "backend"],
-          "failed to parse config:\nanalytics.backend: must be one of postgres, bigquery",
-          "expected one of postgres, bigquery",
-          "use postgres or bigquery",
-          "invalid_enum",
-        ),
-      ];
-    }
-    if (view.get(["analytics", "enabled"]) !== true || backend !== "bigquery") return [];
-    const gate = ["analytics", "enabled"] as const;
-    const reason = "required when analytics.backend = bigquery";
-    const findings: Array<CliConfigUnitFinding> = [];
-    for (const key of ["gcp_project_id", "gcp_project_number"] as const) {
-      if ((str(view.get(["analytics", key])) ?? "").length === 0) {
-        findings.push(
-          missing(["analytics", key], gate, {
-            reason,
-            help: `set ${key}, or set backend = "postgres"`,
-          }),
-        );
-      }
-    }
-    if ((str(view.get(["analytics", "gcp_jwt_path"])) ?? "").length === 0) {
-      findings.push(
-        missing(["analytics", "gcp_jwt_path"], gate, {
-          message: `Path to GCP Service Account Key must be provided in config, relative to ${view.configPath === undefined ? "config.toml" : configFileName(view.configPath)}: analytics.gcp_jwt_path`,
-          reason,
-          help: "set gcp_jwt_path to the service account key file, relative to supabase/",
-        }),
-      );
-    }
-    return findings;
+    return backend !== undefined && backend !== "postgres" && backend !== "bigquery"
+      ? [
+          invalid(
+            ["analytics", "backend"],
+            "failed to parse config:\nanalytics.backend: must be one of postgres, bigquery",
+            "expected one of postgres, bigquery",
+            "use postgres or bigquery",
+            "invalid_enum",
+          ),
+        ]
+      : [];
   },
 });
+
+const GCP_REASON = "required when analytics.backend = bigquery";
+
+const gcpUnit = (
+  key: "gcp_project_id" | "gcp_project_number" | "gcp_jwt_path",
+): CliConfigCheckUnit =>
+  syncUnit({
+    id: `analytics.${key}`,
+    scope: ["analytics"],
+    kind: "requirement",
+    check: (view) => {
+      if (!bigqueryEnabled(view) || (str(view.get(["analytics", key])) ?? "").length > 0) {
+        return [];
+      }
+      const gate = ["analytics", "enabled"] as const;
+      return [
+        key === "gcp_jwt_path"
+          ? missing(["analytics", key], gate, {
+              message: `Path to GCP Service Account Key must be provided in config, relative to ${view.configPath === undefined ? "config.toml" : configFileName(view.configPath)}: analytics.gcp_jwt_path`,
+              reason: GCP_REASON,
+              help: "set gcp_jwt_path to the service account key file, relative to supabase/",
+            })
+          : missing(["analytics", key], gate, {
+              reason: GCP_REASON,
+              help: `set ${key}, or set backend = "postgres"`,
+            }),
+      ];
+    },
+  });
+
+export const analyticsGcpUnits: ReadonlyArray<CliConfigCheckUnit> = [
+  gcpUnit("gcp_project_id"),
+  gcpUnit("gcp_project_number"),
+  gcpUnit("gcp_jwt_path"),
+];
 
 export const experimentalWebhooks = syncUnit({
   id: "experimental.webhooks",

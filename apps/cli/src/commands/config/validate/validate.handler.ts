@@ -170,8 +170,17 @@ function locatedProblem(item: ConfigProblem, document: CliConfigDocumentScan): C
 }
 
 function deprecatedKeyProblems(parsed: ParsedCliConfigDocument): ReadonlyArray<ConfigProblem> {
+  const rawRemotes = parsed.rawDocument?.["remotes"];
+  const remoteNames = isDocumentRecord(rawRemotes) ? Object.keys(rawRemotes) : [];
   return parsed.deprecatedPaths.map((dotted) => {
-    const split = splitRemotePath(dotted.split("."));
+    const owner = remoteNames
+      .filter((name) => dotted.startsWith(`remotes.${name}.auth.`))
+      .toSorted((left, right) => right.length - left.length)[0];
+    const segments =
+      owner === undefined
+        ? dotted.split(".")
+        : ["remotes", owner, ...dotted.slice(`remotes.${owner}.`.length).split(".")];
+    const split = splitRemotePath(segments);
     const local = displayPath(split.path);
     return problem("deprecated_key", {
       severity: "warning",
@@ -386,6 +395,18 @@ export const configValidate = Effect.fn("config.validate")(function* (flags: {
       return yield* new ConfigValidateLoadError({
         message: yield* missingProjectConfigMessageEffect(cliSettings),
       });
+    }
+
+    if (parsed.rawDocument === undefined) {
+      return yield* emit(
+        yield* stopReport(
+          parsed.path,
+          parsed.format,
+          "syntax",
+          [problem("syntax", { reason: "the top level must be an object" })],
+          { readSource: false, source: parsed.rawText },
+        ),
+      );
     }
 
     const file = relativeConfigPath(workdir, parsed.path);

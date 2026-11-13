@@ -92,21 +92,51 @@ describe("validateReport", () => {
   });
 
   it("adds one info line in default mode when values or checks wait on env()", () => {
-    const text = render([], { unknownValues: 3, deferred: [{ check: "a", waitsOn: ["x"] }] });
+    const text = render([], {
+      unknownValues: 3,
+      deferred: [{ check: "a", reason: "env" as const, waitsOn: ["x"] }],
+    });
 
     expect(text).toContain(
       "  3 values come from env() and 1 check was not run; run with --resolve-env to check them\n",
     );
   });
 
-  it("names only the values when no check was deferred", () => {
-    expect(render([], { unknownValues: 1 })).toContain(
-      "  1 value comes from env(); run with --resolve-env to check them\n",
+  it("recommends --resolve-env for env() values even when no check waits on them", () => {
+    const text = render([], { unknownValues: 1 });
+
+    expect(text).toContain("  1 value comes from env(); run with --resolve-env to check them\n");
+  });
+
+  it("says plainly when checks were skipped for invalid values and counts them apart from env()", () => {
+    const text = render([], {
+      unknownValues: 1,
+      deferred: [
+        { check: "a", reason: "env" as const, waitsOn: ["x"] },
+        { check: "b", reason: "invalid" as const, waitsOn: ["y"] },
+        { check: "c", reason: "invalid" as const, waitsOn: ["z"] },
+      ],
+    });
+
+    expect(text).toContain(
+      "  1 value comes from env() and 1 check was not run; run with --resolve-env to check them\n",
+    );
+    expect(text).toContain(
+      "  2 checks were not run because values they read are invalid or missing\n",
     );
   });
 
+  it("does not recommend --resolve-env when only invalid values skipped checks", () => {
+    const text = render([], {
+      deferred: [{ check: "b", reason: "invalid" as const, waitsOn: ["y"] }],
+    });
+
+    expect(text).toContain("1 check was not run because a value it reads is invalid or missing");
+    expect(text).not.toContain("--resolve-env");
+  });
+
   it("uses singular and plural forms in the info line", () => {
-    const check = { check: "a", waitsOn: ["x"] };
+    const check = { check: "a", reason: "env" as const, waitsOn: ["x"] };
     expect(render([], { unknownValues: 1, deferred: [check] })).toContain(
       "  1 value comes from env() and 1 check was not run;",
     );
@@ -124,8 +154,8 @@ describe("validateReport", () => {
       mode: "resolve-env",
       unknownValues: 1,
       deferred: [
-        { check: "a", waitsOn: ["x"] },
-        { check: "b", remote: "staging", waitsOn: ["y"] },
+        { check: "a", reason: "env" as const, waitsOn: ["x"] },
+        { check: "b", remote: "staging", reason: "env" as const, waitsOn: ["y"] },
       ],
     });
 
@@ -219,14 +249,28 @@ describe("validateJsonPayload", () => {
       report([], {
         unknownValues: 2,
         complete: false,
-        deferred: [{ check: "auth.captcha", remote: "staging", waitsOn: ["auth.captcha.secret"] }],
+        deferred: [
+          {
+            check: "auth.captcha",
+            remote: "staging",
+            reason: "env" as const,
+            waitsOn: ["auth.captcha.secret"],
+          },
+        ],
       }),
     );
 
     expect(payload).toMatchObject({
       complete: false,
       unknown_values: 2,
-      deferred: [{ check: "auth.captcha", remote: "staging", waits_on: ["auth.captcha.secret"] }],
+      deferred: [
+        {
+          check: "auth.captcha",
+          remote: "staging",
+          reason: "env",
+          waits_on: ["auth.captcha.secret"],
+        },
+      ],
     });
   });
 

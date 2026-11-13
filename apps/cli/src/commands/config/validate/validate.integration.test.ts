@@ -199,7 +199,7 @@ describe("config validate integration", () => {
             supabase/config.toml:26:12
 
         ✗ 6 errors in supabase/config.toml
-          1 value comes from env() and 2 checks were not run; run with --resolve-env to check them
+          1 value comes from env() and 1 check was not run; run with --resolve-env to check them
           Checked remotes: staging
         "
       `);
@@ -217,12 +217,7 @@ describe("config validate integration", () => {
           "deferred": [
             {
               "check": "auth.email.smtp.pass",
-              "waits_on": [
-                "auth.email.smtp.pass",
-              ],
-            },
-            {
-              "check": "auth.email.smtp.table.pass",
+              "reason": "env",
               "waits_on": [
                 "auth.email.smtp.pass",
               ],
@@ -921,6 +916,7 @@ describe("config validate integration", () => {
 
       expect(payloadOf(result)).toMatchObject({ valid: true });
       expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toEqual([]);
+      expect(Reflect.get(payloadOf(result) ?? {}, "deferred")).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1071,7 +1067,8 @@ describe("config validate integration", () => {
 
       expect(payloadOf(result)).toMatchObject({ valid: true, complete: true, unknown_values: 1 });
       expect(Reflect.get(payloadOf(result) ?? {}, "deferred")).toContainEqual({
-        check: expect.any(String),
+        check: "auth.captcha.secret",
+        reason: "env",
         waits_on: ["auth.captcha.secret"],
       });
     }).pipe(Effect.provide(BunServices.layer)),
@@ -1493,6 +1490,75 @@ describe("config validate integration", () => {
 
       expect(result.failure).toBeUndefined();
       expect(result.stdout).toBe("✓ supabase/config.toml is valid\n");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails a config.json whose top level is not an object", () =>
+    Effect.gen(function* () {
+      for (const root of ["[]", "5"]) {
+        const result = yield* validate({ "supabase/config.json": root }, { format: "json" });
+
+        expect(result.exitCode).toBe(1);
+        expect(payloadOf(result)).toMatchObject({
+          valid: false,
+          complete: false,
+          stopped_at: "syntax",
+          errors: [{ code: "syntax", reason: "the top level must be an object" }],
+        });
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("attributes a deprecated key to a remote whose name contains a dot", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[remotes."prod.eu"]\nproject_id = "abcdefghijklmnopqrst"\n[remotes."prod.eu".auth.email]\nenable_signup = true\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toContainEqual(
+        expect.objectContaining({
+          code: "deprecated_key",
+          remote: "prod.eu",
+          key: "remotes.prod.eu.auth.email.enable_signup",
+        }),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not suggest --resolve-env for checks skipped over an invalid value", () =>
+    Effect.gen(function* () {
+      const text = yield* validate(tomlFile('project_id = "demo"\n[api]\nenabled = "maybe"\n'));
+
+      expect(text.stdout).toMatch(/\d+ checks? w(as|ere) not run because .* invalid or missing/);
+      expect(text.stdout).not.toContain("--resolve-env");
+
+      const json = yield* validate(tomlFile('project_id = "demo"\n[api]\nenabled = "maybe"\n'), {
+        format: "json",
+      });
+      const deferred = Reflect.get(payloadOf(json) ?? {}, "deferred");
+      expect(deferred).toContainEqual(
+        expect.objectContaining({ check: "api.port", reason: "invalid" }),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("defers requirement checks of an enabled custom provider whose values are unset", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[auth.external.myidp]\nenabled = true\nclient_id = "env(UNSET_IDP_ID)"\nsecret = "env(UNSET_IDP_SECRET)"\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "deferred")).toContainEqual({
+        check: "auth.external.required",
+        reason: "env",
+        waits_on: ["auth.external.myidp.client_id", "auth.external.myidp.secret"],
+      });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

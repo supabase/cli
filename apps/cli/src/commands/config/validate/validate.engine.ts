@@ -10,7 +10,7 @@ import {
   type CliConfigLocation,
   type ParsedCliConfigDocument,
 } from "@supabase/config/internal";
-import { Effect, Option, Path } from "effect";
+import { Effect, Exit, Option, Path } from "effect";
 
 import {
   cloneDocumentRecord,
@@ -28,6 +28,7 @@ import {
 import { decodeCliConfigWithoutTableRules } from "../../../config/cli-config-validation.ts";
 import {
   makeCliConfigUnitIo,
+  splitFieldEntry,
   untrackedCliConfigView,
   type CliConfigUnitFinding,
   type CliConfigUnitIo,
@@ -67,10 +68,14 @@ export interface EngineProblem {
   readonly env?: { readonly name: string; readonly uses: ReadonlyArray<EnvReferenceUse> };
 }
 
+/** `env` when an `env()` reference is among the values the check waits on; `invalid` when only invalid, missing or unusable values are. */
+export type DeferralReason = "env" | "invalid";
+
 /** A check that read an unknown value and so was not run. */
 export interface DeferredCheck {
   readonly check: string;
   readonly remote?: string;
+  readonly reason: DeferralReason;
   readonly waitsOn: ReadonlyArray<string>;
 }
 
@@ -601,6 +606,8 @@ const UNIT_GROUPS = [
 /** One unit run for one entry: its findings, or the unknown values it waited on. */
 interface UnitRun {
   readonly unit: string;
+  /** The check a deferral is counted under: the id of the unit's twin when it has one. */
+  readonly check: string;
   readonly rank: number;
   readonly findings: ReadonlyArray<CliConfigUnitFinding>;
   readonly waits: ReadonlyArray<UnknownEntry>;
@@ -627,12 +634,21 @@ export const runUnitsInContext = Effect.fnUntraced(function* (input: {
         const scope = typeof unit.scope === "function" ? unit.scope(entry ?? "") : unit.scope;
         if (context.changed?.some((key) => related(key, scope)) === false) continue;
         const reads: Reads = {
-          paths: entry === undefined ? [] : entryReads.paths.map((table) => [...table, entry]),
+          paths:
+            entry === undefined
+              ? []
+              : entryReads.paths.map((table) => [...table, splitFieldEntry(entry)[0]]),
           waits: new Map(entryReads.waits),
+        };
+        const guarded: CliConfigUnitIo = {
+          ...io,
+          filesAllowed: () => reads.waits.size === 0,
+          readText: (absPath) =>
+            reads.waits.size === 0 ? io.readText(absPath) : Effect.succeed(Exit.succeed("")),
         };
         const findings = yield* unit.run(
           trackedView(context, config, reads, workdir, configPath),
-          io,
+          guarded,
           entry,
         );
         const readChanged =
@@ -641,6 +657,7 @@ export const runUnitsInContext = Effect.fnUntraced(function* (input: {
         if (!readChanged) continue;
         runs.push({
           unit: unit.id,
+          check: unit.twin ?? unit.id,
           rank,
           findings: reads.waits.size > 0 ? [] : findings,
           waits: [...reads.waits.values()],
@@ -661,11 +678,14 @@ export interface RawProblem {
   readonly help?: string;
 }
 
+const contextKey = (remote: string | undefined): string =>
+  remote === undefined ? "base" : `remote:${remote}`;
+
 /** Keeps one problem per context, key and code; the lowest rank wins and ties keep the first. */
 export const collapseProblems = (raw: ReadonlyArray<RawProblem>): ReadonlyArray<RawProblem> => {
   const kept = new Map<string, RawProblem>();
   for (const problem of raw) {
-    const key = `${problem.remote ?? ""}\0${keyOf(problem.path)}\0${problem.code}`;
+    const key = `${contextKey(problem.remote)}\0${keyOf(problem.path)}\0${problem.code}`;
     const existing = kept.get(key);
     if (existing === undefined || problem.rank < existing.rank) kept.set(key, problem);
   }
@@ -805,7 +825,10 @@ export const runConfigValidationWithStandIn = Effect.fn("ConfigValidate.run")(fu
     );
 
   const raw: Array<RawProblem> = [];
-  const deferred = new Map<string, { check: string; remote?: string; waitsOn: Set<string> }>();
+  const deferred = new Map<
+    string,
+    { check: string; remote?: string; reason: DeferralReason; waitsOn: Set<string> }
+  >();
   const neededEnv = new Set<string>();
 
   yield* Effect.gen(function* () {
@@ -825,13 +848,15 @@ export const runConfigValidationWithStandIn = Effect.fn("ConfigValidate.run")(fu
       });
       for (const run of runs) {
         if (run.waits.length > 0) {
-          const id = `${remote ?? ""}\0${run.unit}`;
+          const id = `${contextKey(remote)}\0${run.check}`;
           const record = deferred.get(id) ?? {
-            check: run.unit,
+            check: run.check,
             ...(remote === undefined ? {} : { remote }),
+            reason: "invalid" as DeferralReason,
             waitsOn: new Set<string>(),
           };
           for (const waiting of run.waits) {
+            if (waiting.state === "env") record.reason = "env";
             for (const name of waiting.envNames) neededEnv.add(name);
             record.waitsOn.add(waitLabel(spellPath(maps, remote, waiting.path), remote));
           }
@@ -904,6 +929,7 @@ export const runConfigValidationWithStandIn = Effect.fn("ConfigValidate.run")(fu
     deferred: [...deferred.values()].map((record) => ({
       check: record.check,
       ...(record.remote === undefined ? {} : { remote: record.remote }),
+      reason: record.reason,
       waitsOn: [...record.waitsOn],
     })),
     unknownValues,

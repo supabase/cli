@@ -108,22 +108,34 @@ function renderProblem(
   return out;
 }
 
-function envNotice(report: ValidateReport): string | undefined {
-  const checks = report.deferred.length;
+const wasWere = (count: number) => (count === 1 ? "was" : "were");
+
+function deferralNotices(report: ValidateReport): ReadonlyArray<string> {
+  const envChecks = report.deferred.filter((item) => item.reason === "env").length;
+  const invalidChecks = report.deferred.length - envChecks;
+  const notices: Array<string> = [];
   if (report.mode === "resolve-env") {
-    return checks === 0
-      ? undefined
-      : `${plural(checks, "check")} ${checks === 1 ? "was" : "were"} not run because ${checks === 1 ? "it waits" : "they wait"} on unset or empty variables`;
+    if (envChecks > 0) {
+      notices.push(
+        `${plural(envChecks, "check")} ${wasWere(envChecks)} not run because ${envChecks === 1 ? "it waits" : "they wait"} on unset or empty variables`,
+      );
+    }
+  } else if (report.unknownValues > 0 || envChecks > 0) {
+    const values = report.unknownValues;
+    const parts = [
+      ...(values > 0
+        ? [`${plural(values, "value")} ${values === 1 ? "comes" : "come"} from env()`]
+        : []),
+      ...(envChecks > 0 ? [`${plural(envChecks, "check")} ${wasWere(envChecks)} not run`] : []),
+    ];
+    notices.push(`${parts.join(" and ")}; run with --resolve-env to check them`);
   }
-  const values = report.unknownValues;
-  if (values === 0 && checks === 0) return undefined;
-  const parts = [
-    ...(values > 0
-      ? [`${plural(values, "value")} ${values === 1 ? "comes" : "come"} from env()`]
-      : []),
-    ...(checks > 0 ? [`${plural(checks, "check")} ${checks === 1 ? "was" : "were"} not run`] : []),
-  ];
-  return `${parts.join(" and ")}; run with --resolve-env to check them`;
+  if (invalidChecks > 0) {
+    notices.push(
+      `${plural(invalidChecks, "check")} ${wasWere(invalidChecks)} not run because ${invalidChecks === 1 ? "a value it reads is" : "values they read are"} invalid or missing`,
+    );
+  }
+  return notices;
 }
 
 const countsLabel = (errors: number, warnings: number): string =>
@@ -154,8 +166,7 @@ export function validateReport(
       `${style.red("✗")} ${style.bold(`${countsLabel(errors.length, warnings.length)} in ${file}`)}`,
     );
   }
-  const notice = envNotice(report);
-  if (notice !== undefined) out.push(`  ${style.dim(notice)}`);
+  for (const notice of deferralNotices(report)) out.push(`  ${style.dim(notice)}`);
   if (!report.complete && report.stoppedAt === undefined) {
     out.push(
       `  ${style.dim("The report is incomplete: some checks could not run, so more problems may remain")}`,
@@ -212,6 +223,7 @@ export function validateJsonPayload(report: ValidateReport) {
     deferred: report.deferred.map((item) => ({
       check: item.check,
       ...(item.remote === undefined ? {} : { remote: item.remote }),
+      reason: item.reason,
       waits_on: item.waitsOn,
     })),
     errors: errors.map(payloadProblem),

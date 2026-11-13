@@ -55,10 +55,14 @@ export interface CliConfigUnitIo {
   readText(absPath: string): Effect.Effect<Exit.Exit<string, PlatformError.PlatformError>>;
   /** The value config messages quote for a failed read. */
   readFailureCause(error: PlatformError.PlatformError): unknown;
+  /** False once the unit has read an unknown value; a unit must not touch the filesystem then. */
+  filesAllowed(): boolean;
 }
 
 interface CliConfigCheckUnitBase {
   readonly id: string;
+  /** The id of the check this one duplicates, so a validator counts their deferrals once. */
+  readonly twin?: string;
   /** The smallest key prefix covering every key the unit reads. */
   readonly scope: Segments | ((entry: string) => Segments);
   /** Fans the unit out by entry name; the reads it makes are presence reads of the entries' table. */
@@ -142,6 +146,7 @@ export const makeCliConfigUnitIo = Effect.fnUntraced(function* (flavor: CliConfi
         );
       }),
     readFailureCause: flavor === "db" ? (error) => error : fsErrorCause,
+    filesAllowed: () => true,
   };
   return io;
 });
@@ -160,6 +165,20 @@ export const runConfigUnitsFirst = Effect.fnUntraced(function* (
     }
   }
 });
+
+const ENTRY_SEPARATOR = "\0";
+
+/** Entries for a unit that checks one field per named entry, in name-major order. */
+export const fieldEntries = (
+  names: ReadonlyArray<string>,
+  fields: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  names.flatMap((name) => fields.map((field) => `${name}${ENTRY_SEPARATOR}${field}`));
+
+export const splitFieldEntry = (entry: string): readonly [name: string, field: string] => {
+  const [name = "", field = ""] = entry.split(ENTRY_SEPARATOR);
+  return [name, field];
+};
 
 export const str = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
