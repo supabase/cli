@@ -20,7 +20,7 @@ interface TraceLine {
   }>;
 }
 
-const STATUS_OK = 1;
+const STATUS_UNSET = 0;
 const STATUS_ERROR = 2;
 
 const withoutTraceEnv = {
@@ -64,7 +64,7 @@ describe("trace export across the process exit", () => {
       expect(spans.find((span) => span.name === "cli.run")).toMatchObject({
         traceId,
         parentSpanId: parentId,
-        status: { code: STATUS_OK },
+        status: { code: STATUS_UNSET },
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
