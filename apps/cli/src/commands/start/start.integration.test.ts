@@ -1047,7 +1047,7 @@ describe("start integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = Cause.pretty(exit.cause);
-          expect(serialized).toContain("StartInvalidConfigError");
+          expect(serialized).toContain("DbConfigLoadError");
           expect(serialized).toContain(
             "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
           );
@@ -2940,10 +2940,28 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = Cause.pretty(exit.cause);
-          expect(serialized).toContain("StartInvalidConfigError");
+          expect(serialized).toContain("DbConfigLoadError");
           expect(serialized).toContain(
             "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
           );
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+
+    it.effect("reports an invalid studio.port before a bucket's invalid file_size_limit", () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[studio]\nport = 0\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
+        });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("studio.port");
+          expect(serialized).not.toContain("file_size_limit");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),

@@ -59,7 +59,6 @@ export const LOCAL_CHECK_ORDER: ReadonlyArray<CliConfigCheckUnit> = [
   dbPort,
   dbMajorVersion,
   storageBucketNames,
-  storageBucketFileSizeLimits,
   studioPort,
   studioApiUrl,
   localSmtpPort,

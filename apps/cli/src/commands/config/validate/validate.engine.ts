@@ -26,6 +26,7 @@ import {
   runCliConfigRegistryPass,
   enumerateCliConfigKeys,
 } from "../../../config/cli-config-registry-pass.ts";
+import type { AnyCliConfigKey } from "../../../config/cli-config-keys.ts";
 import { decodeCliConfigWithoutTableRules } from "../../../config/cli-config-validation.ts";
 import {
   makeCliConfigUnitIo,
@@ -240,15 +241,31 @@ const substituteReferences = (
   }
 };
 
+const substituteRaw = (
+  document: Record<string, unknown>,
+  path: Segments,
+  valueOf: (name: string) => string,
+): void => {
+  const text = (item: unknown) => {
+    const name = typeof item === "string" ? ENV_CAPTURE_REGEX.exec(item)?.[1] : undefined;
+    return name === undefined ? item : valueOf(name);
+  };
+  const current = getDocumentValue(document, path);
+  setDocumentValue(document, path, Array.isArray(current) ? current.map(text) : text(current));
+};
+
 interface ArrayLiterals {
   readonly path: Segments;
   readonly document: Record<string, unknown>;
   readonly standIns: ReadonlySet<string>;
+  readonly items: ReadonlyArray<unknown>;
+  readonly codec: AnyCliConfigKey["codec"] | undefined;
 }
 
 const arrayLiterals = (
   copy: Record<string, unknown>,
   path: Segments,
+  codec: AnyCliConfigKey["codec"] | undefined,
 ): ArrayLiterals | undefined => {
   const current = getDocumentValue(copy, path);
   if (!Array.isArray(current)) return undefined;
@@ -260,7 +277,7 @@ const arrayLiterals = (
   });
   const document: Record<string, unknown> = {};
   setDocumentValue(document, path, items);
-  return { path, document, standIns };
+  return { path, document, standIns, items: current, codec };
 };
 
 interface SourceMaps {
@@ -407,6 +424,7 @@ const prepareContext = (input: AnalyzeInput) => {
   delete copy["remotes"];
   const status: StatusTable = new Map();
   const arrays: Array<ArrayLiterals> = [];
+  const registryKeys = enumerateCliConfigKeys(copy);
 
   for (const group of input.groups) {
     const inCopy = group.path[0] !== "remotes";
@@ -418,13 +436,20 @@ const prepareContext = (input: AnalyzeInput) => {
         return found?.state === "set" ? found.value : "";
       };
       substituteReferences(document, group.path, valueOf, group.names);
-      if (inCopy) substituteReferences(copy, group.path, valueOf, group.names);
+      if (inCopy) {
+        if (registryKeys.has(group.path.join("."))) substituteRaw(copy, group.path, valueOf);
+        else substituteReferences(copy, group.path, valueOf, group.names);
+      }
       continue;
     }
     markUnknown(status, group.path, "env", group.names);
     const probe = standIn?.(group.names[0] ?? "");
     if (probe === undefined && inCopy) {
-      const literals = arrayLiterals(copy, group.path);
+      const literals = arrayLiterals(
+        copy,
+        group.path,
+        registryKeys.get(group.path.join("."))?.codec,
+      );
       if (literals !== undefined) arrays.push(literals);
     }
     if (probe !== undefined) {
@@ -583,7 +608,18 @@ export const analyzeContext = (input: AnalyzeInput): ContextResult => {
   const { document, copy, status, arrays } = prepareContext(input);
   const decodeProblems: Array<DecodeProblem> = [];
   const report = makeReport(input, decodeProblems);
-  for (const { path, document: literals, standIns } of arrays) {
+  for (const { path, document: literals, standIns, items, codec } of arrays) {
+    if (codec !== undefined) {
+      items.forEach((item, index) => {
+        if (standIns.has(String(index)) || codec.fromConfig([item]) !== undefined) return;
+        report(
+          [...path, String(index)],
+          false,
+          codecProblem({ expected: codec.expected, kind: "type" }),
+        );
+      });
+      continue;
+    }
     const result = decodeCliConfigWithoutTableRules(literals);
     if (result._tag === "Success") continue;
     for (const issue of result.issues) {
@@ -768,6 +804,8 @@ export const classifyEnvProblems = (input: {
   readonly envRefs: ReadonlyArray<EnvReferenceUse>;
   readonly groups: ReadonlyArray<BlockEnvGroup>;
   readonly keys: ReturnType<typeof enumerateCliConfigKeys> | undefined;
+  /** The keys of each merged remote, which a remote's own groups are classified against. */
+  readonly remoteKeys?: ReadonlyMap<string, ReturnType<typeof enumerateCliConfigKeys>>;
   readonly neededEnv: ReadonlySet<string>;
 }): ReadonlyArray<EngineProblem> => {
   const problems: Array<EngineProblem> = [];
@@ -780,10 +818,11 @@ export const classifyEnvProblems = (input: {
     const uses = input.envRefs.filter((use) => use.name === name);
     const [first] = uses;
     if (first === undefined) continue;
-    const rejectsLiteral = input.groups.some(({ group }) => {
+    const rejectsLiteral = input.groups.some(({ group, remote }) => {
       const schemaPath = group.path[0] === "remotes" ? group.path.slice(2) : group.path;
       if (!group.names.includes(name)) return false;
-      const key = input.keys?.get(schemaPath.join("."));
+      const keys = (remote === undefined ? undefined : input.remoteKeys?.get(remote)) ?? input.keys;
+      const key = keys?.get(schemaPath.join("."));
       if (key !== undefined) return key.codec.parse(`env(${name})`) === undefined;
       const standIn = cliConfigStandIn(schemaPath);
       return typeof standIn === "boolean" || typeof standIn === "number";
@@ -980,6 +1019,13 @@ export const runConfigValidationWithStandIn = Effect.fn("ConfigValidate.run")(fu
         envRefs,
         groups: blockGroups,
         keys: baseResult === undefined ? undefined : enumerateCliConfigKeys(baseResult.document),
+        remoteKeys: new Map(
+          contexts.flatMap(({ remote, result }) =>
+            remote === undefined
+              ? []
+              : [[remote, enumerateCliConfigKeys(result.document)] as const],
+          ),
+        ),
         neededEnv,
       }),
     );

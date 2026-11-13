@@ -383,6 +383,96 @@ instances = "env(COUNT)"
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
 
+    it.effect("reads registry keys from the raw env text, as the loader does", () =>
+      Effect.gen(function* () {
+        const toml = `project_id = "demo"
+
+[api]
+port = "env(PORT)"
+
+[db]
+major_version = "env(PG)"
+`;
+        const lookup = (port: string, pg: string) =>
+          lookupOf({ PORT: { state: "set", value: port }, PG: { state: "set", value: pg } });
+
+        const ok = yield* run(toml, lookup("54321", "15"));
+        expect(labels(ok.problems)).toEqual([]);
+
+        const portZero = yield* run(toml, lookup("010", "15"));
+        expect(labels(portZero.problems)).toEqual(["base:api.port:invalid_value"]);
+
+        const leadingZero = yield* run(toml, lookup("54321", "014"));
+        expect(labels(leadingZero.problems)).toEqual(["base:db.major_version:invalid_value"]);
+
+        const exponent = yield* run(toml, lookup("54321", "1e3"));
+        expect(labels(exponent.problems)).toEqual(["base:db.major_version:invalid_value"]);
+
+        const verify = yield* run(
+          `project_id = "demo"
+
+[functions.foo]
+verify_jwt = "env(VERIFY)"
+`,
+          lookupOf({ VERIFY: { state: "set", value: "false" } }),
+        );
+        expect(labels(verify.problems)).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("checks array literals of a registry key with its codec", () =>
+      Effect.gen(function* () {
+        const sql = yield* run(`project_id = "demo"
+
+[db.seed]
+sql_paths = ["env(SQL)", 42]
+`);
+        expect(labels(sql.problems)).toEqual([]);
+
+        const schemas = yield* run(`project_id = "demo"
+
+[api]
+schemas = ["env(S)", 42]
+`);
+        expect(labels(schemas.problems)).toEqual(["base:api.schemas.1:invalid_type"]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("classifies a remote-only key against the remote's own keys", () =>
+      Effect.gen(function* () {
+        const remote = yield* run(
+          `project_id = "demo"
+
+[auth]
+enabled = false
+
+[remotes.prod]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.prod.auth.external.custom]
+enabled = "env(FLAG)"
+`,
+          lookupOf({}),
+        );
+        expect(remote.problems).toMatchObject([
+          { code: "env_unset", severity: "error", remote: "prod", env: { name: "FLAG" } },
+        ]);
+
+        const base = yield* run(
+          `project_id = "demo"
+
+[auth]
+enabled = false
+
+[auth.external.custom]
+enabled = "env(FLAG)"
+`,
+          lookupOf({}),
+        );
+        expect(base.problems).toMatchObject([{ code: "env_unset", severity: "error" }]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
     it.effect("checks literal array elements next to an env() element", () =>
       Effect.gen(function* () {
         const invalid = yield* run(`project_id = "demo"

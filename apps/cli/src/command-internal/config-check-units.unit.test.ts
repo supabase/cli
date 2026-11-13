@@ -82,11 +82,6 @@ const cases: ReadonlyArray<Case> = [
     message: "Invalid Bucket name: bad/name.",
   },
   {
-    name: "bucket file_size_limit that does not parse",
-    overrides: { storage: { buckets: { avatars: { file_size_limit: "nonsense" } } } },
-    message: "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
-  },
-  {
     name: "bucket file_size_limit 5MB is valid",
     overrides: { storage: { buckets: { avatars: { file_size_limit: "5MB" } } } },
     message: undefined,
@@ -272,6 +267,18 @@ describe("config check units", () => {
       }),
     );
   }
+
+  it.effect(
+    "a bucket file_size_limit that does not parse fails the db order, not the local one",
+    () =>
+      Effect.gen(function* () {
+        const overrides = { storage: { buckets: { avatars: { file_size_limit: "nonsense" } } } };
+        expect(yield* firstMessage(LOCAL_CHECK_ORDER, overrides)).toBeUndefined();
+        expect(yield* firstMessage(DB_CHECK_ORDER, overrides)).toContain(
+          "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
+        );
+      }),
+  );
 
   it.effect("the db order reports the first failure in its own order", () =>
     Effect.gen(function* () {

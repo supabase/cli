@@ -160,12 +160,6 @@ const scenarios: ReadonlyArray<ParityScenario> = [
       "Invalid Bucket name: bad#name. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed.",
   },
   {
-    name: "storage bucket file_size_limit that does not parse",
-    toml: ["[storage.buckets.avatars]", 'file_size_limit = "nonsense"'],
-    overrides: { storage: { buckets: { avatars: { file_size_limit: "nonsense" } } } },
-    message: "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
-  },
-  {
     name: "function slug with an invalid pattern",
     toml: ["[functions.123]"],
     overrides: { functions: { "123": {} } },
@@ -334,6 +328,21 @@ const scenarios: ReadonlyArray<ParityScenario> = [
 // presence is D-skipped for the same reason but is shared with S via
 // `validateApiTlsPresence` — see the S block below.
 describe("config check units cross-caller parity (D vs L)", () => {
+  it.effect("storage bucket file_size_limit that does not parse: D fails and L accepts", () =>
+    Effect.gen(function* () {
+      yield* failsWithD(
+        ["[storage.buckets.avatars]", 'file_size_limit = "nonsense"'],
+        "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
+      );
+      const config = baseConfig({
+        storage: { buckets: { avatars: { file_size_limit: "nonsense" } } },
+      });
+      yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR).pipe(
+        Effect.provide([BunServices.layer, BunCrypto.layer]),
+      );
+    }),
+  );
+
   for (const scenario of scenarios) {
     it.effect(`${scenario.name}: D and L fail with the same message`, () =>
       Effect.gen(function* () {

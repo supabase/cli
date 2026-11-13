@@ -107,6 +107,11 @@ function inlineValueEnd(source: string, start: number, limit: number): number {
       quote = character;
       triple = source.startsWith(character.repeat(3), index);
       if (triple) index += 2;
+    } else if (character === "#") {
+      if (depth === 0) return trimEnd(source, index);
+      while (index + 1 < limit && source[index + 1] !== "\n") index += 1;
+    } else if ((character === "\n" || character === "\r") && depth === 0) {
+      return trimEnd(source, index);
     } else if (character === "{" || character === "[") {
       depth += 1;
     } else if (character === "}" || character === "]") {
@@ -173,7 +178,42 @@ function scanKeyPart(
   return cursor === start ? undefined : { text: source.slice(start, cursor), end: cursor };
 }
 
+function skipArrayFiller(source: string, position: number, limit: number): number {
+  let cursor = position;
+  while (cursor < limit) {
+    const character = source[cursor];
+    if (character === "#") {
+      while (cursor < limit && source[cursor] !== "\n") cursor += 1;
+    } else if (
+      character === " " ||
+      character === "\t" ||
+      character === "\n" ||
+      character === "\r"
+    ) {
+      cursor += 1;
+    } else {
+      break;
+    }
+  }
+  return cursor;
+}
+
+function inlineArrayEntries(source: string, array: Span): ReadonlyArray<InlineEntry> {
+  const limit = array.end - 1;
+  const entries: Array<InlineEntry> = [];
+  let cursor = skipArrayFiller(source, array.start + 1, limit);
+  while (cursor < limit) {
+    const valueEnd = inlineValueEnd(source, cursor, limit);
+    const span = { start: cursor, end: valueEnd };
+    entries.push({ keys: [String(entries.length)], key: span, value: span });
+    cursor = skipArrayFiller(source, valueEnd, limit);
+    if (source[cursor] === ",") cursor = skipArrayFiller(source, cursor + 1, limit);
+  }
+  return entries;
+}
+
 function inlineTableEntries(source: string, table: Span): ReadonlyArray<InlineEntry> | undefined {
+  if (source[table.start] === "[") return inlineArrayEntries(source, table);
   if (source[table.start] !== "{") return undefined;
   const limit = table.end - 1;
   const entries: Array<InlineEntry> = [];
@@ -310,7 +350,7 @@ function locateToml(
 
     const inline = keys.find(
       (token) =>
-        token.insideInlineTable &&
+        (token.insideInlineTable || source[token.valueStart] === "[") &&
         indexedPath(token).length < length &&
         startsWith(wanted, indexedPath(token)),
     );

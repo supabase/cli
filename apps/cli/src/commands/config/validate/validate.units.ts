@@ -35,6 +35,7 @@ import {
   type CliConfigView,
   type Segments,
 } from "../../../command-internal/config-check-core.ts";
+import { storageBucketFileSizeLimits } from "../../../command-internal/config-check-platform-units.ts";
 import type { ConfigValidationIssueCode } from "../../../command-internal/config-validate.ts";
 import { SMTP_ENABLED_PATH, SMTP_PATH } from "../../../command-internal/local-config-helpers.ts";
 
@@ -263,6 +264,7 @@ const remoteProjectIdDuplicates = countingUnit({
 
 /** Checks only `config validate` runs: the table rules and the remote project ids. */
 export const VALIDATE_ONLY_UNITS: ReadonlyArray<CliConfigCheckUnit> = [
+  storageBucketFileSizeLimits,
   ...smtpTableUnits,
   smsTableRule,
   ...externalTableUnits,

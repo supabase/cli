@@ -277,3 +277,63 @@ describe("locateCliConfigKey inline-table keys", () => {
     expect(source.slice((location?.column ?? 0) - 1, (location?.endColumn ?? 0) - 1)).toBe("0");
   });
 });
+
+describe("locateCliConfigKey inline arrays of tables", () => {
+  const textAt = (source: string, path: ReadonlyArray<string>) => {
+    const location = locateCliConfigKey(source, "toml", path, "value");
+    const line = source.split("\n")[(location?.line ?? 1) - 1] ?? "";
+    return {
+      exact: location?.exact,
+      line: location?.line,
+      text: line.slice((location?.column ?? 0) - 1, (location?.endColumn ?? 0) - 1),
+    };
+  };
+
+  test("locates an element field of a multi-line array", () => {
+    const source = [
+      "[experimental.inspect]",
+      "rules = [",
+      '  { query = "ok" }, # first',
+      "  { query = 123 },",
+      "]",
+    ].join("\n");
+    expect(textAt(source, ["experimental", "inspect", "rules", "1", "query"])).toEqual({
+      exact: true,
+      line: 4,
+      text: "123",
+    });
+    expect(textAt(source, ["experimental", "inspect", "rules", "0", "query"])).toMatchObject({
+      exact: true,
+      text: '"ok"',
+    });
+  });
+
+  test("locates an element field of a single-line array", () => {
+    const source = '[experimental.inspect]\nrules = [{ query = "ok" }, { query = 123 }]\n';
+    expect(textAt(source, ["experimental", "inspect", "rules", "1", "query"])).toEqual({
+      exact: true,
+      line: 2,
+      text: "123",
+    });
+  });
+
+  test("locates an element field inside a remote block", () => {
+    const source = [
+      "[remotes.staging]",
+      'project_id = "abcdefghijklmnopqrst"',
+      "[remotes.staging.experimental.inspect]",
+      'rules = [{ query = "ok" }, { query = 123 }]',
+    ].join("\n");
+    expect(
+      textAt(source, ["remotes", "staging", "experimental", "inspect", "rules", "1", "query"]),
+    ).toEqual({ exact: true, line: 4, text: "123" });
+  });
+
+  test("falls back to the array key when the element is absent", () => {
+    const source = '[experimental.inspect]\nrules = [{ query = "ok" }]\n';
+    expect(textAt(source, ["experimental", "inspect", "rules", "3", "query"])).toMatchObject({
+      exact: false,
+      line: 2,
+    });
+  });
+});
