@@ -19,15 +19,13 @@ apps/cli/src/shared/telemetry/__fixtures__/error-tags.txt text eol=lf
 # source. The attribute is GitHub-only: git, CI, and local diffs are unaffected.
 # Collapsed is not hidden. The lockfile does carry changes worth reading --
 # a dependency substitution -- and stays one click away in review.
-# Regeneration is owned by the `generate` turbo task, whose `outputs` in
-# turbo.json are the source of truth for this list. Only the generated files
-# are listed, not their hand-written inputs. apps/docs/content/docs/commands/
-# is generated too but gitignored, so it needs no entry.
+# Regeneration tasks declare their outputs in turbo.json. Only the generated
+# files are listed, not their hand-written inputs.
 packages/api/src/generated/* linguist-generated=true
 packages/api/scripts/openapi-source.json linguist-generated=true
 packages/stack/src/functions/generated/* text eol=lf linguist-generated=true
 apps/cli/src/shared/feedback/database.types.ts linguist-generated=true
-apps/docs/public/schemas/** linguist-generated=true
+apps/cli/schemas/** linguist-generated=true
 
 # Lockfiles. Collapsed rather than hidden -- a dependency change is still one
 # click away in review, which is the same treatment GitHub gives package-lock.json.

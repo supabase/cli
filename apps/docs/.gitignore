@@ -1,9 +1,0 @@
-# Generated docs content
-content/docs/commands/
-
-# Next.js
-.next/
-out/
-
-# Fumadocs generated
-.source/
