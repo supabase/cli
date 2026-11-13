@@ -8,7 +8,6 @@ import {
   type CliConfigTableRuleIssue,
 } from "@supabase/config/internal";
 
-import { isDocumentRecord } from "../../../config/cli-config-document.ts";
 import {
   earlierRemoteWithProjectId,
   isValidRemoteProjectId,
@@ -153,12 +152,11 @@ const externalTableUnits = (["client_id", "secret"] as const).map((field) =>
 
 const serviceVersionRule = syncUnit({
   id: "local.services.version",
-  scope: (service) => ["local", "services", service],
+  scope: (service) => ["local", "services", service, "version"],
   kind: "value",
   entries: (view) => view.keys(["local", "services"]),
   check: (view, service) => {
-    const entry = view.get(["local", "services", service]);
-    const version = isDocumentRecord(entry) ? str(entry["version"]) : undefined;
+    const version = str(view.get(["local", "services", service, "version"]));
     return version === undefined
       ? []
       : tableRuleFindings(
@@ -169,20 +167,37 @@ const serviceVersionRule = syncUnit({
   },
 });
 
-const migrationChecksRule = syncUnit({
-  id: "db.migrations.checks",
-  scope: ["db", "migrations", "checks"],
+const CHECKS_PATH = ["db", "migrations", "checks"];
+const EXCLUDE_PATH = [...CHECKS_PATH, "exclude"];
+
+const migrationCheckFindings = (section: Record<string, unknown>) =>
+  tableRuleFindings(CHECKS_PATH, cliConfigMigrationChecksIssues(section), "invalid_value");
+
+const migrationCheckRuleUnit = syncUnit({
+  id: "db.migrations.checks.rule",
+  scope: (rule) => [...CHECKS_PATH, rule],
   kind: "value",
-  check: (view) => {
-    const section = view.written(["db", "migrations", "checks"]);
-    return isDocumentRecord(section)
-      ? tableRuleFindings(
-          ["db", "migrations", "checks"],
-          cliConfigMigrationChecksIssues(section),
-          "invalid_value",
-        )
-      : [];
-  },
+  entries: (view) => view.keys(CHECKS_PATH).filter((key) => key !== "exclude"),
+  check: (view, rule) => migrationCheckFindings({ [rule]: view.written([...CHECKS_PATH, rule]) }),
+});
+
+const migrationCheckExcludeShapeUnit = syncUnit({
+  id: "db.migrations.checks.exclude",
+  scope: EXCLUDE_PATH,
+  kind: "value",
+  check: (view) =>
+    view.has(EXCLUDE_PATH) && !view.hasTable(EXCLUDE_PATH)
+      ? migrationCheckFindings({ exclude: view.written(EXCLUDE_PATH) })
+      : [],
+});
+
+const migrationCheckExclusionUnit = syncUnit({
+  id: "db.migrations.checks.exclude.rule",
+  scope: (rule) => [...EXCLUDE_PATH, rule],
+  kind: "value",
+  entries: (view) => view.keys(EXCLUDE_PATH),
+  check: (view, rule) =>
+    migrationCheckFindings({ exclude: { [rule]: view.written([...EXCLUDE_PATH, rule]) } }),
 });
 
 const TOML_BARE_KEY = /^[A-Za-z0-9_-]+$/;
@@ -249,7 +264,9 @@ export const VALIDATE_ONLY_UNITS: ReadonlyArray<CliConfigCheckUnit> = [
   smsTableRule,
   ...externalTableUnits,
   serviceVersionRule,
-  migrationChecksRule,
+  migrationCheckRuleUnit,
+  migrationCheckExcludeShapeUnit,
+  migrationCheckExclusionUnit,
   remoteProjectIdFormat,
   remoteProjectIdDuplicates,
 ];

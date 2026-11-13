@@ -172,12 +172,22 @@ const leafPaths = (value: unknown, prefix: Segments = []): Array<Segments> =>
     ? Object.entries(value).flatMap(([key, child]) => leafPaths(child, [...prefix, key]))
     : [prefix];
 
+const tablePaths = (value: unknown, prefix: Segments = []): Array<Segments> =>
+  isDocumentRecord(value)
+    ? [
+        prefix,
+        ...Object.entries(value).flatMap(([key, child]) => tablePaths(child, [...prefix, key])),
+      ]
+    : [];
+
 const changedKeys = (
   base: Record<string, unknown>,
   merged: Record<string, unknown>,
 ): ReadonlyArray<Segments> => {
   const before = new Map(leafPaths(base).map((path) => [keyOf(path), path]));
   const after = new Map(leafPaths(merged).map((path) => [keyOf(path), path]));
+  const baseTables = new Set(tablePaths(base).map(keyOf));
+  const mergedTables = new Set(tablePaths(merged).map(keyOf));
   const changed: Array<Segments> = [];
   for (const [key, path] of after) {
     if (
@@ -187,7 +197,12 @@ const changedKeys = (
       changed.push(path);
     }
   }
-  for (const [key, path] of before) if (!after.has(key)) changed.push(path);
+  for (const [key, path] of before) {
+    if (!after.has(key) && !mergedTables.has(key)) changed.push(path);
+  }
+  for (const path of [...tablePaths(base), ...tablePaths(merged)]) {
+    if (baseTables.has(keyOf(path)) !== mergedTables.has(keyOf(path))) changed.push(path);
+  }
   return changed;
 };
 
@@ -640,11 +655,12 @@ export const runUnitsInContext = Effect.fnUntraced(function* (input: {
       for (const entry of entries) {
         const scope = typeof unit.scope === "function" ? unit.scope(entry ?? "") : unit.scope;
         if (context.changed?.some((key) => related(key, scope)) === false) continue;
+        const memberships =
+          entry === undefined
+            ? []
+            : entryReads.paths.map((table) => [...table, splitFieldEntry(entry)[0]]);
         const reads: Reads = {
-          paths:
-            entry === undefined
-              ? []
-              : entryReads.paths.map((table) => [...table, splitFieldEntry(entry)[0]]),
+          paths: [],
           waits: new Map(entryReads.waits),
         };
         const guarded: CliConfigUnitIo = {
@@ -660,7 +676,8 @@ export const runUnitsInContext = Effect.fnUntraced(function* (input: {
         );
         const readChanged =
           context.changed === undefined ||
-          reads.paths.some((path) => context.changed?.some((key) => related(key, path)));
+          reads.paths.some((path) => context.changed?.some((key) => related(key, path))) ||
+          memberships.some((path) => context.changed?.some((key) => isPrefix(key, path)));
         if (!readChanged) continue;
         runs.push({
           unit: unit.id,

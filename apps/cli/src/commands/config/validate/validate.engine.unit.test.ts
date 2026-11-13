@@ -842,6 +842,40 @@ version = "not-a-version!!"
     );
   });
 
+  describe("units read only what their check needs", () => {
+    it.effect("reports an invalid version while a sibling container value is env()", () =>
+      Effect.gen(function* () {
+        const result = yield* run(`project_id = "demo"
+
+[local.services.realtime]
+version = "not-a-version!!"
+container.memory = "env(REALTIME_MEMORY)"
+`);
+
+        expect(labels(result.problems)).toContain(
+          "base:local.services.realtime.version:invalid_value",
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "reports an unknown migration check rule while another rule's severity is env()",
+      () =>
+        Effect.gen(function* () {
+          const result = yield* run(`project_id = "demo"
+
+[db.migrations.checks]
+rls_disabled_in_pubic = "warn"
+rls_enabled_no_policy = "env(SEVERITY)"
+`);
+
+          expect(labels(result.problems)).toContain(
+            "base:db.migrations.checks.rls_disabled_in_pubic:invalid_value",
+          );
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
+
   describe("unset variables on enum keys", () => {
     it.effect("are errors under --resolve-env, because the literal would be rejected", () =>
       Effect.gen(function* () {
@@ -958,6 +992,38 @@ subject = "y"
           "base:auth.email.template.invite.content_path:invalid_value",
           "base:storage.buckets.bad#name:invalid_value",
         ]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("reports a base bucket name error once when a remote edits a value inside it", () =>
+      Effect.gen(function* () {
+        const result = yield* run(`project_id = "demo"
+
+[storage.buckets."bad#name"]
+
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.storage.buckets."bad#name"]
+public = true
+`);
+
+        expect(labels(result.problems)).toEqual(["base:storage.buckets.bad#name:invalid_value"]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("reports a bucket name error under the remote that adds the bucket", () =>
+      Effect.gen(function* () {
+        const result = yield* run(`project_id = "demo"
+
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.storage.buckets."bad#name"]
+public = true
+`);
+
+        expect(labels(result.problems)).toEqual(["staging:storage.buckets.bad#name:invalid_value"]);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
 
