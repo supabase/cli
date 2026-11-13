@@ -198,7 +198,7 @@ export const authWebauthn = syncUnit({
   scope: ["auth"],
   kind: "requirement",
   check: (view) =>
-    webauthnRequired(view) && !view.has(["auth", "webauthn"])
+    webauthnRequired(view) && !view.hasTable(["auth", "webauthn"])
       ? [
           missing(["auth", "webauthn"], WEBAUTHN_GATE, {
             message:
@@ -215,7 +215,7 @@ export const authWebauthnRpId = syncUnit({
   kind: "requirement",
   check: (view) =>
     webauthnRequired(view) &&
-    view.has(["auth", "webauthn"]) &&
+    view.hasTable(["auth", "webauthn"]) &&
     nonEmpty(view.written(["auth", "webauthn", "rp_id"])) === undefined
       ? [missing(["auth", "webauthn", "rp_id"], WEBAUTHN_GATE)]
       : [],
@@ -226,7 +226,7 @@ export const authWebauthnRpOrigins = syncUnit({
   scope: ["auth"],
   kind: "requirement",
   check: (view) => {
-    if (!webauthnRequired(view) || !view.has(["auth", "webauthn"])) return [];
+    if (!webauthnRequired(view) || !view.hasTable(["auth", "webauthn"])) return [];
     const origins = rawOrigins(view.written(["auth", "webauthn", "rp_origins"]));
     return origins === undefined || origins.length === 0
       ? [missing(["auth", "webauthn", "rp_origins"], WEBAUTHN_GATE)]
@@ -368,13 +368,16 @@ export const emailContentUnit = (section: "template" | "notification"): CliConfi
     const at = [...base, "content_path"] as const;
     const reason = "content_path is not a readable file inside the project";
     const help = "point content_path at an existing file under the project root";
+    const contentPath = str(view.get(at)) ?? "";
+    const contentPresent =
+      contentPath.length === 0 && view.written([...base, "content"]) !== undefined;
     if (!io.filesAllowed()) return [];
     const resolved = yield* Effect.result(
       resolveEmailTemplateContentPath({
         section,
         name,
-        contentPath: str(view.get(at)) ?? "",
-        contentPresent: view.written([...base, "content"]) !== undefined,
+        contentPath,
+        contentPresent,
         base: view.workdir,
       }),
     );
@@ -630,7 +633,7 @@ const externalBool = (view: CliConfigView, name: string, field: string): boolean
 };
 
 const hasExternalProvider = (view: CliConfigView, name: string): boolean =>
-  view.keys(["auth", "external"]).includes(name);
+  view.has(["auth", "external", name]);
 
 export const authExternalBooleans = syncUnit({
   id: "auth.external.booleans",
@@ -737,7 +740,6 @@ export const authSignedKeys: CliConfigCheckUnit = {
     ) {
       return [];
     }
-    const jwtSecret = jwtSecretOrDefault(view);
     const signingKeysPath = nonEmpty(view.get(SIGNING_KEYS_PATH));
     let signingKey: Jwk | undefined;
     if (signingKeysPath !== undefined) {
@@ -749,6 +751,7 @@ export const authSignedKeys: CliConfigCheckUnit = {
         signingKey = DEFAULT_SIGNING_KEY;
       }
     }
+    const jwtSecret = signingKey === undefined ? jwtSecretOrDefault(view) : defaultJwtSecret;
     return signedKeyFindings(configured, jwtSecret, signingKey);
   }),
 };

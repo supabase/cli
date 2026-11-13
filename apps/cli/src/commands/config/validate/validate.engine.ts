@@ -589,6 +589,10 @@ const trackedView = (
       record(path, false);
       return inner.has(path);
     },
+    hasTable: (path) => {
+      record(path, false);
+      return inner.hasTable(path);
+    },
     keys: (path) => {
       record(path, false);
       return inner.keys(path);

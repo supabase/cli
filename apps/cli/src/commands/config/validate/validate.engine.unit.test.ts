@@ -868,6 +868,72 @@ version = "not-a-version!!"
     );
   });
 
+  describe("units read only what their branch needs", () => {
+    const withFile = Effect.fnUntraced(function* (toml: string, file: string, body: string) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "config-validate-engine-" });
+      yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), toml);
+      yield* fs.writeFileString(path.join(root, "supabase", file), body);
+      const parsed = yield* parseCliConfigDocumentFile(root, { search: false });
+      if (parsed === null) return yield* Effect.die("fixture config was not found");
+      return yield* runConfigValidation(parsed, root, undefined);
+    });
+
+    it.effect("reports an asymmetric key error while jwt_secret is unknown", () =>
+      Effect.gen(function* () {
+        const result = yield* withFile(
+          `project_id = "demo"
+
+[auth]
+jwt_secret = "env(JWT_SECRET)"
+signing_keys_path = "keys.json"
+`,
+          "keys.json",
+          '[{"kty":"RSA","kid":"k","n":"x","e":"AQAB"}]',
+        );
+
+        expect(labels(result.problems)).toContain("base:auth.anon_key:invalid_value");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("reports a content_path error while inline content is unknown", () =>
+      Effect.gen(function* () {
+        const result = yield* run(`project_id = "demo"
+
+[auth.email.template.invite]
+content_path = "./missing.html"
+content = "env(INLINE)"
+`);
+
+        expect(labels(result.problems)).toContain(
+          "base:auth.email.template.invite.content_path:invalid_value",
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("reports a base provider error once when a remote edits a sibling provider", () =>
+      Effect.gen(function* () {
+        const result = yield* run(`project_id = "demo"
+
+[auth.external.github]
+enabled = true
+
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.auth.external.google]
+client_id = "x"
+`);
+
+        const github = labels(result.problems).filter((item) => item.includes("external.github"));
+        expect(github.length).toBeGreaterThan(0);
+        expect(github.every((item) => item.startsWith("base:"))).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
+
   describe("remote ownership", () => {
     it.effect("does not repeat base problems under a remote that edits another entry", () =>
       Effect.gen(function* () {

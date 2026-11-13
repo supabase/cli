@@ -42,10 +42,7 @@ import {
   studioPort,
 } from "./config-check-platform-units.ts";
 
-/**
- * Every check unit, in the order `start` and the local-stack resolvers run them. Their final
- * anon/service_role key generation stands in for `authSignedKeys`, which only `config validate` runs.
- */
+/** The shared local checks, in the order `start` and the local-stack resolvers run them; the auth-duration units run separately. */
 export const LOCAL_CHECK_ORDER: ReadonlyArray<CliConfigCheckUnit> = [
   apiTlsFiles,
   dbRootKey,

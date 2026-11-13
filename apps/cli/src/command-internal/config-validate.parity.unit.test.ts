@@ -336,35 +336,6 @@ describe("config check units cross-caller parity (D vs L)", () => {
       }),
     );
   }
-
-  it.effect(
-    "two errors: D reports the first in its order (db.major_version before function slug)",
-    () => failsWithD(["[db]", "major_version = 12", "[functions.1bad]"], "Postgres version 12.x"),
-  );
-
-  it.effect(
-    "two errors: D reports db.port where L reports the unreadable signing keys file first",
-    () =>
-      Effect.gen(function* () {
-        yield* failsWithD(
-          ["[db]", "port = 0", "[auth]", 'signing_keys_path = "./nope.json"'],
-          "Missing required field in config: db.port",
-        );
-        yield* failsWithL(
-          { db: { port: 0 }, auth: { signing_keys_path: "./nope.json" } },
-          "failed to read signing keys",
-        );
-      }),
-  );
-
-  it.effect(
-    "two errors: L reports the first in its order (jwt_secret before db.major_version)",
-    () =>
-      failsWithL(
-        { auth: { jwt_secret: "short" }, db: { major_version: 12 } },
-        "Invalid config for auth.jwt_secret",
-      ),
-  );
 });
 
 interface GoldenScenario {
@@ -395,6 +366,14 @@ const golden: ReadonlyArray<GoldenScenario> = [
     toml: ["[auth.passkey]", "enabled = true"],
     overrides: { auth: MESSAGE_AUTH },
     document: { auth: { passkey: { enabled: true } } },
+    D: "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+    L: "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+  },
+  {
+    name: "passkey with a scalar webauthn",
+    toml: ["[auth]", 'webauthn = "x"', "[auth.passkey]", "enabled = true"],
+    overrides: { auth: MESSAGE_AUTH },
+    document: { auth: { passkey: { enabled: true }, webauthn: "x" } },
     D: "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
     L: "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
   },

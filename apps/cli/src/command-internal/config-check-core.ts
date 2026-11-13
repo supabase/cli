@@ -24,6 +24,8 @@ export interface CliConfigView {
   written(path: Segments): unknown;
   /** Whether the as-written document holds the key. */
   has(path: Segments): boolean;
+  /** Whether the as-written document holds a table at the key, without reading its entries. */
+  hasTable(path: Segments): boolean;
   /** The entry names of a table: as-written keys first, then decoded-only keys. */
   keys(path: Segments): ReadonlyArray<string>;
   /** Records that a switch the unit branches on holds an unusable value, so a validator defers the unit; a no-op outside validate. */
@@ -97,6 +99,7 @@ export const untrackedCliConfigView = (input: {
   get: (path) => getDocumentValue(input.config, path),
   written: (path) => getDocumentValue(input.document, path),
   has: (path) => getDocumentValue(input.document, path) !== undefined,
+  hasTable: (path) => isDocumentRecord(getDocumentValue(input.document, path)),
   keys: (path) => {
     const written = getDocumentValue(input.document, path);
     const decoded = getDocumentValue(input.config, path);

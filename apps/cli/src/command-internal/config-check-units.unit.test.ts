@@ -295,6 +295,7 @@ const recordingView = (
   get: (path) => (reads.push({ method: "get", path }), inner.get(path)),
   written: (path) => (reads.push({ method: "written", path }), inner.written(path)),
   has: (path) => (reads.push({ method: "has", path }), inner.has(path)),
+  hasTable: (path) => (reads.push({ method: "has", path }), inner.hasTable(path)),
   keys: (path) => (reads.push({ method: "keys", path }), inner.keys(path)),
   isKnown: (path) => inner.isKnown(path),
   defer: (path) => inner.defer(path),
