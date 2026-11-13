@@ -63,4 +63,50 @@ describe("[local.services]", () => {
   ])("rejects %s version %j", (key, version, message) => {
     expect(() => decode(services(`${key} = { version = "${version}" }`))).toThrow(message);
   });
+
+  test("accepts a container-only entry with no version", () => {
+    const document = decode(
+      services(
+        [
+          "[local.services.database.container]",
+          'memory = "768MiB"',
+          "cpus = 1.5",
+          "[local.services.rest.container]",
+          'memory = "1g"',
+        ].join("\n"),
+      ),
+    );
+
+    expect(document.local?.services?.database).toEqual({
+      container: { memory: "768MiB", cpus: 1.5 },
+    });
+    expect(document.local?.services?.rest).toEqual({ container: { memory: "1g" } });
+  });
+
+  test.each([
+    ["an unknown unit", 'memory = "12XB"', /"auth"\]\["container"\]\["memory"\]/u],
+    ["no number", 'memory = "MiB"', /"auth"\]\["container"\]\["memory"\]/u],
+    ["a size below Docker's minimum", 'memory = "5MiB"', /at least 6MiB/u],
+    ["an unrepresentable size", 'memory = "8PiB"', /less than 8PiB/u],
+    ["an overflowing size", `memory = "${"9".repeat(309)}"`, /less than 8PiB/u],
+    [
+      "cpus below Docker's minimum",
+      "cpus = 0.009",
+      /at least 0.01[\s\S]*"auth"\]\["container"\]\["cpus"\]/u,
+    ],
+    ["negative cpus", "cpus = -1", /"auth"\]\["container"\]\["cpus"\]/u],
+    ["string cpus", 'cpus = "2"', /"auth"\]\["container"\]\["cpus"\]/u],
+  ])("rejects a container with %s", (_name, line, message) => {
+    expect(() => decode(services(`[local.services.auth.container]\n${line}`))).toThrow(message);
+  });
+
+  test("rejects container limits under default", () => {
+    expect(() =>
+      decode(
+        services(
+          '[local.services.default]\nversion = "bundled"\n[local.services.default.container]\nmemory = "1GiB"',
+        ),
+      ),
+    ).toThrow(/"default"\]\["container"\]/u);
+  });
 });
