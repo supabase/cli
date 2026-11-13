@@ -6,6 +6,7 @@ import {
   getCommandRuntimeSpanName,
 } from "../shared/runtime/command-runtime.service.ts";
 import { failureBesideClosedStdout } from "../shared/output/errors.ts";
+import { normalizeCause } from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import {
   CreateTicketFlag,
@@ -27,14 +28,18 @@ import {
   classifyCliErrorActionability,
   unknownProcessControlledFailureActionability,
 } from "../shared/telemetry/error-actionability.ts";
+import { ConfigValidateProblemsError } from "../commands/config/validate/validate.errors.ts";
 import { DbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.ts";
 import { DbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
 import {
   EventCommandExecuted,
+  EventUpgradeSuggested,
   PropConfigKey,
   PropDurationMs,
   PropErrorCategory,
   PropExitCode,
+  PropFeatureKey,
+  PropOrgSlug,
   PropOutputFormat,
   PropStackBackend,
 } from "../shared/telemetry/event-catalog.ts";
@@ -65,13 +70,11 @@ import {
   type CommandTelemetryAttributeValues,
 } from "./command-telemetry-attributes.ts";
 
-/**
- * Classifies a command that succeeded its Effect but recorded a nonzero exit code through
- * ProcessControl. `db lint`/`db advisors` do this in machine mode after a `--fail-on` trigger, to
- * keep the JSON payload on stdout intact, so their telemetry derives from the same typed error
- * their text mode raises.
- */
+/** Classifies a command that records a nonzero exit code through ProcessControl instead of failing: `db lint`/`db advisors` after a machine-mode `--fail-on` trigger, and `config validate` when it reports problems. */
 function processControlledFailureActionability(command: string): CliErrorActionability {
+  if (command === "config validate") {
+    return classifyCliErrorActionability(new ConfigValidateProblemsError({ message: "" }));
+  }
   if (command === "db lint") {
     return classifyCliErrorActionability(new DbLintFailOnError({ message: "" }));
   }
@@ -101,6 +104,11 @@ interface CommandTelemetryOptions<Flags extends Record<string, unknown> = never>
   // so a `-s public` invocation records the `schema` flag rather than `s`. Global shorthands
   // (`-o` for `--output`) are merged in automatically via `GLOBAL_SHORT_ALIASES` below.
   readonly aliases?: Readonly<Record<string, string>>;
+}
+
+function orgSlugFromUpgradeUrl(upgradeUrl: string): string {
+  const match = /\/org\/([^/]+)/.exec(upgradeUrl);
+  return match?.[1] ?? "";
 }
 
 /**
@@ -573,6 +581,22 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
             : recordedExitCode === 1
               ? toFailureTelemetryProperties(processControlledFailureActionability(command))
               : {};
+        const entitlement =
+          failureCause !== undefined ? normalizeCause(failureCause).entitlement : undefined;
+
+        if (entitlement !== undefined) {
+          yield* analytics
+            .capture(EventUpgradeSuggested, {
+              [PropFeatureKey]: entitlement.feature,
+              [PropOrgSlug]: orgSlugFromUpgradeUrl(entitlement.upgrade_url),
+            })
+            .pipe(
+              withAnalyticsContext(captureContext),
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+              ),
+            );
+        }
 
         yield* analytics
           .capture(EventCommandExecuted, {

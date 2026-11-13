@@ -52,7 +52,7 @@ export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(functio
     enabled ? pinKey(pin) : Effect.succeed("");
   const keyInputs: ShadowCacheKeyInputs = {
     postgresImage: yield* encodeKeyParts([
-      "stack-v3",
+      "stack-v4",
       runtime,
       platform,
       arch,

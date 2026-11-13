@@ -4,6 +4,8 @@
     { "id": "help", "args": ["--help"], "cwdSetup": "none" },
     { "id": "init", "args": ["init"], "cwdSetup": "none" },
     { "id": "migration-new", "args": ["migration", "new", "bench"], "cwdSetup": "init" },
+    { "id": "config-convert", "args": ["config", "convert"], "cwdSetup": "init" },
+    { "id": "config-validate", "args": ["config", "validate"], "cwdSetup": "init" },
     {
       "id": "gen-types",
       "args": ["gen", "types", "--lang", "typescript", "--project-id", "replayfixtureprojref"],

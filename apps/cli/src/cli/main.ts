@@ -9,7 +9,7 @@ import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
-import { cliEntrypointForFeatures } from "./root.ts";
+import { cliEntrypointForFeatures, rootCommandForFeatures } from "./root.ts";
 
 const args = await Effect.runPromise(
   Effect.gen(function* () {
@@ -31,12 +31,17 @@ const selectionExit = await Effect.runPromiseExit(
     return { projectState, stackBackend, computeEnabled };
   }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer))),
 );
+const selectedFeatures = Exit.isSuccess(selectionExit)
+  ? selectionExit.value
+  : ({ stackBackend: "legacy", computeEnabled: false } as const);
 const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(
-  Exit.isSuccess(selectionExit)
-    ? selectionExit.value
-    : { stackBackend: "legacy", computeEnabled: false },
+  selectedFeatures,
   args,
 );
+const stackRootCommand =
+  selectedFeatures.stackBackend === "stack"
+    ? undefined
+    : rootCommandForFeatures({ ...selectedFeatures, stackBackend: "stack" });
 const selectionCause = Exit.isFailure(selectionExit) ? selectionExit.cause : undefined;
 const selectedProjectState = Exit.isSuccess(selectionExit)
   ? selectionExit.value.projectState
@@ -63,6 +68,7 @@ if (
           : "legacy",
       ).pipe(Layer.provide(FetchHttpClient.layer)),
       agentDefaultOutputFormat,
+      ...(stackRootCommand ? { stackRootCommand } : {}),
       afterSuccess: upgradeNoticeHook,
       ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
     }),

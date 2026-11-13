@@ -920,7 +920,7 @@ it.effect("passes the API host port and debug mode to the docker Functions runti
         deps,
         Functions.makeSpec(fakeBootstrap, deps.path, deps.fs),
       );
-      const capture = Effect.fn(function* (apiUrl: string) {
+      const capture = Effect.fn(function* (apiUrl: string, hostApiUrl?: string) {
         const scope = yield* Scope.make();
         yield* recipe.definition
           .launch({
@@ -931,6 +931,7 @@ it.effect("passes the API host port and debug mode to the docker Functions runti
               config: {
                 functionsRoot: "/project/supabase/functions",
                 apiUrl,
+                ...(hostApiUrl === undefined ? {} : { hostApiUrl }),
                 debug: true,
                 env: { PLAIN: "plain" },
               },
@@ -944,10 +945,18 @@ it.effect("passes the API host port and debug mode to the docker Functions runti
 
       const spec = yield* capture("http://host.supabase.internal:61121");
       expect(spec?.env.SUPABASE_INTERNAL_HOST_PORT).toBe("61121");
+      expect(spec?.env).not.toHaveProperty("SUPABASE_INTERNAL_HOST_URL");
       expect(spec?.env.SUPABASE_INTERNAL_DEBUG).toBe("true");
       expect(spec?.args).toContain("--verbose");
       expect(spec?.env.PLAIN).toBe("plain");
       expect((yield* capture("http://127.0.0.1:80"))?.env.SUPABASE_INTERNAL_HOST_PORT).toBe("80");
+      /* Under API TLS the runtime URL and port stay, and the banner gets the HTTPS host origin. */
+      const tls = yield* capture("http://host.supabase.internal:61121", "https://127.0.0.1:61121");
+      expect(tls?.env).toMatchObject({
+        SUPABASE_URL: "http://host.supabase.internal:61121",
+        SUPABASE_INTERNAL_HOST_PORT: "61121",
+        SUPABASE_INTERNAL_HOST_URL: "https://127.0.0.1:61121",
+      });
     }),
   ).pipe(
     Effect.provide(

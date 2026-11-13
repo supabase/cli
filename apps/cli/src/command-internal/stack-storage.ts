@@ -3,6 +3,7 @@
  * endpoint; lazy Storage members may be woken by the first gateway request.
  */
 
+import { X509Certificate } from "node:crypto";
 import { Data, Effect, FileSystem, Match, Option, Path } from "effect";
 import type { Observation, ServiceInstance, Stack } from "@supabase/stack/effect";
 import {
@@ -63,10 +64,14 @@ const capabilityState = (observation: Observation | undefined) => {
   return observation.lifecycle;
 };
 
-/** Resolves bucket-seeding credentials from a configured Storage instance. */
+/**
+ * Resolves bucket-seeding credentials from a configured Storage instance; `apiCert` is the
+ * certificate the stack saved at start, trusted while its API serves HTTPS.
+ */
 export const stackStorageCredentialsFor = (
   storage: ServiceInstance<"storage">,
   serviceRoleKey: string,
+  apiCert: string | undefined,
 ): Effect.Effect<StorageCredentials, StackStorageUnavailableError | StackStorageCapabilityError> =>
   storage.status.pipe(
     Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
@@ -81,7 +86,7 @@ export const stackStorageCredentialsFor = (
           return Effect.fail(
             new StackStorageUnavailableError({ message: describeStorageCapability(observation) }),
           );
-        return storageCredentialsFrom(observation, serviceRoleKey);
+        return storageCredentialsFrom(observation, serviceRoleKey, apiCert);
       },
     ),
   );
@@ -128,20 +133,42 @@ const notRunningSuggestion = (lifecycle: "starting" | "stopping" | "stopped"): s
     Match.exhaustive,
   );
 
+/* Self-signed means it is its own issuer and verifies under its own key; unparsable is not. */
+const selfSigned = (pem: string): Effect.Effect<boolean> =>
+  Effect.try(() => {
+    const cert = new X509Certificate(pem);
+    return cert.subject === cert.issuer && cert.verify(cert.publicKey);
+  }).pipe(Effect.orElseSucceed(() => false));
+
+/* A saved cert with a self-signed root becomes the only trusted CA; a CA-issued one is verified
+   against the default trust store and `NODE_EXTRA_CA_CERTS`. */
+const savedApiCa = (apiCert: string): Effect.Effect<string | undefined> =>
+  Effect.forEach(
+    apiCert.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/gu) ?? [],
+    selfSigned,
+  ).pipe(Effect.map((results) => (results.includes(true) ? apiCert : undefined)));
+
+/* An HTTPS endpoint never uses `config.toml`'s current cert; trust follows the saved one. */
 const storageCredentialsFrom = (
   observation: Observation,
   serviceRoleKey: string,
+  apiCert: string | undefined,
 ): Effect.Effect<StorageCredentials, StackStorageCapabilityError> => {
   const endpoint = observation.endpoints.find(({ name }) => name === "http");
   return endpoint === undefined
     ? Effect.fail(
         new StackStorageCapabilityError({ message: "The stack exposes no Storage endpoint." }),
       )
-    : Effect.succeed({
-        baseUrl: `http://${endpoint.host}:${endpoint.port}`,
-        apiKey: serviceRoleKey,
-        localKongCa: undefined,
-      });
+    : (endpoint.scheme === "https" && apiCert !== undefined
+        ? savedApiCa(apiCert)
+        : Effect.undefined
+      ).pipe(
+        Effect.map((localKongCa) => ({
+          baseUrl: `${endpoint.scheme ?? "http"}://${endpoint.host}:${endpoint.port}`,
+          apiKey: serviceRoleKey,
+          localKongCa,
+        })),
+      );
 };
 
 /** Resolves the composition Storage endpoint without launching the owner or any member. */
@@ -204,7 +231,10 @@ export const stackStorageEndpointFor = (
         message: "The stack has no saved credentials.",
         suggestion: INSPECT_OR_RESTART_SUGGESTION,
       });
-    return yield* storageCredentialsFrom(storageObservation, identity.serviceRoleKey);
+    const apiTls = yield* stack.apiTls.get.pipe(
+      Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
+    );
+    return yield* storageCredentialsFrom(storageObservation, identity.serviceRoleKey, apiTls?.cert);
   });
 
 /** Storage credentials for the project stack, opening it without launching the owner. */

@@ -5,9 +5,9 @@
 # a catalog update. Everything else in this file (this comment, kong, pg14, the one-shot job
 # images) is hand- or Dependabot-managed. Keep a line between image lines: git conflicts on edits to
 # adjacent lines, and catalog PRs for neighbouring aliases are often open at the same time.
-FROM supabase/postgres:17.11.0.018 AS pg
+FROM supabase/postgres:17.12.0.000 AS pg
 
-FROM supabase/postgres:15.19.0.018 AS pg15
+FROM supabase/postgres:15.20.0.000 AS pg15
 # Postgres 14 has no slim build; bumped by hand (Dependabot ignores supabase/postgres).
 FROM supabase/postgres:14.1.0.89 AS pg14
 # New always-on service alias: extend SERVICE_IMAGE_ALIASES in
@@ -25,7 +25,7 @@ FROM supabase/studio:2026.11.09-sha-1567384 AS studio
 
 FROM darthsim/imgproxy:v3.26.0 AS imgproxy
 
-FROM supabase/edge-runtime:v1.78.1 AS edgeruntime
+FROM supabase/edge-runtime:v1.79.1 AS edgeruntime
 
 FROM timberio/vector:0.58.0-alpine AS vector
 
@@ -33,9 +33,9 @@ FROM supabase/supavisor:2.10.0 AS supavisor
 
 FROM supabase/gotrue:v2.197.0 AS gotrue
 
-FROM supabase/realtime:v2.154.0 AS realtime
+FROM supabase/realtime:v2.161.0 AS realtime
 
-FROM supabase/storage-api:v1.90.1 AS storage
+FROM supabase/storage-api:v1.95.0 AS storage
 
 FROM supabase/logflare:1.50.15 AS logflare
 # One-shot job images (not started as long-running containers); differ's alias

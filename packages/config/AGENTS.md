@@ -39,16 +39,16 @@ artifacts (`./schema.json`, `./project-schema.json`).
   otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
   `projectConfigMappingRows`, `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`,
   `ENV_CAPTURE_REGEX`, and `withoutSafeIntegerBounds` for the CLI's published lock schema), the
-  JSONC parser (`parseJsonc`, `JsoncSyntaxError`) and `cliConfigFormatForPath`, and `findUnknownCliConfigKeys` (schema-derived unknown-key paths of a raw document). It also carries
+  JSONC parser (`parseJsonc`, `JsoncSyntaxError`) and `cliConfigFormatForPath`, `findUnknownCliConfigKeys` (schema-derived unknown-key paths of a raw document, each with the keys its parent table accepts), `decodeCliConfigWithoutTableRules` (the decode with the table rules left out) with the table rule functions (`cliConfigSmtpIssues`, `cliConfigExternalProviderIssues` with `EXTERNAL_PROVIDER_IDS` (the built-in provider ids), `cliConfigSmsProviderIssues` with `SMS_PROVIDER_REQUIRED_FIELDS`, `cliConfigServiceVersionIssues`, `cliConfigMigrationChecksIssues`), `collectCliConfigEnvReferences` and `cliConfigStandIn`, `scanCliConfigDocument` (a caller-owned scan of raw TOML/JSON/JSONC text whose `locate` finds the line/column of a key or value; `CliConfigLocation` is a position). It also carries
   `supabase config pull`/`diff`'s own support surface
   (CLI-2064): the format-preserving surgical editor (`applyConfigEdits` and its
   `ConfigEdit`/`ConfigEditOutcome`/`ConfigEditRefusal`/`ConfigEditRefusalReason`/`ConfigEditValue`/
   `AppliedConfigEdit` types — the config diff engine itself, `diffProjectConfig` and its
   `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
   `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
-  `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
-  `remoteProjectIdEntries`, the atomic single-file writer `writeCliConfigDocumentText`/
-  `CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
+  `updateJsonDocument` (comment-preserving JSON/JSONC rewrite), `convertCliConfigTomlToJsonc` (`supabase config convert`: a pure, verified `config.toml` → `config.jsonc` converter that carries comments over; an Effect failing with `CliConfigConvertError`) with its `MovedTomlComment` type, `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
+  `remoteProjectIdEntries`, the atomic single-file writers `writeCliConfigDocumentText` (replace) and
+  `createCliConfigDocumentText` (create, never replacing)/`CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
   `parseCliConfigDocumentFile` (discover and parse) with `mergeParsedCliConfig` (merge the
   `[remotes.*]` block a caller-supplied `selectRemote` picks) and `decodeMergedCliConfig` (interpolate `env()` against a caller-supplied
   env record, then decode and validate, optionally on an overlaid document) — kept off `./effect`'s public surface deliberately (no consumer outside

@@ -6,7 +6,10 @@ import {
   DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
   DEFAULT_SIGNING_KEY,
 } from "@supabase/stack/defaults";
-import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
+import {
+  apiTlsContext,
+  type ServiceCreationInput as ServiceCreationType,
+} from "@supabase/stack/effect";
 import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import { SecureRandom } from "effect/crypto";
@@ -23,14 +26,16 @@ import { CLI_VERSION } from "../shared/cli/version.ts";
 import { decryptSecretMap } from "../shared/config/vault-decrypt.ts";
 import { toEdgeRuntimeSecretsEnv } from "../shared/functions/functions-config.ts";
 import {
+  configLoadFailureSuggestion,
   describeConfigLoadFailure,
   loadResolvedConfigContext,
   resolvePasskeyWebauthn,
 } from "./resolved-config-context.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
-import { resolveSmtpEnabled } from "./smtp-enabled.ts";
+import { smtpOn } from "./local-config-helpers.ts";
 import { parseDuration } from "./duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
+import { ramInBytes } from "./size-units.ts";
 import { stackArtifactSelection } from "./stack-artifact-selection.ts";
 import {
   type LockRequest,
@@ -39,12 +44,23 @@ import {
 } from "./stack-lock.ts";
 
 import {
-  resolveJwtSecret,
   resolveConfiguredSigningKeys,
   resolveAuthExternalProviders,
 } from "./local-config-values.ts";
 import { generateAsymmetricLocalJwt } from "./local-jwt.ts";
-import { resolveEmailTemplatePaths } from "./config-validate.ts";
+import {
+  apiTlsCertReadErrorMessage,
+  apiTlsKeyReadErrorMessage,
+  apiTlsPairErrorMessage,
+  resolveApiTlsPath,
+  resolveEmailTemplatePaths,
+  resolveJwtSecret,
+  validateApiTlsPresence,
+} from "./config-validate.ts";
+import {
+  KONG_LOCAL_TLS_CERT,
+  KONG_LOCAL_TLS_KEY,
+} from "../commands/start/templates/kong-local-tls.ts";
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import {
   resolveRemoteJwks,
@@ -61,11 +77,16 @@ import {
 /** A config error suitable for a stack command's user-facing boundary. */
 export class StackConfigError extends Data.TaggedError("StackConfigError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
 }
+
+/** The remediation a stack config failure carries, for the command error that reports it. */
+export const stackConfigSuggestion = (error: unknown): string | undefined =>
+  error instanceof StackConfigError ? error.suggestion : undefined;
 
 interface StackStartConfig {
   /** The artifact pins every creation of this command carries. */
@@ -74,6 +95,11 @@ interface StackStartConfig {
     stackId: string,
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
   readonly source: CliConfig;
+  /** Reads the PEM pair the API listener serves HTTPS with, when `[api.tls]` is enabled. */
+  readonly apiTls: Effect.Effect<
+    { readonly cert: string; readonly key: string } | undefined,
+    StackConfigError
+  >;
   readonly projectEnvValues: Readonly<Record<string, string>>;
   readonly originAt: CliConfigMaterialized["originAt"];
   readonly remoteJwks: Effect.Effect<string | undefined, StackConfigError>;
@@ -169,7 +195,6 @@ export const stackEndpointKey = (service: string, endpoint: string): StackEndpoi
 export const stackMajorVersionKey: StackEndpointKey = CliConfigKeys.db.majorVersion;
 
 const unsupportedConfigPaths = [
-  { path: "api.tls", active: (config: CliConfig) => config.api.enabled },
   { path: "analytics.gcp_project_id", active: (config: CliConfig) => config.analytics.enabled },
   {
     path: "analytics.gcp_project_number",
@@ -177,7 +202,6 @@ const unsupportedConfigPaths = [
   },
   { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
   { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
-  { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
   ...(["s3_host", "s3_region", "s3_access_key", "s3_secret_key"] as const).map((key) => ({
     path: `experimental.${key}`,
     // Legacy Compose forwards these to OrioleDB; the stack does not, so fail rather than drop them.
@@ -243,12 +267,6 @@ const configValidationError = (config: CliConfig): string | undefined => {
   }
   if (config.analytics.enabled && config.analytics.backend !== "postgres")
     return "analytics.backend must be postgres for the experimental stack";
-  if (
-    config.storage.enabled &&
-    config.storage.vector.enabled &&
-    Object.keys(config.storage.vector.buckets).length > 0
-  )
-    return "storage.vector settings are unsupported by the experimental stack";
   if (config.db.major_version !== 15 && config.db.major_version !== 17)
     return "db.major_version must be 15 or 17 for the experimental stack";
 
@@ -279,7 +297,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         Option.fromNullishOr(opts?.projectRef),
       ).pipe(
         Effect.mapError(
-          (cause) => new StackConfigError({ message: describeConfigLoadFailure(cause) }),
+          (cause) =>
+            new StackConfigError({
+              message: describeConfigLoadFailure(cause),
+              suggestion: configLoadFailureSuggestion(cause),
+            }),
         ),
       );
       const { originAt } = resolvedConfig.materialized;
@@ -309,7 +331,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         validatedConfig.auth,
         validatedConfig.local_smtp,
         {
-          smtpEnabled: resolveSmtpEnabled(resolvedConfig),
+          smtpEnabled: smtpOn(
+            resolvedConfig.materialized.config,
+            resolvedConfig.loaded.document ?? {},
+          ),
           authExternalUrl,
           apiExternalUrl: validatedConfig.api.external_url,
           externalProviders,
@@ -320,6 +345,52 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       );
       const path = yield* Path.Path;
       const { supabaseHome } = yield* CommandSettings;
+      /* Like legacy: both configured paths, joined to `supabase/`, else the embedded local pair. */
+      const tls = validatedConfig.api.tls;
+      const certPath = tls.cert_path ?? "";
+      const keyPath = tls.key_path ?? "";
+      const fs = yield* FileSystem.FileSystem;
+      const readTls = (file: string, message: (cause: unknown) => string) =>
+        fs
+          .readFileString(resolveApiTlsPath(path, projectRoot, file))
+          .pipe(
+            Effect.mapError(
+              (cause) => new StackConfigError({ message: message(cause.reason.cause ?? cause) }),
+            ),
+          );
+      /* Read only by the start that applies TLS; other commands use the pair saved at start. */
+      const apiTls = Effect.gen(function* () {
+        if (!tls.enabled) return undefined;
+        /* Like legacy, a disabled `[api]` still serves https, on the embedded pair. */
+        if (!validatedConfig.api.enabled)
+          return { cert: KONG_LOCAL_TLS_CERT, key: KONG_LOCAL_TLS_KEY };
+        yield* Effect.try({
+          try: () => validateApiTlsPresence(tls.cert_path, tls.key_path),
+          catch: (cause) =>
+            new StackConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
+        if (certPath === "") return { cert: KONG_LOCAL_TLS_CERT, key: KONG_LOCAL_TLS_KEY };
+        const pair = {
+          cert: yield* readTls(certPath, apiTlsCertReadErrorMessage),
+          key: yield* readTls(keyPath, apiTlsKeyReadErrorMessage),
+        };
+        /* Proven usable here, so start never fails on it after binding. */
+        yield* apiTlsContext(pair).pipe(
+          Effect.mapError(
+            (error) =>
+              new StackConfigError({
+                message: apiTlsPairErrorMessage(
+                  resolveApiTlsPath(path, projectRoot, certPath),
+                  resolveApiTlsPath(path, projectRoot, keyPath),
+                  error.cause,
+                ),
+              }),
+          ),
+        );
+        return pair;
+      });
       const auth = validatedConfig.auth;
       const issuer = yield* Effect.try({
         try: () => {
@@ -573,15 +644,30 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ),
       ).pipe(
         Effect.map((templates) => templates.flat()),
-        Effect.provideService(FileSystem.FileSystem, yield* FileSystem.FileSystem),
+        Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.mapError(toStackConfigError),
       );
+      // The memory string is schema-validated, so `ramInBytes` cannot throw here.
+      const withContainerLimits = (creation: ServiceCreationType): ServiceCreationType => {
+        const container = validatedConfig.local?.services?.[creation.service]?.container;
+        return container?.memory === undefined && container?.cpus === undefined
+          ? creation
+          : {
+              ...creation,
+              container: {
+                ...(container.memory === undefined
+                  ? {}
+                  : { memoryBytes: ramInBytes(container.memory) }),
+                ...(container.cpus === undefined ? {} : { cpus: container.cpus }),
+              },
+            };
+      };
       const createCreations = (
         stackId: string,
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
         Effect.map(emailTemplates, (templates) => {
-          return [
+          const creations: ReadonlyArray<ServiceCreationType> = [
             {
               service: "database",
               pin: selection.database,
@@ -633,6 +719,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       schemas: validatedConfig.api.schemas.join(","),
                       extraSearchPath: validatedConfig.api.extra_search_path.join(","),
                       maxRows: validatedConfig.api.max_rows,
+                      ...(validatedConfig.api.db_pool === undefined
+                        ? {}
+                        : { dbPool: validatedConfig.api.db_pool }),
                       ...(validatedConfig.api.external_url === undefined
                         ? {}
                         : { externalApiUrl: validatedConfig.api.external_url }),
@@ -771,11 +860,13 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                 ]
               : []),
           ];
+          return creations.map(withContainerLimits);
         });
       return {
         selection,
         creations: createCreations,
         source: validatedConfig,
+        apiTls,
         projectEnvValues,
         originAt,
         remoteJwks,

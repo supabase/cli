@@ -36,6 +36,7 @@ import {
   remoteNameForProjectRef,
   remoteProjectIdEntries,
   saveCliConfig,
+  createCliConfigDocumentText,
   writeCliConfigDocumentText,
 } from "./io.ts";
 import { loadCliConfig as loadCliConfigFromNode } from "./node.ts";
@@ -283,6 +284,15 @@ describe("config io", () => {
   test("rejects a non-finite number during decode", () => {
     expect(() => decodeCliConfig({ db: { port: Infinity } })).toThrow("Expected a finite number");
     expect(() => decodeCliConfig({ api: { max_rows: NaN } })).toThrow("Expected a finite number");
+  });
+
+  test("decodes an optional api.db_pool of one or more whole connections", () => {
+    expect(decodeCliConfig({}).api.db_pool).toBeUndefined();
+    expect(decodeCliConfig({ api: { db_pool: 1 } }).api.db_pool).toBe(1);
+    expect(() => decodeCliConfig({ api: { db_pool: 0 } })).toThrow("one or more connections");
+    expect(() => decodeCliConfig({ api: { db_pool: 1.5 } })).toThrow(
+      "a whole number of connections",
+    );
   });
 
   test("only validates the highest-priority enabled sms provider during decode", () => {
@@ -1210,6 +1220,24 @@ major_version = 16
         const written = yield* fs.readFileString(tomlPath);
         expect(written.split("\n")[0]).toBe(directive);
         expect(written).toContain('project_id = "ref_123"');
+      }),
+    ));
+
+  test("saving TOML keeps a #:schema directive that has trailing whitespace", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
+        const directive = "#:schema https://example.com/config.schema.json";
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(tomlPath, `${directive}  \nproject_id = "old_ref"\n`);
+
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        const written = yield* fs.readFileString(tomlPath);
+        expect(written.split("\n")[0]?.trimEnd()).toBe(directive);
       }),
     ));
 
@@ -2574,14 +2602,14 @@ project_id = "stagingrefaaaaaaaaaa"
     {
       name: "[inbucket] whatever its contents",
       toml: "[inbucket]\nenabled = false\n",
-      key: "[inbucket]",
-      replacement: "[local_smtp]",
+      key: "inbucket",
+      replacement: "local_smtp",
     },
     {
       name: "[remotes.*.inbucket]",
       toml: `${stagingRemote}\n[remotes.staging.inbucket]\nport = 33333\n`,
-      key: "[remotes.staging.inbucket]",
-      replacement: "[remotes.staging.local_smtp]",
+      key: "remotes.staging.inbucket",
+      replacement: "remotes.staging.local_smtp",
     },
     {
       name: "a non-empty experimental.orioledb_version",
@@ -2604,20 +2632,20 @@ project_id = "stagingrefaaaaaaaaaa"
     {
       name: "an enabled [auth.external.slack]",
       toml: "[auth.external.slack]\nenabled = true\n",
-      key: "[auth.external.slack]",
-      replacement: "[auth.external.slack_oidc]",
+      key: "auth.external.slack",
+      replacement: "auth.external.slack_oidc",
     },
     {
       name: "a disabled [auth.external.linkedin]",
       toml: "[auth.external.linkedin]\nenabled = false\n",
-      key: "[auth.external.linkedin]",
-      replacement: "[auth.external.linkedin_oidc]",
+      key: "auth.external.linkedin",
+      replacement: "auth.external.linkedin_oidc",
     },
     {
       name: "a remote's [auth.external.linkedin]",
       toml: `${stagingRemote}\n[remotes.staging.auth.external.linkedin]\nenabled = true\n`,
-      key: "[remotes.staging.auth.external.linkedin]",
-      replacement: "[remotes.staging.auth.external.linkedin_oidc]",
+      key: "remotes.staging.auth.external.linkedin",
+      replacement: "remotes.staging.auth.external.linkedin_oidc",
     },
   ])("rejects $name", ({ toml, key, replacement }) =>
     runConfigEffect(
@@ -2637,8 +2665,11 @@ project_id = "stagingrefaaaaaaaaaa"
         );
 
         expect(error.message).toBe(
-          "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+          "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
         );
+        expect(error).toMatchObject({
+          suggestion: "Update supabase/config.toml, then rerun the command.",
+        });
       }),
     ));
 
@@ -2669,13 +2700,16 @@ enabled = false
         expect(error.message).toBe(
           [
             "supabase/config.toml uses config keys that are no longer supported:",
-            "  [inbucket]: use [local_smtp] instead.",
+            "  inbucket: use local_smtp instead.",
             "  experimental.orioledb_version: use db.orioledb_version instead.",
-            "  [auth.external.slack]: use [auth.external.slack_oidc] instead.",
-            "  [remotes.staging.inbucket]: use [remotes.staging.local_smtp] instead.",
-            "  [remotes.staging.auth.external.linkedin]: use [remotes.staging.auth.external.linkedin_oidc] instead.",
+            "  auth.external.slack: use auth.external.slack_oidc instead.",
+            "  remotes.staging.inbucket: use remotes.staging.local_smtp instead.",
+            "  remotes.staging.auth.external.linkedin: use remotes.staging.auth.external.linkedin_oidc instead.",
           ].join("\n"),
         );
+        expect(error).toMatchObject({
+          suggestion: "Update supabase/config.toml, then rerun the command.",
+        });
       }),
     ));
 
@@ -3126,6 +3160,91 @@ describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
   });
 });
 
+describe("createCliConfigDocumentText", () => {
+  function targetIn() {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const dir = join(yield* makeTempProject(), "supabase");
+      yield* fs.makeDirectory(dir, { recursive: true });
+      return { dir, filePath: join(dir, "config.jsonc") };
+    });
+  }
+
+  test("creates the file with the requested mode and no temp file left behind", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+
+        const created = yield* createCliConfigDocumentText(filePath, "{}\n", 0o600);
+
+        expect(created).toBe(true);
+        expect(yield* fs.readFileString(filePath)).toBe("{}\n");
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+
+  test("applies the requested mode exactly, whatever the umask", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { filePath } = yield* targetIn();
+
+        yield* createCliConfigDocumentText(filePath, "{}\n", 0o666);
+
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o666);
+      }),
+    ));
+
+  test("creates the file exclusively when the filesystem has no hard links", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+        const noLinks: FileSystem.FileSystem = {
+          ...fs,
+          link: (from) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "link",
+                pathOrDescriptor: from,
+                description: "operation not supported",
+              }),
+            ),
+        };
+        const create = (content: string) =>
+          createCliConfigDocumentText(filePath, content, 0o600).pipe(
+            Effect.provideService(FileSystem.FileSystem, noLinks),
+          );
+
+        expect(yield* create("{}\n")).toBe(true);
+        expect(yield* create('{ "second": true }\n')).toBe(false);
+        expect(yield* fs.readFileString(filePath)).toBe("{}\n");
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+
+  test("returns false and leaves an existing file untouched", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+        yield* fs.writeFileString(filePath, '{ "kept": true }\n');
+
+        const created = yield* createCliConfigDocumentText(filePath, "{}\n", 0o600);
+
+        expect(created).toBe(false);
+        expect(yield* fs.readFileString(filePath)).toBe('{ "kept": true }\n');
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+});
+
 describe("writeCliConfigDocumentText", () => {
   function tempFileTargets() {
     return Effect.gen(function* () {
@@ -3287,7 +3406,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
         expect(error).toMatchObject({
           _tag: "CliConfigRemovedKeyError",
           removedKeys: [
-            { key: "[inbucket]", replacement: "[local_smtp]" },
+            { key: "inbucket", replacement: "local_smtp" },
             {
               key: "remotes.staging.experimental.orioledb_version",
               replacement: "remotes.staging.db.orioledb_version",

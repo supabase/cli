@@ -8,7 +8,10 @@ It creates or resumes the stack for the project and optional `--stack` name, or 
 
 For a new stack or a stopped existing stack, the CLI loads the target project's
 `supabase/config.toml`, supported environment overrides, and project dotenv files. It validates the
-supported configuration before creating service definitions. When every member of the existing
+supported configuration before creating service definitions. A config that uses a removed key
+(for example `inbucket`) fails with exit 1 before any stack is created; the error names the key and
+its replacement and carries the suggestion `Update supabase/config.toml, then rerun the command.`,
+in text and JSON output. When every member of the existing
 composition is running and healthy, or armed to wake and not already starting, start reports its
 current endpoints and returns without reading or applying project configuration. When the database
 is running and every other member is running with any health, starting, or armed to wake, start
@@ -24,6 +27,12 @@ S3 protocol/vector controls are forwarded to their services. Storage receives th
 keys and region, and uses the gateway's `/storage/v1` prefix to verify S3 signatures and to build
 resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PORT` are accepted
 and ignored: the stack runs no Vector service.
+`[storage.analytics]` is accepted, but analytics buckets are hosted-only: the stack configures no
+Iceberg catalog on Storage and a local start seeds none.
+An `edge_runtime.deno_version` other than 2 while Edge Runtime is enabled, or a non-empty
+`analytics.gcp_*` value while Analytics is enabled, fails loading with `<setting> is unsupported by
+the experimental stack`. `analytics.backend = "bigquery"` with Analytics enabled and no `gcp_*`
+value fails with `analytics.backend must be postgres for the experimental stack`.
 Encrypted JWT secrets are decrypted before shared credentials are derived. `[edge_runtime.secrets]`
 names are uppercased, empty or unresolved `env()` values and `SUPABASE_`-prefixed names are dropped,
 and encrypted values are decrypted before they reach the Functions service. `db.health_timeout`
@@ -51,6 +60,52 @@ template mailed and read it there. A changed `content_path` applies after stop a
 sleeps after 60 s idle unless the stack started with `--eager`, and each wake refetches. A replaced
 file reaches mail at the next wake, or once Auth's template cache expires. A deleted file mails
 Auth's cached copy until the next wake, then the built-in template.
+
+With `[api.tls] enabled`, the API port serves HTTPS with legacy's embedded local pair, or the
+`cert_path`/`key_path` pair joined to `supabase/` (ignored, like legacy, with
+`[api] enabled = false`), saved in the stack's state at start; no listener or port is added. The
+embedded pair's key ships in the CLI, so never add its certificate to a trust store. Only
+`stack start` reads those files, and fails before it creates or starts anything on an unreadable one
+with `failed to read TLS cert: <reason>` (or `key`), or on a pair that does not parse as a matching
+PEM pair, or whose certificate has no IP subject alternative name for `127.0.0.1`, with `Invalid
+config for api.tls: failed to load TLS key pair from <cert> and <key>: <reason>`. Only `stack start`
+sets TLS; it, or a command that composes a database-only stack such as `db start`, clears it, and a
+recompose that retains members keeps it. Host URLs (`API_URL`, Auth links, Studio's public URL, and
+Functions' `SUPABASE_INTERNAL_HOST_URL`, which the Functions banner prefers) use
+`https://127.0.0.1:<api>`, and user URL overrides stay as given. Runtime URLs stay
+`http://host.supabase.internal:<api>` for containers and `http://127.0.0.1:<api>` on native, so
+`SUPABASE_URL`, `SUPABASE_INTERNAL_HOST_PORT` and `pg_net` SQL are unchanged.
+
+A TLS hello gets HTTPS from any peer. Plain HTTP answers only loopback (`127.0.0.0/8` or `::1`):
+processes on this host, any user's, and containers on runtimes that forward their traffic from
+loopback. Any other peer, such as a LAN device, a routed VPN or a container arriving from a bridge
+address, is closed before any HTTP byte and must use `https://`. A plain request needs a stack host
+alias, `localhost` or an IP address with the API port in `Host` (the port may be left out on port
+80), or gets 421, WebSocket upgrades included, and `/email` templates answer only plain requests.
+Each request forwards its own connection's proto. While the API port serves TLS on Docker or Podman,
+every stack start or restart, and every instance start or restart while the database runs, ends with
+the database container sending `GET /__api_tls_check` once in plain; it passes only on a 200 read to
+its end whose body is `supabase-stack <stack-id> <nonce>`, a fresh nonce that is never saved and
+admits nothing. On macOS, Docker Desktop, colima and Podman machine forward containers from
+loopback; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta deliver them from a
+bridge or host address, so a TLS start there fails with ``api.tls: unsupported networking on
+<runtime>: containers must reach the api from loopback (the database container's plain request was
+closed without a reply); its services stopped: turn off `[api.tls]`, or use a runtime whose
+containers reach this host from loopback (on macOS: Docker Desktop, colima or Podman machine), then
+start the stack again``. Other runtimes are unmeasured; the check decides. A connection that is
+refused or never opens, or a probe the engine can't run, fails with ``api.tls: containers can't
+reach the api port <port> on <runtime> (<what the probe saw>); its services stopped: let <runtime>
+containers reach the api port, or turn off `[api.tls]`, then start the stack again``, and any other
+reply, or none within 5 s, with `api.tls: the api port <port> on <runtime> isn't answering this
+stack's start check (<what the probe saw>); its services stopped: check what else listens on port
+<port>, then start the stack again`; if they don't stop, the error says to run `supabase stack stop`
+instead.
+
+Bucket seeding and stack `storage` commands use the saved certificate, never `config.toml`, so
+editing `api.tls` applies at the next start. A saved certificate with a self-signed root is the only
+trusted CA; a CA-issued one is verified against Bun's default trust store and `NODE_EXTRA_CA_CERTS`.
+Without TLS every listener, URL and output is unchanged.
+
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) is a `local.services.database.version`
 request for that OrioleDB build instead of the stock major, resolved like any other version (see
 "Service versions and the lock"); the two keys must agree when both are set, and `db.major_version`
@@ -142,6 +197,9 @@ When Functions is selected, the CLI reads and validates `supabase/functions/.env
 `start`, skipping reserved `SUPABASE_*` entries with a warning. That file overrides
 `edge_runtime.secrets`, per-function `.env` files are not read, and `functions.<name>.env`
 provides per-function values from project environment references. Multiline values are supported.
+Functions receive `SUPABASE_DB_URL` for the `postgres` role, like legacy `start`. A stack saved
+with the earlier `supabase_admin` URL keeps it through `stack restart` and gets the `postgres` one
+after stop and start.
 `--debug` runs the Functions runtime verbose; `status` does not report it as drift. Per-function
 enabled/JWT policies, entrypoints, import maps and static files are forwarded to the worker
 bootstrap. Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
@@ -345,8 +403,9 @@ reset of database data removes the record. A service on an external database has
 
 The first configured startup prepares the database catalog, temporarily runs configured schema-owning
 services, creates the `supabase_functions` schema, which migrations must not recreate, applies the
-database overlay, and runs project migrations and seeds. Membership changes
-apply needed catalog and webhook setup without replaying project migrations or seeds. An unchanged
+database overlay (`roles.sql`, vault, API grants) as `postgres`, like legacy `start`, and runs project
+migrations and seeds. Membership changes apply needed catalog and webhook setup without replaying
+the overlay, project migrations or seeds. An unchanged
 composition reapplies the webhook setting before activation, first creating the
 `supabase_functions` schema when the database lacks it.
 

@@ -24,6 +24,7 @@ import type { BranchesUpdateFlags } from "./update.command.ts";
 import { branchesUpdate } from "./update.handler.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 
 type UpdatedBranch = typeof V1UpdateABranchConfigOutput.Type;
 
@@ -44,35 +45,6 @@ const UPDATED: UpdatedBranch = {
   updated_at: "2026-05-27T01:02:04Z",
   with_data: false,
 };
-
-const ORG_SLUG = "test-org";
-
-function projectResponse(ref: string = BRANCH_REF) {
-  return {
-    id: ref,
-    ref,
-    organization_id: "org",
-    organization_slug: ORG_SLUG,
-    name: "Test",
-    region: "us-east-1",
-    created_at: "2026-01-01T00:00:00Z",
-    status: "ACTIVE_HEALTHY" as const,
-    database: { host: "h", version: "15", postgres_engine: "15", release_channel: "ga" },
-  };
-}
-
-function entitlementResponse(opts: { readonly featureKey: string; readonly hasAccess: boolean }) {
-  return {
-    entitlements: [
-      {
-        feature: { key: opts.featureKey, type: "boolean" as const },
-        hasAccess: opts.hasAccess,
-        type: "boolean" as const,
-        config: { enabled: !opts.hasAccess },
-      },
-    ],
-  };
-}
 
 // Resolver's UUID-path response; its `ref` feeds the PATCH's branch_id_or_ref, so it must
 // stay UUID-shaped to satisfy the oneOf union.
@@ -316,86 +288,87 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Exercises the production-shape branchRef end-to-end; the upgrade-suggest helper must
-  // receive the resolved branch's project ref, not the parent ref.
   it.effect(
-    "fires cli_upgrade_suggested with the branch ref + branching_persistent on 4xx gated",
+    "fails a persistent-branch 402 envelope with its entitlement and no extra API calls",
     () => {
       const out = mockOutput({ format: "text" });
       const analytics = mockAnalytics();
-      const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-
-      // The gate's follow-up project and entitlements GETs share the PATCH's
-      // mockCommandPlatformApi handler.
-      const apiMock = mockCommandPlatformApi({
+      const upgradeUrl = "https://supabase.com/dashboard/org/env-org/billing";
+      const api = mockCommandPlatformApi({
         handler: (request) =>
-          Effect.sync(() => {
-            if (request.method === "PATCH" && request.url.includes("/v1/branches/")) {
-              return jsonResponse(request, 402, { message: "upgrade required" });
-            }
-            if (request.method === "GET" && request.url.endsWith(`/v1/projects/${BRANCH_REF}`)) {
-              return jsonResponse(request, 200, projectResponse(BRANCH_REF));
-            }
-            if (
-              request.method === "GET" &&
-              request.url.endsWith(`/v1/organizations/${ORG_SLUG}/entitlements`)
-            ) {
-              return jsonResponse(
-                request,
-                200,
-                entitlementResponse({
-                  featureKey: "branching_persistent",
-                  hasAccess: false,
-                }),
-              );
-            }
-            return jsonResponse(request, 200, null);
-          }),
+          Effect.sync(() =>
+            jsonResponse(request, 402, {
+              message: "Persistent branches are not available on your plan.",
+              error: {
+                code: "entitlement_required",
+                feature: "branching_persistent",
+                upgrade_url: upgradeUrl,
+              },
+            }),
+          ),
       });
-
       const layer = buildRuntime({
         out,
-        api: apiMock,
-        cliSettings,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         analytics,
       });
 
       return Effect.gen(function* () {
-        yield* Effect.exit(
+        const error = yield* Effect.flip(
           branchesUpdate({
             ...baseFlags,
             branchId: Option.some(BRANCH_REF),
             persistent: Option.some(true),
           }),
         );
-        const projectCall = apiMock.requests.find(
-          (r) => r.method === "GET" && r.url.endsWith(`/v1/projects/${BRANCH_REF}`),
-        );
-        expect(projectCall).toBeDefined();
-        const entitlementsCall = apiMock.requests.find((r) =>
-          r.url.endsWith(`/v1/organizations/${ORG_SLUG}/entitlements`),
-        );
-        expect(entitlementsCall).toBeDefined();
-        expect(sequence(apiMock.requests)).toEqual([
-          `PATCH ${API}/v1/branches/${BRANCH_REF}`,
-          `GET ${API}/v1/projects/${BRANCH_REF}`,
-          `GET ${API}/v1/organizations/${ORG_SLUG}/entitlements`,
-        ]);
+        expect(error).toMatchObject({
+          entitlement: { feature: "branching_persistent", upgrade_url: upgradeUrl },
+        });
+        expect(sequence(api.requests)).toEqual([`PATCH ${API}/v1/branches/${BRANCH_REF}`]);
         assertPermissionDrift({
           command: "branches update",
           activeFlags: { persistent: true },
-          requests: apiMock.requests,
+          requests: api.requests,
+          exact: true,
         });
-        expect(analytics.captured).toEqual([
-          {
-            event: "cli_upgrade_suggested",
-            properties: { feature_key: "branching_persistent", org_slug: ORG_SLUG },
-          },
-        ]);
-        expect(out.stderrText).toContain("Upgrade your plan:");
+        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(analytics.captured).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("makes one request and suggests no upgrade on a 4xx without the envelope", () => {
+    const out = mockOutput({ format: "text" });
+    const analytics = mockAnalytics();
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() => jsonResponse(request, 400, { message: "Invalid branch name" })),
+    });
+    const layer = buildRuntime({
+      out,
+      api,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      analytics,
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        branchesUpdate({
+          ...baseFlags,
+          branchId: Option.some(BRANCH_REF),
+          persistent: Option.some(true),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(classifyCliCauseActionability(exit.cause).error_category).not.toBe("plan_limit");
+      }
+      expect(sequence(api.requests)).toEqual([`PATCH ${API}/v1/branches/${BRANCH_REF}`]);
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(analytics.captured).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
     "updates the branch chosen from the pickers and fills the real linked-project cache",

@@ -42,6 +42,7 @@ import {
   writeLock,
 } from "@supabase/stack/effect";
 import { planSupabaseComposition } from "@supabase/stack/internal/composition";
+import { normalizeCliError } from "../../../../shared/output/normalize-error.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -94,6 +95,10 @@ import {
   StackTargetResolver,
 } from "../../../../command-internal/stack-target.ts";
 import { stackStart } from "./start.handler.ts";
+import {
+  KONG_LOCAL_TLS_CERT,
+  KONG_LOCAL_TLS_KEY,
+} from "../../../start/templates/kong-local-tls.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
@@ -338,6 +343,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let hostDestroyed = 0;
   let composed = 0;
   let catalogApplied = 0;
+  const catalogOverlays: Array<boolean> = [];
   let compositionStarts = 0;
   let lifecycle: "stopped" | "running" = "stopped";
   let activations = new Map<string, "eager" | "lazy">();
@@ -347,6 +353,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   /** The endpoint changes a simulated owner startup re-planned, until the next `applyStartupReplan`. */
   let pendingStartupChanges: ReadonlyArray<EndpointPortChange> = [];
   let savedCredentials = credentialsFor(undefined, undefined);
+  let composedApiTls: { readonly cert: string; readonly key: string } | undefined;
   const memberView = (id: string): MemberView => {
     const status = memberStatuses.get(id);
     const memberLifecycle = status?.lifecycle ?? lifecycle;
@@ -376,6 +383,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
         return Effect.succeed(members);
       },
     },
+    apiTls: { get: Effect.undefined },
     credentials: {
       get: Effect.sync(() => savedCredentials),
     },
@@ -387,6 +395,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
         Effect.sync(() => {
           composed += 1;
+          composedApiTls = options?.apiTls;
           savedCredentials = credentialsFor(
             creations.find((creation) => creation.service === "database"),
             options,
@@ -417,6 +426,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
           Effect.map((instances) =>
             planSupabaseComposition(
               {
+                runtime: "native",
                 instances,
                 composition: {
                   members: members.map(({ id }) => ({
@@ -477,6 +487,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     get composed() {
       return composed;
     },
+    /** The API TLS the last compose was given. */
+    get composedApiTls() {
+      return composedApiTls;
+    },
     /** Whether a detached owner is still up, the way a live stack's would be between calls. */
     get hostRunning() {
       return lifecycle === "running";
@@ -487,8 +501,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     get compositionStarts() {
       return compositionStarts;
     },
-    applyCatalog() {
+    get catalogOverlays() {
+      return catalogOverlays;
+    },
+    applyCatalog(overlay: boolean) {
       catalogApplied += 1;
+      catalogOverlays.push(overlay);
     },
     get savedCredentials() {
       return savedCredentials;
@@ -536,6 +554,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       const liveCreations = new Map(instances.map(({ id, creation }) => [id, creation]));
       const planned = planSupabaseComposition(
         {
+          runtime: "native",
           instances,
           composition: {
             members: members.map(({ id }) => ({ id, activation: activations.get(id) ?? "eager" })),
@@ -624,7 +643,7 @@ const layers = (
     ciUnsetLayer,
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(StackCatalogSetup, {
-      apply: () => Effect.sync(() => fixture.applyCatalog()),
+      apply: (input) => Effect.sync(() => fixture.applyCatalog(input.overlay !== undefined)),
     }),
     Layer.succeed(DbConnection, { connect: () => Effect.scoped(Effect.succeed(session)) }),
     Layer.succeed(YesFlag, false),
@@ -772,6 +791,29 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("fails a removed config key with its replacement as the suggestion", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-removed-key-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "removed-key"\n\n[inbucket]\nenabled = true\n',
+      );
+      const fixture = fakeStack();
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(normalizeCliError(error)).toMatchObject({
+        code: "ExperimentalStackStartError",
+        message: "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
+        suggestion: "Update supabase/config.toml, then rerun the command.",
+      });
+      expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect("refuses an unreadable Auth email template before creating a stack", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -791,6 +833,79 @@ describe("experimental stack start", () => {
         message: expect.stringContaining("auth.email.template.invite.content_path"),
       });
       expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "rejects an api.tls pair that does not load, or has no IP SAN for 127.0.0.1, before creating a stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const certs = `${import.meta.dirname}/../../../../../../../packages/stack/tests/certs`;
+        const pairs = [
+          { cert: "not a pem", key: "not a pem", reason: "" },
+          {
+            cert: yield* fs.readFileString(`${certs}/dns-only.crt`),
+            key: yield* fs.readFileString(`${certs}/localhost.key`),
+            reason: "the certificate has no IP subject alternative name for 127.0.0.1",
+          },
+        ];
+        for (const { cert, key, reason } of pairs) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-pair-" });
+          yield* fs.makeDirectory(`${root}/supabase/certs`, { recursive: true });
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            '[api.tls]\nenabled = true\ncert_path = "certs/api.crt"\nkey_path = "certs/api.key"\n',
+          );
+          yield* fs.writeFileString(`${root}/supabase/certs/api.crt`, cert);
+          yield* fs.writeFileString(`${root}/supabase/certs/api.key`, key);
+          let created = false;
+          const fixture = fakeStack();
+          const base = layers(root, fixture, mockOutput(), false);
+          const api = Layer.succeed(StackApi, {
+            create: () =>
+              Effect.sync(() => {
+                created = true;
+                return fixture.stack;
+              }),
+            open: () => Effect.succeed(fixture.stack),
+            discover: () => Effect.succeed([]),
+            find: () => Effect.die("identity not used"),
+            findDeleted: () => Effect.die("identity not used"),
+          });
+          const result = yield* stackStart(flags()).pipe(
+            Effect.flip,
+            Effect.provide(Layer.merge(base, api)),
+          );
+          expect(result).toMatchObject({
+            reason: "invalid-config",
+            message: expect.stringContaining(
+              "Invalid config for api.tls: failed to load TLS key pair",
+            ),
+          });
+          expect(result.message).toContain(reason);
+          expect(created).toBe(false);
+        }
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("composes the stack with the api.tls pair only while api.tls is enabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-on-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      const start = (config: string) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(`${root}/supabase/config.toml`, config);
+          const fixture = fakeStack();
+          yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+          return fixture.composedApiTls;
+        });
+      expect(yield* start('project_id = "start-tls"\n[api.tls]\nenabled = true\n')).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+      expect(yield* start('project_id = "start-tls"\n')).toBeUndefined();
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
@@ -1318,6 +1433,23 @@ describe("experimental stack start", () => {
         expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
         expect(fixture.catalogApplied).toBe(1);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("applies the project overlay once when a later start adds a service", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-overlay-once-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "overlay-once"\n');
+      const fixture = fakeStack();
+
+      yield* stackStart(flags(["storage"])).pipe(Effect.provide(layers(root, fixture)));
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      expect(fixture.members.some(({ service }) => service === "storage")).toBe(true);
+      expect(fixture.catalogOverlays).toEqual([true, false]);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("creates the supabase_functions schema once when restarting a stack without it", () =>

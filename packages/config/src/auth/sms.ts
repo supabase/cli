@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
+import { type CliConfigTableRuleIssue, tableRuleFilter } from "../lib/table-rule.ts";
 
 const tags = ["auth"];
 
@@ -34,107 +35,52 @@ const defaultTextlocalEnabled = false;
 const defaultVonage = {};
 const defaultVonageEnabled = false;
 
-interface SmsProviderSwitchInput {
-  readonly twilio: {
-    readonly enabled: boolean;
-    readonly account_sid: string;
-    readonly message_service_sid: string;
-    readonly auth_token?: string;
-  };
-  readonly twilio_verify: {
-    readonly enabled: boolean;
-    readonly account_sid?: string;
-    readonly message_service_sid?: string;
-    readonly auth_token?: string;
-  };
-  readonly messagebird: {
-    readonly enabled: boolean;
-    readonly originator?: string;
-    readonly access_key?: string;
-  };
-  readonly textlocal: {
-    readonly enabled: boolean;
-    readonly sender?: string;
-    readonly api_key?: string;
-  };
-  readonly vonage: {
-    readonly enabled: boolean;
-    readonly from?: string;
-    readonly api_key?: string;
-    readonly api_secret?: string;
-  };
+/** Sms providers in the priority order the provider rule checks, with the fields each requires. */
+export const SMS_PROVIDER_REQUIRED_FIELDS = [
+  ["twilio", ["account_sid", "message_service_sid", "auth_token"]],
+  ["twilio_verify", ["account_sid", "message_service_sid", "auth_token"]],
+  ["messagebird", ["originator", "access_key"]],
+  ["textlocal", ["sender", "api_key"]],
+  ["vonage", ["from", "api_key", "api_secret"]],
+] as const;
+
+type SmsProviderName = (typeof SMS_PROVIDER_REQUIRED_FIELDS)[number][0];
+
+interface SmsProviderSwitchEntry {
+  readonly enabled: boolean;
+  readonly [field: string]: string | boolean | undefined;
 }
 
-function missing(provider: string, field: string) {
-  return {
-    path: [provider, field],
-    issue: `Missing required field in config: auth.sms.${provider}.${field}`,
-  };
-}
+export type SmsProviderSwitchInput = Readonly<
+  Partial<Record<SmsProviderName, SmsProviderSwitchEntry>>
+>;
 
 /**
- * Validates providers in a fixed priority order — twilio, twilio_verify,
- * messagebird, textlocal, vonage — checking only the first one whose `enabled`
+ * Validates providers in a fixed priority order, checking only the first one whose `enabled`
  * is true; a later enabled-but-incomplete provider is never inspected, so a
  * stale secondary `[auth.sms.*]` block doesn't cause a rejection.
  */
 function validateSmsProviderSwitch(value: SmsProviderSwitchInput) {
-  if (value.twilio.enabled) {
-    if (value.twilio.account_sid === "") return missing("twilio", "account_sid");
-    if (value.twilio.message_service_sid === "") {
-      return missing("twilio", "message_service_sid");
-    }
-    if (value.twilio.auth_token === undefined || value.twilio.auth_token === "") {
-      return missing("twilio", "auth_token");
-    }
-    return undefined;
-  }
-  if (value.twilio_verify.enabled) {
-    if (value.twilio_verify.account_sid === undefined || value.twilio_verify.account_sid === "") {
-      return missing("twilio_verify", "account_sid");
-    }
-    if (
-      value.twilio_verify.message_service_sid === undefined ||
-      value.twilio_verify.message_service_sid === ""
-    ) {
-      return missing("twilio_verify", "message_service_sid");
-    }
-    if (value.twilio_verify.auth_token === undefined || value.twilio_verify.auth_token === "") {
-      return missing("twilio_verify", "auth_token");
-    }
-    return undefined;
-  }
-  if (value.messagebird.enabled) {
-    if (value.messagebird.originator === undefined || value.messagebird.originator === "") {
-      return missing("messagebird", "originator");
-    }
-    if (value.messagebird.access_key === undefined || value.messagebird.access_key === "") {
-      return missing("messagebird", "access_key");
-    }
-    return undefined;
-  }
-  if (value.textlocal.enabled) {
-    if (value.textlocal.sender === undefined || value.textlocal.sender === "") {
-      return missing("textlocal", "sender");
-    }
-    if (value.textlocal.api_key === undefined || value.textlocal.api_key === "") {
-      return missing("textlocal", "api_key");
-    }
-    return undefined;
-  }
-  if (value.vonage.enabled) {
-    if (value.vonage.from === undefined || value.vonage.from === "") {
-      return missing("vonage", "from");
-    }
-    if (value.vonage.api_key === undefined || value.vonage.api_key === "") {
-      return missing("vonage", "api_key");
-    }
-    if (value.vonage.api_secret === undefined || value.vonage.api_secret === "") {
-      return missing("vonage", "api_secret");
-    }
-    return undefined;
+  for (const [provider, fields] of SMS_PROVIDER_REQUIRED_FIELDS) {
+    const entry = value[provider];
+    if (entry?.enabled !== true) continue;
+    const field = fields.find((name) => (entry[name] ?? "") === "");
+    return field === undefined
+      ? undefined
+      : {
+          path: [provider, field],
+          issue: `Missing required field in config: auth.sms.${provider}.${field}`,
+        };
   }
   return undefined;
+}
+
+/** The sms provider-switch rule's issues; paths are relative to `[auth.sms]`. */
+export function cliConfigSmsProviderIssues(
+  value: SmsProviderSwitchInput,
+): ReadonlyArray<CliConfigTableRuleIssue> {
+  const found = validateSmsProviderSwitch(value);
+  return found === undefined ? [] : [{ path: found.path, message: found.issue }];
 }
 
 export const sms = Schema.Struct({
@@ -330,5 +276,5 @@ export const sms = Schema.Struct({
     }),
   ),
 })
-  .check(Schema.makeFilter(validateSmsProviderSwitch))
+  .check(tableRuleFilter(cliConfigSmsProviderIssues))
   .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultSms })));

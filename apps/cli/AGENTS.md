@@ -37,9 +37,15 @@ When two commands need the same responsibility, share it at the narrowest common
 only when a second concrete consumer exists, and move existing call sites together when the
 responsibility should evolve as one. Do not automatically extract every helper used twice.
 
-Config validation has one home: `src/command-internal/config-validate.ts` and
-`validateResolvedConfig`. Both config pipelines use it; extend the parity test when shared
-validation changes. `resolveEmailTemplateContentPath` rejects absolute paths, traversal, and
+Config validation has one home: the check units in `src/command-internal/config-check-*-units.ts`
+(auth and platform families, over `config-check-core.ts` and the primitives in `config-validate.ts`),
+ordered by `LOCAL_CHECK_ORDER` and `DB_CHECK_ORDER` in `config-check-units.ts` and run by
+`runConfigUnitsFirst`. `commands/config/validate/validate.units.ts` holds the units only `config validate` runs, and `validate.engine.ts` beside it runs them.
+`authDurationUnits` sit outside `LOCAL_CHECK_ORDER`: `start` runs them through
+`resolveStartAuthDurations`, `config validate` adds them after the local units, and other commands
+accept a malformed duration. Both config pipelines run the shared units; extend the parity test when shared validation changes.
+Runtime resolvers read shared helpers from `local-config-helpers.ts`, never build a validation view.
+`resolveEmailTemplateContentPath` rejects absolute paths, traversal, and
 symlinks escaping the project root; every `content_path` consumer gets this containment.
 
 ## CLI compatibility
@@ -229,9 +235,12 @@ text layer. Therefore stdout is payload-only for either machine flag. Do not cha
 layer to move spinners; that would change text output globally. Handlers check `--output` first and
 use established encoders before the `output.format` branch.
 
-Plan-gated denials carry an optional `entitlement: { feature, upgrade_url }` on the json and
-stream-json error object. `mapHttpError` attaches it from the Management API's
-`entitlement_required` body, so a handler that rebuilds a mapped status error must forward it.
+Plan-gated denials carry an optional `entitlement: { feature, upgrade_url }` on the error.
+`mapHttpError` attaches it from the Management API's `entitlement_required` body. The json and
+stream-json error object carries it, the text layer's `fail` prints the upgrade hint from it, and
+`withCommandTelemetry` fires `cli_upgrade_suggested` from it, so a handler that rebuilds a mapped
+status error must forward it. `suggestUpgrade` prints and fires only on its entitlements-lookup
+fallback.
 
 ## Targets and hosted consent
 
