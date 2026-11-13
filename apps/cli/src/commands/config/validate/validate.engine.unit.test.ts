@@ -965,18 +965,18 @@ subject = "y"
       Effect.gen(function* () {
         const result = yield* run(`project_id = "demo"
 
-[local.services.auth]
+[local.services.default]
 image = "a"
 
 [remotes.staging]
 project_id = "abcdefghijklmnopqrst"
 
-[remotes.staging.local.services.auth]
+[remotes.staging.local.services.default]
 image = "b"
 `);
 
         expect(labels(result.problems)).toEqual([
-          "base:local.services.auth.version:missing_required",
+          "base:local.services.default.version:missing_required",
         ]);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
@@ -988,12 +988,12 @@ image = "b"
 [remotes.staging]
 project_id = "abcdefghijklmnopqrst"
 
-[remotes.staging.local.services.auth]
+[remotes.staging.local.services.default]
 image = "b"
 `);
 
         expect(labels(result.problems)).toEqual([
-          "staging:local.services.auth.version:missing_required",
+          "staging:local.services.default.version:missing_required",
         ]);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );

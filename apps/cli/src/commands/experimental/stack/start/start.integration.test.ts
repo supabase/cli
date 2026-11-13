@@ -426,6 +426,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
           Effect.map((instances) =>
             planSupabaseComposition(
               {
+                runtime: "native",
                 instances,
                 composition: {
                   members: members.map(({ id }) => ({
@@ -553,6 +554,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       const liveCreations = new Map(instances.map(({ id, creation }) => [id, creation]));
       const planned = planSupabaseComposition(
         {
+          runtime: "native",
           instances,
           composition: {
             members: members.map(({ id }) => ({ id, activation: activations.get(id) ?? "eager" })),

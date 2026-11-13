@@ -211,6 +211,7 @@
     "saml_enabled": false,
     "saml_external_url": null,
     "security_sb_forwarded_for_enabled": false,
+    "external_email_magic_link_disabled": false,
     "security_captcha_enabled": false,
     "security_captcha_provider": "hcaptcha",
     "security_captcha_secret": null,

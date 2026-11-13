@@ -867,6 +867,9 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           mounts: launchMounts,
           user: userForMounts(launchMounts, spec.callerPaths?.(context.config) ?? []),
           ports: [...containerDesired.values()].map((endpoint) => endpoint.port),
+          ...(context.config.container === undefined
+            ? {}
+            : { resources: context.config.container }),
         })
         .pipe(
           Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>

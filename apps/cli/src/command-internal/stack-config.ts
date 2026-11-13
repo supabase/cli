@@ -35,6 +35,7 @@ import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { smtpOn } from "./local-config-helpers.ts";
 import { parseDuration } from "./duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
+import { ramInBytes } from "./size-units.ts";
 import { stackArtifactSelection } from "./stack-artifact-selection.ts";
 import {
   type LockRequest,
@@ -647,11 +648,26 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         Effect.provideService(Path.Path, path),
         Effect.mapError(toStackConfigError),
       );
+      // The memory string is schema-validated, so `ramInBytes` cannot throw here.
+      const withContainerLimits = (creation: ServiceCreationType): ServiceCreationType => {
+        const container = validatedConfig.local?.services?.[creation.service]?.container;
+        return container?.memory === undefined && container?.cpus === undefined
+          ? creation
+          : {
+              ...creation,
+              container: {
+                ...(container.memory === undefined
+                  ? {}
+                  : { memoryBytes: ramInBytes(container.memory) }),
+                ...(container.cpus === undefined ? {} : { cpus: container.cpus }),
+              },
+            };
+      };
       const createCreations = (
         stackId: string,
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
         Effect.map(emailTemplates, (templates) => {
-          return [
+          const creations: ReadonlyArray<ServiceCreationType> = [
             {
               service: "database",
               pin: selection.database,
@@ -844,6 +860,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                 ]
               : []),
           ];
+          return creations.map(withContainerLimits);
         });
       return {
         selection,
