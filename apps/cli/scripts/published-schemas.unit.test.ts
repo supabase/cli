@@ -12,8 +12,7 @@ import { lockSchemaDocument, publishedSchemaPath } from "./published-schemas.ts"
 
 type Document = Readonly<Record<string, unknown>>;
 
-const REGENERATE =
-  "run `pnpm --filter @supabase/config build && bun apps/cli/scripts/generate-docs.ts`";
+const REGENERATE = "run `pnpm exec turbo run supabase#schemas:generate`";
 
 const POST_DRAFT_07_KEYWORDS = new Set([
   "$defs",
@@ -105,8 +104,8 @@ const readCommitted = (file: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const publicDir = path.resolve(import.meta.dirname, "../../docs/public");
-    return yield* decodeDocument(yield* fs.readFileString(path.join(publicDir, file)));
+    const cliRoot = path.resolve(import.meta.dirname, "..");
+    return yield* decodeDocument(yield* fs.readFileString(path.join(cliRoot, file)));
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("findPostDraft07Usage", () => {
@@ -163,10 +162,9 @@ describe.each(published)("published $name schema", (entry) => {
     Effect.gen(function* () {
       const document = yield* readCommitted(entry.file);
 
-      expect(
-        entry.comparable(document),
-        `apps/docs/public/${entry.file} is stale: ${REGENERATE}`,
-      ).toEqual(entry.comparable(entry.build()));
+      expect(entry.comparable(document), `apps/cli/${entry.file} is stale: ${REGENERATE}`).toEqual(
+        entry.comparable(entry.build()),
+      );
     }),
   );
 });
