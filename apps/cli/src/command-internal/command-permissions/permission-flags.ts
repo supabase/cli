@@ -30,22 +30,16 @@ export class CommandFlagsAnnotation extends Context.Service<
   () => ReadonlyArray<PermissionFlag>
 >()("supabase/CommandFlags") {}
 
-function isMapParam(param: Param.Any): param is Param.Map<Param.ParamKind, unknown, unknown> {
-  return param._tag === "Map" && "param" in param && "f" in param && typeof param.f === "function";
+function isTransformParam(
+  param: Param.Any,
+): param is Param.Transform<Param.ParamKind, unknown, unknown> {
+  return param._tag === "Transform";
 }
 
-/**
- * The value `Flag.withDefault` gives an absent flag, read from the `Map` over `Optional` it builds.
- * Any other shape, a throwing mapper or a non-string result yields no default.
- */
+/** The value `Flag.withDefault` records for an absent flag, when it is a plain string. */
 function defaultOf(param: Param.Any): string | undefined {
-  if (!isMapParam(param) || param.param._tag !== "Optional") return undefined;
-  try {
-    const value = param.f(Option.none());
-    return typeof value === "string" ? value : undefined;
-  } catch {
-    return undefined;
-  }
+  if (!isTransformParam(param) || param.fallback?._tag !== "Default") return undefined;
+  return typeof param.fallback.value === "string" ? param.fallback.value : undefined;
 }
 
 export function permissionFlagsOf(

@@ -1,5 +1,5 @@
 import { Context, Option } from "effect";
-import { Command, Flag, type Param } from "effect/cli";
+import { Command, Flag, Param } from "effect/cli";
 
 import { sameDocumentValue } from "./cli-config-document.ts";
 import type { CliConfigCodec, CliConfigKey } from "./cli-config-key.ts";
@@ -203,6 +203,7 @@ const collectBound = (
     found.push({ accessor, binding });
     return;
   }
+  if (Param.isParam(node)) return;
   if (Array.isArray(node)) {
     node.forEach((child, index) => collectBound(child, [...accessor, index], found));
     return;
