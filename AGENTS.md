@@ -13,7 +13,7 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
 reference. Published `apps/cli` and `packages/config` are not private;
-`packages/cli-*` have their own shapes. Lint, format, and unused-code tooling is
+`packages/cli-*` has its own shape. Lint, format, and unused-code tooling is
 root-owned.
 
 ### Config Naming Vocabulary
