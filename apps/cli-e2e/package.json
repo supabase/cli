@@ -9,6 +9,10 @@
     "test:e2e:run": "bun --bun vitest run",
     "replay:serve": "bun scripts/replay-serve.ts",
     "record": "RECORD=true pnpm run test:e2e:run",
+    "gallery": "bun scripts/gallery.ts",
+    "gallery:help": "bun scripts/gallery-help.ts",
+    "gallery:refresh": "bun scripts/gallery-refresh.ts",
+    "gallery:serve": "bun scripts/gallery-serve.ts",
     "types:check": "tsc --noEmit"
   },
   "dependencies": {
