@@ -24,10 +24,7 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["branching_development_write"], ["branching_production_write"]],
     oauthScope: "environment:write",
   },
-  "v1-merge-a-branch": {
-    fga: [["branching_development_write"], ["branching_production_write"]],
-    oauthScope: "environment:write",
-  },
+  "v1-merge-a-branch": { fga: [["branching_production_write"]], oauthScope: "environment:write" },
   "v1-reset-a-branch": {
     fga: [["branching_development_write"], ["branching_production_write"]],
     oauthScope: "environment:write",
