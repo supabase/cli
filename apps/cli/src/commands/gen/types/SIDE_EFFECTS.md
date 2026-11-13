@@ -204,7 +204,7 @@ removed in the next major version.` stdout carries only the types.
 - **Remote project flag groups.** `--remote` (bare, or with a ref or branch), `--linked`,
   `--project-ref` and `--project-id` count as one member of each group
   `[remote linked project-ref <flag>]`, where `<flag>` is `postgrest-v9-compat`, `query-timeout` or a
-  language flag (`swift-access-control`). Passing the selector together with any of them fails with
+  language flag (`swift-access-control`, `swift-typegen-source`). Passing the selector together with any of them fails with
   `if any flags in the group [remote linked project-ref <flag>] are set none of the others can be; [<set flags, sorted>] were all set`,
   reporting the first violated group in that order. `--remote=<db-url>` and `--db-url` are not
   members, so they accept all three. These groups and the other usage guards
@@ -246,10 +246,11 @@ removed in the next major version.` stdout carries only the types.
 - **Remote project language generation.** `--lang` accepts `typescript` (default), `go`, `swift`, or
   `python`. A remote project connects directly to the project database (temporary login-role
   credentials, preview-branch fallback) for every language, so no database URL is required. Do not revert this to a hard error. The flag groups
-  block `--swift-access-control`, `--query-timeout` and `--postgrest-v9-compat` whenever a remote
-  project selector is passed, so a remote project always generates with defaults (`internal` access
-  control, one-to-one detection on, 15s timeout). Use `--remote=<db-url>` for control over any of
-  these three flags.
+  block `--swift-access-control`, `--swift-typegen-source`, `--query-timeout` and
+  `--postgrest-v9-compat` whenever a remote project selector is passed, so a remote project always
+  generates with defaults (`internal` access control, the default `supabase-typegen` source,
+  one-to-one detection on, 15s timeout). Use `--remote=<db-url>` for control over any of these
+  flags.
 - **Output compatibility with the previous pg-meta-based generator.** Measured against
   pg-meta's reference generators on the same schema:
   - Go output is byte-identical. Swift output comes from supabase-swift's
@@ -267,8 +268,11 @@ removed in the next major version.` stdout carries only the types.
 - Introspection follows views in the `[api].extra_search_path` schemas to their base tables, as
   PostgREST does with `db-extra-search-path`, so a generated view built on such a view keeps its
   relationships. Nothing in those schemas is generated unless `--schema` or `[api].schemas` names it.
-- Language flags are rendered from the registry's user-facing option specs; today that is
-  `--swift-access-control`, which accepts `internal` (default) or `public`.
+- Language flags are rendered from the registry's user-facing option specs; today they are
+  `--swift-access-control`, which accepts `internal` (default) or `public`, and
+  `--swift-typegen-source`, which picks the supabase-swift version, branch, full commit SHA or
+  local checkout that `supabase-typegen` is built from. Without it, the Swift driver uses the
+  supabase-swift pin in the nearest `Package.resolved`, else the latest 3.x release.
   Every such flag is mutually exclusive with a remote project selector; on the local and
   `--remote=<db-url>` paths the flags are parsed regardless of `--lang`, and only the values the
   chosen language declares reach its generator.
