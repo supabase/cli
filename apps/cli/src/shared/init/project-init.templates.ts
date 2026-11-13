@@ -464,31 +464,32 @@ These appear as you use them:
 
 ## Common commands
 
-- \`supabase start\`: start the full local stack in containers.
-- \`supabase migration new <name>\`: create an empty migration file.
-- \`supabase db reset\`: reset the local database to your migrations, then run \`seed.sql\`.
-- \`supabase link\`: link this directory to a hosted project.
-- \`supabase db push\`: apply your local migrations to the linked project.
-- \`supabase gen types\`: generate types from your Postgres schema.
+- \`supabase login\`: Connects the Supabase CLI to your Supabase account by logging in with your personal access token.
+- \`supabase start\`: Starts the full local stack in containers. Requires a [local container runtime](https://supabase.com/docs/guides/local-development/cli/getting-started#running-a-local-supabase-project).
+- \`supabase migration new <name>\`: Creates a new, empty migration file locally.
+- \`supabase db reset\`: Resets the local database based off all local migrations, then runs \`seed.sql\`.
+- \`supabase link\`: Links this directory to a hosted project.
+- \`supabase db push\`: Applies your local migrations to the linked project.
+- \`supabase gen types\`: Generates types from your Postgres schema.
 
 Run \`supabase --help\` for everything else, or see
 https://supabase.com/docs/guides/local-development.
 
 ## What is Supabase?
 
-Supabase helps you build a complete backend platform, from your database to application logic. And you can start for free!
+[Supabase](https://supabase.com) helps you build a complete backend platform, from your database to application logic. And you can start for free!
 
 We're an open-source platform with several components that you can use together or separately:
 
 - [Postgres database](https://supabase.com/docs/guides/database/overview): Every project is a **full Postgres database**, the world's most trusted relational database.
-- [Authentication](https://supabase.com/docs/guides/auth): Add user sign ups and logins, securing your data with Row Level Security.
+- [Authentication](https://supabase.com/docs/guides/auth): Add authentication and authorization to your app, including popular auth methods like passwords, magic links, one-time passwords, social sign-in, and SSO.
 - [Edge Functions](https://supabase.com/docs/guides/functions): Author, deploy, and monitor serverless functions distributed globally at the edge, close to your users.
 - [Storage](https://supabase.com/docs/guides/storage): Store, organize, and serve large files, from videos to images.
-- [Realtime](https://supabase.com/docs/guides/realtime): Build multiplayer experiences with realt-ime data synchronization.
+- [Realtime](https://supabase.com/docs/guides/realtime): Send and receive messages to connected clients, great for chat applications, collaborative tools, live dashboards, multiplayer games, and more.
 - [Vector](https://supabase.com/docs/guides/ai): Integrate your favorite ML models to store, index, and search vector embeddings.
-- [Queues](https://supabase.com/docs/guides/queues): A Postgres-native durable Message Queue system with guaranteed delivery.
-- [Cron](https://supabase.com/docs/guides/cron): Simplify scheduling recurring Jobs with cron syntax and monitoring Job runs inside Postgres.
-- Data APIs: Instant, ready-to-use [REST](https://supabase.com/docs/guides/api) and [GraphQL APIs](https://supabase.com/docs/guides/api) automatically generated from your database's schemas.
+- [Queues](https://supabase.com/docs/guides/queues): Create and manage Queues with any Postgres tooling.
+- [Cron](https://supabase.com/docs/guides/cron): Simplify scheduling recurring Cron Jobs with cron syntax and monitoring Job runs inside Postgres.
+- Data APIs: Use our [REST](https://supabase.com/docs/guides/api) and [GraphQL APIs](https://supabase.com/docs/guides/api) automatically generated from your database's schemas.
 `;
 
 export const VSCODE_EXTENSIONS_TEMPLATE = `{
