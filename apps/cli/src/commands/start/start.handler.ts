@@ -1376,11 +1376,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             platform: runtimeInfo.platform,
           };
           const runtime: StartedRuntime = yield* startStackEdgeRuntimeContainer(edgeRuntimeInput);
-          // Not calling `runtime.cleanup` here: unlike every other service (`createContainer`'s
-          // `restartPolicy: "unless-stopped"`), Edge Runtime sets no Docker restart policy, so
-          // its bind-mounted host temp files must still exist for as long as the container can
-          // be reattached to. `startStackEdgeRuntimeContainer` already runs cleanup internally on
-          // a failed or interrupted bring-up, so only the success path must leave it alone.
+          // Not calling `runtime.cleanup` here: `stop` or a failed-start rollback reclaims Edge
+          // Runtime's staged env file, and `startStackEdgeRuntimeContainer` already runs cleanup
+          // internally on a failed or interrupted bring-up.
           started.set(runtime.containerId, edgeRuntimeInput.image);
           edgeRuntimeGateway = {
             containerId: runtime.containerId,
