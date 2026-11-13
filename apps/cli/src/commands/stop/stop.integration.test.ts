@@ -279,6 +279,19 @@ describe("stop integration", () => {
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("stops despite a bucket's invalid file_size_limit", () =>
+    Effect.gen(function* () {
+      const { layer, workdir, child } = yield* setup({ skipConfig: true });
+      yield* writeSupabaseFile(
+        workdir,
+        "config.toml",
+        'project_id = "demo"\n[storage.buckets.a]\nfile_size_limit = "5XB"\n',
+      );
+      yield* stop(flags()).pipe(Effect.provide(layer));
+      expect(child.spawned.some((s) => s.args[0] === "stop")).toBe(true);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect(
     "reclaims staged-secret directories for containers it tears down, leaving unrelated ones alone",
     () =>

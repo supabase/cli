@@ -64,6 +64,17 @@ describe("[local.services]", () => {
     expect(() => decode(services(`${key} = { version = "${version}" }`))).toThrow(message);
   });
 
+  test("reports only the first bad service version", () => {
+    let message = "";
+    try {
+      decode(services('auth = { version = "v2 197" }\nrest = { version = "default" }'));
+    } catch (error) {
+      message = String(error);
+    }
+    expect(message).toMatch(/local\.services\.auth\.version/u);
+    expect(message).not.toMatch(/local\.services\.rest\.version/u);
+  });
+
   test("accepts a container-only entry with no version", () => {
     const document = decode(
       services(

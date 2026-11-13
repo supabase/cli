@@ -9,12 +9,10 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { CliConfigValueError } from "../config/cli-config.errors.ts";
+import { InvalidJwtSecretError, narrowConfigEnum, rawUnmodeledBool } from "./config-validate.ts";
 import { DEFAULT_SIGNING_KEY } from "./local-jwt.ts";
 import {
   POSTGRES_DEFAULT_ROOT_KEY,
-  InvalidJwtSecretError,
-  narrowConfigEnum,
-  rawUnmodeledBool,
   resolveAuthCaptcha,
   resolveAuthEmail,
   resolveAuthExternalProviders,
@@ -104,6 +102,14 @@ describe("resolveLocalConfigValues", () => {
       const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.apiUrl).toBe("https://example.test");
       expect(values.restUrl).toBe("https://example.test/rest/v1");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("accepts a malformed auth max_frequency, which only start checks", () =>
+    Effect.gen(function* () {
+      const config = baseConfig({ auth: { email: { max_frequency: "5x" } } });
+      const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.apiUrl).toBe("http://127.0.0.1:54321");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1033,6 +1039,7 @@ describe("narrowConfigEnum", () => {
       new CliConfigValueError({
         path: "realtime.ip_version",
         tier: "config",
+        expected: "one of IPv4, IPv6",
         message: 'Invalid config for realtime.ip_version: "v9" must be one of "IPv4", "IPv6"',
       }),
     );
