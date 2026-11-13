@@ -56,7 +56,7 @@ bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts -
 ```
 
 The same job then publishes the config, project-config and `supabase.lock` JSON Schemas from
-`apps/docs/public/schemas` with `scripts/publish-schemas.ts`. It copies each schema's current
+`apps/cli/schemas` with `scripts/publish-schemas.ts`. It copies each schema's current
 (highest) `v<N>.json` into `apps/www/public/schemas` on the `cli/schemas` branch in supabase/supabase,
 serving it at `https://supabase.com/schemas/<name>/v<N>.json`, opens a PR when the files differ, and
 arms auto-merge, which squash-merges once a reviewer approves. Lower versions are frozen: the script
@@ -64,6 +64,18 @@ never writes them and refuses to run when supabase.com already serves a higher v
 current one. Both publishers share the clone, branch, commit and PR flow in
 `scripts/publish-pull-request.ts`. A failed publish of either pages Slack; rerun the "Publish to
 supabase.com" job.
+
+Regenerate the committed schemas from the repository root before publishing:
+
+```bash
+pnpm exec turbo run supabase#schemas:generate
+```
+
+This builds `@supabase/config`, copies its post-processed schemas, and generates the lock schema.
+`pnpm run build` and `pnpm run generate` also run this task. Public schema URLs stay independent
+of their location in this repository.
+
+From `apps/cli`, publish with:
 
 ```bash
 bun scripts/publish-schemas.ts --version <version> [--dry-run]
