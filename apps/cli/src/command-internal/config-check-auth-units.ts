@@ -706,40 +706,34 @@ const jwtSecretOrDefault = (view: CliConfigView): string => {
   }
 };
 
+const SIGNED_KEY_ROLES = { anon_key: "anon", service_role_key: "service_role" } as const;
+
+const isSignedKey = (entry: string | undefined): entry is keyof typeof SIGNED_KEY_ROLES =>
+  entry === "anon_key" || entry === "service_role_key";
+
 const signedKeyFindings = (
-  configured: Readonly<Record<"anon_key" | "service_role_key", string | undefined>>,
+  key: keyof typeof SIGNED_KEY_ROLES,
+  configured: string | undefined,
   jwtSecret: string,
   signingKey: Jwk | undefined,
 ): ReadonlyArray<CliConfigUnitFinding> => {
-  const findings: Array<CliConfigUnitFinding> = [];
-  for (const [key, role] of [
-    ["anon_key", "anon"],
-    ["service_role_key", "service_role"],
-  ] as const) {
-    try {
-      resolveSignedKey(configured[key], jwtSecret, signingKey, role);
-    } catch (cause) {
-      findings.push(thrown(["auth", key], cause, SIGNED_KEY_ISSUE.reason, SIGNED_KEY_ISSUE.help));
-    }
+  try {
+    resolveSignedKey(configured, jwtSecret, signingKey, SIGNED_KEY_ROLES[key]);
+    return [];
+  } catch (cause) {
+    return [thrown(["auth", key], cause, SIGNED_KEY_ISSUE.reason, SIGNED_KEY_ISSUE.help)];
   }
-  return findings;
 };
 
 export const authSignedKeys: CliConfigCheckUnit = {
   id: "auth.signed_keys",
   scope: ["auth"],
   kind: "file",
-  run: Effect.fnUntraced(function* (view, io) {
-    const configured = {
-      anon_key: str(view.get(["auth", "anon_key"])),
-      service_role_key: str(view.get(["auth", "service_role_key"])),
-    };
-    if (
-      nonEmpty(configured.anon_key) !== undefined &&
-      nonEmpty(configured.service_role_key) !== undefined
-    ) {
-      return [];
-    }
+  entries: () => Object.keys(SIGNED_KEY_ROLES),
+  run: Effect.fnUntraced(function* (view, io, entry) {
+    if (!isSignedKey(entry)) return [];
+    const configured = str(view.get(["auth", entry]));
+    if (nonEmpty(configured) !== undefined) return [];
     const signingKeysPath = nonEmpty(view.get(SIGNING_KEYS_PATH));
     let signingKey: Jwk | undefined;
     if (signingKeysPath !== undefined) {
@@ -752,6 +746,6 @@ export const authSignedKeys: CliConfigCheckUnit = {
       }
     }
     const jwtSecret = signingKey === undefined ? jwtSecretOrDefault(view) : defaultJwtSecret;
-    return signedKeyFindings(configured, jwtSecret, signingKey);
+    return signedKeyFindings(entry, configured, jwtSecret, signingKey);
   }),
 };

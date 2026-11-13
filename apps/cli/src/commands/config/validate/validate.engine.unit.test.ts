@@ -932,6 +932,24 @@ signing_keys_path = "keys.json"
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
 
+    it.effect("reports one role's key error while the other role's key is unknown", () =>
+      Effect.gen(function* () {
+        const result = yield* withFile(
+          `project_id = "demo"
+
+[auth]
+anon_key = "env(ANON_KEY)"
+signing_keys_path = "keys.json"
+`,
+          "keys.json",
+          '[{"kty":"RSA","kid":"k","n":"x","e":"AQAB"}]',
+        );
+
+        expect(labels(result.problems)).toContain("base:auth.service_role_key:invalid_value");
+        expect(labels(result.problems)).not.toContain("base:auth.anon_key:invalid_value");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
     it.effect("reports a content_path error while inline content is unknown", () =>
       Effect.gen(function* () {
         const result = yield* run(`project_id = "demo"
