@@ -24,6 +24,7 @@ import {
   narrowConfigEnum,
   resolveApiTlsPath,
 } from "./config-validate.ts";
+import { ramInBytes } from "./size-units.ts";
 import { parseUrl } from "./storage-url.ts";
 
 export const apiTlsFiles: CliConfigCheckUnit = {
@@ -207,6 +208,31 @@ export const storageBucketNames = syncUnit({
             "use lowercase letters, numbers, dots, hyphens and spaces only",
           ),
         ],
+});
+
+export const storageBucketFileSizeLimits = syncUnit({
+  id: "storage.buckets.file_size_limit",
+  scope: (name) => ["storage", "buckets", name, "file_size_limit"],
+  kind: "value",
+  entries: (view) => view.keys(["storage", "buckets"]),
+  check: (view, name) => {
+    const path = ["storage", "buckets", name, "file_size_limit"] as const;
+    const limit = view.get(path);
+    if (typeof limit !== "string") return [];
+    try {
+      ramInBytes(limit);
+      return [];
+    } catch {
+      return [
+        invalid(
+          path,
+          `failed to parse config: invalid storage.buckets.${name}.file_size_limit.`,
+          "not a valid size",
+          'use a size such as "50MiB"',
+        ),
+      ];
+    }
+  },
 });
 
 export const studioPort = syncUnit({

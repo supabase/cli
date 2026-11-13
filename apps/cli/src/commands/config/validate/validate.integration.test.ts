@@ -1578,4 +1578,40 @@ describe("config validate integration", () => {
       });
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it.effect("reports an unparseable bucket file_size_limit and accepts valid sizes", () =>
+    Effect.gen(function* () {
+      const bad = yield* validate(
+        tomlFile('project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "nonsense"\n'),
+        { format: "json" },
+      );
+      expect(Reflect.get(payloadOf(bad) ?? {}, "errors")).toMatchObject([
+        { key: "storage.buckets.avatars.file_size_limit" },
+      ]);
+
+      const good = yield* validate(
+        tomlFile('project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "5MB"\n'),
+        { format: "json" },
+      );
+      expect(Reflect.get(payloadOf(good) ?? {}, "errors")).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("defers a bucket file_size_limit held in an unset env() reference", () =>
+    Effect.gen(function* () {
+      const result = yield* validate(
+        tomlFile(
+          'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "env(UNSET_SIZE)"\n',
+        ),
+        { format: "json" },
+      );
+
+      expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toEqual([]);
+      expect(Reflect.get(payloadOf(result) ?? {}, "deferred")).toContainEqual({
+        check: "storage.buckets.file_size_limit",
+        reason: "env",
+        waits_on: ["storage.buckets.avatars.file_size_limit"],
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

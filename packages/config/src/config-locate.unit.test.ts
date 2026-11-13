@@ -117,6 +117,56 @@ describe("locateCliConfigKey (toml)", () => {
   });
 });
 
+describe("locateCliConfigKey (array of tables)", () => {
+  const rules = [
+    "[[experimental.inspect.rules]]",
+    'query = "ok"',
+    "",
+    "[[experimental.inspect.rules]]",
+    "query = 123",
+  ].join("\n");
+
+  test("locates a key in the entry its index names", () => {
+    expect(
+      locateCliConfigKey(
+        rules,
+        "toml",
+        ["experimental", "inspect", "rules", "1", "query"],
+        "value",
+      ),
+    ).toMatchObject({ line: 5, column: 9, exact: true });
+    expect(
+      locateCliConfigKey(rules, "toml", ["experimental", "inspect", "rules", "0", "query"], "key"),
+    ).toMatchObject({ line: 2, column: 1, exact: true });
+  });
+
+  test("locates an entry header by index", () => {
+    expect(
+      locateCliConfigKey(rules, "toml", ["experimental", "inspect", "rules", "1"], "key"),
+    ).toMatchObject({ line: 4, exact: true });
+  });
+
+  test("locates a sub-table of the latest entry", () => {
+    const nested = ["[[a.b]]", "x = 1", "[[a.b]]", "[a.b.c]", "y = 2"].join("\n");
+    expect(locateCliConfigKey(nested, "toml", ["a", "b", "1", "c", "y"], "key")).toMatchObject({
+      line: 5,
+      exact: true,
+    });
+  });
+
+  test("locates a JSONC array entry by index", () => {
+    const jsonc = '{"experimental":{"inspect":{"rules":[{"query":"ok"},{"query":123}]}}}';
+    expect(
+      locateCliConfigKey(
+        jsonc,
+        "json",
+        ["experimental", "inspect", "rules", "1", "query"],
+        "value",
+      ),
+    ).toMatchObject({ line: 1, column: 62, exact: true });
+  });
+});
+
 describe("locateCliConfigKey (jsonc)", () => {
   test("locates the last of a duplicated key, as the parser keeps", () => {
     const source = '{ "api": { "port": 1, "port": 2 } }';

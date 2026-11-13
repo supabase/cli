@@ -5,6 +5,7 @@ import {
   ENV_CAPTURE_REGEX,
   mergeParsedCliConfig,
   PROVIDER_SIGNUP_ALIASES,
+  resolveCliConfigEnvReferences,
   scanCliConfigDocument,
   type CliConfigDocumentScan,
   type CliConfigLocation,
@@ -226,17 +227,40 @@ const substituteReferences = (
   document: Record<string, unknown>,
   path: Segments,
   valueOf: (name: string) => string,
+  names: ReadonlyArray<string>,
 ): void => {
-  const current = getDocumentValue(document, path);
-  const resolve = (item: unknown): unknown => {
-    const name = typeof item === "string" ? ENV_CAPTURE_REGEX.exec(item)?.[1] : undefined;
-    return name === undefined ? item : valueOf(name);
-  };
-  setDocumentValue(
-    document,
-    path,
-    Array.isArray(current) ? current.map(resolve) : resolve(current),
+  const nested: Record<string, unknown> = {};
+  setDocumentValue(nested, path, getDocumentValue(document, path));
+  const resolved = resolveCliConfigEnvReferences(
+    nested,
+    Object.fromEntries(names.map((name) => [name, valueOf(name)])),
   );
+  if (isDocumentRecord(resolved)) {
+    setDocumentValue(document, path, getDocumentValue(resolved, path));
+  }
+};
+
+interface ArrayLiterals {
+  readonly path: Segments;
+  readonly document: Record<string, unknown>;
+  readonly standIns: ReadonlySet<string>;
+}
+
+const arrayLiterals = (
+  copy: Record<string, unknown>,
+  path: Segments,
+): ArrayLiterals | undefined => {
+  const current = getDocumentValue(copy, path);
+  if (!Array.isArray(current)) return undefined;
+  const standIns = new Set<string>();
+  const items = current.map((item, index) => {
+    if (typeof item !== "string" || ENV_CAPTURE_REGEX.exec(item) === null) return item;
+    standIns.add(String(index));
+    return cliConfigStandIn([...path, String(index)]) ?? item;
+  });
+  const document: Record<string, unknown> = {};
+  setDocumentValue(document, path, items);
+  return { path, document, standIns };
 };
 
 interface SourceMaps {
@@ -382,6 +406,7 @@ const prepareContext = (input: AnalyzeInput) => {
   const copy = cloneDocumentRecord(merged);
   delete copy["remotes"];
   const status: StatusTable = new Map();
+  const arrays: Array<ArrayLiterals> = [];
 
   for (const group of input.groups) {
     const inCopy = group.path[0] !== "remotes";
@@ -392,12 +417,16 @@ const prepareContext = (input: AnalyzeInput) => {
         const found = lookup(name);
         return found?.state === "set" ? found.value : "";
       };
-      substituteReferences(document, group.path, valueOf);
-      if (inCopy) substituteReferences(copy, group.path, valueOf);
+      substituteReferences(document, group.path, valueOf, group.names);
+      if (inCopy) substituteReferences(copy, group.path, valueOf, group.names);
       continue;
     }
     markUnknown(status, group.path, "env", group.names);
     const probe = standIn?.(group.names[0] ?? "");
+    if (probe === undefined && inCopy) {
+      const literals = arrayLiterals(copy, group.path);
+      if (literals !== undefined) arrays.push(literals);
+    }
     if (probe !== undefined) {
       setDocumentValue(document, group.path, probe);
       if (inCopy) setDocumentValue(copy, group.path, probe);
@@ -420,7 +449,7 @@ const prepareContext = (input: AnalyzeInput) => {
     }
   }
 
-  return { document, copy, status };
+  return { document, copy, status, arrays };
 };
 
 const makeReport = (input: AnalyzeInput, into: Array<DecodeProblem>): Report => {
@@ -551,9 +580,22 @@ export const decodeWithStandIns = (
 
 /** Builds one context's stand-in copy and status table, then decodes it until it succeeds. */
 export const analyzeContext = (input: AnalyzeInput): ContextResult => {
-  const { document, copy, status } = prepareContext(input);
+  const { document, copy, status, arrays } = prepareContext(input);
   const decodeProblems: Array<DecodeProblem> = [];
   const report = makeReport(input, decodeProblems);
+  for (const { path, document: literals, standIns } of arrays) {
+    const result = decodeCliConfigWithoutTableRules(literals);
+    if (result._tag === "Success") continue;
+    for (const issue of result.issues) {
+      const element = issue.path[path.length];
+      if (!isPrefix(path, issue.path) || element === undefined || standIns.has(element)) continue;
+      report(issue.path, false, {
+        code: issue.code,
+        reason: issue.reason,
+        ...(issue.help === undefined ? {} : { help: issue.help }),
+      });
+    }
+  }
   const pass = dropFailingValues(copy, status, input, report);
 
   const units = cloneDocumentRecord(document);

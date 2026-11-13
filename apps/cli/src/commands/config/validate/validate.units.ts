@@ -212,8 +212,10 @@ const remoteProjectIdFormat = syncUnit({
   scope: (name) => ["remotes", name, "project_id"],
   kind: "value",
   entries: remoteNames,
-  check: (view, name) =>
-    isValidRemoteProjectId(str(view.written(["remotes", name, "project_id"])))
+  check: (view, name) => {
+    const written = view.written(["remotes", name, "project_id"]);
+    return (written !== undefined && typeof written !== "string") ||
+      isValidRemoteProjectId(str(written))
       ? []
       : [
           invalid(
@@ -223,7 +225,8 @@ const remoteProjectIdFormat = syncUnit({
             "use the 20-character project ref",
             "remote_project_id",
           ),
-        ],
+        ];
+  },
 });
 
 const remoteProjectIdDuplicates = countingUnit({

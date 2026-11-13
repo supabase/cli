@@ -1047,7 +1047,7 @@ describe("start integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = Cause.pretty(exit.cause);
-          expect(serialized).toContain("DbConfigLoadError");
+          expect(serialized).toContain("StartInvalidConfigError");
           expect(serialized).toContain(
             "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
           );
@@ -2940,7 +2940,7 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = Cause.pretty(exit.cause);
-          expect(serialized).toContain("DbConfigLoadError");
+          expect(serialized).toContain("StartInvalidConfigError");
           expect(serialized).toContain(
             "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
           );

@@ -160,6 +160,12 @@ const scenarios: ReadonlyArray<ParityScenario> = [
       "Invalid Bucket name: bad#name. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed.",
   },
   {
+    name: "storage bucket file_size_limit that does not parse",
+    toml: ["[storage.buckets.avatars]", 'file_size_limit = "nonsense"'],
+    overrides: { storage: { buckets: { avatars: { file_size_limit: "nonsense" } } } },
+    message: "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
+  },
+  {
     name: "function slug with an invalid pattern",
     toml: ["[functions.123]"],
     overrides: { functions: { "123": {} } },

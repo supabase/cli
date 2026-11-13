@@ -75,4 +75,5 @@ export {
   cliConfigStandIn,
   collectCliConfigEnvReferences,
   decodeCliConfigWithoutTableRules,
+  resolveCliConfigEnvReferences,
 } from "./cli-config-without-table-rules.ts";

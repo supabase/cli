@@ -555,6 +555,7 @@ describe("src/internal.ts export surface", () => {
         "projectConfigMappingRows",
         "remoteNameForProjectRef",
         "remoteProjectIdEntries",
+        "resolveCliConfigEnvReferences",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "scanCliConfigDocument",

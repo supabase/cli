@@ -353,6 +353,65 @@ secrets = "env(HOOK_SECRETS)"
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
 
+    it.effect("coerces resolved env values to the type the key expects", () =>
+      Effect.gen(function* () {
+        const toml = `project_id = "demo"
+
+[functions.foo]
+verify_jwt = "env(VERIFY)"
+
+[compute.worker]
+instances = "env(COUNT)"
+`;
+        const good = yield* run(
+          toml,
+          lookupOf({
+            VERIFY: { state: "set", value: "false" },
+            COUNT: { state: "set", value: "2" },
+          }),
+        );
+        expect(labels(good.problems)).toEqual([]);
+
+        const bad = yield* run(
+          toml,
+          lookupOf({
+            VERIFY: { state: "set", value: "maybe" },
+            COUNT: { state: "set", value: "2" },
+          }),
+        );
+        expect(labels(bad.problems)).toEqual(["base:functions.foo.verify_jwt:invalid_type"]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("checks literal array elements next to an env() element", () =>
+      Effect.gen(function* () {
+        const invalid = yield* run(`project_id = "demo"
+
+[api]
+schemas = ["env(SCHEMA)", 42]
+`);
+        expect(labels(invalid.problems)).toEqual(["base:api.schemas.1:invalid_type"]);
+
+        const valid = yield* run(`project_id = "demo"
+
+[api]
+schemas = ["env(A)", "public"]
+`);
+        expect(labels(valid.problems)).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("reports only the type of a non-string remote project_id", () =>
+      Effect.gen(function* () {
+        const result = yield* run(`project_id = "demo"
+
+[remotes.prod]
+project_id = []
+`);
+        expect(labels(result.problems)).toEqual(["prod:project_id:invalid_type"]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
     it.effect("a missing rp_id is reported while rp_display_name is unknown", () =>
       Effect.gen(function* () {
         const result = yield* run(`project_id = "demo"

@@ -14,7 +14,6 @@ import { DB_CHECK_ORDER } from "./config-check-units.ts";
 import { type ConfigFileRef, configFileRefOf } from "./config-advice.ts";
 import { DbConfigLoadError, isPassthroughLoadFailure } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
-import { ramInBytes } from "./size-units.ts";
 import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt.ts";
 
 /** Resolves a config `env(VAR)` reference: shell env first, then project `.env`. */
@@ -356,17 +355,6 @@ const readDbConfigCore = Effect.fnUntraced(function* (
   const pgDeltaConfig = config.experimental.pgdelta;
   const declarativeSchemaPath = nonEmptyString(pgDeltaConfig?.declarative_schema_path);
   const formatOptions = nonEmptyString(pgDeltaConfig?.format_options);
-
-  const buckets = config.storage.buckets ?? {};
-  for (const [bucketName, bucket] of Object.entries(buckets)) {
-    yield* Effect.try({
-      try: () => ramInBytes(bucket.file_size_limit),
-      catch: () =>
-        new DbConfigLoadError({
-          message: `failed to parse config: invalid storage.buckets.${bucketName}.file_size_limit.`,
-        }),
-    });
-  }
 
   const configFile = configFileRefOf(path, workdir, resolvedConfig);
   const io = yield* makeCliConfigUnitIo("db").pipe(

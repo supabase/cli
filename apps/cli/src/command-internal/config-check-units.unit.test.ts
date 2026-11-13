@@ -82,6 +82,16 @@ const cases: ReadonlyArray<Case> = [
     message: "Invalid Bucket name: bad/name.",
   },
   {
+    name: "bucket file_size_limit that does not parse",
+    overrides: { storage: { buckets: { avatars: { file_size_limit: "nonsense" } } } },
+    message: "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
+  },
+  {
+    name: "bucket file_size_limit 5MB is valid",
+    overrides: { storage: { buckets: { avatars: { file_size_limit: "5MB" } } } },
+    message: undefined,
+  },
+  {
     name: "deno_version 3",
     overrides: { edge_runtime: { deno_version: 3 } },
     message: "Invalid edge_runtime.deno_version: 3.",

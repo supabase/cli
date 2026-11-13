@@ -245,6 +245,46 @@ const scanToml = (source: string): ScannedToml => ({
   starts: lineStarts(source),
 });
 
+function indexedTomlPaths(
+  scan: TomlScanResult,
+): Map<TomlKeyToken | TomlHeaderToken, ReadonlyArray<string>> {
+  const entryCounts = new Map<string, number>();
+  const indexedPaths = new Map<TomlKeyToken | TomlHeaderToken, ReadonlyArray<string>>();
+  const headerPaths: Array<ReadonlyArray<string>> = [];
+  const withIndices = (path: ReadonlyArray<string>, upTo: number): Array<string> => {
+    const indexed: Array<string> = [];
+    for (let length = 1; length <= upTo; length += 1) {
+      indexed.push(path[length - 1] as string);
+      const count = entryCounts.get(JSON.stringify(path.slice(0, length)));
+      if (count !== undefined && length < path.length) indexed.push(String(count - 1));
+    }
+    return indexed;
+  };
+  for (const token of scan.tokens) {
+    if (token.kind === "header") {
+      const key = JSON.stringify(token.path);
+      const indexed = withIndices(token.path, token.path.length);
+      if (token.isArrayOfTables) {
+        const count = entryCounts.get(key) ?? 0;
+        indexed.push(String(count));
+        entryCounts.set(key, count + 1);
+      }
+      headerPaths.push(indexed);
+      indexedPaths.set(token, indexed);
+    } else if (token.kind === "kv") {
+      const header = scan.headers[token.tableIndex];
+      const tablePath = headerPaths[token.tableIndex];
+      indexedPaths.set(
+        token,
+        header === undefined || tablePath === undefined
+          ? token.path
+          : [...tablePath, ...token.path.slice(header.path.length)],
+      );
+    }
+  }
+  return indexedPaths;
+}
+
 function locateToml(
   source: string,
   path: ReadonlyArray<string>,
@@ -252,6 +292,8 @@ function locateToml(
   { scan, starts }: ScannedToml,
 ): CliConfigLocation | undefined {
   if (isScanError(scan)) return undefined;
+  const pathOf = indexedTomlPaths(scan);
+  const indexedPath = (token: TomlKeyToken | TomlHeaderToken) => pathOf.get(token) ?? token.path;
   const keys = scan.tokens.filter((token): token is TomlKeyToken => token.kind === "kv");
   const spanOf = (token: TomlKeyToken) =>
     target === "value"
@@ -261,23 +303,30 @@ function locateToml(
   for (let length = path.length; length > 0; length -= 1) {
     const wanted = path.slice(0, length);
     const exact = length === path.length;
-    const key = keys.find((token) => equals(token.path, wanted));
+    const key = keys.find((token) => equals(indexedPath(token), wanted));
     if (key !== undefined) return toLocation(starts, spanOf(key), exact);
-    const header = scan.headers.find((token) => equals(token.path, wanted));
+    const header = scan.headers.find((token) => equals(indexedPath(token), wanted));
     if (header !== undefined) return toLocation(starts, tomlHeaderSpan(source, header), exact);
 
     const inline = keys.find(
       (token) =>
-        token.insideInlineTable && token.path.length < length && startsWith(wanted, token.path),
+        token.insideInlineTable &&
+        indexedPath(token).length < length &&
+        startsWith(wanted, indexedPath(token)),
     );
     if (inline !== undefined) {
-      const span = locateInInlineTable(source, inline, wanted.slice(inline.path.length), target);
+      const span = locateInInlineTable(
+        source,
+        inline,
+        wanted.slice(indexedPath(inline).length),
+        target,
+      );
       if (span !== undefined) return toLocation(starts, span, exact);
     }
 
     const descendant = scan.tokens.find(
       (token): token is TomlKeyToken | TomlHeaderToken =>
-        (token.kind === "kv" || token.kind === "header") && startsWith(token.path, wanted),
+        (token.kind === "kv" || token.kind === "header") && startsWith(indexedPath(token), wanted),
     );
     if (descendant !== undefined) {
       const span =

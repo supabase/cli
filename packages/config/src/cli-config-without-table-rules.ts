@@ -112,6 +112,14 @@ export function collectCliConfigEnvReferences(
   return found;
 }
 
+/** Substitutes `env(NAME)` references from `env`, coercing each value to the type its `CliConfigSchema` key expects. */
+export function resolveCliConfigEnvReferences(
+  document: unknown,
+  env: Readonly<Record<string, string>>,
+): unknown {
+  return interpolateEnvReferencesAgainstSchema(document, env, CliConfigSchema, { cliCompat: true });
+}
+
 /** A type-correct placeholder for the `CliConfigSchema` leaf at `path`, or `undefined` if it does not resolve. */
 export function cliConfigStandIn(path: ReadonlyArray<string>): unknown {
   return standInAtPath(CliConfigSchema, path);

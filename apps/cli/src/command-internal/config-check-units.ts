@@ -37,6 +37,7 @@ import {
   localSmtpPort,
   pgdeltaFormatOptions,
   projectIdPresent,
+  storageBucketFileSizeLimits,
   storageBucketNames,
   studioApiUrl,
   studioPort,
@@ -58,6 +59,7 @@ export const LOCAL_CHECK_ORDER: ReadonlyArray<CliConfigCheckUnit> = [
   dbPort,
   dbMajorVersion,
   storageBucketNames,
+  storageBucketFileSizeLimits,
   studioPort,
   studioApiUrl,
   localSmtpPort,
@@ -86,6 +88,7 @@ export const LOCAL_CHECK_ORDER: ReadonlyArray<CliConfigCheckUnit> = [
 
 /** The units the `db` config reader runs, in its order. */
 export const DB_CHECK_ORDER: ReadonlyArray<CliConfigCheckUnit> = [
+  storageBucketFileSizeLimits,
   DB_SIGNING_KEYS_UNIT,
   authPasskeyEnabled,
   emailContentUnit("template"),
