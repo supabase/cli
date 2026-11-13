@@ -82,6 +82,7 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
+import { rootCaBundle } from "../../../command-internal/supabase-tls.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import type { RunPostgresClientOptions } from "../../../command-internal/bundled-postgres-client.ts";
@@ -985,6 +986,46 @@ describe("db dump integration", () => {
         expect(docker.lastOpts?.securityOpt).toEqual([]);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect("verifies a pinned Supabase project against the bundled CA in the container", () => {
+    const { layer, docker } = setup({
+      conn: { ...REMOTE_CONN, sslmode: "require", sslrootcertInline: rootCaBundle() },
+      isLocal: false,
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ remote: REMOTE_LINKED }));
+      expect(docker.lastOpts?.env).toMatchObject({
+        PGSSLMODE: "verify-ca",
+        PGSSLROOTCERT: "/tmp/supabase-root.crt",
+        PGSSLROOTCERT_PEM: rootCaBundle(),
+      });
+      expect(docker.lastOpts?.cmd[2]).toContain(
+        `printf '%s' "$PGSSLROOTCERT_PEM" > /tmp/supabase-root.crt || exit 1\n`,
+      );
+      expect(docker.lastOpts?.binds).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("verifies a pinned Supabase project against the bundled CA in a native pg_dump", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { layer, bundled } = setup({
+        conn: { ...REMOTE_CONN, sslmode: "require", sslrootcertInline: rootCaBundle() },
+        isLocal: false,
+        platform: "darwin",
+        stdout: "",
+      });
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+      );
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      const env = bundled.lastOpts?.env ?? {};
+      expect(env["PGSSLMODE"]).toBe("verify-ca");
+      expect(env["PGSSLROOTCERT_PEM"]).toBeUndefined();
+      expect(env["PGSSLROOTCERT"]).toMatch(/supabase-root-.*\.crt$/u);
+      expect(yield* fs.exists(env["PGSSLROOTCERT"] ?? "")).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("mounts the linked project's TLS files into a Windows tool container", () =>

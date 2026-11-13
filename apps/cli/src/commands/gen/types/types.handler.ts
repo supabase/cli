@@ -780,12 +780,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const extraSearchPath = yield* resolveExtraSearchPath();
       const resolved = yield* connectTo(target);
 
-      const conn = resolved.isLocal
-        ? resolved.conn
-        : pinSupabaseTls(resolved.conn, cliSettings.profile);
-
       yield* runGenerate({
-        conn,
+        conn: resolved.conn,
         isLocal: resolved.isLocal,
         includedSchemas,
         extraSearchPath,
