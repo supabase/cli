@@ -1,6 +1,7 @@
 import {
   Config,
   ConfigProvider,
+  Duration,
   Effect,
   FileSystem,
   Layer,
@@ -335,30 +336,45 @@ const loadKeyringModule = (
       : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
   });
 
+interface KeyringToken {
+  readonly value: string;
+  readonly account: "profile" | "legacy";
+}
+
 // Keyring chain for a given profile account: profile key first, then the legacy `access-token`
 // key. Callers must pass the already-reconciled profile name.
-const readKeyringForAccount = (
+const lookupKeyringForAccount = (
   keyringModule: Option.Option<KeyringModule>,
   profileAccount: string,
   platform: RuntimePlatform,
-  debugLogger: DebugLoggerShape,
-): Effect.Effect<Option.Option<string>> =>
+): Effect.Effect<Option.Option<KeyringToken>> =>
   Effect.gen(function* () {
-    if (Option.isNone(keyringModule)) return Option.none<string>();
+    if (Option.isNone(keyringModule)) return Option.none<KeyringToken>();
     const profileResult = yield* tryKeyringRead(keyringModule.value, profileAccount, platform);
     if (Option.isSome(profileResult)) {
-      yield* debugLogger.debug(`Using access token for profile: ${profileAccount}`);
-      return profileResult;
+      return Option.some({ value: profileResult.value, account: "profile" });
     }
     const legacyResult = yield* tryKeyringRead(
       keyringModule.value,
       LEGACY_KEYRING_ACCOUNT,
       platform,
     );
-    if (Option.isSome(legacyResult)) {
-      yield* debugLogger.debug("Using access token from credentials store...");
-    }
-    return legacyResult;
+    return Option.map(legacyResult, (value) => ({ value, account: "legacy" }));
+  });
+
+const logKeyringSource = (
+  token: Option.Option<KeyringToken>,
+  profileAccount: string,
+  debugLogger: DebugLoggerShape,
+): Effect.Effect<Option.Option<string>> =>
+  Effect.gen(function* () {
+    if (Option.isNone(token)) return Option.none<string>();
+    yield* debugLogger.debug(
+      token.value.account === "profile"
+        ? `Using access token for profile: ${profileAccount}`
+        : "Using access token from credentials store...",
+    );
+    return Option.some(token.value.value);
   });
 
 const readFallbackFile = (
@@ -403,10 +419,9 @@ export const accessTokenForProfile = Effect.fn("CommandCredentials.accessTokenFo
       configProvider,
     );
     const keyringModule = yield* loadKeyringModule(fs, noKeyring);
-    const keyringValue = yield* readKeyringForAccount(
-      keyringModule,
+    const keyringValue = yield* logKeyringSource(
+      yield* lookupKeyringForAccount(keyringModule, profileAccount, runtimeInfo.platform),
       profileAccount,
-      runtimeInfo.platform,
       debugLogger,
     );
     if (Option.isSome(keyringValue)) {
@@ -445,11 +460,13 @@ const makeCommandCredentials = Effect.gen(function* () {
   const keyringModule = yield* loadKeyringModule(fs, noKeyring);
   yield* Effect.annotateCurrentSpan({ "keyring.enabled": Option.isSome(keyringModule) });
 
-  const readKeyring = readKeyringForAccount(
-    keyringModule,
-    profileAccount,
-    runtimeInfo.platform,
-    debugLogger,
+  /* Read the keychain once per command: on macOS each read by an untrusted binary prompts. */
+  const [lookupKeyring, invalidateKeyring] = yield* Effect.cachedInvalidateWithTTL(
+    lookupKeyringForAccount(keyringModule, profileAccount, runtimeInfo.platform),
+    Duration.infinity,
+  );
+  const readKeyring = lookupKeyring.pipe(
+    Effect.flatMap((token) => logKeyringSource(token, profileAccount, debugLogger)),
   );
 
   const readFile = readFallbackFile(fs, fallbackPath);
@@ -491,7 +508,7 @@ const makeCommandCredentials = Effect.gen(function* () {
           profileAccount,
           token,
           runtimeInfo.platform,
-        );
+        ).pipe(Effect.ensuring(invalidateKeyring));
         if (ok) {
           yield* Effect.annotateCurrentSpan({ "credential.destination": "keyring" });
           return;
@@ -534,7 +551,7 @@ const makeCommandCredentials = Effect.gen(function* () {
         keyringModule.value,
         profileAccount,
         runtimeInfo.platform,
-      );
+      ).pipe(Effect.ensuring(invalidateKeyring));
       if (outcome === "notFound") {
         return yield* new NotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE });
       }
@@ -542,7 +559,9 @@ const makeCommandCredentials = Effect.gen(function* () {
 
     deleteAllProjectCredentials: Effect.gen(function* () {
       if (Option.isNone(keyringModule)) return;
-      yield* deleteAllKeyringEntries(keyringModule.value, runtimeInfo.platform);
+      yield* deleteAllKeyringEntries(keyringModule.value, runtimeInfo.platform).pipe(
+        Effect.ensuring(invalidateKeyring),
+      );
     }).pipe(Effect.withSpan("CommandCredentials.deleteAllProjectCredentials")),
 
     deleteProjectCredential: Effect.fn("CommandCredentials.deleteProjectCredential")(function* (
