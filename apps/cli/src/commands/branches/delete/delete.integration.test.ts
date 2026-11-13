@@ -23,6 +23,8 @@ import { realLinkedProjectCache } from "../../../../tests/helpers/permission-rea
 import { branchPrompt } from "../branches.prompt.ts";
 import type { BranchesDeleteFlags } from "./delete.command.ts";
 import { branchesDelete } from "./delete.handler.ts";
+import { branchesDeleteOutput } from "./delete.output.ts";
+import * as CommandOutput from "../../../command-internal/command-facts/command-output.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -137,6 +139,9 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
+const runBranchesDelete = (flags: BranchesDeleteFlags) =>
+  branchesDelete(flags).pipe(CommandOutput.emit(branchesDeleteOutput));
+
 const baseFlags: BranchesDeleteFlags = {
   name: Option.none(),
   remote: Option.none(),
@@ -147,7 +152,7 @@ describe("branches delete integration", () => {
   it.effect("deletes a branch and emits 'Deleted preview branch: <ref>' to stderr", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      yield* runBranchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(out.stderrText).toContain(`Deleted preview branch: ${BRANCH_UUID}`);
       expect(api.requests.find((r) => r.method === "DELETE")?.url).toContain(
         `/v1/branches/${BRANCH_UUID}`,
@@ -157,6 +162,22 @@ describe("branches delete integration", () => {
         `DELETE ${API}/v1/branches/${BRANCH_UUID}`,
       ]);
       assertPermissionDrift({ command: "branches delete", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("emits the declared output schema as JSON in json mode", () => {
+    const out = mockOutput({ format: "json" });
+    const layer = buildRuntime({
+      out,
+      api: buildApi({}),
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+    });
+    return Effect.gen(function* () {
+      yield* runBranchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      expect(out.stdoutText).toMatchInlineSnapshot(`
+        "{"project_ref":"11111111-1111-4111-8111-111111111111","message":"Deleted preview branch"}
+        "
+      `);
     }).pipe(Effect.provide(layer));
   });
 
@@ -324,7 +345,7 @@ describe("branches delete integration", () => {
         const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
         expect(yield* fs.exists(cachePath)).toBe(false);
 
-        yield* branchesDelete(baseFlags);
+        yield* runBranchesDelete(baseFlags);
 
         expect(sequence(api.requests)).toEqual([
           `GET ${API}/v1/projects`,

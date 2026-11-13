@@ -27,6 +27,7 @@ import {
   DOCS_TAGS,
 } from "./docs-spec.tables.ts";
 import type { DocsInfoTag } from "./docs-spec.tables.ts";
+import { readStage } from "../command-internal/command-facts/with-stage.ts";
 
 /**
  * Builds the `clispec 001` document consumed by the supabase.com CLI reference
@@ -366,10 +367,14 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       const own = [...declared, ...(extraFlags ?? [])].toSorted((a, b) => docsCompare(a.id, b.id));
       own.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...own);
-      if (DOCS_EXPERIMENTAL.has(docId)) {
-        consumedExperimentalIds.add(docId);
-        flags.push(experimentalFlag);
+      const declaresStage = Option.isSome(readStage(command));
+      if (declaresStage && DOCS_EXPERIMENTAL.has(docId)) {
+        throw new Error(
+          `docs-spec.ts: DOCS_EXPERIMENTAL entry "${docId}" duplicates the command's withStage declaration; remove the table entry.`,
+        );
       }
+      if (DOCS_EXPERIMENTAL.has(docId)) consumedExperimentalIds.add(docId);
+      if (declaresStage || DOCS_EXPERIMENTAL.has(docId)) flags.push(experimentalFlag);
       if (DOCS_EXPERIMENTAL_OPTIONAL.has(docId)) {
         consumedExperimentalIds.add(docId);
         flags.push(experimentalOptionalFlag);
