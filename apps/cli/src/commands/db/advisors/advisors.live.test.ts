@@ -8,11 +8,11 @@ import { queryLiveDb, test, throwWithCleanup } from "../../../../tests/helpers/l
 
 /** What the lint's filters see for `public.<table>` on a connection as `dbUrl`'s role. */
 const lintVisibility = (dbUrl: string, table: string) =>
-  Effect.promise(() =>
+  Effect.tryPromise(() =>
     queryLiveDb(
       dbUrl,
       `select current_user as role,
-         current_setting('pgrst.db_schemas', true) as exposed_schemas,
+         current_setting('pgrst.db_schemas', true) as session_default_exposed_schemas,
          c.relrowsecurity as rls,
          has_table_privilege('anon', c.oid, 'SELECT') as anon_select,
          has_table_privilege('authenticated', c.oid, 'SELECT') as authenticated_select
@@ -21,7 +21,10 @@ const lintVisibility = (dbUrl: string, table: string) =>
        where n.nspname = 'public' and c.relname = $1`,
       [table],
     ),
-  ).pipe(Effect.map((rows) => `lint visibility of public.${table}: ${JSON.stringify(rows)}`));
+  ).pipe(
+    Effect.map((rows) => `lint visibility of public.${table}: ${JSON.stringify(rows)}`),
+    Effect.catch((cause) => Effect.succeed(`lint visibility query failed: ${String(cause)}`)),
+  );
 
 // A table in `public` without row level security deterministically raises the
 // `rls_disabled_in_public` security lint.
