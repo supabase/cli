@@ -41,6 +41,7 @@ interface DestroyTarget {
 
 interface DestroyOptions {
   readonly batch: boolean;
+  readonly question?: string;
   readonly tolerateConcurrentDestroy?: boolean;
 }
 
@@ -66,7 +67,8 @@ export const destroyStacks = Effect.fnUntraced(function* (
   const scope = selected.map((entry) => entry.scope).join("; ");
   if (yes) yield* output.raw(`Permanently destroying ${scope}.\n`, "stderr");
   else {
-    const confirmed = yield* promptYesNo(output, false, `Permanently destroy ${scope}?`, false);
+    const question = options.question ?? `Permanently destroy ${scope}?`;
+    const confirmed = yield* promptYesNo(output, false, question, false);
     if (!confirmed)
       return yield* new StackCommandDestroyError({
         reason: "cancelled",

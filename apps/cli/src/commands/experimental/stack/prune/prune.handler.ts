@@ -108,6 +108,10 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
       })),
       {
         batch: true,
+        question:
+          stacks.length === 1
+            ? "Permanently destroy the stack listed above and its owned data?"
+            : `Permanently destroy the ${stacks.length} stacks listed above and their owned data?`,
         tolerateConcurrentDestroy: true,
       },
     ).pipe(Effect.mapError(pruneError));
