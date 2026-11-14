@@ -48,6 +48,8 @@ interface DestroyOptions {
   readonly question?: string;
   /** Counts a stack that another process destroyed meanwhile as destroyed. */
   readonly tolerateConcurrentDestroy?: boolean;
+  /** Replaces the suggested retry command for the stacks that failed. */
+  readonly retry?: string;
 }
 
 /**
@@ -171,7 +173,7 @@ export const destroyStacks = Effect.fnUntraced(function* (
       });
     const manual =
       leftover.length === 0 ? undefined : leftover.map(({ error }) => error.suggestion).join(" ");
-    const retry = `"supabase stack destroy ${retryable.map(({ id }) => `--stack-id ${id}`).join(" ")} --yes"`;
+    const retry = `"${options.retry ?? `supabase stack destroy ${retryable.map(({ id }) => `--stack-id ${id}`).join(" ")} --yes`}"`;
     const runtime =
       retryable.length > 0 && retryable.every(({ error }) => error.reason === "runtime");
     const retrySuggestion = runtime

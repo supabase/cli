@@ -113,6 +113,8 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
             ? "Permanently destroy the stack listed above and its owned data?"
             : `Permanently destroy the ${stacks.length} stacks listed above and their owned data?`,
         tolerateConcurrentDestroy: true,
+        /* Pruning again rechecks each directory, which destroying by id would skip. */
+        retry: "supabase stack prune --yes",
       },
     ).pipe(Effect.mapError(pruneError));
     const pruned = stacks.filter((stack) => destroyed.some(({ id }) => id === stack.id));

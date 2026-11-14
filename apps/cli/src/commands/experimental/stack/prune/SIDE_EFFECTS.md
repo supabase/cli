@@ -41,10 +41,10 @@ stream-json success data contain `dry_run` and `stacks`: the `stack list` entrie
 stacks with `--dry-run`, otherwise of the destroyed ones, as found before destruction.
 
 Failures are reported together, even when one stack was selected, with each failed stack in the
-error detail. Retryable failures suggest a `supabase stack destroy --stack-id <id> --yes` command;
-an upload cleanup failure names the directory to remove instead. The JSON/stream-json error
-envelope lists the destroyed stacks in `destroyed_stacks`, including those whose upload cleanup
-failed. Exit 0 on success, including when none is selected or every selected stack is kept; 1 on
-invalid flags, registry failure, rejected or cancelled confirmation, an unreachable engine, or
-cleanup failure; 130 on interruption. Standard command telemetry is unchanged, with no custom
-events.
+error detail. Retryable failures suggest running `supabase stack prune --yes` again, which checks
+each directory again; an upload cleanup failure names the directory to remove instead. The
+JSON/stream-json error envelope lists the destroyed stacks in `destroyed_stacks`, including those
+whose upload cleanup failed. Exit 0 on success, including when none is selected or every selected
+stack is kept; 1 on invalid flags, registry failure, rejected or cancelled confirmation, an
+unreachable engine, or cleanup failure; 130 on interruption. Standard command telemetry is
+unchanged, with no custom events.
