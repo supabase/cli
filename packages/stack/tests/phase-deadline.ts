@@ -1,6 +1,6 @@
 import { Data, Duration, Effect } from "effect";
 
-export class PhaseStallError extends Data.TaggedError("PhaseStallError")<{
+class PhaseStallError extends Data.TaggedError("PhaseStallError")<{
   readonly message: string;
 }> {}
 
