@@ -10,6 +10,7 @@ import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 import { selection } from "../../tests/pins.ts";
+import { phaseDeadline } from "../../tests/phase-deadline.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-pooler",
@@ -51,12 +52,14 @@ describe("service catalog", () => {
             id: "database",
             config: databaseRecipe.creation,
           });
-          yield* database.start;
-          yield* database.ready;
+          yield* database.start.pipe(phaseDeadline("database start", 75));
+          yield* database.ready.pipe(phaseDeadline("database readiness", 30));
           const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
           if (databaseEndpoint.kind !== "tcp" || databaseEndpoint.host === undefined)
             return yield* new ProxyError({ message: "Docker database did not expose TCP" });
-          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
+          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql")).pipe(
+            phaseDeadline("database relay", 15),
+          );
           const dockerDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/_supabase`;
           const nativeDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseEndpoint.host}:${databaseEndpoint.port}/_supabase`;
           for (const runtime of ["native", testEngine] as const) {
@@ -82,11 +85,12 @@ describe("service catalog", () => {
                 config: poolerRecipe.creation,
               });
               for (const phase of runtime === "native" ? ["start", "restart"] : ["start"]) {
+                const step = `${runtime} ${poolMode} pooler ${phase}`;
                 if (phase === "restart") {
-                  yield* pooler.stop;
+                  yield* pooler.stop.pipe(phaseDeadline(`${step} stop`, 15));
                 }
-                yield* pooler.start;
-                yield* pooler.ready;
+                yield* pooler.start.pipe(phaseDeadline(`${step} start`, 60));
+                yield* pooler.ready.pipe(phaseDeadline(`${step} readiness`, 30));
                 const sqlEndpoint = yield* poolerRecipe.endpoint("sql");
                 if (sqlEndpoint.kind !== "tcp" || sqlEndpoint.host === undefined)
                   return yield* new ProxyError({ message: "Pooler did not expose TCP" });
@@ -98,15 +102,17 @@ describe("service catalog", () => {
                     username: `supabase_admin.${tenant}`,
                     password: Redacted.make("postgres"),
                   }),
-                );
+                ).pipe(phaseDeadline(`${step} client connect`, 15));
                 const sql = Context.get(poolerLayer, PgClient.PgClient);
-                const rows = yield* sql.unsafe<{ readonly value: number }>("SELECT 1 AS value");
+                const rows = yield* sql
+                  .unsafe<{ readonly value: number }>("SELECT 1 AS value")
+                  .pipe(phaseDeadline(`${step} query`, 15));
                 expect(rows[0]?.value).toBe(1);
               }
-              yield* pooler.stop;
+              yield* pooler.stop.pipe(phaseDeadline(`${runtime} ${poolMode} pooler stop`, 15));
             }
           }
-          yield* database.stop;
+          yield* database.stop.pipe(phaseDeadline("database stop", 15));
         }),
       ).pipe(
         Effect.provide(

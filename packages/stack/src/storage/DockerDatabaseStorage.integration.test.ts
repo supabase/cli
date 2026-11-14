@@ -6,7 +6,6 @@ import {
   ConfigProvider,
   Data,
   Deferred,
-  Duration,
   Effect,
   Exit,
   Fiber,
@@ -23,6 +22,7 @@ import {
 import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
+import { phaseDeadline } from "../../tests/phase-deadline.ts";
 import { resolveArtifact, slimImageMirrors, type ArtifactPin } from "../Artifacts.ts";
 import {
   makeContainerRuntime,
@@ -72,20 +72,6 @@ class DockerTestError extends Data.TaggedError("DockerTestError")<{
 class PublishBarrierError extends Data.TaggedError("PublishBarrierError")<{
   readonly message: string;
 }> {}
-class PhaseStallError extends Data.TaggedError("PhaseStallError")<{
-  readonly message: string;
-}> {}
-
-/** Fails with the stalled phase's name before the test's own timeout hides which step hung. */
-const phaseDeadline =
-  (phase: string, seconds = 5) =>
-  <A, E, R>(self: Effect.Effect<A, E, R>) =>
-    Effect.timeoutOrElse(self, {
-      duration: Duration.seconds(seconds),
-      orElse: () =>
-        Effect.fail(new PhaseStallError({ message: `${phase} did not finish within ${seconds}s` })),
-    });
-
 const dockerStoragePublishLoopFixture = fileURLToPath(
   new URL("../../tests/docker-storage-publish-loop-fixture.ts", import.meta.url),
 );
