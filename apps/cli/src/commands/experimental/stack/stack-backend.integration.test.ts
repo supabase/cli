@@ -464,6 +464,7 @@ stack = true
               "list",
               "logs",
               "outdated",
+              "prune",
               "restart",
               "start",
               "status",
