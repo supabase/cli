@@ -58,7 +58,14 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
     const orphaned = yield* Effect.filter(discovered, ({ definition }) =>
       fs.exists(definition.identity.projectRoot).pipe(
         Effect.map((exists) => !exists),
-        Effect.catchTag("PlatformError", () => Effect.succeed(false)),
+        Effect.catchTag("PlatformError", (error) =>
+          output
+            .raw(
+              `Warning: keeping stack ${definition.id}; its project directory could not be checked: ${error.message}\n`,
+              "stderr",
+            )
+            .pipe(Effect.as(false)),
+        ),
       ),
     );
     const stacks = stackListEntries(orphaned);
