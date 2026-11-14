@@ -235,6 +235,7 @@ ExperimentalStackInstallError
 ExperimentalStackListError
 ExperimentalStackLogsError
 ExperimentalStackOutdatedError
+ExperimentalStackPruneError
 ExperimentalStackRestartError
 ExperimentalStackStartError
 ExperimentalStackStatusError
