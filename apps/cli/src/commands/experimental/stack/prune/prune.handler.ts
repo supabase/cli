@@ -9,7 +9,7 @@ import {
   rejectStackOutput,
 } from "../../../../command-internal/stack-target.ts";
 import type { StackCommandDestroyError } from "../destroy/destroy.errors.ts";
-import { destroyScope, destroyStacks } from "../stack-destroy.ts";
+import { destroyScope, destroyStacks, stackLocations } from "../stack-destroy.ts";
 import { renderStackListTable, stackListEntries } from "../stack-list.format.ts";
 import type { StackPruneFlags } from "./prune.command.ts";
 import { StackCommandPruneError } from "./prune.errors.ts";
@@ -37,7 +37,7 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
     );
     const discovered = yield* api
       .discover({
-        stateRoot: path.join(settings.supabaseHome, "stacks"),
+        stateRoot: stackLocations(path, settings.supabaseHome).stateRoot,
         onInvalidState: (id, error) =>
           output.raw(`Warning: skipping invalid stack ${id}: ${error.message}\n`, "stderr"),
       })
