@@ -457,6 +457,25 @@ describe("stack destroy", () => {
     { timeout: 60_000 },
   );
 
+  it.live(
+    "reports the destroyed stack id in JSON",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const output = mockOutput({ format: "json" });
+
+        yield* runDestroy(Layer.merge(f.layer, output.layer), ["--stack-id", f.stack.id]);
+
+        expect(output.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            data: { destroyed: true, id: f.stack.id },
+          }),
+        );
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
+  );
+
   it.effect("rejects --stack combined with repeated --stack-id flags", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
