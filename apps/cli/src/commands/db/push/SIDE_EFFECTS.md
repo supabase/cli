@@ -148,8 +148,8 @@ project ref and its environment.
   alike; host, port, role, and database stay pinned. As in libpq, a `PGSERVICE` entry's settings outrank these vars.
   An invalid mode or `PGCONNECT_TIMEOUT`, an unknown `PGSERVICE`, or a lone `PGSSLCERT`/`PGSSLKEY`
   outside `sslmode=disable` fails with `invalid libpq environment` on either route.
-  **Supabase CA pin (every remote-project connection, shared by all commands that resolve a linked
-  database):** when `sslmode` is not set (query, `pg_service.conf` or `PGSSLMODE`) and the host
+  **Supabase CA pin (every remote-project and `--db-url` connection, shared by all commands that
+  resolve a database through the connection resolver):** when `sslmode` is not set (query, `pg_service.conf` or `PGSSLMODE`) and the host
   is a `db.<ref>.<project_host>` direct host or a
   pooler host of the `supabase`, `supabase-staging` or `snap` built-in profile, the connection uses
   `sslmode=require` with the bundled Supabase root CA, which the driver verifies as `verify-ca`
@@ -160,7 +160,8 @@ project ref and its environment.
   does a pooler rejection of the caller's IP (`Address not in tenant allow_list`), which suggests
   checking Network Restrictions and Network Bans and links the dashboard's database settings. Any
   explicit `sslmode`, `disable` and `verify-full` included, is passed through unchanged. `supabase-local` and YAML profiles are
-  never pinned.
+  never pinned. A `--db-url` naming such a host is pinned the same way unless it resolves local;
+  any other `--db-url` host keeps libpq `prefer`.
   `sslmode=disable` dials plaintext and reads no CA or client-cert file; otherwise those PEM files
   are read when set and a missing one fails the connection, and a `pg_service.conf` is read
   whenever `PGSERVICE` names a service. The pooler route also reads `.pgpass` (`PGPASSFILE`, else

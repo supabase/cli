@@ -117,6 +117,12 @@ export interface DumpOptions {
 
 const TLS_DEMANDING_SSLMODES = new Set(["require", "verify-ca", "verify-full"]);
 
+/**
+ * Carries an inline root CA (the pinned Supabase CA) to the pg_dump runner, which writes it to a
+ * file and points `PGSSLROOTCERT` at it, since libpq reads root certs only from files.
+ */
+export const INLINE_ROOT_CERT_ENV = "PGSSLROOTCERT_PEM";
+
 export function toDumpEnv(conn: PgConnInput, remote = false): Record<string, string> {
   const env: Record<string, string> = {
     PGHOST: conn.host,
@@ -126,16 +132,27 @@ export function toDumpEnv(conn: PgConnInput, remote = false): Record<string, str
     PGDATABASE: conn.database,
   };
   if (!remote) return env;
-  /* libpq's `system` root cert implies and only allows `verify-full`. */
+  const inlineRootCert =
+    conn.sslrootcert === undefined && (conn.sslrootcertInline?.length ?? 0) > 0
+      ? conn.sslrootcertInline
+      : undefined;
+  /* libpq's `system` root cert implies and only allows `verify-full`; an inline root CA promotes
+     `require` to `verify-ca`, as the driver does. */
   const sslmode =
-    conn.sslrootcert === "system" && conn.sslmode !== "disable" ? "verify-full" : conn.sslmode;
+    conn.sslrootcert === "system" && conn.sslmode !== "disable"
+      ? "verify-full"
+      : inlineRootCert !== undefined && conn.sslmode === "require"
+        ? "verify-ca"
+        : conn.sslmode;
   if (sslmode !== undefined) env["PGSSLMODE"] = sslmode;
   if (conn.connectTimeoutSeconds !== undefined)
     env["PGCONNECT_TIMEOUT"] = String(conn.connectTimeoutSeconds);
   if (sslmode === "disable") return env;
   /* Under `prefer`, libpq falls back to plaintext when the root cert does not match. */
-  if (conn.sslrootcert !== undefined && TLS_DEMANDING_SSLMODES.has(sslmode ?? ""))
-    env["PGSSLROOTCERT"] = conn.sslrootcert;
+  if (TLS_DEMANDING_SSLMODES.has(sslmode ?? "")) {
+    if (conn.sslrootcert !== undefined) env["PGSSLROOTCERT"] = conn.sslrootcert;
+    else if (inlineRootCert !== undefined) env[INLINE_ROOT_CERT_ENV] = inlineRootCert;
+  }
   /* libpq takes no key passphrase from the env, so an encrypted key would stop `pg_dump`. */
   if (conn.sslcert !== undefined && conn.sslkey !== undefined && conn.sslpassword === undefined) {
     env["PGSSLCERT"] = conn.sslcert;

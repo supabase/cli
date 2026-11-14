@@ -88,6 +88,7 @@ import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
+import { SUGGEST_CA_VERIFICATION } from "../../../command-internal/connect-errors.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
@@ -1388,6 +1389,24 @@ describe("db pull", () => {
       expect(error.message).toContain("error running container: exit 1");
       expect(s.poolerFallbackCalls).toHaveLength(1); // gate checked, no pooler resolved
       expect(streamText(s.out, "stderr")).not.toContain("Retrying via the IPv4 connection pooler");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an initial-pull dump carries the CA suggestion on a rejected certificate", () => {
+    const s = setup(tmp.current, {
+      remoteVersions: [],
+      dumpExitCode: 1,
+      dumpStderr: "SSL error: certificate verify failed",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const error = yield* dbPull(
+        flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }),
+      ).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        message: "error running container: exit 1",
+        suggestion: SUGGEST_CA_VERIFICATION,
+      });
     }).pipe(Effect.provide(s.layer));
   });
 

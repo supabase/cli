@@ -584,6 +584,51 @@ describe("dbConfigResolver (local + db-url)", () => {
     );
   });
 
+  it.effect.each([
+    {
+      name: "direct database host",
+      url: "postgres://postgres:pw@db.abcdefghijklmnopqrst.supabase.co:5432/postgres",
+    },
+    {
+      name: "pooler host",
+      url: "postgres://postgres.ref:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
+    },
+  ])("db-url mode: pins the Supabase CA for a $name", ({ url }) =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const r = yield* resolveConnection(dir, inputFor(dbUrlTarget(url)));
+      expect(r.isLocal).toBe(false);
+      expect(r.conn.sslmode).toBe("require");
+      expect(r.conn.sslrootcertInline).toBe(rootCaBundle());
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect.each([
+    {
+      name: "an explicit sslmode on a Supabase host",
+      url: "postgres://postgres:pw@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=disable",
+      sslmode: "disable",
+    },
+    {
+      name: "a non-Supabase host",
+      url: "postgres://postgres:pw@db.example.net:5432/postgres",
+      sslmode: undefined,
+    },
+    {
+      name: "a local target on a Supabase host name",
+      url: "postgres://postgres:pw@db.abcdefghijklmnopqrst.supabase.co:54322/postgres",
+      sslmode: undefined,
+      configEnv: { SUPABASE_SERVICES_HOSTNAME: "db.abcdefghijklmnopqrst.supabase.co" },
+    },
+  ])("db-url mode: leaves TLS untouched for $name", ({ url, sslmode, configEnv }) =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const r = yield* resolveConnection(dir, inputFor(dbUrlTarget(url)), { configEnv });
+      expect(r.conn.sslmode).toBe(sslmode);
+      expect(r.conn.sslrootcertInline).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect("db-url mode: accepts a libpq keyword/value DSN", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();

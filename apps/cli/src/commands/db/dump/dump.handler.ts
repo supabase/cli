@@ -10,10 +10,7 @@ import { resolveTarget } from "../../../command-internal/target/resolve-target.t
 import { loadProjectEnvValues, readDbConfig } from "../../../command-internal/db-config.read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
-import {
-  ipv6Suggestion,
-  isIPv6ConnectivityError,
-} from "../../../command-internal/connect-errors.ts";
+import { pgDumpFailureSuggestion } from "../../../command-internal/connect-errors.ts";
 import { bold, yellow } from "../../../command-internal/colors.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -431,9 +428,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     //    ran, otherwise the original) into an actionable suggestion, e.g. IPv6
     //    connectivity.
     if (result.exitCode !== 0) {
+      const suggestion = pgDumpFailureSuggestion(result.stderr);
       return yield* new DbDumpRunError({
         message: pgDumpClientExitMessage(dumpClient, result.exitCode),
-        ...(isIPv6ConnectivityError(result.stderr) ? { suggestion: ipv6Suggestion() } : {}),
+        ...(suggestion === undefined ? {} : { suggestion }),
       });
     }
 

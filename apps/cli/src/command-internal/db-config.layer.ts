@@ -862,7 +862,11 @@ export const dbConfigResolverLayer = Layer.effect(
         // still authenticates.
         const localPassword = onStack ? stackConn.password : tomlValues.password;
         return {
-          conn: isLocal && conn.password.length === 0 ? { ...conn, password: localPassword } : conn,
+          conn: isLocal
+            ? conn.password.length === 0
+              ? { ...conn, password: localPassword }
+              : conn
+            : pinSupabaseTls(conn, cliSettings.profile),
           isLocal,
           exposedSchemas: tomlValues.exposedSchemas,
         };

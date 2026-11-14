@@ -230,8 +230,8 @@ removed in the next major version.` stdout carries only the types.
     `snap` profile host connects with `sslmode=require` and the bundled Supabase CA pinned (promoted to
     `verify-ca`) unless `sslmode` is set from any source, which is then used as is. A root cert
     set without `sslmode` replaces the bundled CA and keeps `require`. The connection resolver applies the pin for a project ref, its direct host and pooler
-    alike, including the pooler temp-role probe (see `db push`); this command applies it itself
-    only to a preview branch. On a project ref the `PG*` env (see `db push`) is validated and
+    alike, including the pooler temp-role probe, and for a `--remote=<db-url>` (see `db push`);
+    this command applies it itself only to a preview branch. On a project ref the `PG*` env (see `db push`) is validated and
     supplies the client-cert pair, and the 15s query timeout sets the connect timeout. A preview
     branch's direct host takes no `PG*` setting and is always pinned; its pooler fallback parses
     the pooler URL with the shell `PG*` env, so `PGSSLMODE`, `PGSSLROOTCERT`, the client-cert pair

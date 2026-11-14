@@ -71,8 +71,10 @@ running a container; with `--file` it still prints the `Dumped schema to <abs>.`
 confirmation on a successful dry-run but does **not** create or truncate the file.
 
 On a remote dump whose container fails with an IPv6 connectivity error (no IPv4
-pooler retry available, or the retry also fails), the error is followed on stderr by
-the IPv4 transaction-pooler suggestion.
+pooler retry available, or the retry also fails with one), the error is followed on stderr, in
+text mode, by the IPv4 transaction-pooler suggestion. Otherwise, when `pg_dump` rejects the
+server certificate (`certificate verify failed`), the suggestion is instead to set
+`PGSSLROOTCERT` to a CA bundle that trusts it, or `PGSSLMODE=require`.
 
 On Windows only, a **successful** stdout dump (no `--file`) whose stdout is a
 **pipe** (PowerShell interposes one for `>`/`|`; MSYS/mintty sessions excluded
@@ -113,8 +115,10 @@ shell inherits the suppressing variables and is missed.
   `--remote=<url>`) gets the resolved `sslmode` and connect timeout, the root cert only under
   `require`/`verify-ca`/`verify-full`, and the client cert and key unless the key needs
   `sslpassword` (libpq reads no passphrase from the environment). The Supabase CA pin that
-  `db push` describes reaches `pg_dump` as `PGSSLMODE=require` only: the inline CA is not
-  forwarded, so `pg_dump` requires TLS without verifying the server. `system` pins
+  `db push` describes reaches `pg_dump` as `PGSSLMODE=verify-ca` with the bundled CA: a
+  container receives the PEM as `PGSSLROOTCERT_PEM` and writes it to `/tmp/supabase-root.crt`
+  before `pg_dump` runs (no bind mount), and a native `pg_dump` reads it from a temp file
+  that is removed after the run. `system` pins
   `verify-full`. Verifying without a root cert, or with `system`, uses the image's trust
   store in a container and the host's CA bundle for a native `pg_dump`, which keeps
   libpq's `~/.postgresql/root.crt` when no root cert is set, keeps `system` on libpq 16+
