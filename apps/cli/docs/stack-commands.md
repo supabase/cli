@@ -18,6 +18,7 @@ default `max_worker_processes` to 17 to leave room for those workers; `postgresq
 | ------------------------- | --------------------------------------------------------------------------------- |
 | `supabase stack destroy`  | Permanently delete stacks and their data.                                         |
 | `supabase stack list`     | List persisted managed local stacks.                                              |
+| `supabase stack prune`    | Destroy stacks whose project directory no longer exists.                          |
 | `supabase stack install`  | Resolve and lock service versions, then download artifacts without a stack.       |
 | `supabase stack update`   | Re-resolve locked service versions and rewrite `supabase/supabase.lock`.          |
 | `supabase stack outdated` | Report which locked service versions `stack update` would change.                 |
@@ -451,6 +452,10 @@ success or not-running summary is emitted when a stop fails.
 uploads (`stacks/<stack-id>/uploads`) after confirmation. Use `--yes` for unattended execution. Repeat `--stack-id` to destroy several stacks
 after one confirmation; every id must resolve before anything is destroyed, and a stack that fails
 to be destroyed does not stop the rest, though the command still fails.
+
+`supabase stack prune` destroys, after one confirmation, the stacks whose project directory no
+longer exists, such as those of deleted worktrees or moved directories; `--dry-run` only lists
+them.
 
 ## Storage and bucket seeding
 
