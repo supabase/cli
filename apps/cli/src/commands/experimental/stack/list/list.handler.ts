@@ -2,9 +2,9 @@ import { Effect, Path } from "effect";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { renderGlamourTable } from "../../../../output/glamour-table.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { StackApi, rejectStackOutput } from "../../../../command-internal/stack-target.ts";
+import { renderStackListTable, stackListEntries } from "../stack-list.format.ts";
 import { StackCommandListError } from "./list.errors.ts";
 
 export const stackList = Effect.fn("experimental.stack.list")(function* () {
@@ -43,37 +43,11 @@ export const stackList = Effect.fn("experimental.stack.list")(function* () {
             }),
         ),
       );
-    const stacks = discovered
-      .map(({ definition, host }) => ({
-        id: definition.id,
-        project_root: definition.identity.projectRoot,
-        name: definition.identity.stackName,
-        branch_context: definition.identity.branchContext,
-        runtime: definition.runtime,
-        owner: host === undefined ? "unavailable" : "reachable",
-      }))
-      .sort((left, right) => {
-        for (const field of ["project_root", "name", "id"] as const) {
-          if (left[field] !== right[field]) return left[field] < right[field] ? -1 : 1;
-        }
-        return 0;
-      });
+    const stacks = stackListEntries(discovered);
     yield* Effect.annotateCurrentSpan({ "stack.count": stacks.length });
     if (output.format === "text") {
       yield* output.raw(
-        stacks.length === 0
-          ? "No managed stacks found.\n"
-          : `${renderGlamourTable(
-              ["NAME", "PROJECT", "BRANCH", "RUNTIME", "OWNER", "ID"],
-              stacks.map((stack) => [
-                stack.name,
-                stack.project_root,
-                stack.branch_context,
-                stack.runtime,
-                stack.owner,
-                stack.id.slice(0, 8),
-              ]),
-            ).trimEnd()}\n`,
+        stacks.length === 0 ? "No managed stacks found.\n" : `${renderStackListTable(stacks)}\n`,
       );
     } else yield* output.success("", { stacks });
     return stacks;
