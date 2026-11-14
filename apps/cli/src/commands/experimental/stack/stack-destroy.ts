@@ -29,22 +29,32 @@ export const stackLocations = (path: Path.Path, supabaseHome: string) => ({
   cacheRoot: path.join(supabaseHome, "cache", "stack"),
 });
 
+/** How the confirmation names one registered stack. */
 export const destroyScope = (id: string, projectRoot: string) =>
   `stack ${id} at ${projectRoot} and its owned data`;
 
+/** A stack selected for destruction, resolved before confirmation. */
 interface DestroyTarget {
   readonly id: string;
   readonly deleted: Option.Option<DeletedStack>;
   readonly scope: string;
+  /** Runs right before this stack is destroyed; a message skips it with that warning. */
   readonly recheck?: Effect.Effect<Option.Option<string>>;
 }
 
 interface DestroyOptions {
   readonly batch: boolean;
+  /** Replaces the interactive question; the `--yes` notice still names every stack. */
   readonly question?: string;
+  /** Counts a stack that another process destroyed meanwhile as destroyed. */
   readonly tolerateConcurrentDestroy?: boolean;
 }
 
+/**
+ * Confirms once, then destroys each target and its Storage uploads, continuing past failures.
+ * Returns the destroyed ids; a failed `batch` fails once, naming every failed stack. Untraced, so
+ * its span annotations land on the calling command's span.
+ */
 export const destroyStacks = Effect.fnUntraced(function* (
   selected: ReadonlyArray<DestroyTarget>,
   options: DestroyOptions,
