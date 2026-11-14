@@ -41,6 +41,7 @@ interface DestroyTarget {
 
 interface DestroyOptions {
   readonly batch: boolean;
+  readonly tolerateConcurrentDestroy?: boolean;
 }
 
 export const destroyStacks = Effect.fnUntraced(function* (
@@ -79,20 +80,40 @@ export const destroyStacks = Effect.fnUntraced(function* (
         yield* output.raw(`${skip.value}\n`, "stderr");
         return Option.none();
       }
+      /* Destroy removes the registration last, so a stack no longer registered is gone. */
+      const unlessGone = <A>(fallback: A) =>
+        Effect.catch((error: StackError) =>
+          options.tolerateConcurrentDestroy === true && Option.isNone(deleted)
+            ? api.find({ stateRoot: locations.stateRoot, id }).pipe(
+                Effect.map(Option.isNone),
+                Effect.orElseSucceed(() => false),
+                Effect.flatMap((gone) => (gone ? Effect.succeed(fallback) : Effect.fail(error))),
+              )
+            : Effect.fail(error),
+        );
       const stack = Option.isSome(deleted)
-        ? deleted.value
-        : yield* api.open({ ...locations, id }).pipe(Effect.mapError(destroyError(id)));
-      const destroying = yield* output.task(`Destroying stack ${id}...`);
-      yield* stack.destroy.pipe(
-        Effect.onExit((exit) =>
-          Exit.isSuccess(exit)
-            ? destroying.clear
-            : Cause.hasInterruptsOnly(exit.cause)
-              ? destroying.cancel()
-              : destroying.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),
-        ),
-        Effect.mapError(destroyError(id)),
-      );
+        ? deleted
+        : yield* api
+            .open({ ...locations, id })
+            .pipe(
+              Effect.map(Option.some),
+              unlessGone(Option.none()),
+              Effect.mapError(destroyError(id)),
+            );
+      if (Option.isSome(stack)) {
+        const destroying = yield* output.task(`Destroying stack ${id}...`);
+        yield* stack.value.destroy.pipe(
+          unlessGone(undefined),
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit)
+              ? destroying.clear
+              : Cause.hasInterruptsOnly(exit.cause)
+                ? destroying.cancel()
+                : destroying.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),
+          ),
+          Effect.mapError(destroyError(id)),
+        );
+      }
       const uploads = stackUploadsDir(path, settings.supabaseHome, id);
       yield* fs.remove(uploads, { recursive: true, force: true }).pipe(
         Effect.mapError(

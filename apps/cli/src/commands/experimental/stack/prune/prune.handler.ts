@@ -108,6 +108,7 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
       })),
       {
         batch: true,
+        tolerateConcurrentDestroy: true,
       },
     ).pipe(Effect.mapError(pruneError));
     const pruned = stacks.filter((stack) => destroyed.some(({ id }) => id === stack.id));
