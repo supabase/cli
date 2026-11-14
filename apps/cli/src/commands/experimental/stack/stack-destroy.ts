@@ -36,6 +36,7 @@ interface DestroyTarget {
   readonly id: string;
   readonly deleted: Option.Option<DeletedStack>;
   readonly scope: string;
+  readonly recheck?: Effect.Effect<Option.Option<string>>;
 }
 
 interface DestroyOptions {
@@ -71,8 +72,13 @@ export const destroyStacks = Effect.fnUntraced(function* (
         message: "Stack destruction was not confirmed.",
       });
   }
-  const [destroyed, failed] = yield* Effect.partition(selected, ({ id, deleted }) =>
+  const [outcomes, failed] = yield* Effect.partition(selected, ({ id, deleted, recheck }) =>
     Effect.gen(function* () {
+      const skip = recheck === undefined ? Option.none<string>() : yield* recheck;
+      if (Option.isSome(skip)) {
+        yield* output.raw(`${skip.value}\n`, "stderr");
+        return Option.none();
+      }
       const stack = Option.isSome(deleted)
         ? deleted.value
         : yield* api.open({ ...locations, id }).pipe(Effect.mapError(destroyError(id)));
@@ -106,12 +112,13 @@ export const destroyStacks = Effect.fnUntraced(function* (
             ? `Removed the containers stack ${id} left behind.\n`
             : `Stack ${id} destroyed.\n`,
         );
-      return { id };
+      return Option.some({ id });
     }).pipe(
       Effect.scoped,
       Effect.mapError((error) => ({ id, error })),
     ),
   );
+  const destroyed = outcomes.flatMap((outcome) => (Option.isSome(outcome) ? [outcome.value] : []));
   if (batch)
     yield* Effect.annotateCurrentSpan({
       "stack.prompted": !yes,

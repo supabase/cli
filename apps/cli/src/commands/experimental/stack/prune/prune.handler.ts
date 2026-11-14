@@ -84,12 +84,27 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
       if (output.format !== "text") yield* output.success("", { dry_run: flags.dryRun, stacks });
       return stacks;
     }
+    /* Checked again right before each destroy, so a directory that came back keeps its stack. */
+    const recheck = (id: string, projectRoot: string) =>
+      fs.exists(projectRoot).pipe(
+        Effect.map((exists) =>
+          exists
+            ? Option.some(`Warning: keeping stack ${id}; its project directory exists again.`)
+            : Option.none(),
+        ),
+        Effect.catchTag("PlatformError", (error) =>
+          Effect.succeedSome(
+            `Warning: keeping stack ${id}; its project directory could not be checked: ${error.message}`,
+          ),
+        ),
+      );
     /* Always a batch, so a failure names each stack and lists the ones destroyed. */
     const destroyed = yield* destroyStacks(
       stacks.map((stack) => ({
         id: stack.id,
         deleted: Option.none(),
         scope: destroyScope(stack.id, stack.project_root),
+        recheck: recheck(stack.id, stack.project_root),
       })),
       {
         batch: true,
