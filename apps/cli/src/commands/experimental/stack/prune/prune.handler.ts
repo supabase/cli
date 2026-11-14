@@ -11,6 +11,7 @@ import {
 import type { StackCommandDestroyError } from "../destroy/destroy.errors.ts";
 import { destroyScope, destroyStacks } from "../stack-destroy.ts";
 import { renderStackListTable, stackListEntries } from "../stack-list.format.ts";
+import type { StackPruneFlags } from "./prune.command.ts";
 import { StackCommandPruneError } from "./prune.errors.ts";
 
 const pruneError = (error: StackCommandDestroyError) =>
@@ -23,7 +24,7 @@ const pruneError = (error: StackCommandDestroyError) =>
     ...(error.cause === undefined ? {} : { cause: error.cause }),
   });
 
-export const stackPrune = Effect.fn("experimental.stack.prune")(function* () {
+export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags: StackPruneFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
     const output = yield* Output;
@@ -64,6 +65,7 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* () {
     yield* Effect.annotateCurrentSpan({
       "stack.discovered_count": discovered.length,
       "stack.orphaned_count": stacks.length,
+      "stack.dry_run": flags.dryRun,
     });
     if (output.format === "text")
       yield* output.raw(
@@ -71,8 +73,8 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* () {
           ? "No stacks found whose project directory no longer exists.\n"
           : `Found ${stacks.length} ${stacks.length === 1 ? "stack" : "stacks"} whose project directory no longer exists:\n${renderStackListTable(stacks)}\n`,
       );
-    if (stacks.length === 0) {
-      if (output.format !== "text") yield* output.success("", { stacks });
+    if (flags.dryRun || stacks.length === 0) {
+      if (output.format !== "text") yield* output.success("", { dry_run: flags.dryRun, stacks });
       return stacks;
     }
     /* Always a batch, so a failure names each stack and lists the ones destroyed. */
@@ -87,7 +89,7 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* () {
       },
     ).pipe(Effect.mapError(pruneError));
     const pruned = stacks.filter((stack) => destroyed.some(({ id }) => id === stack.id));
-    if (output.format !== "text") yield* output.success("", { stacks: pruned });
+    if (output.format !== "text") yield* output.success("", { dry_run: false, stacks: pruned });
     return pruned;
   }).pipe(Effect.ensuring(telemetry.flush));
 });
