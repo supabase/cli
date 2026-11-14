@@ -71,8 +71,10 @@ running a container; with `--file` it still prints the `Dumped schema to <abs>.`
 confirmation on a successful dry-run but does **not** create or truncate the file.
 
 On a remote dump whose container fails with an IPv6 connectivity error (no IPv4
-pooler retry available, or the retry also fails), the error is followed on stderr by
-the IPv4 transaction-pooler suggestion.
+pooler retry available, or the retry also fails with one), the error is followed on stderr, in
+text mode, by the IPv4 transaction-pooler suggestion. Otherwise, when `pg_dump` rejects the
+server certificate (`certificate verify failed`), the suggestion is instead to set
+`PGSSLROOTCERT` to a CA bundle that trusts it, or `PGSSLMODE=require`.
 
 On Windows only, a **successful** stdout dump (no `--file`) whose stdout is a
 **pipe** (PowerShell interposes one for `>`/`|`; MSYS/mintty sessions excluded

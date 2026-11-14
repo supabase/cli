@@ -100,7 +100,9 @@ const CONTAINER_PRIVATE_KEY = "/tmp/supabase-client.key";
 const CONTAINER_INLINE_ROOT_CERT = "/tmp/supabase-root.crt";
 
 /* libpq reads root certs only from a file, so a native pg_dump gets the inline CA as a temp file. */
-const nativeInlineRootCert = Effect.fnUntraced(function* (env: Readonly<Record<string, string>>) {
+const nativeInlineRootCert = Effect.fn("PgDump.nativeInlineRootCert")(function* (
+  env: Readonly<Record<string, string>>,
+) {
   const { [INLINE_ROOT_CERT_ENV]: pem, ...rest } = env;
   if (pem === undefined) return env;
   const fs = yield* FileSystem.FileSystem;

@@ -615,14 +615,15 @@ describe("dbConfigResolver (local + db-url)", () => {
       sslmode: undefined,
     },
     {
-      name: "a local target",
-      url: "postgres://postgres:pw@127.0.0.1:54322/postgres",
+      name: "a local target on a Supabase host name",
+      url: "postgres://postgres:pw@db.abcdefghijklmnopqrst.supabase.co:54322/postgres",
       sslmode: undefined,
+      configEnv: { SUPABASE_SERVICES_HOSTNAME: "db.abcdefghijklmnopqrst.supabase.co" },
     },
-  ])("db-url mode: leaves TLS untouched for $name", ({ url, sslmode }) =>
+  ])("db-url mode: leaves TLS untouched for $name", ({ url, sslmode, configEnv }) =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();
-      const r = yield* resolveConnection(dir, inputFor(dbUrlTarget(url)));
+      const r = yield* resolveConnection(dir, inputFor(dbUrlTarget(url)), { configEnv });
       expect(r.conn.sslmode).toBe(sslmode);
       expect(r.conn.sslrootcertInline).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),

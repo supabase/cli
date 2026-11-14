@@ -27,9 +27,11 @@ find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary pr
 and uses an automatically assigned port; `db.shadow_port` applies only to the legacy backend. Migra (`--diff-engine migra`) is rejected in stack mode.
 A `--remote=<url>` whose host and port match the running project stack's SQL endpoint (the `DB_URL`
 from `stack status --env`) is a local target and connects in plaintext, like the default local
-target; a remote or multi-host URL without an explicit `sslmode` tries TLS first and falls back to
-plaintext when the server declines it or `pg_hba` rejects the TLS connection, as libpq `prefer`
-does.
+target. A remote or multi-host URL without an explicit `sslmode` pins the bundled Supabase CA, or
+the root cert set in its place, when its first host is a direct or pooler host of the active
+`supabase`, `supabase-staging` or `snap` profile (see `db push`). Any other such URL tries TLS
+first and falls back to plaintext when the server declines it or `pg_hba` rejects the TLS
+connection, as libpq `prefer` does.
 
 Pg-delta runs in-process. Coverage gaps warn; `--strict-coverage` makes them
 fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
@@ -216,7 +218,9 @@ resolved `target` object is merged into the payload.
 - The initial-migra pull (no local migrations, Compose / non-stack only) is native:
   it streams a `pg_dump` of the remote schema into the migration file, then appends
   the migra diff. An empty diff after a non-empty dump is swallowed; an empty dump +
-  empty diff is "No schema changes found". Stack-backed pulls never take this path.
+  empty diff is "No schema changes found". A dump that fails with an IPv6 connectivity error
+  or a rejected server certificate carries the matching suggestion (see `db dump`).
+  Stack-backed pulls never take this path.
 
 ### Removed surfaces
 
