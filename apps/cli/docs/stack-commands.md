@@ -455,7 +455,7 @@ to be destroyed does not stop the rest, though the command still fails.
 
 `supabase stack prune` destroys, after one confirmation, the stacks whose project directory no
 longer exists, such as those of deleted worktrees or moved directories; `--dry-run` only lists
-them.
+them. A directory on an unmounted drive counts as missing, so check with `--dry-run` first.
 
 ## Storage and bucket seeding
 

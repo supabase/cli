@@ -22,7 +22,7 @@ export type StackPruneFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const stackPruneCommand = Command.make("prune", config).pipe(
   Command.withDescription(
-    "Permanently destroy managed local stacks whose project directory no longer exists, such as those of deleted worktrees or moved directories, with their owned data and Storage uploads.",
+    "Permanently destroy managed local stacks whose project directory no longer exists, such as those of deleted worktrees or moved directories, with their owned data and Storage uploads. A directory on an unmounted drive counts as missing, so check with --dry-run first.",
   ),
   Command.withShortDescription("Destroy stacks whose project directory no longer exists"),
   Command.withExamples([

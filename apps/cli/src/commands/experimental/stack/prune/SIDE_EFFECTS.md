@@ -9,8 +9,9 @@ command registration.
 Discovery reads the global registry like `stack list`. A stack is selected only when its saved
 canonical project root is reported as not found, whatever its branch. A project root that cannot
 be checked (for example permission denied) keeps its stack and prints a warning on stderr naming
-it. Registry entries that cannot be read or decoded are skipped with a warning on stderr, as in
-`stack list`.
+it. A project on an unmounted volume is reported as not found, so run `--dry-run` first when
+projects live on removable or network storage. Registry entries that cannot be read or decoded
+are skipped with a warning on stderr, as in `stack list`.
 
 `--dry-run` lists the selected stacks and destroys nothing. Otherwise they are destroyed with the
 same cleanup as `stack destroy`: interactive text runs ask once whether to destroy the stacks
