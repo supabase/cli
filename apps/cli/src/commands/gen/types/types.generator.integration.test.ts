@@ -14,6 +14,9 @@ import {
 
 const unused = (what: string) => () => Effect.die(`${what} is not part of this test`);
 
+/** Typegen's schemas query is the only introspection query that joins `pg_roles u`. */
+const isSchemasQuery = (sql: string) => sql.includes("pg_roles u");
+
 /** A connection whose introspection finds only `schemas`, each empty. */
 const databaseRecording = (issued: string[], schemas: readonly string[]) =>
   Layer.succeed(DbConnection, {
@@ -24,9 +27,7 @@ const databaseRecording = (issued: string[], schemas: readonly string[]) =>
         query: (sql) => {
           issued.push(sql);
           return Effect.succeed(
-            sql.includes("pg_roles u")
-              ? schemas.map((name, id) => ({ id, name, owner: "postgres" }))
-              : [],
+            isSchemasQuery(sql) ? schemas.map((name, id) => ({ id, name, owner: "postgres" })) : [],
           );
         },
         queryRaw: unused("queryRaw"),
@@ -192,15 +193,22 @@ describe.skipIf(process.platform === "win32")(
     it.effect("reports missing requested schemas once", () =>
       withFakeDart(({ cwd }) =>
         Effect.gen(function* () {
-          const generator = yield* GenTypesGenerator;
-          const output = yield* Effect.scoped(
-            generator.generate({
-              ...input("typescript"),
-              includedSchemas: ["public", "nope", "nope"],
-            }),
-          );
+          const issued: string[] = [];
+          const output = yield* Effect.gen(function* () {
+            const generator = yield* GenTypesGenerator;
+            return yield* Effect.scoped(
+              generator.generate({
+                ...input("typescript"),
+                includedSchemas: ["public", "nope", "nope"],
+              }),
+            );
+          }).pipe(Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, issued, ["public"])));
+          expect(
+            issued.some(isSchemasQuery),
+            "typegen's schemas query no longer joins `pg_roles u`",
+          ).toBe(true);
           expect(output.missingSchemas).toEqual(["nope"]);
-        }).pipe(Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, [], ["public"]))),
+        }),
       ),
     );
   },
