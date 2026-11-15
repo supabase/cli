@@ -4,7 +4,7 @@ import { ArtifactPin, type ServiceKind } from "../Artifacts.ts";
 import type { PortError } from "../Ports.ts";
 import type { LaunchOutput } from "../runtime/Session.ts";
 import type { ServiceDefinition } from "../Service.ts";
-import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
+import { ContainerResources, type EngineTarget, type HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 
 type CatalogRuntime = "native" | "docker" | "podman";
@@ -40,6 +40,7 @@ export const serviceCreation = <
     pin: ArtifactPin,
     config,
     endpoints: Schema.optionalKey(endpoints),
+    container: Schema.optionalKey(ContainerResources),
   });
 
 export interface CatalogOptions {
@@ -79,6 +80,7 @@ export interface RecipeCreation<K extends ServiceKind, C> {
   readonly pin: ArtifactPin;
   readonly config: C;
   readonly endpoints?: unknown;
+  readonly container?: ContainerResources;
 }
 
 export interface ProcessRecipeResult<C> {

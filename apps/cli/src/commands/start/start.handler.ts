@@ -49,7 +49,6 @@ import {
   withStorageGatewayFetch,
 } from "../../command-internal/storage-credentials.ts";
 import { decryptSecretMap } from "../../shared/config/vault-decrypt.ts";
-import { parseDuration } from "../../command-internal/duration.ts";
 import { configureLoopbackProxyBypass } from "../../command-internal/hostname.ts";
 import {
   cliProjectFilterValue,
@@ -85,6 +84,7 @@ import {
   resolveGotrueSessions,
   resolveGotrueWeb3,
   resolveLocalConfigValues,
+  resolveStartAuthDurations,
   resolveLocalJwks,
   resolveThirdPartyProviders,
   type LocalConfigValues,
@@ -475,19 +475,17 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       cliSettings.workdir,
       fs,
     );
-    // Duration fields (duration syntax) are otherwise only parsed inside GoTrue's own env
-    // builder, which never runs when auth is disabled or `gotrue` is excluded — so a malformed
-    // value must be validated eagerly here or it would be silently accepted.
-    const gotrueSessionsForValidation = resolveGotrueSessions(config.auth.sessions);
-    yield* wrapConfigOverride("auth.email.max_frequency", () =>
-      parseDuration(resolvedEmail.max_frequency),
-    );
+    // Durations are otherwise only parsed inside GoTrue's env builder, which never runs when
+    // auth is disabled or `gotrue` is excluded.
+    yield* resolveStartAuthDurations(
+      config,
+      cliSettings.workdir,
+      context.document,
+      context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
+    ).pipe(Effect.mapError(startConfigError));
     // `resolveLocalConfigValues`'s own SMS validation only runs when auth is enabled, so this is
     // the only place a malformed `auth.sms.*` override is caught when auth is disabled.
     const smsForValidation = yield* tryStartConfig(() => resolveAuthSms(config.auth.sms));
-    yield* wrapConfigOverride("auth.sms.max_frequency", () =>
-      parseDuration(smsForValidation.max_frequency),
-    );
     // `resolveAuthSms` already downgrades `enable_signup` when no provider is enabled; this only
     // detects whether that branch fired, to print the matching warning.
     if (
@@ -500,19 +498,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     ) {
       yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
     }
-    const sessionsTimebox = gotrueSessionsForValidation?.timebox;
-    if (sessionsTimebox !== undefined) {
-      yield* wrapConfigOverride("auth.sessions.timebox", () => parseDuration(sessionsTimebox));
-    }
-    const sessionsInactivityTimeout = gotrueSessionsForValidation?.inactivity_timeout;
-    if (sessionsInactivityTimeout !== undefined) {
-      yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
-        parseDuration(sessionsInactivityTimeout),
-      );
-    }
-    yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
-      parseDuration(resolveAuthMfa(config.auth.mfa).phone.max_frequency),
-    );
     // These GoTrue overrides must validate unconditionally too, regardless of
     // `auth.enabled`/`--exclude gotrue`. The resolvers already throw internally on a bad
     // override, so calling each once here is simpler than re-deriving every field individually.

@@ -7,12 +7,11 @@ import { pickCliEnvName } from "../config/cli-config-key.ts";
 import { CliEnvNames } from "../config/cli-config-keys.ts";
 import { readShellEnvironment } from "../shared/config/cli-config-env.ts";
 import { resolveApiExternalUrl } from "./api-url.ts";
-import { validateApiPort, validateApiTlsPresence } from "./config-validate.ts";
+import { resolveJwtSecret, validateApiPort, validateApiTlsPresence } from "./config-validate.ts";
 import { describeConfigLoadFailure, loadResolvedConfigContext } from "./resolved-config-context.ts";
 import { mapTenantApiKeysError } from "./get-tenant-api-keys.ts";
 import { generateLocalJwt } from "./local-jwt.ts";
 import { getHostname } from "./hostname.ts";
-import { resolveJwtSecret } from "./local-config-values.ts";
 import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 import { extractServiceKeys } from "./tenant-keys.ts";
 import {

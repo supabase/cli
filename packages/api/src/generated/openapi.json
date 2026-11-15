@@ -412,7 +412,7 @@
           }
         ],
         "x-endpoint-owners": ["dev-workflows"],
-        "x-fga-permissions": [["branching_development_write"], ["branching_production_write"]],
+        "x-fga-permissions": [["branching_production_write"]],
         "x-oauth-scope": "environment:write"
       }
     },
