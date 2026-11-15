@@ -24,6 +24,12 @@ export interface GenTypesGenerateInput {
   readonly options: OptionValues;
 }
 
+interface GenTypesGenerateResult {
+  readonly source: string;
+  /** Unique requested schema names absent from introspection. */
+  readonly missingSchemas: ReadonlyArray<string>;
+}
+
 export type GenTypesGenerateError =
   | GenTypesGenerationError
   | GenTypesToolNotInstalledError
@@ -33,7 +39,7 @@ interface GenTypesGeneratorShape {
   /** Connects to `input.conn`, introspects it, and generates `input.lang` source. */
   readonly generate: (
     input: GenTypesGenerateInput,
-  ) => Effect.Effect<string, GenTypesGenerateError | DbConnectError, Scope.Scope>;
+  ) => Effect.Effect<GenTypesGenerateResult, GenTypesGenerateError | DbConnectError, Scope.Scope>;
 }
 
 /** Introspection or code generation failed against the target database's schema. */

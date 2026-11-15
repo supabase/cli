@@ -14,8 +14,8 @@ import {
 
 const unused = (what: string) => () => Effect.die(`${what} is not part of this test`);
 
-/** A connection whose every introspection query returns no rows: a valid, empty database. */
-const databaseRecording = (issued: string[]) =>
+/** A connection whose introspection finds only `schemas`, each empty. */
+const databaseRecording = (issued: string[], schemas: readonly string[]) =>
   Layer.succeed(DbConnection, {
     connect: () =>
       Effect.succeed<DbSession>({
@@ -23,7 +23,11 @@ const databaseRecording = (issued: string[]) =>
         execBatch: unused("execBatch"),
         query: (sql) => {
           issued.push(sql);
-          return Effect.succeed([]);
+          return Effect.succeed(
+            sql.includes("pg_roles u")
+              ? schemas.map((name, id) => ({ id, name, owner: "postgres" }))
+              : [],
+          );
         },
         queryRaw: unused("queryRaw"),
         extensionExists: unused("extensionExists"),
@@ -42,9 +46,14 @@ const runtimeIn = (cwd: string) =>
   });
 
 /** The generator layer as the command wires it, with the environment the layer reads through Config. */
-const layerIn = (cwd: string, env: Record<string, string>, issued: string[] = []) =>
+const layerIn = (
+  cwd: string,
+  env: Record<string, string>,
+  issued: string[] = [],
+  schemas: readonly string[] = [],
+) =>
   genTypesGeneratorLayer.pipe(
-    Layer.provide(databaseRecording(issued)),
+    Layer.provide(databaseRecording(issued, schemas)),
     Layer.provide(runtimeIn(cwd)),
     Layer.provide(BunServices.layer),
     Layer.provide(Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord(env))),
@@ -107,10 +116,10 @@ describe.skipIf(process.platform === "win32")(
         generate("dart").pipe(
           Effect.tap((output) =>
             Effect.sync(() => {
-              expect(output).toContain("args: run supabase_typegen --output -\n");
-              expect(output).toContain(`cwd: ${cwd}\n`);
-              expect(output).toContain('"schemas":[]');
-              expect(output).toContain('"version":1');
+              expect(output.source).toContain("args: run supabase_typegen --output -\n");
+              expect(output.source).toContain(`cwd: ${cwd}\n`);
+              expect(output.source).toContain('"schemas":[]');
+              expect(output.source).toContain('"version":1');
             }),
           ),
           Effect.provide(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` })),
@@ -172,11 +181,26 @@ describe.skipIf(process.platform === "win32")(
         generate("typescript").pipe(
           Effect.tap((output) =>
             Effect.sync(() => {
-              expect(output).toContain("export type Database");
+              expect(output.source).toContain("export type Database");
             }),
           ),
           Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" })),
         ),
+      ),
+    );
+
+    it.effect("reports missing requested schemas once", () =>
+      withFakeDart(({ cwd }) =>
+        Effect.gen(function* () {
+          const generator = yield* GenTypesGenerator;
+          const output = yield* Effect.scoped(
+            generator.generate({
+              ...input("typescript"),
+              includedSchemas: ["public", "nope", "nope"],
+            }),
+          );
+          expect(output.missingSchemas).toEqual(["nope"]);
+        }).pipe(Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, [], ["public"]))),
       ),
     );
   },

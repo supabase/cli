@@ -256,6 +256,7 @@ function mockGenTypesGenerator(
       callIndex: number,
     ) => Effect.Effect<string, GenTypesGenerateError | DbConnectError>;
     readonly output?: string;
+    readonly missingSchemas?: ReadonlyArray<string>;
   } = {},
 ) {
   const calls: Array<GenTypesGenerateInput> = [];
@@ -265,7 +266,7 @@ function mockGenTypesGenerator(
         calls.push(input);
         return (
           opts.generate?.(input, calls.length - 1) ?? Effect.succeed(opts.output ?? "generated")
-        );
+        ).pipe(Effect.map((source) => ({ source, missingSchemas: opts.missingSchemas ?? [] })));
       }),
   });
   return {
@@ -4244,6 +4245,35 @@ describe("gen types", () => {
 
         expect(generator.calls[0]?.lang).toBe("go");
       }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "warns on stderr for each --schema missing from the generated types, never for default schemas",
+      () =>
+        Effect.gen(function* () {
+          const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+          const remote = Option.some({ _tag: "DbUrl", url: dbUrl } as const);
+          const generator = mockGenTypesGenerator({
+            output: "types",
+            missingSchemas: ["nope", 'quote"name'],
+          });
+          const explicit = yield* setup({ generator });
+          yield* genTypes(defaultFlags({ remote, schema: ["public", "nope", 'quote"name'] })).pipe(
+            Effect.provide(explicit.layer),
+          );
+          const defaulted = yield* setup({ generator });
+          yield* genTypes(defaultFlags({ remote })).pipe(Effect.provide(defaulted.layer));
+
+          expect(explicit.out.stdoutText).toBe("types");
+          const warnings = stripAnsi(explicit.out.stderrText)
+            .split("\n")
+            .filter((line) => line.startsWith("Warning: "));
+          expect(warnings).toEqual([
+            'Warning: schema "nope" is missing from the generated types: it does not exist, the connecting role cannot use it, or its name starts with pg_.',
+            'Warning: schema "quote\\"name" is missing from the generated types: it does not exist, the connecting role cannot use it, or its name starts with pg_.',
+          ]);
+          expect(defaulted.out.stderrText).not.toContain("Warning: ");
+        }).pipe(Effect.provide(BunServices.layer)),
     );
   });
 });

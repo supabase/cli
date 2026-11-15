@@ -74,7 +74,12 @@ import {
 import { type GenTypesGenerateError, GenTypesGenerator } from "./types.generator.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
-import { defaultSchemas, localDbContainerId, parseQueryTimeoutMillis } from "./types.shared.ts";
+import {
+  defaultSchemas,
+  localDbContainerId,
+  parseQueryTimeoutMillis,
+  quoteJsonString,
+} from "./types.shared.ts";
 
 const mapProjectTypesError = mapHttpError({
   networkError: GenTypesNetworkError,
@@ -397,13 +402,22 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             classifyError: classifyGenerateError,
           });
 
+    /* Defaults such as graphql_public are absent on plain Postgres, so only --schema warns. */
+    if (schemas.length > 0) {
+      for (const name of types.missingSchemas) {
+        yield* output.raw(
+          `${yellow(`Warning: schema ${yield* quoteJsonString(name)} is missing from the generated types: it does not exist, the connecting role cannot use it, or its name starts with pg_.`)}\n`,
+          "stderr",
+        );
+      }
+    }
     if (lang === "typescript") {
       yield* output.raw(
         "Generated TypeScript is unformatted. Format it with:\n  npx oxfmt <generated-file.ts>\n",
         "stderr",
       );
     }
-    yield* output.raw(types);
+    yield* output.raw(types.source);
   });
 
   const connectionInputFor = Effect.fnUntraced(function* (target: ResolvedTarget) {
