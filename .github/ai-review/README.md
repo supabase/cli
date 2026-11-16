@@ -23,11 +23,9 @@ churn instead of substance. This pipeline instead:
 ## Stages
 
 ```
-                ┌─ claude-review ─┐
-resolve  ──────>┤                 ├──> adjudicate ──> post-review
-(decide)        └─ codex-review  ─┘   (Codex reconciles  (post ONE
-              (two independent reviews  + verifies by      GitHub review)
-               in parallel → JSON)      reading the code)
+                            +-> claude-review --+
+resolve -> docs-guidance ---+                   +-> adjudicate -> post-review
+                            +-> codex-review ---+
 ```
 
 - **`resolve`** (`.github/scripts/ai-review/resolve.ts`) decides whether this
@@ -54,6 +52,57 @@ resolve  ──────>┤                 ├──> adjudicate ──> po
   job with write access. It posts one `COMMENT`-event GitHub review (inline
   comments where the diff can anchor them, a summary body for everything
   else), then best-effort supersedes any prior AI review on the PR.
+
+### CLI reference prose
+
+After authorization, a separate read-only `docs-guidance` job conservatively
+selects reference sources from the resolved PR head's merge-base diff. Overlays under `apps/cli/docs/supabase/`,
+`apps/cli/docs/templates/examples.yaml`, and non-test TypeScript under
+`apps/cli/src/` qualify. Generated YAML and unrelated paths do not trigger a
+fetch. Findings are limited to changed reference prose, not every selected file.
+
+For relevant changes, the trusted collector resolves `supabase/supabase` master
+once and fetches only `apps/docs/style-guide/README.md`,
+`01-voice-and-tone.md`, `02-elements.md`, `03-page-structure.md`, and
+`WORD_LIST.md` at that SHA. Requests use no credentials, reject redirects, time
+out after 15 seconds, and cap each guide at 512 KiB (revision JSON at 64 KiB).
+The single immutable `docs-guidance` artifact carries a JSON manifest recording
+status, SHA, and file paths, plus raw Markdown under `docs-guidance/`. All models
+read those raw files directly, without decoding long escaped JSON strings.
+All three model passes and the poster download its exact artifact ID from the
+current run, not another run or a PR-authored artifact name.
+
+The artifact also carries the trusted default-branch copy of the
+[shared CLI procedure](../../.agents/skills/cli-reference/review-procedure.md).
+All CI prompts consume it directly; local authors use the
+[CLI reference skill](../../.agents/skills/cli-reference/SKILL.md). Upstream
+Markdown is reference data only, never executed or followed as agent
+instructions. Review findings quote changed prose and cite real upstream rules
+at the snapshot SHA, preserving commands, code, and identifiers.
+
+The preparation job has a separate fifteen-minute budget, leaving resolve's
+five-minute authorization budget unchanged. Only authorized runs provision the
+trusted checkout's Node, Bun, and pnpm toolchains. A root-filtered frozen-lockfile
+install uses the existing optional Dependency Firewall registry convention with
+all lifecycle scripts disabled. No dependencies or setup scripts come from the
+PR checkout, and downstream review/post jobs do not import Effect.
+
+Missing trusted collector/procedure files during first rollout skip dependency
+setup and publish an explicit unavailable artifact. The trusted poster's rollout
+fallback also prefixes the consolidated summary when its new status helper is
+absent; dispatching a PR workflow does not change its trusted checkout.
+
+Dependency setup, retrieval, source-selection, upload, or download failure records
+`unavailable`, discards partial guidance, and continues ordinary review wherever
+the runner can still proceed. Failed preparation does not gate the model jobs.
+Every consumer supplies a local unavailable fallback if artifact delivery fails,
+and the poster does not claim delivery if any model missed the artifact. Unrelated changes record
+`not-applicable` without upstream requests. The poster adds a deterministic
+snapshot status to the consolidated review, independent of model summaries;
+available guidance is not a style-pass claim. Prose findings remain advisory
+`nit` findings in the existing review, with no new reviewer or blocking gate.
+The snapshot artifact is public and retained for three days. When overlays move,
+update both source selection and the shared procedure.
 
 ### Next-branch impact
 
