@@ -45,7 +45,7 @@ import { failureKind, isStackFailureKind, type StackFailureKind } from "./Failur
 import type { ArtifactSelection } from "./Artifacts.ts";
 import { collectDataConflicts } from "./internal/data-conflicts.ts";
 import { initializedDatabaseIds } from "./internal/database-reuse.ts";
-import { failureMessage } from "./internal/failure-message.ts";
+import { failureMessage, rpcClientFailureMessage } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
 import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
@@ -179,7 +179,7 @@ const failure = (operation: string, cause: unknown, kind?: StackFailureKind): St
   return new StackError({
     operation,
     message: Schema.is(RpcClientError)(cause)
-      ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
+      ? `Owner response unavailable; the request outcome is uncertain: ${rpcClientFailureMessage(cause)}`
       : failureMessage(cause),
     ...(ownerAbsent(cause) || stackGone(cause)
       ? { reason: "owner-unavailable" as const }
