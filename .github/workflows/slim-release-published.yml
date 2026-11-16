@@ -183,7 +183,7 @@ jobs:
                 read -r -a others <<<"$others"
                 echo "${branch} has ${#others[@]} commit(s) from others; replaying them onto ${release}."
                 if ! git fetch --no-tags --depth="$((ahead_by + 1))" "$push_url" "$remote_sha" ||
-                  ! git cherry-pick --keep-redundant-commits "${others[@]}"; then
+                  ! git -c core.hooksPath=/dev/null cherry-pick --keep-redundant-commits "${others[@]}"; then
                   git cherry-pick --abort 2>/dev/null || true
                   echo "::error ::Could not replay the commits others pushed to ${branch} onto ${release}. Rebuild ${branch} from ${DEFAULT_BRANCH} with ${manual_prefix} ${release}, regenerate the Dockerfile with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then cherry-pick those commits by hand."
                   exit 1
@@ -193,6 +193,10 @@ jobs:
 
             if ! push_output="$(git push "--force-with-lease=refs/heads/${branch}:${remote_sha}" "$push_url" "HEAD:refs/heads/${branch}" 2>&1)"; then
               echo "$push_output"
+              if grep -q "(stale info)" <<<"$push_output"; then
+                echo "::error ::${branch} changed while this run was updating it. Re-run this job to replay the new commits onto ${release}."
+                exit 1
+              fi
               if ! grep -q "queued for merging cannot be updated" <<<"$push_output"; then
                 echo "::error ::Failed to push ${branch}. Run manually: ${manual_prefix} ${release}, regenerate the Dockerfile with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
                 exit 1
