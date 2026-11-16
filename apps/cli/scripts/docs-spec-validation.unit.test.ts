@@ -78,10 +78,14 @@ it.effect("omits excluded commands from both coverage and parent links", () =>
 );
 
 it.effect.each([
-  ["missing child", []],
-  ["wrong existing child", ["supabase-inspect"]],
-  ["duplicate child", ["supabase-inspect-db", "supabase-inspect-db"]],
-] as const)("rejects %s in parent links", ([, subcommands]) =>
+  ["missing child", [], "[]"],
+  ["wrong existing child", ["supabase-inspect"], "[supabase-inspect]"],
+  [
+    "duplicate child",
+    ["supabase-inspect-db", "supabase-inspect-db"],
+    "[supabase-inspect-db, supabase-inspect-db]",
+  ],
+] as const)("rejects %s in parent links", ([, subcommands, supplied]) =>
   Effect.gen(function* () {
     const input = {
       ...inspectSpec,
@@ -90,7 +94,9 @@ it.effect.each([
       ),
     };
     const error = yield* validateDocsSpec(stringify(input), "1.0.0", inspectRoot).pipe(Effect.flip);
-    expect(error.message).toContain("subcommand coverage mismatch for supabase-inspect.");
+    expect(error.message).toBe(
+      `subcommand coverage mismatch for supabase-inspect. Expected: [supabase-inspect-db]; supplied: ${supplied}.`,
+    );
   }),
 );
 

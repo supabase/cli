@@ -108,7 +108,7 @@ export const validateDocsSpec = Effect.fn("Docs.validateSpec")(function* (
       children.some((id) => !supplied.has(id))
     ) {
       return yield* new InvalidDocsSpec({
-        message: `subcommand coverage mismatch for ${command.id}.`,
+        message: `subcommand coverage mismatch for ${command.id}. Expected: [${children.join(", ")}]; supplied: [${command.subcommands.join(", ")}].`,
       });
     }
   }
