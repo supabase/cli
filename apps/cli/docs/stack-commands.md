@@ -230,9 +230,16 @@ instance on the stack's API listener without changing the saved composition. Ctr
 temporary instance; an existing member remains available. On a running stack, any difference
 between the configuration serve resolves (env files, per-function `.env`, `[functions.<name>]`
 settings, `--env-file`, `--debug`, `--no-verify-jwt`) and the saved one restarts Functions for
-the serving session, and the saved configuration is restored on exit. Edits made while serving
-apply on the next `functions serve`, because the stack backend does not watch files. Ordinary code edits
-are picked up by the next invocation without a runtime restart. Import-map and inspector flags
+the serving session, and the saved configuration is restored on exit. Configuration edits made while
+serving apply on the next `functions serve`. Ordinary code edits are checked on every request and
+picked up by the next invocation without a runtime restart, including directories symlinked
+into `supabase/functions` and configured entrypoints and import maps elsewhere, except edits in dot
+directories, `node_modules` and `vendor`. Other edits outside `supabase/functions`, such as shared
+code reached through an import map, apply after `supabase stack restart`, as does a write that
+keeps a file's size and restores its old modification time. Files dated in the future, and a
+functions directory with more than 3,000 entries counting symlinked directories, boot a worker per
+request, the latter until restart; workers from before an edit run until their wall clock limit.
+Import-map and inspector flags
 are currently unsupported on this backend. Normal exit owns cleanup; forcibly killing the CLI
 cannot guarantee restoration or removal of its temporary instance. Concurrent override sessions
 for the same Functions instance are unsupported. Cleanup waits for submitted lifecycle operations;

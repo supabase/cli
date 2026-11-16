@@ -71,6 +71,7 @@ export type CatalogLogs = Effect.Effect<PubSub.Subscription<LaunchOutput>, never
 export interface CatalogRecipe<C> {
   readonly creation: C;
   readonly definition: ServiceDefinition<C>;
+  /** Hands out a running endpoint for traffic, after any `beforeTraffic` check its recipe defines. */
   readonly endpoint: (name: string) => Effect.Effect<ServiceEndpoint, CatalogError>;
   readonly logs: CatalogLogs;
 }
@@ -87,4 +88,9 @@ export interface ProcessRecipeResult<C> {
   readonly definition: ServiceDefinition<C>;
   readonly endpoints: Ref.Ref<ReadonlyMap<string, ServiceEndpoint>>;
   readonly logs: CatalogLogs;
+  /** Runs each time an endpoint is handed out, before the traffic that asked for it is sent. */
+  readonly beforeTraffic?: (
+    name: string,
+    endpoint: ServiceEndpoint,
+  ) => Effect.Effect<void, CatalogError>;
 }

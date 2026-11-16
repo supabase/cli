@@ -2,6 +2,7 @@ import { NodeCrypto, NodeHttpClient, NodePath, NodeServices } from "@effect/plat
 import { beforeAll, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Clock,
   Deferred,
   Effect,
   Exit,
@@ -14,6 +15,7 @@ import {
   Stream,
 } from "effect";
 import { Digest, SecureRandom } from "effect/crypto";
+import { systemError } from "effect/PlatformError";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { prepareNativeArtifact } from "../Artifacts.ts";
@@ -54,6 +56,12 @@ const engineInfo = Effect.scoped(
     return yield* Stream.mkString(Stream.decodeText(child.all));
   }),
 ).pipe(Effect.orElseSucceed(() => `${testEngine} info unavailable`));
+
+/* A fresh identity per run, so concurrent runs never share a native port or runtime directory. */
+const runIdentity = Effect.fn(function* (prefix: string) {
+  const id = (yield* (yield* SecureRandom.SecureRandom).uuidV4()).replaceAll("-", "");
+  return { stackId: id.repeat(2), instanceId: `${prefix}-${id}` };
+});
 
 describe("service catalog", () => {
   it.live(
@@ -168,6 +176,387 @@ describe("service catalog", () => {
           ),
         ),
       120_000,
+    );
+
+    /* Every request asks for the endpoint first, as the API gateway does. */
+    const serveHello = Effect.fn(function* (prefix: string, fs: FileSystem.FileSystem) {
+      const files = yield* FileSystem.FileSystem;
+      const root = yield* files.makeTempDirectoryScoped({ prefix: `${prefix}-` });
+      const callerRoot = yield* files.makeTempDirectoryScoped({ prefix: `${prefix}-caller-` });
+      const functionsRoot = `${callerRoot}/user-functions`;
+      const source = (version: string) =>
+        files.writeFileString(
+          `${functionsRoot}/hello/index.ts`,
+          `let requests = 0; Deno.serve(() => Response.json({ requests: ++requests, version: "${version}" }));`,
+        );
+      yield* files.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
+      yield* source("one");
+      /* Two equally deep paths to one directory, which a scan must count once whichever it
+         reaches first. */
+      yield* files.makeDirectory(`${callerRoot}/lib`);
+      yield* files.writeFileString(`${callerRoot}/lib/dep.ts`, "export const dep = 1;");
+      yield* files.symlink("../../lib", `${functionsRoot}/hello/lib`);
+      yield* files.makeDirectory(`${functionsRoot}/other`);
+      yield* files.symlink("../../lib", `${functionsRoot}/other/lib`);
+      /* A function whose import goes through a symlink that can be pointed elsewhere. */
+      for (const lib of ["a", "b"]) {
+        yield* files.makeDirectory(`${functionsRoot}/lib-${lib}`);
+        yield* files.writeFileString(
+          `${functionsRoot}/lib-${lib}/dep.ts`,
+          `export const lib = "${lib}";`,
+        );
+      }
+      yield* files.makeDirectory(`${functionsRoot}/picker`);
+      yield* files.writeFileString(
+        `${functionsRoot}/picker/index.ts`,
+        'import { lib } from "./lib/dep.ts"; Deno.serve(() => Response.json({ lib }));',
+      );
+      const pointLib = (lib: string) =>
+        files
+          .remove(`${functionsRoot}/picker/lib`, { force: true })
+          .pipe(Effect.andThen(files.symlink(`../lib-${lib}`, `${functionsRoot}/picker/lib`)));
+      yield* pointLib("a");
+      /* A file written within the last second is never trusted to stay current, so files the
+         tests expect a worker to be reused for get a time a minute back (seconds, as utimes takes). */
+      const settle = (file: string) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) =>
+            files.utimes(file, (now - 60_000) / 1_000, (now - 60_000) / 1_000),
+          ),
+        );
+      yield* Effect.forEach(
+        ["hello/index.ts", "picker/index.ts", "lib-a/dep.ts", "lib-b/dep.ts", "../lib/dep.ts"],
+        (file) => settle(`${functionsRoot}/${file}`),
+        { discard: true },
+      );
+      /* A configured entrypoint elsewhere in the project, checked file by file. */
+      yield* files.makeDirectory(`${callerRoot}/src`);
+      const outsideSource = (value: string) =>
+        files.writeFileString(
+          `${callerRoot}/src/outside.ts`,
+          `Deno.serve(() => Response.json({ value: "${value}" }));`,
+        );
+      yield* outsideSource("one");
+      yield* settle(`${callerRoot}/src/outside.ts`);
+      const { stackId, instanceId } = yield* runIdentity(prefix);
+      const recipe = yield* makeServiceRecipe(
+        {
+          service: "functions",
+          pin: selection.functions,
+          config: {
+            functionsRoot,
+            filesRoot: callerRoot,
+            verifyJwt: false,
+            functions: {
+              outside: { entrypoint: `${callerRoot}/src/outside.ts` },
+              /* A configured file that does not exist yet changes nothing about reuse. */
+              gone: { entrypoint: `${callerRoot}/src/gone.ts` },
+              /* A disabled function's files are never checked, readable or not. */
+              disabled: { enabled: false, entrypoint: `${callerRoot}/src/disabled.ts` },
+            },
+          },
+        },
+        { ...options(root), stackId, instanceId, cacheRoot: testArtifactCacheRoot },
+      ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+      const instance = yield* makeStandaloneService(recipe.definition, {
+        id: instanceId,
+        config: recipe.creation,
+      });
+      yield* instance.start;
+      yield* instance.ready;
+      const client = yield* HttpClient.HttpClient;
+      const call = (name: string) =>
+        recipe.endpoint("http").pipe(
+          Effect.flatMap((endpoint) =>
+            client.execute(
+              HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/${name}`),
+            ),
+          ),
+          Effect.flatMap((response) => response.json),
+        );
+      return {
+        functionsRoot,
+        outsideSource,
+        source,
+        settle: settle(`${functionsRoot}/hello/index.ts`),
+        touchAhead: Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) =>
+            files.utimes(
+              `${functionsRoot}/hello/index.ts`,
+              (now + 60_000) / 1_000,
+              (now + 60_000) / 1_000,
+            ),
+          ),
+        ),
+        pointLib,
+        call,
+        invoke: call("hello"),
+        restart: instance.stop.pipe(Effect.andThen(instance.start), Effect.andThen(instance.ready)),
+        stop: instance.stop,
+      };
+    });
+
+    it.live("reuses a function's worker and serves every edit on the next request", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const {
+            source,
+            outsideSource,
+            settle,
+            touchAhead,
+            pointLib,
+            call,
+            invoke,
+            restart,
+            stop,
+          } = yield* serveHello("functions-reload", yield* FileSystem.FileSystem);
+          for (const requests of [1, 2, 3, 4, 5, 6])
+            expect(yield* invoke).toEqual({ requests, version: "one" });
+          for (const version of ["two", "three", "four", "five", "six"]) {
+            yield* source(version);
+            expect(yield* invoke).toMatchObject({ version });
+          }
+          yield* settle;
+          expect(yield* invoke).toEqual({ requests: 1, version: "six" });
+          expect(yield* invoke).toEqual({ requests: 2, version: "six" });
+          /* A change the check can trust, made while workers are reused, reloads at once. */
+          yield* source("seven");
+          yield* settle;
+          expect(yield* invoke).toEqual({ requests: 1, version: "seven" });
+          expect(yield* invoke).toEqual({ requests: 2, version: "seven" });
+          expect(yield* call("picker")).toEqual({ lib: "a" });
+          expect(yield* call("picker")).toEqual({ lib: "a" });
+          yield* pointLib("b");
+          expect(yield* call("picker")).toEqual({ lib: "b" });
+          /* A relaunched main reuses workers again. */
+          yield* restart;
+          expect(yield* invoke).toEqual({ requests: 1, version: "seven" });
+          expect(yield* invoke).toEqual({ requests: 2, version: "seven" });
+          /* While workers are reused, a configured entrypoint outside the directory still reloads. */
+          expect(yield* call("outside")).toEqual({ value: "one" });
+          expect(yield* call("outside")).toEqual({ value: "one" });
+          yield* outsideSource("two");
+          expect(yield* call("outside")).toEqual({ value: "two" });
+          /* A time no older than a second cannot be trusted to change with the content, so each
+             request gets a fresh worker until it is. */
+          yield* touchAhead;
+          expect(yield* invoke).toEqual({ requests: 1, version: "seven" });
+          expect(yield* invoke).toEqual({ requests: 1, version: "seven" });
+          yield* stop;
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
+    );
+
+    it.live("boots a worker per request while the sources cannot be read", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          let unreadable = false;
+          let denied = false;
+          const failure = (method: string, path: string) =>
+            systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method,
+              pathOrDescriptor: path,
+            });
+          const { source, settle, invoke, stop } = yield* serveHello("functions-unreadable", {
+            ...fs,
+            stat: (path) =>
+              path.endsWith("/src/disabled.ts") || (denied && path.endsWith("/src/outside.ts"))
+                ? Effect.fail(failure("stat", path))
+                : fs.stat(path),
+            readDirectoryEntries: (directory) =>
+              unreadable && directory.endsWith("/hello")
+                ? Effect.fail(
+                    systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "readDirectoryEntries",
+                      pathOrDescriptor: directory,
+                    }),
+                  )
+                : fs.readDirectoryEntries(directory),
+          });
+          expect(yield* invoke).toEqual({ requests: 1, version: "one" });
+          expect(yield* invoke).toEqual({ requests: 2, version: "one" });
+          unreadable = true;
+          expect(yield* invoke).toEqual({ requests: 1, version: "one" });
+          expect(yield* invoke).toEqual({ requests: 1, version: "one" });
+          /* Once readable again, reuse resumes without any worker from before the failure. */
+          yield* source("two");
+          expect(yield* invoke).toEqual({ requests: 1, version: "two" });
+          yield* settle;
+          unreadable = false;
+          expect(yield* invoke).toEqual({ requests: 1, version: "two" });
+          expect(yield* invoke).toEqual({ requests: 2, version: "two" });
+          /* A configured file that cannot be read, rather than one that is gone, is not trusted. */
+          denied = true;
+          expect(yield* invoke).toEqual({ requests: 1, version: "two" });
+          expect(yield* invoke).toEqual({ requests: 1, version: "two" });
+          yield* stop;
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
+    );
+
+    it.live("sends a custom bootstrap no reload announcements", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-custom-" });
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-custom-caller-",
+          });
+          const functionsRoot = `${callerRoot}/user-functions`;
+          yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
+          yield* fs.writeFileString(`${functionsRoot}/hello/index.ts`, "export default 1;");
+          const { stackId, instanceId } = yield* runIdentity("functions-custom");
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "functions",
+              pin: selection.functions,
+              config: {
+                functionsRoot,
+                bootstrap: `let reloads = 0;
+Deno.serve((request) => {
+  const { pathname } = new URL(request.url);
+  if (pathname === "/_internal/health") return new Response("ok");
+  if (pathname === "/_internal/reload") reloads += 1;
+  return Response.json({ reloads });
+});`,
+              },
+            },
+            { ...options(root), stackId, instanceId, cacheRoot: testArtifactCacheRoot },
+          );
+          const instance = yield* makeStandaloneService(recipe.definition, {
+            id: instanceId,
+            config: recipe.creation,
+          });
+          yield* instance.start;
+          yield* instance.ready;
+          const client = yield* HttpClient.HttpClient;
+          const call = recipe.endpoint("http").pipe(
+            Effect.flatMap((endpoint) =>
+              client.execute(
+                HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/hello`),
+              ),
+            ),
+            Effect.flatMap((response) => response.json),
+          );
+          expect(yield* call).toEqual({ reloads: 0 });
+          expect(yield* call).toEqual({ reloads: 0 });
+          yield* instance.stop;
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
+    );
+
+    it.live(
+      "checks a relative configured entrypoint where the real functions directory resolves it",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-linked-" });
+            const callerRoot = yield* fs.makeTempDirectoryScoped({
+              prefix: "functions-linked-caller-",
+            });
+            /* The functions directory is a symlink one level up from where it really lives, so its
+             relative paths lead somewhere else lexically than for the bootstrap. */
+            const realFunctions = `${callerRoot}/nested/deeper/functions`;
+            yield* fs.makeDirectory(`${realFunctions}/outside`, { recursive: true });
+            yield* fs.symlink(realFunctions, `${callerRoot}/functions`);
+            yield* fs.makeDirectory(`${callerRoot}/nested/deeper/src`, { recursive: true });
+            const outside = `${callerRoot}/nested/deeper/src/outside.ts`;
+            const write = (value: string) =>
+              fs
+                .writeFileString(
+                  outside,
+                  `let requests = 0; Deno.serve(() => Response.json({ requests: ++requests, value: "${value}" }));`,
+                )
+                .pipe(
+                  Effect.andThen(Clock.currentTimeMillis),
+                  Effect.flatMap((now) =>
+                    fs.utimes(outside, (now - 60_000) / 1_000, (now - 60_000) / 1_000),
+                  ),
+                );
+            yield* write("one");
+            const { stackId, instanceId } = yield* runIdentity("functions-linked");
+            const recipe = yield* makeServiceRecipe(
+              {
+                service: "functions",
+                pin: selection.functions,
+                config: {
+                  functionsRoot: `${callerRoot}/functions`,
+                  filesRoot: callerRoot,
+                  verifyJwt: false,
+                  functions: { outside: { entrypoint: "../../src/outside.ts" } },
+                },
+              },
+              { ...options(root), stackId, instanceId, cacheRoot: testArtifactCacheRoot },
+            );
+            const instance = yield* makeStandaloneService(recipe.definition, {
+              id: instanceId,
+              config: recipe.creation,
+            });
+            yield* instance.start;
+            yield* instance.ready;
+            const client = yield* HttpClient.HttpClient;
+            const call = recipe.endpoint("http").pipe(
+              Effect.flatMap((endpoint) =>
+                client.execute(
+                  HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/outside`),
+                ),
+              ),
+              Effect.flatMap((response) => response.json),
+            );
+            expect(yield* call).toEqual({ requests: 1, value: "one" });
+            expect(yield* call).toEqual({ requests: 2, value: "one" });
+            yield* write("two");
+            expect(yield* call).toEqual({ requests: 1, value: "two" });
+            yield* instance.stop;
+          }),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
+    );
+
+    it.live("keeps a worker per request in a project too large to check", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const { functionsRoot, invoke, stop } = yield* serveHello("functions-large", fs);
+          yield* fs.makeDirectory(`${functionsRoot}/assets`);
+          yield* Effect.forEach(
+            Array.from({ length: 3_001 }, (_, index) => index),
+            (index) => {
+              const file = `${functionsRoot}/assets/${index}.txt`;
+              return fs.writeFileString(file, "").pipe(Effect.andThen(fs.utimes(file, 0, 0)));
+            },
+            { concurrency: 64, discard: true },
+          );
+          expect(yield* invoke).toEqual({ requests: 1, version: "one" });
+          expect(yield* invoke).toEqual({ requests: 1, version: "one" });
+          yield* stop;
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     );
 
     it.live("destroy survives a symlink planted where its runtime directory used to be", () =>

@@ -122,6 +122,7 @@ describe("stack-owned functions bootstrap", () => {
       const envRecord: Record<string, string> = {
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: root,
         SUPABASE_INTERNAL_JWT_SECRET: secret,
+        SUPABASE_INTERNAL_RELOAD_TOKEN: "reload-token",
         KEEP: "yes",
       };
       let createOptions: Record<string, unknown> | undefined;
@@ -251,12 +252,41 @@ describe("stack-owned functions bootstrap", () => {
         forceCreate: true,
         staticPatterns: [],
       });
+      expect(createOptions).not.toHaveProperty("poolKey");
       expect(createOptions?.envVars).toEqual(
         expect.arrayContaining([
           ["KEEP", "yes"],
           ["SUPABASE_FUNCTION_SLUG", "hello"],
         ]),
       );
+      /* A worker is reused only between the reloads the host's source checks announce. */
+      const reload = (method: string, headers: Record<string, string>) =>
+        Effect.tryPromise(() =>
+          registered.handler(new Request("http://127.0.0.1/_internal/reload", { method, headers })),
+        );
+      const announced = { "x-supabase-reload": "reload-token" };
+      expect((yield* reload("POST", {})).status).toBe(404);
+      expect((yield* reload("GET", announced)).status).toBe(404);
+      expect((yield* reload("POST", announced)).status).toBe(200);
+      yield* invoke(token);
+      expect(createOptions).toMatchObject({
+        forceCreate: false,
+        poolKey: expect.stringMatching(/hello@1$/u),
+      });
+      expect((yield* reload("POST", announced)).status).toBe(200);
+      yield* invoke(token);
+      expect(createOptions).toMatchObject({ poolKey: expect.stringMatching(/hello@2$/u) });
+      expect((yield* reload("DELETE", announced)).status).toBe(200);
+      yield* invoke(token);
+      expect(createOptions).toMatchObject({ forceCreate: true });
+      expect(createOptions).not.toHaveProperty("poolKey");
+      /* Reuse resumes on a generation no earlier worker belongs to. */
+      expect((yield* reload("POST", announced)).status).toBe(200);
+      yield* invoke(token);
+      expect(createOptions).toMatchObject({
+        forceCreate: false,
+        poolKey: expect.stringMatching(/hello@3$/u),
+      });
       const wrongToken = yield* Effect.tryPromise(() =>
         new SignJWT({ sub: "bootstrap-test" })
           .setProtectedHeader({ alg: "HS256" })

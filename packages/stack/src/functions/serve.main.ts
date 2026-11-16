@@ -46,6 +46,7 @@ interface WorkerCreateOptions {
   readonly noNpm: boolean;
   readonly envVars: ReadonlyArray<readonly [string, string]>;
   readonly forceCreate: boolean;
+  readonly poolKey?: string;
   readonly customModuleRoot: string;
   readonly cpuTimeSoftLimitMs: number;
   readonly cpuTimeHardLimitMs: number;
@@ -87,6 +88,7 @@ const bootstrapConfig = Effect.runSync(
       functionsConfig: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_CONFIG")),
       debug: yield* read(Config.String("SUPABASE_INTERNAL_DEBUG")),
       jwks: yield* read(Config.String("SUPABASE_JWKS")),
+      reloadToken: yield* read(Config.String("SUPABASE_INTERNAL_RELOAD_TOKEN")),
     };
   }).pipe(
     Effect.provideService(
@@ -380,6 +382,11 @@ const warnPlainDenoConfig = (slug: string, config: FunctionConfig): Effect.Effec
 const workerServicePath = createWorkerServicePathResolver(() =>
   Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
 );
+const RELOAD_TOKEN = Option.getOrUndefined(bootstrapConfig.reloadToken);
+/* Workers are reused only while the host's source checks vouch for them; every change they
+   announce moves the functions to a new, never reused generation. */
+let reusing = false;
+let generation = 0;
 
 const shouldUsePackageJsonDiscovery = (config: FunctionConfig): Effect.Effect<boolean> =>
   config.importMapPath
@@ -434,6 +441,19 @@ Deno.serve({
         if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
         if (pathname === "/_internal/metric")
           return Response.json(yield* foreign(() => EdgeRuntime.getRuntimeMetrics()));
+        if (
+          pathname === "/_internal/reload" &&
+          (request.method === "POST" || request.method === "DELETE") &&
+          RELOAD_TOKEN !== undefined &&
+          request.headers.get("x-supabase-reload") === RELOAD_TOKEN
+        ) {
+          reusing = request.method === "POST";
+          if (reusing) generation += 1;
+          return getResponse({ message: "ok" }, STATUS_CODE.OK);
+        }
+        /* Taken before the config is read, so a reload announced meanwhile never files a worker
+           built from older sources under the newer generation. */
+        const reuse = reusing ? generation : undefined;
         const functionName = pathname.split("/")[1];
         if (!functionName)
           return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
@@ -467,9 +487,11 @@ Deno.serve({
         );
         const noNpm = !(yield* shouldUsePackageJsonDiscovery(config));
         const workerRequest = Effect.gen(function* () {
-          const worker = yield* foreign(() =>
-            EdgeRuntime.userWorkers.create({
-              servicePath: workerServicePath(functionName, config),
+          const worker = yield* foreign(() => {
+            const servicePath = workerServicePath(functionName, config);
+            return EdgeRuntime.userWorkers.create({
+              servicePath,
+              ...(reuse === undefined ? {} : { poolKey: `${servicePath}@${reuse}` }),
               memoryLimitMb: 256,
               workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
                 ? WALLCLOCK_LIMIT_SEC * 1000
@@ -479,7 +501,7 @@ Deno.serve({
               noModuleCache: false,
               noNpm,
               envVars,
-              forceCreate: true,
+              forceCreate: reuse === undefined,
               customModuleRoot: "",
               cpuTimeSoftLimitMs: 1000,
               cpuTimeHardLimitMs: 2000,
@@ -492,8 +514,8 @@ Deno.serve({
                   : { importMapPath: config.importMapPath }),
               },
               staticPatterns: config.staticFiles,
-            }),
-          );
+            });
+          });
           return yield* foreign(() => worker.fetch(prepareUserRequest(request, body)));
         });
         return yield* workerRequest.pipe(

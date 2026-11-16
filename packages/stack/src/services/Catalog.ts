@@ -206,7 +206,7 @@ const catalogRecipe = <C extends ServiceCreation>(
                 service: creation.service,
               }),
             )
-          : Effect.succeed(endpoint);
+          : (result.beforeTraffic?.(name, endpoint) ?? Effect.void).pipe(Effect.as(endpoint));
       }),
     ),
   logs: result.logs,
