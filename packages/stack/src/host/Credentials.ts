@@ -26,6 +26,7 @@ export const consumesCredentials = (creation: ServiceCreationInput): boolean => 
     case "functions":
     case "studio":
     case "pooler":
+    case "sparkmeta":
       return true;
     case "rest":
       return creation.config.jwks === undefined || creation.config.jwtSecret !== undefined;
@@ -184,6 +185,8 @@ const credentialInputs: {
   pgmeta: {},
   mail: {},
   analytics: {},
+  spark: {},
+  sparkmeta: { anonKey: "anonKey", serviceRoleKey: "serviceRoleKey" },
 };
 
 /** Names the config inputs the owner fills from the stack credential record. */

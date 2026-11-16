@@ -12,9 +12,9 @@ import {
   type ProcessRecipeSpec,
   type StartupCommand,
 } from "./ProcessRecipe.ts";
-import type { RecipeCreation, CatalogOptions } from "./Recipe.ts";
+import type { PinnedRecipeCreation, CatalogOptions } from "./Recipe.ts";
 
-const resolve = <C extends RecipeCreation<"auth" | "storage" | "realtime", unknown>>(
+const resolve = <C extends PinnedRecipeCreation<"auth" | "storage" | "realtime", unknown>>(
   service: C["service"],
   creation: C,
   spec: ProcessRecipeSpec<C>,

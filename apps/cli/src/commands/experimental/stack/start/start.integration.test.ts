@@ -269,6 +269,10 @@ const instance = (
       return { ...base, service: "analytics" };
     case "pooler":
       return { ...base, service: "pooler" };
+    case "spark":
+      return { ...base, service: "spark" };
+    case "sparkmeta":
+      return { ...base, service: "sparkmeta" };
   }
 };
 
@@ -2702,9 +2706,9 @@ const publishRest = (host: ReleaseFixture) => {
 
 /** The artifact pin the fake stack's member of `service` was created with. */
 const memberPin = (stack: ReturnType<typeof fakeStack>, service: ServiceCreation["service"]) =>
-  stack.members.flatMap((member) =>
-    member.service === service ? [Effect.runSync(member.status).config.pin] : [],
-  )[0];
+  stack.members
+    .flatMap((member) => (member.service === service ? [Effect.runSync(member.status).config] : []))
+    .flatMap((config) => ("pin" in config ? [config.pin] : []))[0];
 
 /** One `supabase start` of `root`, with `CI` pinned and the release host reachable only when given. */
 const lockedStart = (

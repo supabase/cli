@@ -114,7 +114,9 @@ enabled = true
       expect(keys.gotrueJwtKeys).toBeUndefined();
       expect(keys.publicSigningKeys).toBeUndefined();
       const database = recipes.get("database");
-      for (const service of services) expect(service.pin).toEqual(selection[service.service]);
+      for (const service of services)
+        if (service.service !== "spark" && service.service !== "sparkmeta")
+          expect(service.pin).toEqual(selection[service.service]);
       expect(
         database?.service === "database" ? database.config.rootKey : undefined,
       ).toBeUndefined();

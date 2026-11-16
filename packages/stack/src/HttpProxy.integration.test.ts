@@ -366,7 +366,7 @@ it.live("overrides the upstream host for HTTP routes when configured", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
+it.live("rewrites bearer, apikey and sb-api-key headers only on opted-in routes", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const backend = createServer((incoming, response) => {
@@ -410,6 +410,12 @@ it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
           prefix: "/storage/v1",
           target: Effect.succeed(backendAddress),
           keyRewrite: { policy: "bearer", keys },
+        },
+        {
+          id: "apikey",
+          prefix: "/spark",
+          target: Effect.succeed(backendAddress),
+          keyRewrite: { policy: "apikey", keys },
         },
         { id: "passthrough", prefix: "/raw", target: Effect.succeed(backendAddress) },
       ]);
@@ -463,6 +469,16 @@ it.live("rewrites bearer and sb-api-key headers only on opted-in routes", () =>
         authorization: "AWS4-HMAC-SHA256 Credential=client",
         apikey: keys.secretKey,
       });
+      expect(yield* send("/spark", { apikey: keys.publishableKey })).toEqual({
+        authorization: "Bearer anon.jwt.value",
+        apikey: "anon.jwt.value",
+      });
+      expect(
+        yield* send("/spark", {
+          authorization: "Bearer custom-client-token",
+          apikey: keys.secretKey,
+        }),
+      ).toEqual({ authorization: "Bearer custom-client-token", apikey: "service.role.jwt" });
       expect(
         yield* send("/raw", {
           authorization: "Bearer sb_publishable_client",
@@ -542,6 +558,38 @@ it.live("rewrites only the apikey query value on opted-in WebSocket routes", () 
         );
         return Effect.void;
       });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("routes a request to the most specific matching prefix regardless of route order", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((incoming, response) => response.end(incoming.url));
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        {
+          id: "data",
+          prefix: "/rest/v1",
+          upstreamPrefix: "/data",
+          target: Effect.succeed(backendAddress),
+        },
+        {
+          id: "document",
+          prefix: "/rest/v1/",
+          upstreamPrefix: "/document",
+          target: Effect.succeed(backendAddress),
+        },
+      ]);
+      const path = (target: string) =>
+        request(proxy.port, target, new Uint8Array(), {}, "GET").pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.map(({ body }) => new TextDecoder().decode(body)),
+        );
+
+      expect(yield* path("/rest/v1/")).toBe("/document");
+      expect(yield* path("/rest/v1/todos?select=id")).toBe("/data/todos?select=id");
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

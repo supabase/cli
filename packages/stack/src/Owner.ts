@@ -70,8 +70,9 @@ import {
   ServiceCreation,
   serviceSchemas,
   type CatalogRecipe,
-  type ServiceCreationInput,
+  ServiceCreationInput,
   type ServiceRestartInput,
+  creationPin,
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
@@ -518,9 +519,11 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     context: ServiceLaunchContext<ServiceCreation>,
     launch: Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError>,
   ) {
-    const { service, pin } = context.config;
+    const { service } = context.config;
+    const pin = creationPin(context.config);
     const databaseId = isSchemaWriter(service) ? yield* boundDatabase(context.id) : undefined;
-    if (!isSchemaWriter(service) || databaseId === undefined) return yield* launch;
+    if (!isSchemaWriter(service) || databaseId === undefined || pin === undefined)
+      return yield* launch;
     const lease = yield* Scope.fork(context.scope, "sequential");
     yield* holdSchemaWriter(
       fs,
@@ -738,14 +741,17 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       if (databaseId === undefined) return;
       yield* Effect.forEach(
         creations,
-        ({ service, pin }) =>
-          isSchemaWriter(service)
+        (creation) => {
+          const { service } = creation;
+          const pin = creationPin(creation);
+          return isSchemaWriter(service) && pin !== undefined
             ? checkSchemaWriter(
                 fs,
                 path,
                 schemaWriterSelection(databaseId, service, pin.upstreamVersion),
               )
-            : Effect.void,
+            : Effect.void;
+        },
         { discard: true },
       );
     },
@@ -826,7 +832,15 @@ const makeOwner = Effect.fn("Owner.make")(function* (
         operation: "restart",
         message: "Service kind cannot change",
       });
-    const next = yield* resolveCredentials({ ...input, pin: previous.pin });
+    const pin = creationPin(previous);
+    const pinned = yield* Schema.decodeUnknownEffect(ServiceCreationInput)(
+      pin === undefined ? input : { ...input, pin },
+    ).pipe(
+      Effect.mapError(
+        (cause) => new ServiceError({ operation: "restart", message: cause.message, cause }),
+      ),
+    );
+    const next = yield* resolveCredentials(pinned);
     return yield* orchestrator.restart(id, next);
   });
 

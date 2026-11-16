@@ -46,6 +46,8 @@ export const apiRoute = (service: string): string | undefined => {
       return "/functions/v1";
     case "realtime":
       return "/realtime/v1";
+    case "spark":
+      return "/rest/v1";
     default:
       return undefined;
   }
@@ -118,6 +120,14 @@ export const sharedRoutes = (
         },
         { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
       ];
+    case "spark":
+      /* Spark serves both data plane APIs and its admin routes under their own paths. */
+      return ["/rest/v1", "/auth/v1", "/_spark"].map((prefix) => ({
+        prefix,
+        upstreamPrefix: prefix,
+        forwardedPrefix: prefix,
+        keyRewrite: { policy: "apikey" as const, keys },
+      }));
     case "functions":
       return [
         {
@@ -150,6 +160,12 @@ export const joinRoutes = (
       return [{ prefix: "/analytics/v1", upstreamPrefix: "/" }];
     case "pooler":
       return [{ prefix: "/pooler/v2", upstreamPrefix: "/v2" }];
+    case "sparkmeta":
+      return ["/pg", "/v1/projects", "/v1/organizations", "/_dev", "/rest/v1/"].map((prefix) => ({
+        prefix,
+        upstreamPrefix: prefix,
+        forwardedPrefix: prefix,
+      }));
     default:
       return undefined;
   }
@@ -210,6 +226,8 @@ export const outputsFor = <E>(
     );
     outputs.runtimeUrl = output("http");
   }
+  if (creation.service === "sparkmeta" && endpointNames(creation).includes("http"))
+    outputs.pgmetaUrl = output("http").pipe(Effect.map((url) => `${url}/pg`));
   if (creation.service === "mail" && endpointNames(creation).includes("smtp"))
     outputs.smtpUrl = address("smtp", "runtime").pipe(
       Effect.map(({ host, port }) => `smtp://${host}:${port}`),

@@ -15,7 +15,12 @@ import { SecureRandom } from "effect/crypto";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem exposes no OS temp or home directory path for the shared roots.
 import { homedir, tmpdir, userInfo } from "node:os";
 import type { PlatformError } from "effect/PlatformError";
-import { defaultArtifactSelection, defaultRuntime, type ArtifactPin } from "./Artifacts.ts";
+import {
+  defaultArtifactSelection,
+  defaultRuntime,
+  isPinnedServiceKind,
+  type ArtifactPin,
+} from "./Artifacts.ts";
 import * as StackEffect from "./effect.ts";
 import {
   LockInvalidError,
@@ -250,7 +255,9 @@ const make = Effect.fn("TestStack.make")(function* <
       const local = yield* localCreation(kind, dataRoot);
       return yield* decode({
         service: kind,
-        pin: (typeof service === "string" ? undefined : service.pin) ?? selection[kind],
+        ...(isPinnedServiceKind(kind)
+          ? { pin: (typeof service === "string" ? undefined : service.pin) ?? selection[kind] }
+          : {}),
         config: { ...local.config, ...(typeof service === "string" ? {} : service.config) },
         endpoints: {
           ...local.endpoints,

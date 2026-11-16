@@ -2219,7 +2219,8 @@ describe("db start stack backend", () => {
           Effect.sync(() => {
             state.reusedIds = options?.reuseIds;
             const [creation] = creations;
-            if (options?.reuseIds !== undefined && creation !== undefined) state.pin = creation.pin;
+            if (options?.reuseIds !== undefined && creation !== undefined && "pin" in creation)
+              state.pin = creation.pin;
             members = creations.map(() => database);
             if (options?.retainMembers !== true) otherMemberIds = [];
             registered = [database];

@@ -1165,7 +1165,7 @@ it.live(
           yield* mail.restart({ config: {} });
 
           const restarted = yield* mail.status;
-          expect(restarted.config.pin).toEqual(savedPin);
+          expect(restarted.config).toMatchObject({ pin: savedPin });
           expect(restarted.lifecycle).toBe("running");
         }),
         destroyTestStack(stack),

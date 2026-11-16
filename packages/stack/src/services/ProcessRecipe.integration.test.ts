@@ -25,7 +25,7 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
-import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
+import { catalogPins, resolveArtifact, type PinnedServiceKind } from "../Artifacts.ts";
 import { makeScopedPorts, nativePortBase, nativePortSpan } from "../Ports.ts";
 import {
   makeArtifactStore,
@@ -507,7 +507,7 @@ const platform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpCl
 const nativeFixtureArtifact = Effect.fn(function* (
   cacheRoot: string,
   artifact: {
-    readonly service: ServiceKind;
+    readonly service: PinnedServiceKind;
     readonly name: string;
     readonly executablePath: string;
     readonly files: Readonly<Record<string, string>>;

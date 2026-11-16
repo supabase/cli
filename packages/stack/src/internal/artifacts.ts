@@ -19,7 +19,8 @@ export {
   type ArtifactPin,
   type ArtifactSelection,
   type NativePin,
-  type ServiceKind,
+  type PinnedServiceKind,
+  type PinnedServiceKind as ServiceKind,
 } from "../Artifacts.ts";
 export { SLIM_IMAGE_GHCR_REGISTRY } from "../preparation/SlimEndpoints.ts";
 export {

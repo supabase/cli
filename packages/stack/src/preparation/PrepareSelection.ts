@@ -9,7 +9,7 @@ import {
   slimImageMirrors,
   type ArtifactPin,
   type ArtifactSelection,
-  type ServiceKind,
+  type PinnedServiceKind,
 } from "../Artifacts.ts";
 import { stackError } from "../Rpc.ts";
 import {
@@ -21,7 +21,7 @@ import {
 
 /** One selected service's artifact and whether this call had to fetch it. */
 export interface PreparedRelease {
-  readonly service: ServiceKind;
+  readonly service: PinnedServiceKind;
   /** The published release, `<upstream>-r<revision>`. */
   readonly release: string;
   readonly outcome: "downloaded" | "cached";
@@ -30,7 +30,7 @@ export interface PreparedRelease {
 const PREPARE_CONCURRENCY = 4;
 
 type Preparer = (
-  service: ServiceKind,
+  service: PinnedServiceKind,
   pin: ArtifactPin,
 ) => Effect.Effect<
   PreparedRelease["outcome"],
@@ -56,7 +56,7 @@ const imagePreparer = Effect.fn("Artifacts.imagePreparer")(function* (
     root: cacheRoot,
     imageMirrors: slimImageMirrors,
   });
-  return (_service: ServiceKind, pin: ArtifactPin) =>
+  return (_service: PinnedServiceKind, pin: ArtifactPin) =>
     runtime
       .ensureImage(pin.image)
       .pipe(
@@ -81,7 +81,7 @@ export const prepareArtifactSelection = Effect.fn("Artifacts.prepareSelection")(
   ) {
     const prepareOne: Preparer =
       options.runtime === "native"
-        ? (service: ServiceKind, pin: ArtifactPin) =>
+        ? (service: PinnedServiceKind, pin: ArtifactPin) =>
             prepareNativeArtifact({ service, pin }, options.cacheRoot, options.platform).pipe(
               Effect.map((artifact) => artifact.outcome),
             )

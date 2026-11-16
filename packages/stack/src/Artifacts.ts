@@ -21,12 +21,26 @@ export type ServiceKind =
   | "pgmeta"
   | "mail"
   | "analytics"
-  | "pooler";
+  | "pooler"
+  | HostServiceKind;
 
-/** A catalog artifact: a stack service kind, or an artifact only the legacy `supabase start` runs. */
-export type ArtifactKind = ServiceKind | "vector";
+/**
+ * Experimental service kinds with no published artifact: Spark runs a host binary the caller
+ * names, and its meta adapter runs inside the stack owner.
+ */
+export type HostServiceKind = "spark" | "sparkmeta";
 
-const isServiceKind = (kind: ArtifactKind): kind is ServiceKind => kind !== "vector";
+/** A stack service kind that runs a pinned slim-services artifact. */
+export type PinnedServiceKind = Exclude<ServiceKind, HostServiceKind>;
+
+/** A catalog artifact: a pinned service kind, or an artifact only the legacy `supabase start` runs. */
+export type ArtifactKind = PinnedServiceKind | "vector";
+
+const isServiceKind = (kind: ArtifactKind): kind is PinnedServiceKind => kind !== "vector";
+
+/** Whether a stack service kind runs a pinned artifact rather than a host executable. */
+export const isPinnedServiceKind = (kind: ServiceKind): kind is PinnedServiceKind =>
+  kind !== "spark" && kind !== "sparkmeta";
 
 export class ArtifactError extends Data.TaggedError("ArtifactError")<{
   readonly message: string;
@@ -73,7 +87,7 @@ export const ArtifactPin = Schema.Struct({
 export interface ArtifactPin extends Schema.Schema.Type<typeof ArtifactPin> {}
 
 /** The pin each stack service runs, chosen once per command and written into every creation. */
-export type ArtifactSelection = Readonly<Record<ServiceKind, ArtifactPin>>;
+export type ArtifactSelection = Readonly<Record<PinnedServiceKind, ArtifactPin>>;
 
 /** The published release version, `<upstream>-r<revision>`. */
 const releaseVersion = (pin: ArtifactPin): string => `${pin.upstreamVersion}-r${pin.revision}`;
@@ -893,7 +907,7 @@ export const artifactSourceService = (service: ArtifactKind): string =>
   definitions[service].sourceService;
 
 /** Service kinds the stack runs, in artifact catalog order; legacy-only artifacts are omitted. */
-export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
+export const artifactServiceKinds = (): ReadonlyArray<PinnedServiceKind> =>
   Record.keys(definitions).filter(isServiceKind);
 
 /**
@@ -1004,7 +1018,7 @@ export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact"
  * its paths. Every consumer must use the returned paths only inside this scope.
  */
 export const useNativeArtifact = Effect.fn("Artifacts.useNativeArtifact")(function* (
-  request: { readonly service: ServiceKind; readonly pin: ArtifactPin },
+  request: { readonly service: PinnedServiceKind; readonly pin: ArtifactPin },
   cacheRoot: string,
   platform: { readonly os: string; readonly arch: string } = {
     os: process.platform,

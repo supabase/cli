@@ -1,6 +1,6 @@
 import { Data, Schema } from "effect";
 import type { Effect, PubSub, Ref, Scope } from "effect";
-import { ArtifactPin, type ServiceKind } from "../Artifacts.ts";
+import { ArtifactPin, type HostServiceKind, type ServiceKind } from "../Artifacts.ts";
 import type { PortError } from "../Ports.ts";
 import type { LaunchOutput } from "../runtime/Session.ts";
 import type { ServiceDefinition } from "../Service.ts";
@@ -42,6 +42,22 @@ export const serviceCreation = <
     endpoints: Schema.optionalKey(endpoints),
   });
 
+/** A creation for a host service kind, which runs no pinned artifact. */
+export const hostServiceCreation = <
+  K extends HostServiceKind,
+  C extends Schema.Schema<unknown>,
+  E extends Schema.Schema<unknown>,
+>(
+  service: K,
+  config: C,
+  endpoints: E,
+) =>
+  Schema.Struct({
+    service: Schema.Literal(service),
+    config,
+    endpoints: Schema.optionalKey(endpoints),
+  });
+
 export interface CatalogOptions {
   readonly stackId: string;
   readonly instanceId: string;
@@ -76,9 +92,15 @@ export interface CatalogRecipe<C> {
 
 export interface RecipeCreation<K extends ServiceKind, C> {
   readonly service: K;
-  readonly pin: ArtifactPin;
+  /** Absent for a host service kind, whose recipe names its executable. */
+  readonly pin?: ArtifactPin;
   readonly config: C;
   readonly endpoints?: unknown;
+}
+
+/** A creation that runs a pinned artifact. */
+export interface PinnedRecipeCreation<K extends ServiceKind, C> extends RecipeCreation<K, C> {
+  readonly pin: ArtifactPin;
 }
 
 export interface ProcessRecipeResult<C> {

@@ -43,7 +43,8 @@ export interface HttpRoute {
 
 /** Configures Supabase API-key rewriting for one HTTP route. */
 interface HttpRouteKeyRewrite {
-  readonly policy: "bearer" | "query" | "sb-api-key";
+  /** `apikey` also rewrites that header, for upstreams such as Spark that check it themselves. */
+  readonly policy: "bearer" | "query" | "sb-api-key" | "apikey";
   readonly keys: {
     readonly publishableKey: string;
     readonly secretKey: string;
@@ -176,7 +177,14 @@ const upstreamHeadersFor = (request: IncomingMessage, route: HttpRoute) => {
   for (const [name, value] of Object.entries(route.addHeaders ?? {}))
     result[name.toLowerCase()] ??= value;
   const keyRewrite = route.keyRewrite;
-  if (keyRewrite?.policy === "bearer") {
+  if (keyRewrite?.policy === "apikey") {
+    const value = bearerValueFor(headers, keyRewrite.keys);
+    if (value === undefined) delete result.authorization;
+    else result.authorization = value;
+    const apiKey = headerValue(headers.apikey);
+    if (apiKey === keyRewrite.keys.secretKey) result.apikey = keyRewrite.keys.serviceRoleKey;
+    else if (apiKey === keyRewrite.keys.publishableKey) result.apikey = keyRewrite.keys.anonKey;
+  } else if (keyRewrite?.policy === "bearer") {
     const value = bearerValueFor(headers, keyRewrite.keys);
     if (value === undefined) delete result.authorization;
     else result.authorization = value;
@@ -289,12 +297,19 @@ const rewriteQuery = (query: string, route: HttpRoute) => {
 
 const pathnameFor = (url: string) => url.split("?", 1)[0] || "/";
 
+/** The most specific matching route, so `/rest/v1/` can sit beside `/rest/v1` on the listener. */
 const routeFor = (url: string, routes: ReadonlyArray<HttpRoute>) => {
   const pathname = pathnameFor(url);
-  return routes.find(
-    (route) =>
-      pathname === route.prefix || route.prefix === "/" || pathname.startsWith(`${route.prefix}/`),
-  );
+  let best: HttpRoute | undefined;
+  for (const route of routes)
+    if (
+      (pathname === route.prefix ||
+        route.prefix === "/" ||
+        pathname.startsWith(`${route.prefix}/`)) &&
+      (best === undefined || route.prefix.length > best.prefix.length)
+    )
+      best = route;
+  return best;
 };
 
 const corsMethods = "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS,TRACE,CONNECT";
