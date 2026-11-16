@@ -251,6 +251,27 @@ function docsVisibleChildren(command: Command.Command.Any): ReadonlyArray<Comman
     .toSorted((a, b) => docsCompare(a.name, b.name));
 }
 
+/** Published command IDs and their children, excluding the root and hidden subtrees. */
+export function docsCommandTree(
+  root: Command.Command.Any,
+): ReadonlyMap<string, ReadonlyArray<string>> {
+  const tree = new Map<string, ReadonlyArray<string>>();
+  const visit = (command: Command.Command.Any, path: ReadonlyArray<string>): void => {
+    const children = docsVisibleChildren(command).filter(
+      (child) => !DOCS_EXCLUDED.has([...path, child.name].join("-")),
+    );
+    if (path.length > 1) {
+      tree.set(
+        path.join("-"),
+        children.map((child) => [...path, child.name].join("-")),
+      );
+    }
+    for (const child of children) visit(child, [...path, child.name]);
+  };
+  visit(root, ["supabase"]);
+  return tree;
+}
+
 /** First line of a command's long description, for the listing summary fallback. */
 function docsSummary(command: Command.Command.Any): string {
   if (command.shortDescription !== undefined) return command.shortDescription;
