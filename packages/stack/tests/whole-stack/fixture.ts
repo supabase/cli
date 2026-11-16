@@ -1,24 +1,29 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import {
+  ByteSize,
   Cause,
-  Crypto,
   Effect,
   Exit,
   FileSystem,
   Layer,
   Option,
+  Path,
   Redacted,
   Ref,
   Stream,
 } from "effect";
-import { postgres } from "../../src/Tools.ts";
-import { homedir, tmpdir } from "node:os";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { bundleServeMainTemplate } from "../serve-main-bundler.ts";
+import { SecureRandom } from "effect/crypto";
+import { postgres } from "../../src/Commands.ts";
+import { homedir } from "node:os";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { create, type Stack } from "../../src/effect.ts";
+import type { ContainerEngine } from "../../src/runtime/Container.ts";
 import type { Observation } from "../../src/Rpc.ts";
-import { vectorAnalyticsConfig } from "./analytics.ts";
 import { cleanupDockerRoot } from "../docker-cleanup.ts";
+import { destroyTestStack } from "../stack-cleanup.ts";
+import { testEngine } from "../test-engine.ts";
+import { testArtifactCacheRoot } from "../artifact-cache.ts";
+import { selection } from "../pins.ts";
 
 type AnyService = Effect.Success<Stack["services"]["list"]>[number];
 
@@ -34,11 +39,13 @@ export const serviceNames = [
   "pgmeta",
   "mail",
   "analytics",
-  "vector",
   "pooler",
 ] as const;
 
-export type Runtime = "native" | "docker";
+/* Auth answers with its built-in email when a template fetch fails, so only this proves the fetch. */
+export const recoveryTemplateMarker = "whole-stack recovery template";
+
+export type Runtime = "native" | ContainerEngine;
 export type WholeStack = Readonly<{
   readonly stack: Stack;
   readonly services: ReadonlyArray<AnyService>;
@@ -61,10 +68,10 @@ const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
       services,
       (instance) =>
         Effect.forkScoped(
-          instance.logs.pipe(
-            Stream.runForEach(({ bytes }) =>
+          instance.readLogs({ follow: true }).pipe(
+            Stream.runForEach((record) =>
               Ref.update(logTails, (tails) => {
-                const text = new TextDecoder().decode(bytes);
+                const text = record.text === undefined ? "" : `${record.text}\n`;
                 const existing = tails.find(([name]) => name === instance.service)?.[1] ?? "";
                 const updated = `${existing}${text}`.slice(-8192);
                 const without = tails.filter(([name]) => name !== instance.service);
@@ -86,28 +93,61 @@ const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
 
 const endpoint = (port: "auto") => ({ port });
 
+/** Bounds diagnostic log text to its last lines, so a runaway owner log stays readable. */
+const tailLines = (content: string, limit: number): string =>
+  content.trimEnd().split("\n").slice(-limit).join("\n");
+
+/** Reads only the end of the owner log, so a runaway log doesn't slow down diagnostics. */
+const ownerLogTail = Effect.fn("WholeStack.ownerLogTail")(
+  (fs: FileSystem.FileSystem, path: Path.Path, stateRoot: string, stackId: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fs.open(path.join(stateRoot, stackId, "owner.log"));
+        const size = ByteSize.toBigInt((yield* file.stat).size);
+        const length = size < 4096n ? size : 4096n;
+        yield* file.seek(size - length, "start");
+        const bytes = yield* file.readAlloc(Number(length));
+        const content = Option.match(bytes, {
+          onNone: () => "",
+          onSome: (buffer) => new TextDecoder().decode(buffer),
+        });
+        return tailLines(content, 40);
+      }),
+    ).pipe(Effect.orElseSucceed(() => "")),
+);
+
 export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
   Effect.gen(function* () {
+    // The test helpers observe and clean up through the selected engine, so a container runtime
+    // must be that engine.
+    if (runtime !== "native" && runtime !== testEngine)
+      return yield* Effect.die(
+        `Whole-stack ${runtime} scenarios need SUPABASE_STACK_TEST_ENGINE=${runtime}`,
+      );
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({
       prefix: `stack-whole-${runtime}-`,
       ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
     });
+    /* Template containment compares canonical paths; the rest of the fixture keeps `root` as created. */
+    const templateRoot = yield* fs.realPath(root);
     const functionsRoot = `${root}/functions`;
     const storageRoot = `${root}/storage`;
-    const vectorConfigPath = `${root}/vector.yaml`;
     yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
     yield* fs.makeDirectory(storageRoot, { recursive: true });
+    yield* fs.writeFileString(
+      `${root}/recovery.html`,
+      `<p>${recoveryTemplateMarker}</p><a href="{{ .ConfirmationURL }}">Reset</a>`,
+    );
     yield* fs.writeFileString(
       `${functionsRoot}/hello/index.ts`,
       "Deno.serve(async (request) => { const authorization = request.headers.get('authorization') ?? ''; const input = await request.json(); const response = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/whole_stack_items?id=eq.${input.id}`, { headers: { authorization, apikey: authorization.replace('Bearer ', '') } }); return new Response(await response.text(), { status: response.status, headers: { 'content-type': 'application/json' } }); });",
     );
-    const bootstrap = yield* bundleServeMainTemplate;
-    const crypto = yield* Crypto.Crypto;
-    const secret = `whole-stack-${yield* crypto.randomUUIDv4}-secret`;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const secret = `whole-stack-${yield* crypto.uuidV4()}-secret`;
     const locations = {
       stateRoot: `${root}/state`,
-      cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+      cacheRoot: testArtifactCacheRoot,
     };
     const stack = yield* create({
       projectRoot: root,
@@ -115,100 +155,109 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
       runtime,
       name: `whole-${runtime}`,
     });
-    yield* fs.writeFileString(vectorConfigPath, vectorAnalyticsConfig(`vector-${stack.id}`));
     const owner = yield* Ref.make<Option.Option<Stack>>(Option.some(stack));
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const current = yield* Ref.get(owner);
-        const destroy = Option.isSome(current)
-          ? current.value.destroy.pipe(Effect.catchCause(Effect.die))
-          : Effect.void;
-        yield* runtime === "docker"
+        const destroy = Option.isSome(current) ? destroyTestStack(current.value) : Effect.void;
+        yield* runtime !== "native"
           ? destroy.pipe(Effect.ensuring(cleanupDockerRoot(storageRoot)))
           : destroy;
       }),
     );
-    const created = yield* stack.composition.supabase([
-      {
-        service: "database",
-        config: {
-          version: "17",
-          databasePassword: Redacted.make("postgres"),
-          jwtSecret: Redacted.make(secret),
-          jwtExpiry: 3600,
+    const created = yield* stack.composition.supabase(
+      [
+        {
+          service: "database",
+          pin: selection.database,
+          config: {
+            databasePassword: Redacted.make("postgres"),
+            jwtSecret: Redacted.make(secret),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: endpoint("auto") },
         },
-        endpoints: { sql: endpoint("auto") },
-      },
-      {
-        service: "rest",
-        config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "auth",
-        config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "realtime",
-        config: { databaseUrl: "postgresql://placeholder", jwtSecret: secret },
-        endpoints: { http: endpoint("auto"), rpc: endpoint("auto") },
-      },
-      {
-        service: "storage",
-        config: {
-          databaseUrl: "postgresql://placeholder",
-          filePath: storageRoot,
-          jwtSecret: secret,
+        {
+          service: "rest",
+          pin: selection.rest,
+          config: { jwtSecret: secret },
+          endpoints: { http: endpoint("auto") },
         },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "imgproxy",
-        config: { filePath: storageRoot },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "functions",
-        config: { functionsRoot, bootstrap, verifyJwt: true, jwtSecret: secret },
-        endpoints: { http: endpoint("auto") },
-      },
-      { service: "studio", config: { jwtSecret: secret }, endpoints: { http: endpoint("auto") } },
-      {
-        service: "pgmeta",
-        config: { databaseUrl: "postgresql://placeholder" },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "mail",
-        config: {},
-        endpoints: { http: endpoint("auto"), smtp: endpoint("auto"), pop3: endpoint("auto") },
-      },
-      {
-        service: "analytics",
-        config: { databaseUrl: "postgresql://placeholder", backend: "postgres", apiKey: secret },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "vector",
-        config: {
-          analyticsUrl: "http://placeholder",
-          apiKey: secret,
-          configPath: vectorConfigPath,
+        {
+          service: "auth",
+          pin: selection.auth,
+          config: {
+            jwtSecret: secret,
+            templates: [
+              { id: "recovery", path: `${templateRoot}/recovery.html`, root: templateRoot },
+            ],
+          },
+          endpoints: { http: endpoint("auto") },
         },
-        endpoints: { http: endpoint("auto") },
-      },
-      {
-        service: "pooler",
-        config: {
-          databaseUrl: "postgresql://placeholder",
-          jwtSecret: secret,
-          tenant: "whole",
-          poolMode: "transaction",
+        {
+          service: "realtime",
+          pin: selection.realtime,
+          config: { jwtSecret: secret },
+          endpoints: { http: endpoint("auto"), rpc: endpoint("auto") },
         },
-        endpoints: { http: endpoint("auto"), sql: endpoint("auto") },
-      },
-    ]);
+        {
+          service: "storage",
+          pin: selection.storage,
+          config: {
+            filePath: storageRoot,
+            jwtSecret: secret,
+          },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "imgproxy",
+          pin: selection.imgproxy,
+          config: { filePath: storageRoot },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "functions",
+          pin: selection.functions,
+          config: { functionsRoot, verifyJwt: true, jwtSecret: secret },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "studio",
+          pin: selection.studio,
+          config: { jwtSecret: secret },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "pgmeta",
+          pin: selection.pgmeta,
+          config: {},
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "mail",
+          pin: selection.mail,
+          config: {},
+          endpoints: { http: endpoint("auto"), smtp: endpoint("auto"), pop3: endpoint("auto") },
+        },
+        {
+          service: "analytics",
+          pin: selection.analytics,
+          config: { backend: "postgres", apiKey: secret },
+          endpoints: { http: endpoint("auto") },
+        },
+        {
+          service: "pooler",
+          pin: selection.pooler,
+          config: {
+            jwtSecret: secret,
+            tenant: "whole",
+            poolMode: "transaction",
+          },
+          endpoints: { http: endpoint("auto"), sql: endpoint("auto") },
+        },
+      ],
+      { keys: { gotrueJwtKeys: "[]", publicSigningKeys: "[]" } },
+    );
     const logTails = yield* Ref.make<ReadonlyArray<readonly [string, string]>>([]);
     yield* watchServiceLogs(created, logTails);
     yield* Effect.addFinalizer((exit) =>
@@ -230,8 +279,10 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
               ),
             );
             const tails = yield* Ref.get(logTails);
+            const path = yield* Path.Path;
+            const ownerLog = yield* ownerLogTail(fs, path, locations.stateRoot, stack.id);
             yield* Effect.logError(
-              `Whole-stack failure diagnostics: cause=${Cause.pretty(exit.cause)} statuses=${statuses.join(",")} logs=${tails.map(([name, value]) => `${name}: ${value}`).join("\n")}`,
+              `Whole-stack failure diagnostics: cause=${Cause.pretty(exit.cause)} statuses=${statuses.join(",")} logs=${tails.map(([name, value]) => `${name}: ${value}`).join("\n")} owner log=${ownerLog}`,
             );
           }).pipe(Effect.ignoreCause)
         : Effect.void,
@@ -336,7 +387,7 @@ export const sql = Effect.fn("WholeStack.sql")((fixture: WholeStack, statement: 
     if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
     const output: Array<Uint8Array> = [];
     const errors: Array<Uint8Array> = [];
-    const result = yield* fixture.stack.tools.run(postgres.psql({ major: 17 }), {
+    const result = yield* fixture.stack.commands.run(postgres.psql({ pin: selection.database }), {
       args: ["--set", "ON_ERROR_STOP=1", "--dbname", databaseUrl, "-At"],
       stdin: Stream.make(new TextEncoder().encode(`${statement}\n`)),
       stdout: (bytes) => Effect.sync(() => output.push(bytes)),
@@ -364,4 +415,11 @@ export const waitForLifecycle = Effect.fn("WholeStack.waitForLifecycle")(
     ),
 );
 
-export const servicesLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const servicesLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NodeHttpClient.layerNodeHttp,
+);
+
+export const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.scoped(effect).pipe(Effect.provide(servicesLayer));

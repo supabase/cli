@@ -63,7 +63,7 @@ describe("resetDisconnectClients", () => {
   );
 
   it.effect(
-    "is still retrying after 9 one-second backoffs, but fails once the 10th is exhausted — pins Go's `NewBackoffPolicy(ctx, 10*time.Second)` constant",
+    "is still retrying after 9 one-second backoffs, but fails once the 10th is exhausted — pins the 10-second backoff limit",
     () =>
       Effect.gen(function* () {
         // Never drains — pegs the retry schedule to its hard 10-retry ceiling.

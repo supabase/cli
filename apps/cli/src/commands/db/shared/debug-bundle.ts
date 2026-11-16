@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { DateTime, Effect, type FileSystem, type Path } from "effect";
 
 import { bold, yellow } from "../../../command-internal/colors.ts";
 import { listLocalMigrations } from "../../../command-internal/migration-list.ts";
@@ -21,7 +21,7 @@ export interface DebugBundle {
 
 /** The debug-bundle id layout `20060102-150405` (UTC). */
 export function formatDebugId(millis: number): string {
-  const digits = new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
+  const digits = DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/gu, "").slice(0, 14);
   return `${digits.slice(0, 8)}-${digits.slice(8)}`;
 }
 
@@ -42,7 +42,7 @@ const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Ef
  * top-level directory is fatal (so callers don't claim a bundle was saved), while every
  * individual artifact write is best-effort (a failed copy must not mask the original error).
  */
-export const saveDebugBundle = Effect.fnUntraced(function* (
+export const saveDebugBundle = Effect.fn("DebugBundle.save")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -96,7 +96,7 @@ export const collectMigrationsList = Effect.fnUntraced(function* (
   // unreadable `supabase/migrations` must only omit migration copies, never replace the
   // actionable original error. The main generate/sync path still fails on an unreadable dir.
   const migrations = yield* listLocalMigrations(fs, path, migrationsDir).pipe(
-    Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   return migrations.map((p) => path.basename(p));
 });

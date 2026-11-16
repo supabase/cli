@@ -1,79 +1,81 @@
-import { describe, expect, test } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { Console, Effect, Layer, Schema, Stream } from "effect";
+import { CliOutput, Command } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
-import { vi } from "vitest";
 import { rootCommand } from "../../cli/root.ts";
+import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { CliArgs } from "./cli-args.service.ts";
+import { CLI_VERSION } from "./version.ts";
 
-const formatLogArg = (value: unknown): string =>
-  typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+const builtinLayer = (args: ReadonlyArray<string>, console: Console.Console) =>
+  Layer.mergeAll(
+    CliOutput.layer(textCliOutputFormatter()),
+    Layer.succeed(CliArgs, { args }),
+    Layer.succeed(Console.Console, console),
+    mockOutput({ format: "text" }).layer,
+    emptyEnv(),
+  );
+
+describe("CLI --help (text)", () => {
+  it.effect("source runs describe themselves as a development build", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      yield* Command.runWith(rootCommand, { version: CLI_VERSION })(["--help"]).pipe(
+        Effect.provide(builtinLayer(["--help"], console)),
+      );
+      const help = calls.join("\n");
+      expect(help).toContain("Supabase CLI (development build).");
+      expect(help).not.toContain("stable channel");
+    }),
+  );
+});
 
 describe("CLI --version (text)", () => {
-  const versionLayer = (args: ReadonlyArray<string>) =>
-    Layer.mergeAll(
-      CliOutput.layer(textCliOutputFormatter()),
-      Layer.succeed(CliArgs, { args }),
-      BunServices.layer,
-    );
-
-  test("CLI prints bare semver on stdout", async () => {
-    const logs: string[] = [];
-    const spy = vi
-      .spyOn(console, "log")
-      .mockImplementation((first?: unknown, ...rest: unknown[]) => {
-        const line =
-          rest.length === 0
-            ? first === undefined
-              ? ""
-              : formatLogArg(first)
-            : [first, ...rest].map(formatLogArg).join(" ");
-        logs.push(line);
-      });
-    try {
-      // `Command.runWith` keeps handler/global-flag services in the effect type even when
-      // `--version` exits early; only BunServices + CliOutput are needed at runtime here.
-      await Effect.runPromise(
-        Command.runWith(rootCommand, { version: "2.99.0-beta.1" })(["--version"]).pipe(
-          Effect.provide(versionLayer(["--version"])),
-        ) as Effect.Effect<void>,
+  it.effect("CLI prints bare semver on stdout", () =>
+    Effect.gen(function* () {
+      const version = "2.99.0-beta.1";
+      const { console, calls } = fakeConsole();
+      yield* Command.runWith(rootCommand, { version })(["--version"]).pipe(
+        Effect.provide(builtinLayer(["--version"], console)),
       );
-    } finally {
-      spy.mockRestore();
-    }
-    expect(logs.length).toBeGreaterThanOrEqual(1);
-    expect(logs[0]).toMatch(/^\d+\.\d+\.\d+/);
-    expect(logs[0]).not.toMatch(/supabase\s+v/i);
-  });
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      expect(calls[0]).toBe(`log:${version}`);
+      expect(calls[0]).not.toMatch(/supabase\s+v/i);
+    }),
+  );
 
-  test("source execution ignores a runtime version environment variable", async () => {
-    const bunExecutable = Bun.which("bun");
-    if (!bunExecutable) {
-      throw new Error("Bun executable not found");
-    }
+  it.live("source execution ignores a runtime version environment variable", () =>
+    Effect.gen(function* () {
+      const bunExecutable = yield* Effect.fromNullishOr(Bun.which("bun"));
+      const versionModule = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
+        fileURLToPath(new URL("./version.ts", import.meta.url)),
+      );
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          bunExecutable,
+          ["-e", `import { CLI_VERSION } from ${versionModule}; console.log(CLI_VERSION);`],
+          {
+            env: { SUPABASE_CLI_VERSION: "9.9.9" },
+            extendEnv: true,
+            stdin: "ignore",
+          },
+        ),
+      );
+      const [exitCode, stdout, stderr] = yield* Effect.all(
+        [
+          child.exitCode,
+          Stream.mkString(Stream.decodeText(child.stdout)),
+          Stream.mkString(Stream.decodeText(child.stderr)),
+        ],
+        { concurrency: "unbounded" },
+      );
 
-    const versionModule = fileURLToPath(new URL("./version.ts", import.meta.url));
-    const child = Bun.spawn(
-      [
-        bunExecutable,
-        "-e",
-        `import { CLI_VERSION } from ${JSON.stringify(versionModule)}; console.log(CLI_VERSION);`,
-      ],
-      {
-        env: { ...process.env, SUPABASE_CLI_VERSION: "9.9.9" },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-
-    expect(exitCode, stderr).toBe(0);
-    expect(stdout.trim()).toBe("0.0.0-dev");
-  });
+      expect(exitCode, stderr).toBe(0);
+      expect(stdout.trim()).toBe("0.0.0-dev");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

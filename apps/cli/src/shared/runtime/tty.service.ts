@@ -3,6 +3,7 @@ import { Context } from "effect";
 interface TtyShape {
   readonly stdinIsTty: boolean;
   readonly stdoutIsTty: boolean;
+  readonly stdoutColumns?: number;
   /**
    * fd 1 is a FIFO per fstat — the signal for the Windows piped-dump warning
    * (PowerShell `>`/`|` interpose one). False on fstat errors and for non-FIFO

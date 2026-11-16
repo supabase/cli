@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { telemetryDisableCommand } from "./disable/disable.command.ts";
 import { telemetryEnableCommand } from "./enable/enable.command.ts";
 import { telemetryStatusCommand } from "./status/status.command.ts";

@@ -6,18 +6,14 @@ import type { Advisory } from "./query.format.ts";
  * with Row Level Security disabled, surfaced inside the JSON envelope.
  */
 
-/** `rlsCheckSQL` — user-schema tables with RLS disabled (mirrors `lints.sql`). */
+/** User-schema tables with RLS disabled in the schemas bound to `$1`. */
 export const RLS_CHECK_SQL = `
-SELECT format('%I.%I', n.nspname, c.relname)
+SELECT format('%I.%I', n.nspname, c.relname) AS table_name
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
 WHERE c.relkind = 'r'
   AND NOT c.relrowsecurity
-  AND n.nspname = any(array(
-    SELECT trim(unnest(string_to_array(
-      coalesce(nullif(current_setting('pgrst.db_schemas', 't'), ''), 'public'),
-    ',')))
-  ))
+  AND n.nspname = any($1::text[])
   AND n.nspname NOT IN (
     '_timescaledb_cache', '_timescaledb_catalog', '_timescaledb_config', '_timescaledb_internal',
     'auth', 'cron', 'extensions', 'graphql', 'graphql_public', 'information_schema',

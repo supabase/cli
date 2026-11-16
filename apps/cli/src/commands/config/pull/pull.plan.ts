@@ -10,6 +10,7 @@ import {
   type ConfigEditValue,
   dualScopeProjectConfigPaths,
   ENV_CAPTURE_REGEX,
+  PROVIDER_SIGNUP_ALIASES,
 } from "@supabase/config/internal";
 
 import {
@@ -105,6 +106,8 @@ export interface PlanConfigPullInput {
    * against what the config root independently declares.
    */
   readonly rootDocument: Readonly<Record<string, unknown>>;
+  /** The base config as written on disk, before the loader folds `auth.{email,sms}.enabled`. */
+  readonly sourceDocument: Readonly<Record<string, unknown>>;
   /** Carried for parity with `resolveConfigPullDestination`'s own input
    * shape; not otherwise consulted by the planner (every path-scoped
    * decision is already fully determined by `changeSet` + `destination` +
@@ -165,11 +168,38 @@ function isDualScopePath(path: ReadonlyArray<string>): boolean {
   return false;
 }
 
+// Writes `enable_signup` only where the section declares it without `enabled`; the loader
+// ignores an `enable_signup` next to `enabled`, so any other write must use `enabled`.
+function spelledPathFor(path: ReadonlyArray<string>, layer: unknown): ReadonlyArray<string> {
+  const alias = PROVIDER_SIGNUP_ALIASES.find(
+    ({ path: section, legacy }) =>
+      path.length === section.length + 1 &&
+      section.every((segment, index) => segment === path[index]) &&
+      path[section.length] === legacy,
+  );
+  if (alias === undefined) {
+    return path;
+  }
+  const section = configValueAtPath(layer, alias.path);
+  const declares = (key: string) => configIsRecord(section) && Object.hasOwn(section, key);
+  return [
+    ...alias.path,
+    declares(alias.legacy) && !declares(alias.preferred) ? alias.legacy : alias.preferred,
+  ];
+}
+
 function documentPathFor(
   destination: ConfigPullDestination,
   path: ReadonlyArray<string>,
+  sourceDocument: unknown,
 ): ReadonlyArray<string> {
-  return destination.kind === "remote" ? ["remotes", destination.label, ...path] : path;
+  return destination.kind === "remote"
+    ? [
+        "remotes",
+        destination.label,
+        ...spelledPathFor(path, configValueAtPath(sourceDocument, ["remotes", destination.label])),
+      ]
+    : spelledPathFor(path, sourceDocument);
 }
 
 /**
@@ -207,7 +237,7 @@ export function planConfigPull(input: PlanConfigPullInput): ConfigPullPlan {
     }
     writes.push({
       change,
-      documentPath: documentPathFor(input.destination, change.path),
+      documentPath: documentPathFor(input.destination, change.path, input.sourceDocument),
       value: change.remote,
     });
   }

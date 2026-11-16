@@ -1,5 +1,5 @@
 import { Layer } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { commandCredentialsLayer } from "../auth/command-credentials.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../auth/command-platform-api-factory.layer.ts";
@@ -22,7 +22,7 @@ import { StackApi, stackApiLayer } from "./stack-api.ts";
 /**
  * Runtime layer for the commands that talk to the Storage gateway directly:
  * `seed buckets` and `storage ls/cp/mv/rm`. The Management API client is lazy,
- * so the local path (no `--linked`) never resolves a token or requires login.
+ * so the local default (no `--remote`) never resolves a token or requires login.
  *
  * `HttpClient` is exposed at the top level because the Storage gateway needs
  * it directly, not through the typed Management API client.
@@ -35,7 +35,7 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     Layer.provide(debugLoggerLayer),
   );
   // Token resolution is deferred until `factory.make` is first called, on the
-  // `--linked` branch.
+  // hosted-target branch.
   const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),
@@ -61,7 +61,11 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     stackApiLayer,
   );
 
-  const _serviceCoverageCheck: Layer.Layer<StorageGatewayServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<
+    StorageGatewayServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

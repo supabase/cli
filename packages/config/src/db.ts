@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { MigrationChecks } from "./db-migration-checks.ts";
 import { secret } from "./lib/env.ts";
 import { stringEnum } from "./lib/schema.ts";
 
@@ -40,18 +41,18 @@ const settings = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
   maintenance_work_mem: Schema.optionalKey(Schema.String),
-  max_connections: Schema.optionalKey(Schema.Number),
-  max_locks_per_transaction: Schema.optionalKey(Schema.Number),
-  max_parallel_maintenance_workers: Schema.optionalKey(Schema.Number),
-  max_parallel_workers: Schema.optionalKey(Schema.Number),
-  max_parallel_workers_per_gather: Schema.optionalKey(Schema.Number),
-  max_replication_slots: Schema.optionalKey(Schema.Number),
+  max_connections: Schema.optionalKey(Schema.Finite),
+  max_locks_per_transaction: Schema.optionalKey(Schema.Finite),
+  max_parallel_maintenance_workers: Schema.optionalKey(Schema.Finite),
+  max_parallel_workers: Schema.optionalKey(Schema.Finite),
+  max_parallel_workers_per_gather: Schema.optionalKey(Schema.Finite),
+  max_replication_slots: Schema.optionalKey(Schema.Finite),
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
   max_wal_size: Schema.optionalKey(Schema.String),
-  max_wal_senders: Schema.optionalKey(Schema.Number),
-  max_worker_processes: Schema.optionalKey(Schema.Number),
+  max_wal_senders: Schema.optionalKey(Schema.Finite),
+  max_worker_processes: Schema.optionalKey(Schema.Finite),
   session_replication_role: Schema.optionalKey(
     stringEnum(["origin", "replica", "local"], {
       description: "Session replication role.",
@@ -68,13 +69,13 @@ const settings = Schema.Struct({
 }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({})));
 
 export const db = Schema.Struct({
-  port: Schema.Number.annotate({
+  port: Schema.Finite.annotate({
     default: defaultPort,
     description: "Port to use for the local database URL.",
     tags,
     links: [links.postgres],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPort))),
-  shadow_port: Schema.Number.annotate({
+  shadow_port: Schema.Finite.annotate({
     default: defaultShadowPort,
     description: "Port used by db diff command to initialize the shadow database.",
     tags,
@@ -85,13 +86,20 @@ export const db = Schema.Struct({
       "Maximum amount of time to wait for health check when starting the local database.",
     tags,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultHealthTimeout))),
-  major_version: Schema.Number.annotate({
+  major_version: Schema.Finite.annotate({
     default: defaultMajorVersion,
     description:
       "The database major version to use. This has to be the same as your remote database's.",
     tags,
     links: [links.postgres],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMajorVersion))),
+  orioledb_version: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "OrioleDB version of the Postgres image to use for the local database. Requires `major_version` 15 or 17.",
+      tags,
+    }),
+  ),
   pooler: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultPoolerEnabled,
@@ -99,7 +107,7 @@ export const db = Schema.Struct({
       tags,
       links: [links.pgbouncer()],
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPoolerEnabled))),
-    port: Schema.Number.annotate({
+    port: Schema.Finite.annotate({
       default: defaultPoolerPort,
       description: "Port to use for the local connection pooler.",
       tags,
@@ -111,13 +119,13 @@ export const db = Schema.Struct({
       tags,
       links: [links.pgbouncer("pool_mode")],
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPoolMode))),
-    default_pool_size: Schema.Number.annotate({
+    default_pool_size: Schema.Finite.annotate({
       default: defaultPoolSize,
       description: "How many server connections to allow per user/database pair.",
       tags,
       links: [links.pgbouncer("default_pool_size")],
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPoolSize))),
-    max_client_conn: Schema.Number.annotate({
+    max_client_conn: Schema.Finite.annotate({
       default: defaultMaxClientConn,
       description: "Maximum number of client connections allowed.",
       tags,
@@ -143,6 +151,7 @@ export const db = Schema.Struct({
         tags,
       })
       .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultSchemaPaths]))),
+    checks: Schema.optionalKey(MigrationChecks),
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultMigrations }))),
   seed: Schema.Struct({
     enabled: Schema.Boolean.annotate({

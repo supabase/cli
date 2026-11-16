@@ -1,0 +1,11 @@
+{
+  "$comment": "Model IDs by family and tier. A new model can also need the Claude Code or Codex CLI version pinned in the workflows that read this file bumped.",
+  "claude": {
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "haiku": "claude-haiku-5-5"
+  },
+  "codex": {
+    "sol": "gpt-6.1-sol"
+  }
+}

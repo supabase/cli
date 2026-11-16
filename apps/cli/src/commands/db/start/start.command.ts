@@ -1,13 +1,17 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbStart } from "./start.handler.ts";
 import { dbStartRuntimeLayer } from "./start.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  fromBackup: Flag.string("from-backup").pipe(
+  fromBackup: Flag.String("from-backup").pipe(
     Flag.withDescription("Path to a logical backup file."),
     Flag.optional,
   ),
@@ -18,6 +22,7 @@ export type DbStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbStartCommand = Command.make("start", config).pipe(
   Command.withDescription("Starts local Postgres database."),
   Command.withShortDescription("Starts local Postgres database"),
+  withPermissions({ operations: [], noApiEffectFlags: ["from-backup"] }),
   Command.withHandler((flags) =>
     dbStart(flags).pipe(
       withCommandTelemetry({
@@ -29,4 +34,7 @@ export const dbStartCommand = Command.make("start", config).pipe(
     ),
   ),
   Command.provide(dbStartRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

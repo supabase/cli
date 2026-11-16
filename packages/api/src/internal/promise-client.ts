@@ -1,6 +1,8 @@
 import type * as ManagedRuntime from "effect/ManagedRuntime";
 import type * as Effect from "effect/Effect";
 
+import type { SupabaseApiError } from "./client.ts";
+
 type PromiseClientOperations<Operations extends object> = {
   readonly [Key in keyof Operations]: Operations[Key] extends (
     ...args: infer Args
@@ -27,9 +29,11 @@ export function makePromiseClient<Operations extends object, Error>(
     if (typeof value === "function") {
       return (...args: ReadonlyArray<unknown>) =>
         runtime.runPromise(
-          (value as (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown, never>)(
-            ...args,
-          ),
+          (
+            value as (
+              ...args: ReadonlyArray<unknown>
+            ) => Effect.Effect<unknown, SupabaseApiError, never>
+          )(...args),
         );
     }
     if (isRecord(value)) {

@@ -1,6 +1,5 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack";
 import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
 import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { makeSpec as authSpec } from "../../../../../../packages/stack/src/services/Auth.ts";
@@ -9,16 +8,26 @@ import { makeSpec as poolerSpec } from "../../../../../../packages/stack/src/ser
 import { makeSpec as realtimeSpec } from "../../../../../../packages/stack/src/services/Realtime.ts";
 import { makeSpec as storageSpec } from "../../../../../../packages/stack/src/services/Storage.ts";
 import { makeSpec as studioSpec } from "../../../../../../packages/stack/src/services/Studio.ts";
+import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
-const layer = Layer.merge(BunServices.layer, runtimeInfoLayer);
+const layer = Layer.mergeAll(
+  BunServices.layer,
+  BunCrypto.layer,
+  runtimeInfoLayer,
+  mockCommandSettings({ workdir: "/unused-stack-forwarding-workdir" }),
+  cliConfigValuesTestLayer,
+);
 
 describe("stack service configuration", () => {
-  it.live("carries editable TOML settings into native and container service environments", () =>
+  it.effect("carries editable TOML settings into native and container service environments", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "forwarding"
+[auth]
+jwt_secret = "forwarding-jwt-secret-with-at-least-32-characters"
 [api]
 extra_search_path = ["public", "extensions", "custom"]
 [db]
@@ -40,40 +49,57 @@ enabled = false
 enabled = false
 max_buckets = 3
 max_indexes = 2
-[analytics]
-vector_port = 59001
 `);
       const loaded = yield* loadStackConfig(root);
       const services = yield* loaded.creations("forwarding");
       const database = services.find((s) => s.service === "database");
+      expect(
+        database?.service === "database"
+          ? Redacted.value(database.config.jwtSecret ?? Redacted.make(""))
+          : undefined,
+      ).toBe("forwarding-jwt-secret-with-at-least-32-characters");
       expect(database?.config.healthTimeoutMs).toBe(12500);
       expect(database?.config.rootKey && Redacted.value(database.config.rootKey)).toBe(
         "a".repeat(64),
       );
-      expect(services.find((s) => s.service === "vector")?.endpoints?.http?.port).toBe(59001);
+      const realtime = services.find((service) => service.service === "realtime");
+      expect(
+        realtime?.service === "realtime" ? realtime.config.secretKeyBase : undefined,
+      ).toBeUndefined();
+      // A composition binds each database URL before launch.
+      const bound = <C extends { readonly config: object }>(creation: C) => ({
+        ...creation,
+        config: {
+          ...creation.config,
+          databaseUrl: "postgresql://supabase_admin@127.0.0.1/postgres",
+        },
+      });
       for (const container of [false, true]) {
         for (const service of services) {
           switch (service.service) {
             case "rest":
-              expect(yield* restSpec().env(service, new Map(), container)).toMatchObject({
+              expect(yield* restSpec().env(bound(service), new Map(), container)).toMatchObject({
                 PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions,custom",
               });
               break;
             case "pooler":
-              expect(yield* poolerSpec().env(service, new Map(), container)).toMatchObject({
+              expect(yield* poolerSpec().env(bound(service), new Map(), container)).toMatchObject({
                 TENANT_ID: "pooler-dev",
                 DEFAULT_POOL_SIZE: "7",
                 MAX_CLIENT_CONN: "42",
               });
               break;
             case "realtime":
-              expect(yield* realtimeSpec().env(service, new Map(), container)).toMatchObject({
-                MAX_HEADER_LENGTH: "8192",
-                ERL_AFLAGS: "-proto_dist inet6_tcp",
-              });
+              expect(yield* realtimeSpec().env(bound(service), new Map(), container)).toMatchObject(
+                {
+                  MAX_HEADER_LENGTH: "8192",
+                  ERL_AFLAGS: "-proto_dist inet6_tcp",
+                  DB_IP_VERSION: "ipv4",
+                },
+              );
               break;
             case "storage":
-              expect(yield* storageSpec().env(service, new Map(), container)).toMatchObject({
+              expect(yield* storageSpec().env(bound(service), new Map(), container)).toMatchObject({
                 S3_PROTOCOL_ENABLED: "false",
                 VECTOR_ENABLED: "false",
                 VECTOR_MAX_BUCKETS: "3",
@@ -92,7 +118,7 @@ vector_port = 59001
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live(
+  it.effect(
     "resolves per-function configuration and shared secrets without enabling the inspector",
     () =>
       Effect.gen(function* () {
@@ -141,33 +167,85 @@ enabled = false
         expect(functions?.endpoints?.inspector?.port).toBe(59229);
       }).pipe(Effect.provide(layer)),
   );
-  it.live(
-    "decrypts a configured signing secret before deriving service credentials and reopening",
-    () =>
-      Effect.gen(function* () {
-        const plaintext = "test-jwt-secret-with-more-than-32-characters";
-        const root = yield* createStackConfigProject(
-          `project_id = "encrypted-jwt"
+  it.effect("decrypts a configured signing secret before forwarding it to the stack", () =>
+    Effect.gen(function* () {
+      const plaintext = "test-jwt-secret-with-more-than-32-characters";
+      const root = yield* createStackConfigProject(
+        `project_id = "encrypted-jwt"
 [auth]
 jwt_secret = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhEf3+8SEDngaEMZnSWajCMCInbHJbRnH+C1xgcAZlWKR0qLcHanvkM+zDKWxcQgMbN5AmOqwn3olCjpHbqkSzoyPri015szpcZMp5JKGmUsw6KEwTFE7LyQwRlTbqlVn7u"
 `,
-          {
-            rootEnv:
-              "DOTENV_PRIVATE_KEY=7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb\n",
-          },
-        );
-        const config = yield* loadStackConfig(root);
-        expect(Redacted.value(config.jwtSecret)).toBe(plaintext);
-        const services = yield* config.creations("encrypted-jwt", {
-          jwtSecret: Redacted.make(plaintext),
-        });
-        expect(services.find((service) => service.service === "auth")?.config.jwtSecret).toBe(
-          plaintext,
-        );
-      }).pipe(Effect.provide(layer)),
+        {
+          rootEnv:
+            "DOTENV_PRIVATE_KEY=7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb\n",
+        },
+      );
+      const config = yield* loadStackConfig(root);
+      const services = yield* config.creations("encrypted-jwt");
+      expect(services.find((service) => service.service === "auth")?.config.jwtSecret).toBe(
+        plaintext,
+      );
+    }).pipe(Effect.provide(layer)),
   );
 
-  it.live("reopens with empty configured secrets using package defaults", () =>
+  it.effect("decrypts edge runtime secrets before forwarding them to the functions service", () =>
+    Effect.gen(function* () {
+      const root = yield* createStackConfigProject(
+        `project_id = "encrypted-functions-env"
+[edge_runtime.secrets]
+SHARED = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhEf3+8SEDngaEMZnSWajCMCInbHJbRnH+C1xgcAZlWKR0qLcHanvkM+zDKWxcQgMbN5AmOqwn3olCjpHbqkSzoyPri015szpcZMp5JKGmUsw6KEwTFE7LyQwRlTbqlVn7u"
+PLAIN = "plain-value"
+`,
+        {
+          rootEnv:
+            "DOTENV_PRIVATE_KEY=7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb\n",
+        },
+      );
+      const config = yield* loadStackConfig(root);
+      const services = yield* config.creations("encrypted-functions-env");
+      expect(services.find((service) => service.service === "functions")?.config.env).toEqual({
+        SHARED: "test-jwt-secret-with-more-than-32-characters",
+        PLAIN: "plain-value",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("fails the stack config when an edge runtime secret cannot be decrypted", () =>
+    Effect.gen(function* () {
+      const root = yield* createStackConfigProject(`project_id = "undecryptable-functions-env"
+[edge_runtime.secrets]
+SHARED = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhEf3+8SEDngaEMZnSWajCMCInbHJbRnH+C1xgcAZlWKR0qLcHanvkM+zDKWxcQgMbN5AmOqwn3olCjpHbqkSzoyPri015szpcZMp5JKGmUsw6KEwTFE7LyQwRlTbqlVn7u"
+`);
+      const error = yield* loadStackConfig(root).pipe(Effect.flip);
+      expect(error._tag).toBe("StackConfigError");
+      expect(error.message).toBe("failed to parse config: missing private key");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("uppercases edge runtime secret names and drops unset ones", () =>
+    Effect.gen(function* () {
+      const root = yield* createStackConfigProject(
+        `project_id = "functions-secret-names"
+[edge_runtime.secrets]
+my_lower = "lower-value"
+FROM_ENV = "env(STACK_SECRET_SOURCE)"
+MISSING = "env(STACK_SECRET_UNSET)"
+EMPTY = ""
+supabase_internal_wallclock_limit_sec = "7"
+`,
+        { rootEnv: "STACK_SECRET_SOURCE=from-env\n" },
+      );
+      const config = yield* loadStackConfig(root);
+      const services = yield* config.creations("functions-secret-names");
+      expect(services.find((service) => service.service === "functions")?.config.env).toEqual({
+        MY_LOWER: "lower-value",
+        FROM_ENV: "from-env",
+        SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC: "7",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("leaves empty configured secrets for the stack to normalize", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "empty-secrets"
 [auth]
@@ -176,20 +254,27 @@ jwt_secret = ""
 root_key = ""
 `);
       const config = yield* loadStackConfig(root);
-      const creations = yield* config.creations("empty-secrets", { jwtSecret: config.jwtSecret });
-      expect(Redacted.value(config.jwtSecret)).toBe(DEFAULT_LOCAL_JWT_SECRET);
+      const creations = yield* config.creations("empty-secrets");
       const database = creations.find((creation) => creation.service === "database");
       expect(database).toBeDefined();
-      expect(database?.config.rootKey && Redacted.value(database.config.rootKey)).toBe(
-        DEFAULT_POSTGRES_ROOT_KEY,
-      );
+      expect(
+        database?.service === "database" ? database.config.rootKey : undefined,
+      ).toBeUndefined();
+      expect(
+        database?.service === "database" ? database.config.jwtSecret : undefined,
+      ).toBeUndefined();
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("forwards Auth policies, providers and custom SMTP ahead of local mail", () =>
+  it.effect.each([
+    { secure_password_change: true, require_current_password: false },
+    { secure_password_change: false, require_current_password: true },
+  ])("forwards Auth policies, providers and custom SMTP ahead of local mail with %j", (policy) =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(
         `project_id = "auth-forwarding"
+[api]
+external_url = "https://api.example.test"
 [auth]
 additional_redirect_urls = ["https://app.example.test/callback"]
 enable_refresh_token_rotation = false
@@ -206,7 +291,8 @@ sign_in_sign_ups = 33
 [auth.email]
 enable_confirmations = true
 double_confirm_changes = false
-secure_password_change = true
+secure_password_change = ${policy.secure_password_change}
+require_current_password = ${policy.require_current_password}
 otp_length = 8
 otp_expiry = 120
 max_frequency = "10s"
@@ -283,6 +369,7 @@ allow_dynamic_registration = true
       expect(decoded.config.settings?.email?.notification.password_changed?.subject).toBe(
         "Password changed",
       );
+      expect(decoded.config.apiExternalUrl).toBe("https://api.example.test");
       expect(decoded.config.smtp).toMatchObject({
         host: "smtp.example.test",
         port: 2525,
@@ -293,8 +380,8 @@ allow_dynamic_registration = true
           ...auth,
           config: {
             ...auth.config,
+            databaseUrl: "postgresql://supabase_auth_admin@127.0.0.1/postgres",
             smtpUrl: "smtp://127.0.0.1:1025",
-            externalApiUrl: "http://localhost:54321/auth/v1",
           },
         },
         new Map(),
@@ -302,6 +389,7 @@ allow_dynamic_registration = true
       );
       expect(env).toMatchObject({
         GOTRUE_URI_ALLOW_LIST: "https://app.example.test/callback",
+        API_EXTERNAL_URL: "https://api.example.test/auth/v1",
         GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "false",
         GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "15",
         GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: "true",
@@ -315,7 +403,12 @@ allow_dynamic_registration = true
         GOTRUE_RATE_LIMIT_OTP: "33",
         GOTRUE_MAILER_AUTOCONFIRM: "false",
         GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "false",
-        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: "true",
+        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: String(
+          policy.secure_password_change,
+        ),
+        GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: String(
+          policy.require_current_password,
+        ),
         GOTRUE_MAILER_OTP_LENGTH: "8",
         GOTRUE_MAILER_OTP_EXP: "120",
         GOTRUE_SMTP_MAX_FREQUENCY: "10s",
@@ -342,7 +435,7 @@ allow_dynamic_registration = true
         GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: "1h",
         GOTRUE_EXTERNAL_GITHUB_CLIENT_ID: "github-client",
         GOTRUE_EXTERNAL_GITHUB_SECRET: "github-secret",
-        GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: "http://localhost:54321/auth/v1/callback",
+        GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: "https://issuer.example.test/callback",
         GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED: "true",
         GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH: "/oauth/consent",
       });

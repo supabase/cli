@@ -7,18 +7,6 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
- * is an established output contract.
- */
-export class DbResetTargetFlagsError extends Data.TaggedError("DbResetTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * `--version` and `--last` together; message text is an established output
  * contract.
  */
@@ -53,18 +41,6 @@ export class DbResetMigrationFileError extends Data.TaggedError("DbResetMigratio
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
-  }
-}
-
-/**
- * The user declined the reset confirmation; message text (`context canceled`)
- * is an established output contract.
- */
-export class DbResetCancelledError extends Data.TaggedError("DbResetCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }
 

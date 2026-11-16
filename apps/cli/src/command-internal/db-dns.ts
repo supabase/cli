@@ -1,5 +1,7 @@
 import * as net from "node:net";
 import { Duration, Effect } from "effect";
+import { constTrue } from "effect/Function";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { DbConnectError } from "./db-connection.errors.ts";
 
@@ -50,24 +52,38 @@ export function parseResolvedIps(payload: unknown, host: string): string[] {
  */
 export function resolveHostsOverHttps(host: string): Effect.Effect<string[], DbConnectError> {
   if (net.isIP(host) !== 0) return Effect.succeed([host]);
-  return Effect.tryPromise({
-    try: (signal) =>
-      fetch(`${CF_DOH_URL}?name=${encodeURIComponent(host)}`, {
-        headers: { accept: "application/dns-json" },
-        signal,
-      }).then(async (response) => {
-        if (response.status !== 200) {
-          throw new Error(`unexpected DNS query status ${response.status}`);
-        }
-        return parseResolvedIps(await response.json(), host);
-      }),
-    catch: (cause) =>
-      new DbConnectError({
-        message: `failed to resolve ${host} via DNS-over-HTTPS: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-      }),
+  const resolveError = (cause: unknown) =>
+    new DbConnectError({
+      message: `failed to resolve ${host} via DNS-over-HTTPS: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+    });
+  return Effect.gen(function* () {
+    const response = yield* HttpClient.execute(
+      HttpClientRequest.get(`${CF_DOH_URL}?name=${encodeURIComponent(host)}`).pipe(
+        HttpClientRequest.setHeader("accept", "application/dns-json"),
+      ),
+    ).pipe(Effect.mapError((error) => resolveError(error.reason.cause)));
+    yield* Effect.annotateCurrentSpan("http.response.status_code", response.status);
+    if (response.status !== 200) {
+      return yield* resolveError(`unexpected DNS query status ${response.status}`);
+    }
+    const body = yield* response.arrayBuffer.pipe(
+      Effect.mapError((error) => resolveError(error.reason.cause)),
+    );
+    const payload = yield* Effect.tryPromise({
+      try: (): Promise<unknown> => new Response(body).json(),
+      catch: resolveError,
+    });
+    const ips = yield* Effect.try({
+      try: () => parseResolvedIps(payload, host),
+      catch: resolveError,
+    });
+    yield* Effect.annotateCurrentSpan("dns.answer_count", ips.length);
+    return ips;
   }).pipe(
+    Effect.provideService(HttpClient.TracerDisabledWhen, constTrue),
+    Effect.provide(FetchHttpClient.layer),
     Effect.timeoutOrElse({
       duration: DOH_TIMEOUT,
       orElse: () =>
@@ -77,5 +93,6 @@ export function resolveHostsOverHttps(host: string): Effect.Effect<string[], DbC
           }),
         ),
     }),
+    Effect.withSpan("Db.resolveHostsOverHttps"),
   );
 }

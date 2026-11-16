@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createDecipheriv, createECDH, randomUUID, type ECDH } from "node:crypto";
 import { hostname, userInfo } from "node:os";
-import { Effect, Layer } from "effect";
+import { Clock, Effect, Layer } from "effect";
 
 import { LoginCrypto, type LoginEncryptedPayload } from "../commands/login/login-crypto.service.ts";
 import { LoginCryptoError, LoginDecryptError } from "../commands/login/login.errors.ts";
@@ -20,14 +20,14 @@ export const loginCryptoLayer = Layer.sync(LoginCrypto, () =>
         new LoginCryptoError({ message: `cannot generate crypto keys: ${String(cause)}` }),
     }),
     generateSessionId: Effect.sync(() => randomUUID()),
-    defaultTokenName: Effect.sync(() => {
-      const ts = Math.floor(Date.now() / 1000);
+    defaultTokenName: Effect.map(Clock.currentTimeMillis, (millis) => {
+      const ts = Math.floor(millis / 1000);
       try {
         const user = userInfo().username;
         const host = hostname();
         if (user && host) return `cli_${user}@${host}_${ts}`;
       } catch {
-        /* fall through to the fallback name (Go's generateTokenNameWithFallback) */
+        /* fall through to the fallback name */
       }
       return `cli_${ts}`;
     }),
@@ -35,7 +35,7 @@ export const loginCryptoLayer = Layer.sync(LoginCrypto, () =>
       Effect.try({
         try: () => {
           const sharedSecret = ecdh.computeSecret(Buffer.from(payload.publicKey, "hex"));
-          // Go's `aesgcm.Open` expects the 16-byte GCM tag appended to the
+          // The payload carries the 16-byte GCM tag appended to the
           // ciphertext; Node wants it supplied separately via `setAuthTag`.
           const ciphertextHex = payload.ciphertext.slice(0, -32);
           const authTagHex = payload.ciphertext.slice(-32);

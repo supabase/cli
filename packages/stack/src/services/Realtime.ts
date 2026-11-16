@@ -1,11 +1,17 @@
 import { Effect, Schema } from "effect";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import { databaseConnection, localJwtSecret } from "./ServiceConfig.ts";
-import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
+import { databaseConnection, requiredInput, localJwtSecret } from "./ServiceConfig.ts";
+import {
+  DEFAULT_ERL_MAX_PORTS,
+  DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
+  DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
+} from "../Defaults.ts";
+import { type ProcessRecipeSpec, type StartupCommand } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
-  databaseUrl: Schema.String,
+  databaseUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
+  jwks: Schema.optionalKey(Schema.String),
   dbEncryptionKey: Schema.optionalKey(Schema.String),
   secretKeyBase: Schema.optionalKey(Schema.String),
   ipVersion: Schema.optionalKey(Schema.Literals(["IPv4", "IPv6"])),
@@ -23,6 +29,23 @@ export const Creation = serviceCreation("realtime", Config, Endpoints);
 
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 
+export const initializationCommand = {
+  args: [],
+  containerEntrypoint: "/app/bin/prepare",
+} satisfies StartupCommand & { readonly containerEntrypoint: string };
+
+const nativeReadinessOutput: NonNullable<ProcessRecipeSpec<Creation>["nativeReadinessOutput"]> = (
+  line,
+  endpoints,
+) => {
+  const http = endpoints.get("http");
+  if (http === undefined || /\bfailed\b/i.test(line)) return false;
+  return (
+    line.includes("Running RealtimeWeb.Endpoint") &&
+    new RegExp(`:${http.port}\\s+\\(http\\)(?:\\s|$)`).test(line)
+  );
+};
+
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "realtime",
   executable: "bin/server",
@@ -30,14 +53,20 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   healthPath: "/healthcheck",
   env: (creation, endpoints, container) =>
     Effect.gen(function* () {
-      const db = yield* databaseConnection(creation.config.databaseUrl);
+      const databaseUrl = yield* requiredInput(
+        "realtime",
+        "databaseUrl",
+        creation.config.databaseUrl,
+      );
+      const db = yield* databaseConnection(databaseUrl);
       const http = endpoints.get("http");
       const rpc = endpoints.get("rpc");
       const jwt = creation.config.jwtSecret ?? localJwtSecret;
       return {
-        DATABASE_URL: creation.config.databaseUrl,
+        DATABASE_URL: databaseUrl,
         ...(http === undefined ? {} : { PORT: String(http.port) }),
-        DB_URL: creation.config.databaseUrl,
+        ...(container ? {} : { PHX_HTTP_IP: "127.0.0.1" }),
+        DB_URL: databaseUrl,
         DB_HOST: db.host,
         DB_PORT: db.port,
         DB_USER: db.username ?? "supabase_admin",
@@ -45,15 +74,20 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         DB_NAME: db.database,
         DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
         API_JWT_SECRET: jwt,
+        ...(creation.config.jwks === undefined ? {} : { API_JWT_JWKS: creation.config.jwks }),
         METRICS_JWT_SECRET: jwt,
-        DB_ENC_KEY: creation.config.dbEncryptionKey ?? "0123456789abcdef",
-        SECRET_KEY_BASE: creation.config.secretKeyBase ?? localJwtSecret,
+        DB_ENC_KEY: creation.config.dbEncryptionKey ?? DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
+        SECRET_KEY_BASE: creation.config.secretKeyBase ?? DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
         DNS_NODES: "''",
         APP_NAME: "realtime",
         SEED_SELF_HOST: "true",
         MAX_HEADER_LENGTH: String(creation.config.maxHeaderLength ?? 4096),
         ERL_AFLAGS:
           creation.config.ipVersion === "IPv6" ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
+        ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
+        // The stack database listens on IPv4 only. This covers Realtime's own repo; tenant
+        // connections probe IPv6 first and rely on the runtime host alias having no AAAA record.
+        DB_IP_VERSION: "ipv4",
         RUN_JANITOR: "true",
         ...(rpc === undefined
           ? {}
@@ -67,6 +101,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   args: (_creation, _endpoints, context) =>
     Effect.succeed(context.container ? ["-s", "-g", "--", "/app/bin/server"] : []),
   mounts: () => Effect.succeed([]),
-  startup: [{ args: [], containerEntrypoint: "/app/bin/prepare" }],
+  startupCommands: [initializationCommand],
+  nativeReadinessOutput,
   containerEntrypoint: () => "/usr/bin/tini",
 });

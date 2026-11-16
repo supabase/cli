@@ -68,7 +68,7 @@ Disabling a capability releases its automatic port assignment; re-enabling it ma
 select a new port.
 
 Stack handles are lightweight identity-scoped clients. Creating or opening one
-does not launch a Supervisor. Successful stop drains ingress, removes every
+does not launch a Supervisor. Successful stop stops services in dependency order, removes every
 ephemeral runtime resource, persists stopped state, delivers its response, then
 closes control and releases ownership. The caller waits for both response and
 lease release. A stopped stack therefore consumes no live process, container,
@@ -106,7 +106,16 @@ Fresh automatic claims draw from
 `20000..32767` with a start derived from the stack's project root, identifier, and
 listener key, and stride `257`, making up to 64 bounded
 `EADDRINUSE`/`EACCES` attempts per newly selected binding while skipping
-durable sibling claims. Sticky values do not migrate. Failed acquisition
+durable sibling claims. Sticky values are stable: they do not migrate on their
+own, but a stopped stack's own owner startup re-plans an endpoint whose saved
+port differs from the current configuration while it alone holds the stack's
+lease: it saves the requested endpoint intents, releases the changed
+endpoints' registry rows, and claims the new ports through its normal endpoint
+binding. A taken fixed port fails the start with the usual port conflict; the
+saved intent stays as requested and nothing is rolled back. The requested
+creations reach the owner through a private, short-lived file the owner deletes
+after reading, never through argv. A concurrent start attaches to whichever
+owner wins the lease instead of re-planning again. Failed acquisition
 preserves the
 previous successful arrays, including claims removed or reconfigured by the
 new definition, and releases attempted sockets; those arrays change only after
@@ -132,16 +141,16 @@ Linux, and Windows in CI.
 
 Every managed document records one concrete runtime selection. Native and
 container runtimes never mix. For a new stack, an omitted runtime checks that
-the Docker client is installed and then probes the daemon with a short timeout;
-it selects Docker when the daemon is reachable and native otherwise. An
-installed client with an unreachable daemon selects native, and the created
-Effect handle carries a notice that the selection is persisted for that stack,
-so a later switch to Docker requires destroying the stack or choosing a new
-stack name; callers such as `stack start` decide whether to print it. Native is
-refused as uid 0. Existing state is reused without probing. Callers may
-explicitly select native, Docker, or Podman without fallback, and an omitted
-engine for an explicit container runtime defaults to Docker. Podman is
-supported only on local Linux hosts. See
+each container engine in turn, Docker then Podman, resolves the same engine
+target the stack owner pins and probes it with a 10 s timeout; it selects the
+first reachable engine and native otherwise, where native artifacts are
+supported. When Docker is skipped, the created Effect handle carries a notice
+that the selected runtime (Podman or native) is persisted for that stack, so a
+later switch to Docker requires destroying the stack or choosing a new stack
+name; callers such as `stack start` decide whether to print it. Native as
+root runs only PostgreSQL as an unprivileged user. Existing state is reused
+without probing. Callers may explicitly select native, Docker, or Podman without
+fallback. See
 [ADR-0025](0025-ephemeral-postgres-for-schema-tooling.md) for the daemon
 probe and its interaction with ephemeral Postgres.
 Persisted state records the resolved exact engine. Capability releases and
@@ -153,6 +162,12 @@ environment values take precedence. Smoke-only environment files are excluded
 from packaged profiles. The artifact release is the boundary for service
 startup defaults; the stack package owns runtime selection and lifecycle around
 the selected artifact.
+Every service creation carries an exact artifact pin (upstream version and
+revision) taken from the selection the CLI builds from the project lock file or
+the bundled defaults, instead of following the compiled default at launch. The
+detached owner never resolves versions itself. One-shot jobs (initialization,
+command runner jobs, and the Postgres client tools) use the same selection. See
+[ADR-0026](0026-slim-artifact-mirrors.md) for how the lock is resolved.
 
 Read-only discovery never acquires ownership. Owner metadata points to a Unix
 domain socket on POSIX or a named pipe on Windows, and the ownership lock is the
@@ -300,7 +315,7 @@ Tests follow consumed boundaries:
   ownership, stale-owner recovery, and interrupted cleanup;
 - supervisor integration covers detached ownership, RPC, stop, destroy,
   retirement, and wake-up; and
-- one shared stack-package E2E journey runs in native and Docker modes, starts
+- one shared stack-package E2E journey runs in native, Docker, and Podman modes, starts
   with PostgreSQL alone, activates every other service through realistic
   traffic, verifies cross-service behavior, then exercises
   stop/start and retained offline observability.

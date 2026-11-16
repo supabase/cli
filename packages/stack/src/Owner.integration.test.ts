@@ -1,43 +1,112 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
-import { expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path, Redacted, Ref } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { tmpdir } from "node:os";
+import { describe, expect, it } from "@effect/vitest";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Redacted,
+  Ref,
+  Schema,
+  Stream,
+} from "effect";
+import { HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { createServer, type Server } from "node:net";
+import { connect as tlsConnect } from "node:tls";
+import { RpcTest } from "effect/rpc";
 import * as Owner from "./Owner.ts";
-import * as State from "./State.ts";
-import type { SavedStack } from "./State.ts";
+import { OwnerRpc } from "./Rpc.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import type { SavedStack } from "./StackNamespace.ts";
+import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
+import { apiTlsRuntimeLabel } from "./runtime/ApiTlsSupport.ts";
+import { API_TLS_CHECK_PATH } from "./HttpProxy.ts";
+import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
+import { containerPeer, isLoopback } from "../tests/api-tls.ts";
+import type { ServiceCreationInput } from "./services/Catalog.ts";
+import { ownerFor } from "../tests/owner-rpc.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
+import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
-    const context = yield* Layer.build(State.layer({ root }));
-    return Context.get(context, State.Service);
+    const context = yield* Layer.build(StackNamespace.layer({ root }));
+    return Context.get(context, StackNamespace.Service);
   });
 
-const ownerFor = (options: {
-  readonly saved: SavedStack;
-  readonly state: State.Interface;
-  readonly root: string;
-  readonly cacheRoot: string;
-}) => {
-  const { state, ...layerOptions } = options;
-  return Effect.gen(function* () {
-    const context = yield* Layer.build(
-      Owner.layer(layerOptions).pipe(Layer.provide(Layer.succeed(State.Service, state))),
-    );
-    return Context.get(context, Owner.Service);
-  });
-};
-
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 
 const initial = (id: string): SavedStack => ({
   id,
   identity: { projectRoot: "/tmp/project", branchContext: "owner-test", stackName: id },
   runtime: "native",
   instances: [],
+  lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
+});
+
+const initialContainer = (id: string): SavedStack => ({ ...initial(id), runtime: testEngine });
+
+/**
+ * Container ids the engine still reports for `instanceId`, by the labels an instance's own containers
+ * carry. Excludes a stack-wide shared volume helper (labeled only with the stack, never the
+ * instance), which outlives any one instance's destroy and is torn down on its own lifecycle.
+ */
+const containersForInstance = (stackId: string, instanceId: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          testEngine,
+          [
+            ...engineTarget.argv,
+            "ps",
+            "-a",
+            "--filter",
+            `label=com.supabase.stack=${stackId}`,
+            "--filter",
+            `label=com.supabase.instance=${instanceId}`,
+            "--format",
+            "{{.ID}} {{.Names}} {{.Image}} {{.Status}}",
+          ],
+          { stdout: "pipe", stderr: "pipe" },
+        ),
+      );
+      const output = yield* Stream.mkString(Stream.decodeText(child.stdout));
+      return output
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer));
+
+/** Runs a Docker CLI command and returns its combined stdout, for assertions against the engine. */
+const runDocker = (args: ReadonlyArray<string>) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("docker", args, { stdout: "pipe", stderr: "pipe" }),
+      );
+      return yield* Stream.mkString(Stream.decodeText(child.stdout));
+    }),
+  ).pipe(Effect.provide(NodeServices.layer));
+
+/** The fields read directly off a database instance's own storage marker file. */
+const InstanceMarker = Schema.Struct({
+  backend: Schema.Literals(["docker", "host"]),
+  volume: Schema.optionalKey(Schema.String),
+  namespace: Schema.String,
 });
 
 const query = (url: string, statement: string) =>
@@ -57,30 +126,298 @@ const query = (url: string, statement: string) =>
     }),
   );
 
-it.effect("rejects a malformed persisted composition", () =>
+it.effect("credential lookup leaves a fresh stack untouched for custom database credentials", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-malformed-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-credentials-" });
+      const stack = initial("owner-credentials");
       const state = yield* stateFor(`${root}/state`);
-      const saved = initial("owner-malformed");
-      yield* state.save(saved);
-      const malformed =
-        '{"id":"owner-malformed","identity":{"projectRoot":"/tmp/project","branchContext":"owner-test","stackName":"owner-malformed"},"runtime":"native","instances":[],"composition":{"members":"invalid","dependencies":[]},"ports":[]}';
-      yield* fs.writeFileString(path.join(root, "state", saved.id, "state.json"), malformed);
-      const reopened = yield* state.read(saved.id);
-      if (reopened === undefined) return yield* Effect.die("saved state disappeared");
-      const failure = yield* ownerFor({
-        saved: reopened,
+      yield* state.save(stack);
+      const owner = yield* ownerFor({
+        saved: stack,
         state,
-        root: `${root}/state/${saved.id}/data`,
+        root: `${root}/data`,
         cacheRoot,
-      }).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(Owner.OwnerError);
-      expect(failure.operation).toBe("configure");
+      });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+      const failure = yield* owner.getStackCredentials.pipe(Effect.flip);
+      expect(failure.message).toContain("have not been established");
+      expect((yield* state.read(stack.id))?.credentials).toBeUndefined();
+
+      const jwtSecret = "custom-owner-credentials-jwt-secret-long-enough";
+      yield* owner.rpc.createService({
+        service: "database",
+        pin: selection.database,
+        config: {
+          databasePassword: Redacted.make("owner-credentials-database-password"),
+          jwtSecret: Redacted.make(jwtSecret),
+          jwtExpiry: 3600,
+        },
+        endpoints: { sql: { port: "auto" } },
+      });
+      expect((yield* state.read(stack.id))?.credentials?.jwtSecret).toBe(jwtSecret);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
+);
+
+it.live("forwards and rotates saved identity across composed services in one owner", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-identity-rotation-" });
+      const stack = initial("a".repeat(64));
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({
+        saved: stack,
+        state,
+        root: `${root}/data`,
+        cacheRoot,
+      });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+      const servicesFor = (jwtSecret?: string): ReadonlyArray<ServiceCreationInput> => [
+        {
+          service: "database" as const,
+          pin: selection.database,
+          config: {
+            databasePassword: Redacted.make("identity-rotation-password"),
+            jwtExpiry: 3600,
+            ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.make(jwtSecret) }),
+          },
+          endpoints: { sql: { port: "auto" as const } },
+        },
+        {
+          service: "rest" as const,
+          pin: selection.rest,
+          config: {},
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "auth" as const,
+          pin: selection.auth,
+          config: {},
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "storage" as const,
+          pin: selection.storage,
+          config: { filePath: `${root}/uploads` },
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "realtime" as const,
+          pin: selection.realtime,
+          config: {},
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "functions" as const,
+          pin: selection.functions,
+          config: { functionsRoot: `${root}/functions`, bootstrap: "export {};" },
+          endpoints: { http: { port: "auto" as const } },
+        },
+        {
+          service: "studio" as const,
+          pin: selection.studio,
+          config: {},
+          endpoints: { http: { port: "auto" as const } },
+        },
+      ];
+      const stackKeys = (suffix: string, gotrueJwtKeys: string): StackNamespace.StackKeysInput => ({
+        publishableKey: `publishable-${suffix}`,
+        secretKey: `secret-${suffix}`,
+        anonKey: `anon-${suffix}`,
+        serviceRoleKey: `service-role-${suffix}`,
+        gotrueJwtKeys,
+        publicSigningKeys: "[]",
+        anonKeyIsOverride: true,
+        serviceRoleKeyIsOverride: true,
+      });
+      const customJwtSecret = "custom-owner-rotation-jwt-secret-long-enough";
+      const services = servicesFor(customJwtSecret);
+      const first = yield* owner.rpc.supabaseComposition({
+        services: services,
+        keys: stackKeys("one", "[]"),
+      });
+      const ids = first.map(({ id }) => id);
+      const creationFor = (entries: typeof first, service: string) =>
+        entries.find((entry) => entry.creation.service === service)?.creation;
+      const firstCredentials = yield* state
+        .read(stack.id)
+        .pipe(Effect.map((saved) => saved?.credentials));
+      if (firstCredentials === undefined) return yield* Effect.die("identity was not persisted");
+      expect(firstCredentials.jwtSecret).toBe(customJwtSecret);
+      expect(yield* owner.getStackCredentials).toEqual(firstCredentials);
+      const firstRest = creationFor(first, "rest");
+      const firstStorage = creationFor(first, "storage");
+      const firstRealtime = creationFor(first, "realtime");
+      const firstFunctions = creationFor(first, "functions");
+      const firstStudio = creationFor(first, "studio");
+      const firstAuth = creationFor(first, "auth");
+      if (
+        firstRest?.service !== "rest" ||
+        firstStorage?.service !== "storage" ||
+        firstRealtime?.service !== "realtime" ||
+        firstFunctions?.service !== "functions" ||
+        firstStudio?.service !== "studio" ||
+        firstAuth?.service !== "auth"
+      )
+        return yield* Effect.die("identity consumers are missing");
+      expect(firstRest.config.jwks).toBe(firstCredentials.jwks);
+      expect(firstStorage.config).toMatchObject({
+        jwks: firstCredentials.jwks,
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+      });
+      expect(firstRealtime.config.jwks).toBe(firstCredentials.jwks);
+      expect(firstFunctions.config).toMatchObject({
+        jwks: firstCredentials.jwks,
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+        publishableKey: firstCredentials.publishableKey,
+        secretKey: firstCredentials.secretKey,
+      });
+      expect(firstStudio.config).toMatchObject({
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+        publishableKey: firstCredentials.publishableKey,
+        secretKey: firstCredentials.secretKey,
+      });
+      expect(firstAuth.config.gotrueJwtKeys).toBe(firstCredentials.gotrueJwtKeys);
+
+      const standaloneRest = yield* owner.rpc.createService({
+        service: "rest",
+        pin: selection.rest,
+        config: {},
+        endpoints: {},
+      });
+      expect(standaloneRest.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: firstCredentials.jwks,
+      });
+      const standaloneAuth = yield* owner.rpc.createService({
+        service: "auth",
+        pin: selection.auth,
+        config: {},
+        endpoints: {},
+      });
+      expect(standaloneAuth.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        gotrueJwtKeys: firstCredentials.gotrueJwtKeys,
+      });
+      const standaloneStorage = yield* owner.rpc.createService({
+        service: "storage",
+        pin: selection.storage,
+        config: { filePath: `${root}/standalone-uploads` },
+        endpoints: {},
+      });
+      expect(standaloneStorage.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: firstCredentials.jwks,
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+      });
+      const standaloneFunctions = yield* owner.rpc.createService({
+        service: "functions",
+        pin: selection.functions,
+        config: {
+          functionsRoot: `${root}/standalone-functions`,
+          bootstrap: "export {};",
+          jwks: "refreshed-functions-jwks",
+        },
+        endpoints: {},
+      });
+      expect(standaloneFunctions.creation.config).toMatchObject({
+        jwtSecret: customJwtSecret,
+        jwks: "refreshed-functions-jwks",
+        anonKey: firstCredentials.anonKey,
+        serviceRoleKey: firstCredentials.serviceRoleKey,
+      });
+
+      yield* owner.rpc.stopComposition();
+      const secondServices = servicesFor().filter((creation) => creation.service !== "studio");
+      const studioId = first.find(({ creation }) => creation.service === "studio")?.id;
+      if (studioId === undefined) return yield* Effect.die("Studio ID is missing");
+      const retainedIds = ids.filter((id) => id !== studioId);
+      const second = yield* owner.rpc.supabaseComposition({
+        services: secondServices,
+        keys: stackKeys("two", "[{}]"),
+        reuseIds: retainedIds,
+      });
+      const secondCredentials = yield* state
+        .read(stack.id)
+        .pipe(Effect.map((saved) => saved?.credentials));
+      if (secondCredentials === undefined)
+        return yield* Effect.die("rotated identity was not saved");
+      expect(secondCredentials.jwtSecret).toBe(DEFAULT_LOCAL_JWT_SECRET);
+      expect(secondCredentials.anonKey).toBe("anon-two");
+      expect(secondCredentials.publishableKey).toBe("publishable-two");
+      expect(creationFor(second, "rest")?.config).toMatchObject({ jwks: secondCredentials.jwks });
+      expect(creationFor(second, "realtime")?.config).toMatchObject({
+        jwks: secondCredentials.jwks,
+      });
+      expect(creationFor(second, "storage")?.config).toMatchObject({
+        jwks: secondCredentials.jwks,
+        anonKey: secondCredentials.anonKey,
+        serviceRoleKey: secondCredentials.serviceRoleKey,
+      });
+      expect(creationFor(second, "functions")?.config).toMatchObject({
+        jwks: secondCredentials.jwks,
+        anonKey: secondCredentials.anonKey,
+        serviceRoleKey: secondCredentials.serviceRoleKey,
+        publishableKey: secondCredentials.publishableKey,
+        secretKey: secondCredentials.secretKey,
+      });
+      expect(creationFor(second, "auth")?.config).toMatchObject({
+        gotrueJwtKeys: secondCredentials.gotrueJwtKeys,
+      });
+      expect(second.some(({ id }) => id === studioId)).toBe(false);
+      expect((yield* owner.rpc.status({ id: studioId })).lifecycle).toBe("stopped");
+      const excludedStudio = (yield* owner.rpc.status({ id: studioId })).config;
+      expect(excludedStudio.service).toBe("studio");
+      if (excludedStudio.service === "studio")
+        expect(excludedStudio.config.anonKey).toBe(secondCredentials.anonKey);
+      for (const id of retainedIds)
+        expect((yield* owner.rpc.status({ id: id })).lifecycle).toBe("stopped");
+
+      yield* owner.rpc.stopComposition();
+      const third = yield* owner.rpc.supabaseComposition({
+        services: servicesFor(customJwtSecret),
+        keys: stackKeys("three", "[]"),
+        reuseIds: ids,
+      });
+      const thirdCredentials = yield* state
+        .read(stack.id)
+        .pipe(Effect.map((saved) => saved?.credentials));
+      expect(thirdCredentials?.jwtSecret).toBe(customJwtSecret);
+      expect(creationFor(third, "studio")?.config).toMatchObject({
+        anonKey: "anon-three",
+        publishableKey: "publishable-three",
+      });
+
+      const credentialConflict = yield* owner.rpc
+        .supabaseComposition({
+          services: servicesFor("different-owner-jwt-secret-long-enough"),
+          reuseIds: ids,
+        })
+        .pipe(Effect.flip);
+      expect(credentialConflict.message).toContain("Credential override jwtSecret conflicts");
+      expect(
+        (yield* state.read(stack.id).pipe(Effect.map((saved) => saved?.credentials)))?.jwtSecret,
+      ).toBe(customJwtSecret);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.effect("publishes service removal and composition pruning together", () =>
@@ -92,7 +429,7 @@ it.effect("publishes service removal and composition pruning together", () =>
       const state = yield* stateFor(`${root}/state`);
       yield* state.save(stack);
       const removalWrite = yield* Ref.make(false);
-      const failingState: State.Interface = {
+      const failingState: StackNamespace.Interface = {
         ...state,
         save: (next) =>
           Ref.get(removalWrite).pipe(
@@ -100,7 +437,10 @@ it.effect("publishes service removal and composition pruning together", () =>
               next.instances.length === 0
                 ? alreadyWritten
                   ? Effect.fail(
-                      new State.StateError({ operation: "write", message: "injected failure" }),
+                      new StackNamespace.NamespaceError({
+                        operation: "write",
+                        message: "injected failure",
+                      }),
                     )
                   : Ref.set(removalWrite, true).pipe(Effect.andThen(state.save(next)))
                 : state.save(next),
@@ -114,17 +454,18 @@ it.effect("publishes service removal and composition pruning together", () =>
         cacheRoot,
       });
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
-      const service = yield* owner.services.create({
+      const service = yield* owner.rpc.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
       });
-      yield* owner.composition.configure({
+      yield* owner.rpc.configureComposition({
         members: [{ id: service.id, activation: "eager" }],
         dependencies: [],
       });
 
-      yield* owner.core.destroy(service.id);
+      yield* owner.rpc.destroyService({ id: service.id });
 
       const saved = yield* state.read(stack.id);
       if (saved === undefined) return yield* Effect.die("saved state disappeared");
@@ -132,7 +473,11 @@ it.effect("publishes service removal and composition pruning together", () =>
       expect(saved.instances).toEqual([]);
       expect(saved.composition).toEqual({ members: [], dependencies: [] });
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -152,32 +497,33 @@ it.live(
           cacheRoot,
         });
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
-        const database = yield* owner.services.create({
+        const database = yield* owner.rpc.createService({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("owner-password"),
-            jwtSecret: Redacted.make("owner-jwt"),
+            jwtSecret: Redacted.make("owner-integration-jwt-secret-long-enough"),
             jwtExpiry: 3600,
           },
           endpoints: { sql: { port: "auto" } },
         });
-        const rest = yield* owner.services.create({
+        const rest = yield* owner.rpc.createService({
           service: "rest",
-          config: { databaseUrl: "postgresql://placeholder" },
+          pin: selection.rest,
+          config: {},
           endpoints: { http: { port: "auto" } },
         });
-        const shadow = yield* owner.services.create({
+        const shadow = yield* owner.rpc.createService({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
-            databasePassword: Redacted.make("shadow-password"),
-            jwtSecret: Redacted.make("shadow-jwt"),
+            databasePassword: Redacted.make("owner-password"),
+            jwtSecret: Redacted.make("owner-integration-jwt-secret-long-enough"),
             jwtExpiry: 3600,
           },
           endpoints: { sql: { port: "auto" } },
         });
-        yield* owner.composition.configure({
+        yield* owner.rpc.configureComposition({
           members: [
             { id: database.id, activation: "eager" },
             { id: rest.id, activation: "lazy", idleMillis: 30_000 },
@@ -190,18 +536,18 @@ it.live(
             },
           ],
         });
-        yield* owner.core.start(shadow.id);
-        yield* owner.core.ready(shadow.id);
-        yield* owner.composition.start;
-        const dbCredentials = yield* owner.credentials(database.id, "host");
+        yield* owner.rpc.startService({ id: shadow.id });
+        yield* owner.rpc.readyService({ id: shadow.id });
+        yield* owner.rpc.startComposition();
+        const dbCredentials = yield* owner.rpc.credentials({ id: database.id, from: "host" });
         const databaseUrl = dbCredentials.databaseUrl;
         if (databaseUrl === undefined) return yield* Effect.die("database credentials missing");
         yield* query(databaseUrl, "CREATE TABLE owner_rows(value text NOT NULL)");
         yield* query(databaseUrl, "INSERT INTO owner_rows(value) VALUES ('wake')");
-        const restCredentials = yield* owner.credentials(rest.id, "host");
+        const restCredentials = yield* owner.rpc.credentials({ id: rest.id, from: "host" });
         const restUrl = restCredentials.url;
         if (restUrl === undefined) return yield* Effect.die("REST credentials missing");
-        const restObservation = yield* owner.core.get(rest.id);
+        const restObservation = yield* owner.rpc.status({ id: rest.id });
         const restEndpoint = restObservation.endpoints.find((endpoint) => endpoint.name === "http");
         expect(restEndpoint?.host).toBe("127.0.0.1");
         expect(restEndpoint?.port).toBe(Number(new URL(restUrl).port));
@@ -210,14 +556,14 @@ it.live(
         expect(response.status).toBe(200);
         const body = yield* response.json;
         expect(body).toEqual([{ value: "wake" }]);
-        expect((yield* owner.core.get(shadow.id)).lifecycle).toBe("running");
-        yield* owner.composition.stop;
-        expect((yield* owner.core.get(shadow.id)).lifecycle).toBe("running");
+        expect((yield* owner.rpc.status({ id: shadow.id })).lifecycle).toBe("running");
+        yield* owner.rpc.stopComposition();
+        expect((yield* owner.rpc.status({ id: shadow.id })).lifecycle).toBe("running");
         const firstPort = new URL(databaseUrl).port;
-        yield* owner.core.stop(database.id);
-        yield* owner.core.start(database.id);
-        yield* owner.core.ready(database.id);
-        const reopened = yield* owner.credentials(database.id, "host");
+        yield* owner.rpc.stopService({ id: database.id });
+        yield* owner.rpc.startService({ id: database.id });
+        yield* owner.rpc.readyService({ id: database.id });
+        const reopened = yield* owner.rpc.credentials({ id: database.id, from: "host" });
         if (reopened.databaseUrl === undefined)
           return yield* Effect.die("reopened credentials missing");
         expect(new URL(reopened.databaseUrl).port).toBe(firstPort);
@@ -229,10 +575,14 @@ it.live(
           cacheRoot,
         });
         yield* Effect.addFinalizer(() => reopenedOwner.namespace.destroy.pipe(Effect.ignore));
-        expect((yield* reopenedOwner.services.list).length).toBe(3);
-        expect((yield* reopenedOwner.core.get(database.id)).lifecycle).toBe("stopped");
+        expect((yield* state.read(stack.id))?.instances).toHaveLength(3);
+        expect((yield* reopenedOwner.rpc.status({ id: database.id })).lifecycle).toBe("stopped");
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -254,28 +604,41 @@ it.effect("isolates owner graphs built in one scope", () =>
             saved,
             root: `${root}/data`,
             cacheRoot,
-          }).pipe(Layer.provide(Layer.succeed(State.Service, state))),
+          }).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
           memoMap,
           scope,
-        ).pipe(Effect.map((context) => Context.get(context, Owner.Service)));
+        ).pipe(
+          Effect.map((context) => Context.get(context, Owner.Service)),
+          Effect.flatMap((owner) =>
+            RpcTest.makeClient(OwnerRpc).pipe(
+              Effect.provide(OwnerRpc.toLayer(owner.handlers)),
+              Effect.map((rpc) => ({ rpc, namespace: owner.namespace })),
+            ),
+          ),
+        );
       const firstOwner = yield* buildOwner(first);
       const secondOwner = yield* buildOwner(second);
       yield* Effect.addFinalizer(() => firstOwner.namespace.destroy.pipe(Effect.ignore));
       yield* Effect.addFinalizer(() => secondOwner.namespace.destroy.pipe(Effect.ignore));
-      const created = yield* firstOwner.services.create({
+      const created = yield* firstOwner.rpc.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
       });
-      const isolated = yield* secondOwner.composition
-        .configure({
+      const isolated = yield* secondOwner.rpc
+        .configureComposition({
           members: [{ id: created.id, activation: "eager" }],
           dependencies: [],
         })
         .pipe(Effect.flip);
-      expect(isolated.operation).toBe("configure");
+      expect(isolated.operation).toBe("configureComposition");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live(
@@ -295,28 +658,32 @@ it.live(
           cacheRoot,
         });
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
-        const created = yield* owner.composition.supabase([
-          {
-            service: "database",
-            config: {
-              version: "17",
-              databasePassword: Redacted.make("owner-factory-password"),
-              jwtSecret: Redacted.make("owner-factory-jwt"),
-              jwtExpiry: 3600,
+        const created = yield* owner.rpc.supabaseComposition({
+          services: [
+            {
+              service: "database",
+              pin: selection.database,
+              config: {
+                databasePassword: Redacted.make("owner-factory-password"),
+                jwtSecret: Redacted.make("owner-factory-jwt-secret-long-enough"),
+                jwtExpiry: 3600,
+              },
+              endpoints: { sql: { port: "auto" } },
             },
-            endpoints: { sql: { port: "auto" } },
-          },
-          {
-            service: "rest",
-            config: { databaseUrl: "postgresql://placeholder" },
-            endpoints: { http: { port: "auto" } },
-          },
-          {
-            service: "mail",
-            config: {},
-            endpoints: { http: { port: "auto" }, smtp: { port: "auto" } },
-          },
-        ]);
+            {
+              service: "rest",
+              pin: selection.rest,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+            {
+              service: "mail",
+              pin: selection.mail,
+              config: {},
+              endpoints: { http: { port: "auto" }, smtp: { port: "auto" } },
+            },
+          ],
+        });
         const database = created.find((entry) => entry.creation.service === "database");
         const rest = created.find((entry) => entry.creation.service === "rest");
         const mail = created.find((entry) => entry.creation.service === "mail");
@@ -324,23 +691,27 @@ it.live(
           return yield* Effect.die("factory did not create all requested services");
         if (rest.creation.service !== "rest") return yield* Effect.die("REST service missing");
         expect(rest.creation.config.databaseUrl).toContain("authenticator:");
-        yield* owner.composition.start;
-        const databaseCredentials = yield* owner.credentials(database.id, "host");
+        yield* owner.rpc.startComposition();
+        const databaseCredentials = yield* owner.rpc.credentials({ id: database.id, from: "host" });
         const databaseUrl = databaseCredentials.databaseUrl;
         if (databaseUrl === undefined) return yield* Effect.die("database URL missing");
         yield* query(databaseUrl, "CREATE TABLE factory_rows(value text NOT NULL)");
         yield* query(databaseUrl, "INSERT INTO factory_rows VALUES ('factory-row')");
-        const restCredentials = yield* owner.credentials(rest.id, "host");
+        const restCredentials = yield* owner.rpc.credentials({ id: rest.id, from: "host" });
         const restUrl = restCredentials.url;
         if (restUrl === undefined) return yield* Effect.die("REST URL missing");
-        const mailCredentials = yield* owner.credentials(mail.id, "host");
+        const mailCredentials = yield* owner.rpc.credentials({ id: mail.id, from: "host" });
         expect(mailCredentials.smtpUrl).toMatch(/^smtp:\/\//u);
         const client = yield* HttpClient.HttpClient;
         const response = yield* client.get(`${restUrl}/factory_rows`);
         expect(response.status).toBe(200);
         expect(yield* response.json).toEqual([{ value: "factory-row" }]);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -361,33 +732,39 @@ it.effect("validates Supabase composition recipes before creating instances", ()
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       const database = {
         service: "database" as const,
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("owner-errors-password"),
           jwtSecret: Redacted.make("owner-errors-jwt"),
           jwtExpiry: 3600,
         },
         endpoints: { sql: { port: "auto" as const } },
       };
-      const duplicate = yield* owner.composition.supabase([database, database]).pipe(Effect.flip);
-      expect(duplicate.operation).toBe("supabase");
-      expect(yield* owner.services.list).toHaveLength(0);
-      const conflicting = yield* owner.composition
-        .supabase([
-          {
-            service: "rest",
-            config: { databaseUrl: "postgresql://placeholder" },
-            endpoints: { http: { port: 41_001 } },
-          },
-          {
-            service: "auth",
-            config: { databaseUrl: "postgresql://placeholder" },
-            endpoints: { http: { port: 41_002 } },
-          },
-        ])
+      const duplicate = yield* owner.rpc
+        .supabaseComposition({ services: [database, database] })
         .pipe(Effect.flip);
-      expect(conflicting.operation).toBe("supabase");
-      expect(yield* owner.services.list).toHaveLength(0);
+      expect(duplicate.operation).toBe("supabaseComposition");
+      expect((yield* state.read(stack.id))?.instances).toHaveLength(0);
+      const conflicting = yield* owner.rpc
+        .supabaseComposition({
+          services: [
+            {
+              service: "rest",
+              pin: selection.rest,
+              config: {},
+              endpoints: { http: { port: 41_001 } },
+            },
+            {
+              service: "auth",
+              pin: selection.auth,
+              config: {},
+              endpoints: { http: { port: 41_002 } },
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+      expect(conflicting.operation).toBe("supabaseComposition");
+      expect((yield* state.read(stack.id))?.instances).toHaveLength(0);
 
       const badDataRoot = `${root}/data-file`;
       const badOwner = yield* ownerFor({
@@ -400,29 +777,1097 @@ it.effect("validates Supabase composition recipes before creating instances", ()
       yield* fs.makeDirectory(badDataRoot);
       yield* fs.remove(badDataRoot, { recursive: true });
       yield* fs.writeFileString(badDataRoot, "occupied");
-      const registrationFailure = yield* badOwner.services.create(database).pipe(Effect.flip);
-      expect(registrationFailure.operation).toBe("register");
-      expect(yield* badOwner.services.list).toHaveLength(0);
+      const registrationFailure = yield* badOwner.rpc.createService(database).pipe(Effect.flip);
+      expect(registrationFailure.operation).toBe("createService");
       expect((yield* state.read(stack.id))?.instances).toHaveLength(0);
 
-      const databaseWithoutSql = yield* owner.services.create({
+      const databaseWithoutSql = yield* owner.rpc.createService({
         service: "database",
+        pin: selection.database,
         config: database.config,
         endpoints: {},
       });
-      expect(yield* owner.credentials(databaseWithoutSql.id, "host")).toEqual({});
+      expect(yield* owner.rpc.credentials({ id: databaseWithoutSql.id, from: "host" })).toEqual({});
 
-      const missingSql = yield* owner.composition
-        .supabase([
-          { ...database, endpoints: {} },
-          {
-            service: "rest",
-            config: { databaseUrl: "postgresql://placeholder" },
-            endpoints: { http: { port: "auto" } },
-          },
-        ])
+      const missingSql = yield* owner.rpc
+        .supabaseComposition({
+          services: [
+            { ...database, endpoints: {} },
+            {
+              service: "rest",
+              pin: selection.rest,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+          ],
+        })
         .pipe(Effect.flip);
       expect(missingSql.message).toBe("database requires configured sql endpoint");
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
+
+it.effect("lets a retry choose other credentials after the first database creation failed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-owner-credential-rollback-",
+      });
+      const stack = initial("owner-credential-rollback");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const database = (password: string) => ({
+        service: "database" as const,
+        pin: selection.database,
+        config: { databasePassword: Redacted.make(password), jwtExpiry: 3600 },
+        endpoints: {},
+      });
+      const badDataRoot = `${root}/data-file`;
+      yield* fs.writeFileString(badDataRoot, "occupied");
+      const failing = yield* ownerFor({ saved: stack, state, root: badDataRoot, cacheRoot });
+      yield* Effect.addFinalizer(() => failing.namespace.destroy.pipe(Effect.ignore));
+
+      yield* failing.rpc.createService(database("first-password")).pipe(Effect.flip);
+
+      expect((yield* state.read(stack.id))?.credentials).toBeUndefined();
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      yield* owner.rpc.createService(database("second-password"));
+      expect((yield* state.read(stack.id))?.credentials?.databasePassword).toBe("second-password");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
+);
+
+it.effect(
+  "rejects a duplicate instance without releasing the existing instance's reservations",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-duplicate-" });
+        const state = yield* stateFor(`${root}/state`);
+        const stack = initial(`owner-duplicate-${randomUUID().slice(0, 8)}`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const definitions = yield* owner.rpc.supabaseComposition({
+          services: [
+            {
+              service: "mail",
+              pin: selection.mail,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+          ],
+        });
+        const mail = definitions.find((entry) => entry.creation.service === "mail");
+        if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+        const realStateRoot = yield* fs.realPath(`${root}/state`);
+        const portReservations = yield* PortReservations.Service;
+        const endpoint = `${mail.id}:http`;
+        const assigned = yield* portReservations.find(realStateRoot, stack.id, endpoint);
+        expect(assigned).toBeDefined();
+        const saved = yield* state.read(stack.id);
+        if (saved === undefined) return yield* Effect.die("saved state disappeared");
+        const instance = saved.instances.find((entry) => entry.id === mail.id);
+        if (instance === undefined) return yield* Effect.die("mail instance was not saved");
+
+        const failure = yield* ownerFor({
+          saved: { ...saved, instances: [instance, instance] },
+          state,
+          root: `${root}/data`,
+          cacheRoot,
+        }).pipe(Effect.flip);
+
+        expect(failure.message).toBe(`Duplicate instance ${mail.id}`);
+        expect(yield* portReservations.find(realStateRoot, stack.id, endpoint)).toBe(assigned);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+);
+
+it.live("destroying one service deletes its port reservation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-service-destroy-" });
+      const stack = initial(`owner-service-destroy-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      // Composing reserves every member's public port up front without starting any of them.
+      const definitions = yield* owner.rpc.supabaseComposition({
+        services: [
+          {
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
+        ],
+      });
+      const mail = definitions.find((entry) => entry.creation.service === "mail");
+      if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+      const realStateRoot = yield* fs.realPath(`${root}/state`);
+      const portReservations = yield* PortReservations.Service;
+      expect(
+        yield* portReservations.find(realStateRoot, stack.id, `${mail.id}:http`),
+      ).toBeDefined();
+
+      yield* owner.rpc.destroyService({ id: mail.id });
+
+      expect(
+        yield* portReservations.find(realStateRoot, stack.id, `${mail.id}:http`),
+      ).toBeUndefined();
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
+const otherKey = () =>
+  generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+    .privateKey.export({ type: "pkcs8", format: "pem" })
+    .toString();
+
+/* Listens on 127.0.0.1:`port`, or answers none while a listener there holds it. */
+const listenLoopback = (port: number) =>
+  Effect.callback<Option.Option<Server>>((resume) => {
+    const server = createServer((socket) => socket.destroy());
+    server.once("error", () => resume(Effect.succeedNone));
+    server.listen({ host: "127.0.0.1", port }, () => resume(Effect.succeedSome(server)));
+    return Effect.sync(() => {
+      server.close();
+    });
+  });
+
+/* Whether a TLS client trusting `ca` completes a handshake with 127.0.0.1:`port`. */
+const handshake = (port: number, ca: string) =>
+  Effect.callback<boolean>((resume) => {
+    const socket = tlsConnect({ host: "127.0.0.1", port, ca, servername: "localhost" }, () =>
+      resume(Effect.succeed(true)),
+    );
+    socket.once("error", () => resume(Effect.succeed(false)));
+    socket.once("close", () => resume(Effect.succeed(false)));
+    return Effect.sync(() => socket.destroy());
+  });
+
+it.live(
+  "serves the API TLS each recompose saves, or plain without it, on the listener an earlier claim opened, and keeps it on a mismatched pair",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-api-tls-reopen-" });
+        const stack = initial(`owner-api-tls-reopen-${randomUUID().slice(0, 8)}`);
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save(stack);
+        /* From the first state read that finds `holdPort` free, the one a TLS reopen makes once
+           the old listener closed, a test listener holds it for that one read. */
+        const hold: { port: number; server: Server | undefined } = { port: 0, server: undefined };
+        const free = Effect.suspend(() => {
+          const server = hold.server;
+          hold.server = undefined;
+          return server === undefined
+            ? Effect.void
+            : Effect.callback<void>((resume) => {
+                server.close(() => resume(Effect.void));
+                return Effect.void;
+              });
+        });
+        yield* Effect.addFinalizer(() => free);
+        const owner = yield* ownerFor({
+          saved: stack,
+          state: {
+            ...state,
+            read: (id) =>
+              Effect.gen(function* () {
+                if (hold.server !== undefined) yield* free;
+                else if (hold.port !== 0) {
+                  hold.server = Option.getOrUndefined(yield* listenLoopback(hold.port));
+                  if (hold.server !== undefined) hold.port = 0;
+                }
+                return yield* state.read(id);
+              }),
+          },
+          root: `${root}/data`,
+          cacheRoot,
+        });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const certs = `${import.meta.dirname}/../tests/certs`;
+        const apiTls = {
+          cert: yield* fs.readFileString(`${certs}/trusted.crt`),
+          key: yield* fs.readFileString(`${certs}/localhost.key`),
+        };
+        const services: ReadonlyArray<ServiceCreationInput> = [
+          {
+            service: "database",
+            pin: selection.database,
+            config: { databasePassword: Redacted.make("api-tls-reopen-password"), jwtExpiry: 3600 },
+            endpoints: { sql: { port: "auto" } },
+          },
+          {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
+        ];
+        const api = (
+          entries: ReadonlyArray<{
+            readonly id: string;
+            readonly creation: { readonly service: string };
+          }>,
+        ) =>
+          Effect.gen(function* () {
+            const rest = entries.find(({ creation }) => creation.service === "rest");
+            if (rest === undefined) return yield* Effect.die("rest was not composed");
+            const { endpoints } = yield* owner.rpc.status({ id: rest.id });
+            const http = endpoints.find(({ name }) => name === "http");
+            if (http === undefined) return yield* Effect.die("rest has no API endpoint");
+            return http;
+          });
+
+        /* A plain compose leaves the API listener open, as a startup endpoint claim does. */
+        const plain = yield* owner.rpc.supabaseComposition({ services });
+        const before = yield* api(plain);
+        expect(before.scheme).toBeUndefined();
+        expect(yield* handshake(before.port, apiTls.cert)).toBe(false);
+
+        const secured = yield* owner.rpc.supabaseComposition({
+          services,
+          reuseIds: plain.map(({ id }) => id),
+          apiTls,
+        });
+        expect(yield* api(secured)).toMatchObject({ port: before.port, scheme: "https" });
+        expect(yield* handshake(before.port, apiTls.cert)).toBe(true);
+
+        for (const invalid of [
+          { ...apiTls, key: otherKey() },
+          { cert: "", key: "" },
+        ]) {
+          const mismatched = yield* Effect.flip(
+            owner.rpc.supabaseComposition({
+              services,
+              reuseIds: plain.map(({ id }) => id),
+              apiTls: invalid,
+            }),
+          );
+          expect(mismatched.message).toContain("api.tls: invalid certificate or key: ");
+          expect((yield* state.read(stack.id))?.apiTls).toMatchObject(apiTls);
+          expect(yield* handshake(before.port, apiTls.cert)).toBe(true);
+        }
+
+        /* A rotation whose listener can't open keeps both the TLS it saved and the one it serves. */
+        const untrusted = yield* fs.readFileString(`${certs}/untrusted.crt`);
+        const kept = (yield* state.read(stack.id))?.apiTls;
+        hold.port = before.port;
+        yield* Effect.flip(
+          owner.rpc.supabaseComposition({
+            services,
+            reuseIds: plain.map(({ id }) => id),
+            apiTls: { ...apiTls, cert: untrusted },
+          }),
+        );
+        expect(hold.server).toBeUndefined();
+        expect((yield* state.read(stack.id))?.apiTls).toEqual(kept);
+        expect(yield* handshake(before.port, apiTls.cert)).toBe(true);
+        expect(yield* handshake(before.port, untrusted)).toBe(false);
+
+        const rotated = yield* owner.rpc.supabaseComposition({
+          services,
+          reuseIds: plain.map(({ id }) => id),
+          apiTls: { ...apiTls, cert: untrusted },
+        });
+        expect(yield* api(rotated)).toMatchObject({ port: before.port, scheme: "https" });
+        expect(yield* handshake(before.port, untrusted)).toBe(true);
+        expect(yield* handshake(before.port, apiTls.cert)).toBe(false);
+
+        const unsecured = yield* owner.rpc.supabaseComposition({
+          services,
+          reuseIds: plain.map(({ id }) => id),
+        });
+        const after = yield* api(unsecured);
+        expect(after.port).toBe(before.port);
+        expect(after.scheme).toBeUndefined();
+        expect(yield* handshake(before.port, untrusted)).toBe(false);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+);
+
+it.live("destroying a stack leaves its data root empty after an owner was killed mid-command", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-orphaned-job-" });
+      const stack = initial(`owner-orphaned-job-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const orphanedJob = `${root}/data/jobs/0b1c2d3e-orphan`;
+      yield* fs.makeDirectory(orphanedJob, { recursive: true });
+      yield* fs.writeFileString(`${orphanedJob}/config.json`, "{}");
+
+      yield* owner.namespace.destroy;
+
+      expect(yield* fs.exists(`${root}/data`)).toBe(true);
+      expect(yield* fs.readDirectory(`${root}/data`)).toEqual([]);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
+it.live("refuses to destroy one service after its data directory became a symlink", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-service-symlink-" });
+      const stack = initial(`owner-service-symlink-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const data = `${root}/state/${stack.id}/data`;
+      yield* fs.makeDirectory(data, { recursive: true });
+      const owner = yield* ownerFor({ saved: stack, state, root: data, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const service = yield* owner.rpc.createService({
+        service: "mail",
+        pin: selection.mail,
+        config: {},
+        endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
+      });
+      const outside = `${root}/outside`;
+      yield* fs.makeDirectory(`${outside}/${service.id}`, { recursive: true });
+      yield* fs.writeFileString(`${outside}/${service.id}/precious.txt`, "keep");
+      yield* fs.remove(data, { recursive: true });
+      yield* fs.symlink(outside, data);
+
+      const failure = yield* owner.rpc.destroyService({ id: service.id }).pipe(Effect.flip);
+
+      expect(failure.message).toContain("symlink");
+      expect(yield* fs.readFileString(`${outside}/${service.id}/precious.txt`)).toBe("keep");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
+it.live("refuses to destroy a stack whose data directory is a symlink and keeps its target", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-symlinked-data-" });
+      const stack = initial(`owner-symlinked-data-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const outside = `${root}/outside`;
+      yield* fs.makeDirectory(outside);
+      yield* fs.writeFileString(`${outside}/precious.txt`, "keep");
+      const data = `${root}/state/${stack.id}/data`;
+      yield* fs.symlink(outside, data);
+      const owner = yield* ownerFor({ saved: stack, state, root: data, cacheRoot });
+
+      const failure = yield* owner.namespace.destroy.pipe(Effect.flip);
+
+      expect(failure.message).toContain("symlink");
+      expect(yield* fs.readFileString(`${outside}/precious.txt`)).toBe("keep");
+      expect(yield* state.read(stack.id), "the registration stays for a retry").toBeDefined();
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
+it.effect("refuses to generate credentials for a stack whose saved instances consume them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-credentials-" });
+      const stack = initial("owner-credentials");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      yield* owner.rpc.createService({
+        service: "database",
+        pin: selection.database,
+        config: { jwtExpiry: 3600 },
+        endpoints: {},
+      });
+      const withCredentials = yield* state.read(stack.id);
+      if (withCredentials?.credentials === undefined)
+        return yield* Effect.die("database creation did not save credentials");
+      const { credentials: _, ...withoutCredentials } = withCredentials;
+      yield* state.save(withoutCredentials);
+
+      const refused = yield* owner.rpc
+        .createService({ service: "auth", pin: selection.auth, config: {} })
+        .pipe(Effect.flip);
+
+      expect(refused.message).toBe(
+        "Saved instances have no stack credential record; refusing to infer credentials",
+      );
+      const current = yield* state.read(stack.id);
+      expect(current?.credentials).toBeUndefined();
+      expect(current?.instances).toHaveLength(1);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
+);
+
+it.live("blocks a credential change while a standalone credential consumer runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-owner-credential-admission-",
+      });
+      const stack = initial("owner-credential-admission");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const standalone = yield* owner.rpc.createService({
+        service: "rest",
+        pin: selection.rest,
+        config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+        endpoints: {},
+      });
+      yield* owner.rpc.startService({ id: standalone.id });
+      const before = yield* owner.getStackCredentials;
+
+      const refused = yield* owner.rpc
+        .supabaseComposition({
+          services: [{ service: "mail", pin: selection.mail, config: {}, endpoints: {} }],
+          keys: {
+            publishableKey: "publishable-rotated",
+            secretKey: "secret-rotated",
+            anonKey: "anon-rotated",
+            serviceRoleKey: "service-role-rotated",
+            gotrueJwtKeys: "[]",
+            publicSigningKeys: "[]",
+            anonKeyIsOverride: true,
+            serviceRoleKeyIsOverride: true,
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(refused.message).toContain(
+        `Service ${standalone.id} must be stopped with wake disabled before stack credentials change`,
+      );
+      expect(yield* owner.getStackCredentials).toEqual(before);
+      yield* owner.rpc.stopService({ id: standalone.id });
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
+);
+
+it.live(
+  "refreshes a stopped standalone credential consumer when the stack credentials change",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-owner-credential-refresh-",
+        });
+        const stack = initial("owner-credential-refresh");
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const rest = yield* owner.rpc.createService({
+          service: "rest",
+          pin: selection.rest,
+          config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+          endpoints: {},
+        });
+        const explicitKeys = '[{"kty":"oct","k":"explicit"}]';
+        const auth = yield* owner.rpc.createService({
+          service: "auth",
+          pin: selection.auth,
+          config: { gotrueJwtKeys: explicitKeys },
+          endpoints: {},
+        });
+        const before = yield* owner.getStackCredentials;
+
+        yield* owner.rpc.supabaseComposition({
+          services: [{ service: "mail", pin: selection.mail, config: {}, endpoints: {} }],
+          keys: {
+            gotrueJwtKeys: "[]",
+            publicSigningKeys: '[{"kty":"EC","kid":"rotated"}]',
+          },
+        });
+
+        const after = yield* owner.getStackCredentials;
+        expect(after.jwks).not.toBe(before.jwks);
+        const observed = yield* owner.rpc.status({ id: rest.id });
+        expect(observed.config).toMatchObject({ config: { jwks: after.jwks } });
+        const saved = yield* state.read(stack.id);
+        expect(saved?.instances.find(({ id }) => id === rest.id)?.creation).toMatchObject({
+          config: { jwks: after.jwks },
+        });
+        expect((yield* owner.rpc.status({ id: auth.id })).config).toMatchObject({
+          config: { gotrueJwtKeys: explicitKeys },
+        });
+
+        yield* owner.rpc.startService({ id: rest.id });
+        yield* owner.rpc.stopService({ id: rest.id });
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
+);
+
+it.live("rejects a missing required input before starting or stopping the service", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-missing-input-" });
+      const stack = initial("owner-missing-input");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const unbound = yield* owner.rpc.createService({
+        service: "rest",
+        pin: selection.rest,
+        config: {},
+        endpoints: {},
+      });
+
+      const startFailure = yield* owner.rpc.startService({ id: unbound.id }).pipe(Effect.flip);
+
+      expect(startFailure.message).toContain("rest requires input databaseUrl");
+      expect((yield* owner.rpc.status({ id: unbound.id })).lifecycle).toBe("stopped");
+
+      const provided = yield* owner.rpc.createService({
+        service: "rest",
+        pin: selection.rest,
+        config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+        endpoints: {},
+      });
+      yield* owner.rpc.startService({ id: provided.id });
+      const restartFailure = yield* owner.rpc
+        .restartService({
+          id: provided.id,
+          config: { service: "rest", config: { maxRows: 5 } },
+        })
+        .pipe(Effect.flip);
+
+      expect(restartFailure.message).toContain("rest requires input databaseUrl");
+      const kept = yield* owner.rpc.status({ id: provided.id });
+      expect(kept.lifecycle).toBe("running");
+      expect(kept.config).toMatchObject({
+        config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+      });
+      yield* owner.rpc.stopService({ id: provided.id });
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
+);
+
+it.live(
+  "destroys a database's container, storage namespace and port reservation after its registration file is deleted",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stackId = `owner-no-registration-${randomUUID().slice(0, 8)}`;
+        const dataRoot = yield* makeDockerDatabaseRoot("stack-owner-no-registration-", stackId);
+        const tempRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-owner-no-registration-state-",
+        });
+        const stack = initialContainer(stackId);
+        const state = yield* stateFor(`${tempRoot}/state`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({
+          saved: stack,
+          state,
+          root: dataRoot,
+          cacheRoot,
+          engineTarget,
+        });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+        const created = yield* owner.rpc.createService({
+          service: "database",
+          pin: selection.database,
+          config: {
+            databasePassword: Redacted.make("owner-no-registration-password"),
+            jwtSecret: Redacted.make("owner-no-registration-jwt-secret-at-least-32-characters"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        });
+        yield* owner.rpc.startService({ id: created.id });
+        yield* owner.rpc.readyService({ id: created.id });
+
+        const realStateRoot = yield* fs.realPath(`${tempRoot}/state`);
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
+        );
+        expect(
+          yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+        ).toBeDefined();
+        expect(yield* containersForInstance(stackId, created.id)).not.toHaveLength(0);
+
+        // The registration disappears from under the live owner (deleted externally, or by a
+        // concurrent process); its resource cleanup must still run to completion and release
+        // everything it owns, with the removal simply having nothing left to publish.
+        yield* fs.remove(`${tempRoot}/state/${stackId}/state.json`);
+
+        yield* owner.rpc.destroyService({ id: created.id });
+
+        expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
+        expect(
+          yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+        ).toBeUndefined();
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+  120_000,
+);
+
+/* What `probingEngine` does with the start check's probes. */
+interface Probes {
+  count: number;
+  /* Fails each probe's exec as an engine error would. */
+  refuse: boolean;
+  /* Runs each probe with this host's bash at loopback, saving what it read into `dir`. */
+  onHost: boolean;
+  dir?: string;
+  /* Holds the next probe until a lifecycle engine command arrives or the guard elapses. */
+  hold?: { readonly started: Deferred.Deferred<void>; readonly intruded: Deferred.Deferred<void> };
+  /* Whether a probe is held now. */
+  holding: boolean;
+}
+
+const probesFor = (onHost: boolean): Probes => ({
+  count: 0,
+  refuse: false,
+  onHost,
+  holding: false,
+});
+
+const LIFECYCLE_VERBS = new Set(["create", "start", "stop", "kill", "rm", "restart"]);
+
+/* Counts the start check's container probes, passing every other engine command through. Off
+   `onHost`, a probe runs in the database container as in production. Reading to EOF behaves the
+   same on bash 3.2, so plain `bash` is enough here. */
+const probingEngine = (probes: Probes) =>
+  Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return ChildProcessSpawner.make((command) => {
+        if (!ChildProcess.isStandardCommand(command)) return delegate.spawn(command);
+        const args = command.args.map(String);
+        const script = args.at(-1) ?? "";
+        if (!script.includes(API_TLS_CHECK_PATH)) {
+          const hold = probes.hold;
+          if (
+            hold !== undefined &&
+            probes.holding &&
+            LIFECYCLE_VERBS.has(args[engineTarget.argv.length] ?? "")
+          )
+            Deferred.doneUnsafe(hold.intruded, Effect.void);
+          return delegate.spawn(command);
+        }
+        probes.count += 1;
+        const index = probes.count;
+        const hold = probes.hold;
+        /* An overlapping restart's first lifecycle command releases the probe into it, failing the
+           start; serialised, nothing does, and the guard only bounds that wait. */
+        const held =
+          hold === undefined
+            ? Effect.void
+            : Effect.sync(() => {
+                probes.holding = true;
+              }).pipe(
+                Effect.andThen(Deferred.succeed(hold.started, undefined)),
+                Effect.andThen(
+                  Effect.raceFirst(Deferred.await(hold.intruded), Effect.sleep("2 seconds")),
+                ),
+                Effect.andThen(
+                  Effect.sync(() => {
+                    probes.hold = undefined;
+                    probes.holding = false;
+                  }),
+                ),
+              );
+        const spawned = probes.refuse
+          ? ChildProcess.make("false")
+          : probes.onHost
+            ? ChildProcess.make("bash", [
+                "-c",
+                `${script.replaceAll(DOCKER_HOST_ALIAS, "127.0.0.1")}; printf '%s' "$reply" > '${probes.dir}/probe-${index}'`,
+              ])
+            : command;
+        return held.pipe(Effect.andThen(delegate.spawn(spawned)));
+      });
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
+
+/* A container stack with `[api.tls]` composed over a database and REST, owned by this scope. */
+const tlsStack = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const certs = `${import.meta.dirname}/../tests/certs`;
+    const apiTls = {
+      cert: yield* fs.readFileString(`${certs}/trusted.crt`),
+      key: yield* fs.readFileString(`${certs}/localhost.key`),
+    };
+    const stackId = `${name}-${randomUUID().slice(0, 8)}`;
+    const dataRoot = yield* makeDockerDatabaseRoot(`stack-${name}-`, stackId);
+    const tempRoot = yield* fs.makeTempDirectoryScoped({ prefix: `stack-${name}-` });
+    const stack = initialContainer(stackId);
+    const state = yield* stateFor(`${tempRoot}/state`);
+    yield* state.save(stack);
+    const owner = yield* ownerFor({ saved: stack, state, root: dataRoot, cacheRoot, engineTarget });
+    yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+    const database: ServiceCreationInput = {
+      service: "database",
+      pin: selection.database,
+      config: {
+        databasePassword: Redacted.make(`${name}-password`),
+        jwtSecret: Redacted.make(`${name}-jwt-secret-long-enough-to-sign`),
+        jwtExpiry: 3600,
+      },
+      endpoints: { sql: { port: "auto" } },
+    };
+    const rest: ServiceCreationInput = {
+      service: "rest",
+      pin: selection.rest,
+      config: {},
+      endpoints: { http: { port: "auto" } },
+    };
+    const stopped = (ids: ReadonlyArray<string>) =>
+      Effect.forEach(ids, (id) =>
+        owner.rpc.status({ id }).pipe(Effect.map(({ lifecycle }) => lifecycle)),
+      );
+    return {
+      stackId,
+      apiTls,
+      owner,
+      database,
+      rest,
+      stopped,
+      savedTls: state.read(stackId).pipe(Effect.map((saved) => saved?.apiTls)),
+    };
+  });
+
+const tlsLayer = (probes: Probes) =>
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    NodeHttpClient.layerNodeHttp,
+    PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+    probingEngine(probes),
+  );
+
+it.live(
+  "checks container reach under api.tls after every start and restart, and keeps it on a database recompose",
+  () => {
+    const probes = probesFor(false);
+    return Effect.scoped(
+      Effect.gen(function* () {
+        /* Whether this engine's containers reach this host from loopback, measured on its own. */
+        const peer = yield* containerPeer(engineTarget);
+        const { apiTls, owner, database, rest, stopped, savedTls } =
+          yield* tlsStack("owner-api-tls");
+        const runtime = apiTlsRuntimeLabel(engineTarget);
+
+        const [first] = yield* owner.rpc.supabaseComposition({ services: [database], apiTls });
+        if (first === undefined) return yield* Effect.die("no database was composed");
+        const reuseIds = [first.id];
+        /* A database alone opens no API listener, so there is nothing to check. */
+        yield* owner.rpc.startComposition();
+        expect(probes.count).toBe(0);
+        const rejected = yield* Effect.flip(
+          owner.rpc.supabaseComposition({ services: [database] }),
+        );
+        expect(rejected.message).toContain("Composition is already configured");
+        expect(yield* savedTls).toEqual(apiTls);
+        yield* owner.rpc.stopComposition();
+
+        const created = yield* owner.rpc.supabaseComposition({
+          services: [database, rest],
+          reuseIds,
+          apiTls,
+        });
+        const ids = created.map(({ id }) => id);
+        yield* owner.rpc.supabaseComposition({
+          services: [database],
+          reuseIds,
+          retainMembers: true,
+        });
+        expect(yield* savedTls).toEqual(apiTls);
+        if (isLoopback(peer)) {
+          yield* owner.rpc.startComposition();
+          yield* owner.rpc.restartComposition();
+        } else
+          for (const operation of [owner.rpc.startComposition(), owner.rpc.restartComposition()]) {
+            const unsupported = yield* Effect.flip(operation);
+            expect(unsupported.message).toContain(
+              `api.tls: unsupported networking on ${runtime}: `,
+            );
+            expect(yield* stopped(ids)).toEqual(ids.map(() => "stopped"));
+          }
+        expect(probes.count).toBe(2);
+
+        probes.refuse = true;
+        const refused = yield* Effect.flip(owner.rpc.restartComposition());
+        expect(refused.message).toMatch(
+          new RegExp(
+            `^api\\.tls: containers can't reach the api port \\d+ on ${runtime} \\(probe failed for ${DOCKER_HOST_ALIAS}:\\d+: `,
+            "u",
+          ),
+        );
+        expect(yield* stopped(ids)).toEqual(ids.map(() => "stopped"));
+
+        yield* owner.rpc.supabaseComposition({ services: [database, rest], reuseIds: ids });
+        expect(yield* savedTls).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(tlsLayer(probes)));
+  },
+  { timeout: 240_000 },
+);
+
+it.live(
+  "checks overlapping starts and restarts one at a time, and an instance started or restarted alone",
+  () => {
+    const probes = probesFor(true);
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        probes.dir = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-api-tls-probes-" });
+        const { stackId, apiTls, owner, database, rest, stopped } =
+          yield* tlsStack("owner-api-tls-order");
+        const created = yield* owner.rpc.supabaseComposition({
+          services: [database, rest],
+          apiTls,
+        });
+        const ids = created.map(({ id }) => id);
+        const api = created.find(({ creation }) => creation.service === "rest")?.id;
+        if (api === undefined) return yield* Effect.die("no REST was composed");
+
+        /* A restart that overlapped a start's check would stop its containers or clear its reply, so
+           the start fails; serialised, both pass and each check reads its own reply. */
+        const hold = {
+          started: yield* Deferred.make<void>(),
+          intruded: yield* Deferred.make<void>(),
+        };
+        probes.hold = hold;
+        const starting = yield* Effect.forkChild(owner.rpc.startComposition());
+        yield* Deferred.await(hold.started);
+        const restarting = yield* Effect.forkChild(owner.rpc.restartComposition());
+        yield* Fiber.join(starting);
+        yield* Fiber.join(restarting);
+        expect(probes.count).toBe(2);
+        /* Each check armed its own reply for this stack. */
+        const bodies = yield* Effect.forEach([1, 2], (index) =>
+          fs
+            .readFileString(`${probes.dir}/probe-${index}`)
+            .pipe(Effect.map((reply) => reply.slice(reply.indexOf("\r\n\r\n") + 4))),
+        );
+        for (const body of bodies)
+          expect(body).toMatch(new RegExp(`^supabase-stack ${stackId} [0-9a-f-]{36}$`, "u"));
+        expect(bodies[0]).not.toBe(bodies[1]);
+
+        yield* owner.rpc.stopService({ id: api });
+        yield* owner.rpc.startService({ id: api });
+        expect(probes.count).toBe(3);
+        yield* owner.rpc.restartService({ id: api });
+        expect(probes.count).toBe(4);
+
+        /* A failed check stops the instance alone and the composition too. */
+        const refusedWith = <A, E extends { readonly message: string }>(
+          operation: Effect.Effect<A, E>,
+        ) =>
+          Effect.gen(function* () {
+            probes.refuse = true;
+            const refused = yield* Effect.flip(operation);
+            probes.refuse = false;
+            expect(refused.message).toContain("api.tls: containers can't reach the api port ");
+            expect(yield* stopped(ids)).toEqual(ids.map(() => "stopped"));
+          });
+        yield* refusedWith(owner.rpc.restartService({ id: api }));
+        yield* owner.rpc.startComposition();
+        yield* owner.rpc.stopService({ id: api });
+        yield* refusedWith(owner.rpc.startService({ id: api }));
+      }),
+    ).pipe(Effect.provide(tlsLayer(probes)));
+  },
+  { timeout: 240_000 },
+);
+
+// The Docker volume backend has no Podman counterpart: Podman keeps database data in host directories.
+describe.runIf(testEngine === "docker")("Docker volume storage", () => {
+  it.live(
+    "destroys a database's container and storage namespace, and releases its port reservation, after the whole data root is deleted",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const stackId = `owner-no-data-root-${randomUUID().slice(0, 8)}`;
+          const dataRoot = yield* makeDockerDatabaseRoot("stack-owner-no-data-root-", stackId);
+          const tempRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "stack-owner-no-data-root-state-",
+          });
+          const stack = initialContainer(stackId);
+          const state = yield* stateFor(`${tempRoot}/state`);
+          yield* state.save(stack);
+          const owner = yield* ownerFor({
+            saved: stack,
+            state,
+            root: dataRoot,
+            cacheRoot,
+            engineTarget,
+          });
+          yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+
+          const created = yield* owner.rpc.createService({
+            service: "database",
+            pin: selection.database,
+            config: {
+              databasePassword: Redacted.make("owner-no-data-root-password"),
+              jwtSecret: Redacted.make("owner-no-data-root-jwt-secret-at-least-32-characters"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          });
+          yield* owner.rpc.startService({ id: created.id });
+          yield* owner.rpc.readyService({ id: created.id });
+
+          const realStateRoot = yield* fs.realPath(`${tempRoot}/state`);
+          const portReservations = Context.get(
+            yield* Layer.build(PortReservations.layer),
+            PortReservations.Service,
+          );
+          expect(
+            yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+          ).toBeDefined();
+          expect(yield* containersForInstance(stackId, created.id)).not.toHaveLength(0);
+          const marker = yield* Schema.decodeEffect(Schema.fromJsonString(InstanceMarker))(
+            yield* fs.readFileString(`${dataRoot}/${created.id}/.supabase-database-storage.json`),
+          );
+          if (marker.backend !== "docker" || marker.volume === undefined)
+            return yield* Effect.die("Docker test selected host fallback");
+          const volume = marker.volume;
+
+          // The database sleeps; its storage object (inside the still-running owner) keeps the
+          // identity it already resolved in memory, then the whole owned data root disappears (the
+          // volume host, a disk failure, manual cleanup).
+          yield* owner.rpc.stopService({ id: created.id });
+          expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
+          yield* fs.remove(dataRoot, { recursive: true, force: true });
+
+          yield* owner.rpc.destroyService({ id: created.id });
+
+          expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
+          expect(
+            yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+          ).toBeUndefined();
+          const remainingNamespace = yield* runDocker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=volume,src=${volume},dst=/store`,
+            "docker.io/library/busybox:1.36",
+            "/bin/sh",
+            "-c",
+            `[ -e /store/${marker.namespace} ] && echo present || echo absent`,
+          ]);
+          expect(remainingNamespace.trim()).toBe("absent");
+          yield* runDocker(["volume", "rm", volume]);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            NodeHttpClient.layerNodeHttp,
+            PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+          ),
+        ),
+      ),
+    120_000,
+  );
+});

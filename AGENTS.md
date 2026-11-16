@@ -6,15 +6,14 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 ## Workspaces and naming
 
 - `apps/cli` — published `supabase` CLI
-- `apps/docs` — Next.js docs site
 - `packages/api` — typed Management API client
 - `packages/config` — published config schema and generated types
 - `packages/stack` — local Supabase stack runtime
 - `packages/cli-*` — published platform binary wrappers
 
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
-reference. Published `apps/cli` and `packages/config` are not private; `apps/docs` and
-`packages/cli-*` have their own shapes. Generic lint, format, and unused-code tooling is
+reference. Published `apps/cli` and `packages/config` are not private;
+`packages/cli-*` has its own shape. Lint, format, and unused-code tooling is
 root-owned.
 
 ### Config Naming Vocabulary
@@ -35,8 +34,18 @@ all TypeScript runtime code in Effect. Promise-returning APIs are allowed only a
 for consumers that do not use Effect.
 The skill is authoritative for Effect coding practices when repository instructions conflict.
 
-Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
-`pnpm lint:effect:fix` from the repository root.
+Effect linting is part of the repo lint (`.oxlintrc.json` extends the Effect oxlint preset); run
+`pnpm lint:check` or `pnpm lint:fix` from the repository root; `lint:fix` also applies suggestion
+fixes, so review its diff. `ignorePatterns` keeps `.github/scripts`, the npm launcher shim, compute
+stack templates and the generated API contracts and feedback types out of the lint.
+
+Instrument by default: when you add or change code that does I/O (HTTP, SQL, filesystem beyond a
+small read, child processes, containers, waits) or millisecond-scale work, give it a named span
+(`Effect.fn("Area.operation")`, or `Effect.withSpan("<command>.<phase>")` for handler phases) and
+annotate outcomes that help debugging, such as counts, cache hits, attempts, and exit codes. Keep
+`Effect.fnUntraced` for pure helpers and per-item loop bodies. Follow the
+[tracing conventions ADR](docs/adr/0027-cli-tracing-conventions.md) for naming, attribute rules,
+and what never to record.
 
 ## Commands, validation, and workflows
 
@@ -59,9 +68,10 @@ Keep the local feedback loop fast; full CI runs for ready PRs targeting `develop
 Use `pnpm test` only when its scope fits the change; the CLI's aggregate script includes full E2E,
 so use `pnpm run test:unit` and `pnpm run test:integration` with affected test files locally.
 When repo-wide validation is warranted, use root `pnpm check:all` or `pnpm fix:all`. These are the
-repo-wide quality entrypoints: `check:all` runs generic and Effect lint, format, knip, and type
-checks; `fix:all` applies generic and Effect lint, format, and knip fixes. Do not use production
-`as` casts to silence type errors.
+repo-wide quality entrypoints: `check:all` runs lint, format, knip, type, and
+GitHub Actions workflow checks (jactionlint and shellcheck, installed by mise); `fix:all` applies
+lint, format, and knip fixes. Do not use production `as` casts to silence type
+errors.
 
 Use root Turbo entrypoints for live and auxiliary workflows:
 
@@ -103,7 +113,7 @@ page, or upstream issue. If the rationale needs more than three lines, move it t
 ### Never write
 
 - Code narration, provenance/history, evidence trails, ticket IDs as provenance, or meta-commentary on code shape. A ticket ID belongs only in a `TODO(CLI-1234):` or when no ADR exists and the ticket is the only home for a decision.
-- Restatements of docs, section banners, or Go-parity framing. Link to maintained docs instead.
+- Restatements of docs, or section banners. Link to maintained docs instead.
 - ALL-CAPS emphasis or words such as “deliberately”, “crucially”, and “exactly”.
 
 Tests should carry intent in their names; comments only explain non-obvious fixture setup. Keep
@@ -121,6 +131,17 @@ internal metrics (percentages, ratios, or relative changes are fine), vendor/leg
 details, and competitor names; protocol identifiers such as user-agent strings are fine. Keep
 internal context in Linear.
 
+## Branches and releases
+
+Non-breaking PRs target `develop`. Breaking PRs target `next` with a `type(scope)!:` title; the PR
+title lint rejects `!` titles on any other base. `v*.x` maintenance branches take only security
+fixes and fixes for fundamentally broken behaviour, through `hotfix/*` or `backport/*` PRs. If a
+change touches release infrastructure and a `v*.x` branch exists, flag that it needs a cherry-pick
+to each active `v*.x`; the paths are listed in the runbook. A stable fix that cannot wait for the
+weekly deploy is a `hotfix/*` PR into `main` titled `fix`, `perf`, or `revert`; there is no
+rollback. For any release, hotfix, major cut, or maintenance task, follow
+[the release process](apps/cli/docs/release-process.md).
+
 ## Refactoring
 
 Internal unreleased APIs may be simplified or reshaped; move responsibility to the correct owner
@@ -137,7 +158,10 @@ limitations over speculative machinery while preserving required safeguards.
 - Assert behavior that matters to consumers, not implementation details. Prefer real parsers and observable outcomes over source-text or registry checks. Exercise shared contracts across supported implementations.
 - Make assertions meaningful: establish prerequisites, check specific failures, and choose matchers that express the intended contract.
 - Keep setup concise with small fixtures. Accept some duplication rather than introducing unnecessary test abstractions.
-- Remove redundant coverage. Push back on review suggestions that add assertions without protecting meaningful behavior.
+
+Follow the [test-audit skill](.agents/skills/test-audit/SKILL.md) whenever a test is written,
+changed, or reviewed: it gates new tests before they land and audits existing ones for redundant,
+mock-driven, or implementation-coupled coverage.
 
 Name tests `*.unit.test.ts`, `*.integration.test.ts`, or `*.e2e.test.ts`; colocate them with source.
 Use `tests/` for shared helpers. For CLI commands, unit-test complex pure logic, integration-test

@@ -10,10 +10,9 @@ test("lists API keys for a project", ({ cliEffect, project, signal }) =>
       const result = yield* cliEffect([
         "projects",
         "api-keys",
-        "--project-ref",
-        project.ref,
         "--output",
         "json",
+        `--remote=${project.ref}`,
       ]);
       expect(result.exitCode, result.stderr).toBe(0);
       const rows = yield* Schema.decodeEffect(Schema.fromJsonString(V1GetProjectApiKeysOutput))(

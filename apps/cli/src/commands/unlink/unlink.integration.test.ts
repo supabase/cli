@@ -1,10 +1,31 @@
+import { LegacyProjectState } from "../../shared/config/legacy-project-state.service.ts";
+import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { holdLock } from "@supabase/stack/effect";
+import {
+  Cause,
+  Clock,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Option,
+  Path,
+  Queue,
+  Scope,
+} from "effect";
 import { badArgument } from "effect/PlatformError";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import { TestClock } from "effect/testing";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
+import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../tests/helpers/legacy-state-guard.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -13,7 +34,10 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
 } from "../../../tests/helpers/command-mocks.ts";
+import { writeProjectLink } from "../../shared/config/project-link.ts";
+import { projectStateMode, projectStateModeLayer } from "../../shared/config/project-state-mode.ts";
 import { unlink } from "./unlink.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-unlink-int-");
@@ -27,17 +51,18 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   deleteFails?: boolean;
   removeFails?: boolean;
+  stack?: boolean;
 }
 
-// Wraps the real Bun FileSystem but forces `remove` to fail, so the temp-dir-removal
+// Wraps the real state service but forces `removeAll` to fail, so the temp-dir-removal
 // error branch is exercised deterministically, independent of filesystem permissions.
-const failingRemoveFsLayer = Layer.effect(
-  FileSystem.FileSystem,
+const failingRemoveStateLayer = Layer.effect(
+  LegacyProjectState,
   Effect.gen(function* () {
-    const real = yield* FileSystem.FileSystem;
-    return FileSystem.FileSystem.of({
+    const real = yield* LegacyProjectState;
+    return LegacyProjectState.of({
       ...real,
-      remove: () =>
+      removeAll: () =>
         Effect.fail(
           badArgument({
             module: "FileSystem",
@@ -47,7 +72,7 @@ const failingRemoveFsLayer = Layer.effect(
         ),
     });
   }),
-).pipe(Layer.provide(BunServices.layer));
+).pipe(Layer.provide(legacyProjectStateLayer), Layer.provide(BunServices.layer));
 
 const seedProjectRef = (workdir: string, ref: string) =>
   Effect.gen(function* () {
@@ -66,6 +91,7 @@ const tempDirExists = (workdir: string) =>
   });
 
 function setup(opts: SetupOpts = {}) {
+  const recorder = recordingFileSystem();
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const credentials = mockCommandCredentialsTracked({ deleteFails: opts.deleteFails });
@@ -81,15 +107,24 @@ function setup(opts: SetupOpts = {}) {
       cliSettings,
       analytics: mockAnalytics(),
       telemetry: telemetry.layer,
+      fileSystem: recorder.layer,
     }),
     credentials.layer,
-    ...(opts.removeFails === true ? [failingRemoveFsLayer] : []),
+    ...(opts.removeFails === true ? [failingRemoveStateLayer] : []),
+    ...(opts.stack === true ? [projectStateModeLayer("stack")] : []),
   );
-  return { layer, out, telemetry, credentials, workdir: tempRoot.current };
+  return {
+    layer,
+    out,
+    telemetry,
+    credentials,
+    workdir: tempRoot.current,
+    accessed: recorder.accessed,
+  };
 }
 
 describe("unlink integration", () => {
-  it.live("unlinks: removes the temp dir, deletes the keyring entry, prints Finished", () => {
+  it.effect("unlinks: removes the temp dir, deletes the keyring entry, prints Finished", () => {
     const { layer, out, credentials, workdir } = setup();
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -101,7 +136,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes 'Unlinking project: <ref>' to stderr", () => {
+  it.effect("writes 'Unlinking project: <ref>' to stderr", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -110,7 +145,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("succeeds when no credential is stored (keyring not-found ignored)", () => {
+  it.effect("succeeds when no credential is stored (keyring not-found ignored)", () => {
     // The mock returns true here; a real not-found returns false without erroring —
     // either way unlink succeeds.
     const { layer, out, workdir } = setup();
@@ -121,7 +156,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with ProjectRefNotLinkedError when the project-ref file is absent", () => {
+  it.effect("fails with ProjectRefNotLinkedError when the project-ref file is absent", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(unlink());
@@ -134,7 +169,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the keyring delete errors (permission denied)", () => {
+  it.effect("fails when the keyring delete errors (permission denied)", () => {
     const { layer, workdir } = setup({ deleteFails: true });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -148,7 +183,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with UnlinkTempRemovalError when the temp dir cannot be removed", () => {
+  it.effect("fails with UnlinkTempRemovalError when the temp dir cannot be removed", () => {
     const { layer, workdir } = setup({ removeFails: true });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -162,7 +197,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces both messages when temp removal and keyring delete both fail", () => {
+  it.effect("surfaces both messages when temp removal and keyring delete both fail", () => {
     const { layer, workdir } = setup({ removeFails: true, deleteFails: true });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -176,7 +211,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry via ensuring", () => {
+  it.effect("flushes telemetry via ensuring", () => {
     const { layer, telemetry, workdir } = setup();
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -185,7 +220,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("json output: emits a structured success and suppresses the Finished line", () => {
+  it.effect("json output: emits a structured success and suppresses the Finished line", () => {
     const { layer, out, workdir } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -196,7 +231,7 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("stream-json output: emits a structured success", () => {
+  it.effect("stream-json output: emits a structured success", () => {
     const { layer, out, workdir } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* seedProjectRef(workdir, VALID_REF);
@@ -204,5 +239,186 @@ describe("unlink integration", () => {
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ project_ref: VALID_REF });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1, removing nothing", () => {
+    const { layer, credentials, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const mode = yield* withConfigEnv(
+        { SUPABASE_EXPERIMENTAL_STACK: "maybe" },
+        projectStateMode({ cwd: workdir }),
+      ).pipe(Effect.exit);
+      yield* seedProjectRef(workdir, VALID_REF);
+      yield* writeProjectLink(workdir, {
+        project: { ref: VALID_REF },
+        active_branch: { ref: VALID_REF },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const error = yield* unlink().pipe(Effect.provide(projectStateModeLayer(mode)), Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ExperimentalFeatureFlagError",
+        message: expect.stringContaining(`Invalid SUPABASE_EXPERIMENTAL_STACK="maybe"`),
+      });
+      expect(yield* tempDirExists(workdir)).toBe(true);
+      expect(yield* fs.exists(path.join(workdir, "supabase", ".link.json"))).toBe(true);
+      expect(credentials.deletedRefs).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  describe("in stack mode", () => {
+    const seedLinkDocument = (workdir: string, ref: string) =>
+      writeProjectLink(workdir, {
+        project: { ref: VALID_REF },
+        active_branch: { ref },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+    const linkDocumentExists = (workdir: string) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* fs.exists(path.join(workdir, "supabase", ".link.json"));
+      });
+
+    it.effect("removes the link document and the credential of the active branch", () => {
+      const { layer, out, credentials, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        yield* seedLinkDocument(workdir, "branchprojectrefabcd");
+        yield* unlink();
+        expect(yield* linkDocumentExists(workdir)).toBe(false);
+        expect(credentials.deletedRefs).toEqual(["branchprojectrefabcd"]);
+        expect(out.stdoutText).toContain("Finished supabase unlink.");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("reports not linked without creating supabase/ when the project has none", () => {
+      const { layer, credentials, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const error = yield* unlink().pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "ProjectRefNotLinkedError" });
+        expect(yield* fs.exists(path.join(workdir, "supabase"))).toBe(false);
+        expect(credentials.deletedRefs).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails on a busy project lease before removing the link or its credential", () => {
+      const { layer, credentials, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        yield* seedLinkDocument(workdir, VALID_REF);
+        yield* holdLock(`${workdir}/supabase/.supabase.lock.lease`, "1 hour", "supabase.lock");
+        // The lease wait runs on the test clock; the lock stays held, so the outcome is fixed.
+        yield* TestClock.adjust("1 second").pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.forever,
+          Effect.forkScoped,
+        );
+
+        const error = yield* unlink().pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "lease-busy" });
+        expect(yield* linkDocumentExists(workdir)).toBe(true);
+        expect(credentials.deletedRefs).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("acts on the link document it reads under the lease, not one read before it", () => {
+      const { layer, out, credentials, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        const concurrentLink = yield* Scope.make();
+        yield* seedLinkDocument(workdir, "firstprojectrefabcdef");
+        yield* holdLock(`${workdir}/supabase/.supabase.lock.lease`, "1 hour", "supabase.lock").pipe(
+          Scope.provide(concurrentLink),
+        );
+        // Each sleep the lease wait registers on the test clock is announced here.
+        const sleeps = yield* Queue.unbounded<void>();
+        const unlinking = yield* Clock.clockWith((clock) =>
+          unlink().pipe(
+            Effect.provideService(Clock.Clock, {
+              currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+              currentTimeMillis: clock.currentTimeMillis,
+              currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+              currentTimeNanos: clock.currentTimeNanos,
+              monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+              monotonicTimeNanos: clock.monotonicTimeNanos,
+              sleep: (duration) =>
+                Queue.offer(sleeps, undefined).pipe(Effect.andThen(clock.sleep(duration))),
+            }),
+            Effect.forkScoped,
+          ),
+        );
+
+        yield* Queue.take(sleeps);
+
+        yield* seedLinkDocument(workdir, "secondprojectrefabcde");
+        yield* Scope.close(concurrentLink, Exit.void);
+        const wakeOnEachSleep = TestClock.adjust("50 millis").pipe(
+          Effect.andThen(Queue.take(sleeps)),
+          Effect.forever,
+        );
+        yield* Effect.race(Fiber.join(unlinking), wakeOnEachSleep);
+
+        expect(out.stderrText).toContain("Unlinking project: secondprojectrefabcde");
+        expect(credentials.deletedRefs).toEqual(["secondprojectrefabcde"]);
+        expect(yield* linkDocumentExists(workdir)).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("leaves supabase/supabase.lock untouched", () => {
+      const { layer, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const lock = path.join(workdir, "supabase", "supabase.lock");
+        yield* seedLinkDocument(workdir, VALID_REF);
+        yield* fs.writeFileString(lock, '{"linked":"kept"}\n');
+        yield* unlink();
+        expect(yield* fs.readFileString(lock)).toBe('{"linked":"kept"}\n');
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("leaves the legacy temp dir alone without reading or writing it", () => {
+      const { layer, workdir, accessed } = setup({ stack: true });
+      return Effect.andThen(
+        seedLegacyStateDecoys(workdir),
+        Effect.gen(function* () {
+          yield* seedLinkDocument(workdir, VALID_REF);
+          yield* unlink();
+          expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
+          expect(legacyStateAccesses(accessed)).toEqual([]);
+          expect(yield* tempDirExists(workdir)).toBe(true);
+        }).pipe(Effect.provide(layer)),
+      );
+    });
+
+    it.effect("fails with ProjectRefNotLinkedError when only legacy state exists", () => {
+      const { layer, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        yield* seedProjectRef(workdir, VALID_REF);
+        const error = yield* unlink().pipe(Effect.flip);
+        expect(error._tag).toBe("ProjectRefNotLinkedError");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("removes a malformed link document and leaves credentials alone", () => {
+      const { layer, credentials, out, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", ".link.json"), "{not json");
+        yield* unlink();
+        expect(yield* linkDocumentExists(workdir)).toBe(false);
+        expect(credentials.deletedRefs).toEqual([]);
+        expect(out.stdoutText).toContain("Finished supabase unlink.");
+      }).pipe(Effect.provide(layer));
+    });
   });
 });

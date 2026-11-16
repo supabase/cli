@@ -1,6 +1,6 @@
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
+import { ByteSize, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import { compareUtf8Bytes, globPattern, resolveUnderWorkdir, walkSqlFiles } from "./glob.ts";
 
@@ -81,14 +81,14 @@ function fakeFileInfo(type: FileSystem.File.Type): FileSystem.File.Info {
     mtime: Option.none(),
     atime: Option.none(),
     birthtime: Option.none(),
-    dev: 0,
+    dev: 0n,
     ino: Option.none(),
     mode: 0,
     nlink: Option.none(),
     uid: Option.none(),
     gid: Option.none(),
     rdev: Option.none(),
-    size: 0n as FileSystem.Size,
+    size: ByteSize.zero,
     blksize: Option.none(),
     blocks: Option.none(),
   };
@@ -157,7 +157,7 @@ describe("walkSqlFiles", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("recurses into subdirectories, already sorted in Go's byte order", () => {
+  it.effect("recurses into subdirectories, already sorted in byte order", () => {
     const layer = fakeWalkFs(
       { "/schemas": ["nested", "top.sql"], "/schemas/nested": ["inner.sql"] },
       {
@@ -194,22 +194,19 @@ describe("walkSqlFiles", () => {
     },
   );
 
-  it.effect(
-    "does not descend into a symlinked subdirectory (Go's fs.WalkDir/afero.Walk no-follow)",
-    () => {
-      const layer = fakeWalkFs(
-        { "/schemas": ["linked", "top.sql"], "/schemas/linked": ["secret.sql"] },
-        { "/schemas/linked": "Directory", "/schemas/top.sql": "File" },
-        undefined,
-        new Set(["/schemas/linked"]),
-      );
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const files = yield* walkSqlFiles(fs, "/schemas", "");
-        expect([...files]).toEqual(["top.sql"]);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("does not descend into a symlinked subdirectory", () => {
+    const layer = fakeWalkFs(
+      { "/schemas": ["linked", "top.sql"], "/schemas/linked": ["secret.sql"] },
+      { "/schemas/linked": "Directory", "/schemas/top.sql": "File" },
+      undefined,
+      new Set(["/schemas/linked"]),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const files = yield* walkSqlFiles(fs, "/schemas", "");
+      expect([...files]).toEqual(["top.sql"]);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("excludes a symlinked .sql file instead of applying its target", () => {
     const layer = fakeWalkFs(

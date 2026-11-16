@@ -1,25 +1,15 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
- * is an established output contract.
- */
-export class DbDiffTargetFlagsError extends Data.TaggedError("DbDiffTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * Conflicting diff-engine flags (`use-migra`/`use-pgadmin`/`use-pg-schema`/
- * `use-pg-delta`); message text is an established output contract.
+ * Conflicting diff-engine flags (`use-migra`/`use-pgadmin`/`use-pg-delta`); message text is
+ * an established output contract. `use-pg-schema` is rejected unconditionally before this
+ * check runs, so it can never appear in a real conflict.
  */
 export class DbDiffEngineConflictError extends Data.TaggedError("DbDiffEngineConflictError")<{
   readonly message: string;
@@ -30,22 +20,11 @@ export class DbDiffEngineConflictError extends Data.TaggedError("DbDiffEngineCon
 }
 
 /**
- * Only one of `--from` / `--to` was set in explicit diff mode; message text is
- * an established output contract.
+ * Explicit diff mode got only one of `--from` / `--to`, a non-postgres URL or keyword connection
+ * string for one of them, `--remote`, which it doesn't take, or a `--project-ref` that names a URL
+ * or has no `remote` side to apply to; message text is an established output contract.
  */
 export class DbDiffExplicitFlagsError extends Data.TaggedError("DbDiffExplicitFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * An explicit `--from`/`--to` ref was neither `local`/`linked`/`migrations` nor a
- * postgres URL; message text is an established output contract.
- */
-export class DbDiffUnknownTargetError extends Data.TaggedError("DbDiffUnknownTargetError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -74,14 +53,15 @@ export class DbDiffDbNotRunningError extends Data.TaggedError("DbDiffDbNotRunnin
   readonly message: string;
   readonly daemonDown?: boolean;
   readonly suggestion?: string;
+  readonly cause?: unknown;
 }> {
   // Must stay character-identical to `LocalDbRunningError`'s classification
   // (`legacy-db-bootstrap`'s equivalent local-db-not-running check). The two are kept in sync by
   // hand rather than shared, since they serve separate parity targets.
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.daemonDown === true
-      ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
-      : actionability.startStack; // same preset `reset-local-database.ts` uses
+    if (this.daemonDown === true)
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    return causeDeclaration(this.cause) ?? actionability.startStack; // same preset `reset-local-database.ts` uses
   }
 }
 

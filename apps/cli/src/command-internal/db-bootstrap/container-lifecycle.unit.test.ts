@@ -1,11 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { afterEach, beforeEach } from "vitest";
+import { Deferred, Effect, PlatformError, type Redacted, Sink, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   ContainerCreateError,
@@ -20,19 +15,13 @@ import {
   removeContainer,
   removeVolume,
   createContainer,
+  postgresDataInitialized,
   volumeExists,
 } from "./container-lifecycle.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import type { StartContainerSpec } from "./docker-create-args.ts";
 
-let workdir: string;
-
-beforeEach(() => {
-  workdir = mkdtempSync(join(tmpdir(), "supabase-start-container-lifecycle-"));
-});
-
-afterEach(() => {
-  rmSync(workdir, { recursive: true, force: true });
-});
+const workdir = useTempWorkdir("supabase-start-container-lifecycle-");
 
 /** Per-call handler, for multi-step orchestration (volume create -> container create -> start). */
 function mockSpawner(
@@ -42,14 +31,14 @@ function mockSpawner(
   const spawned: Array<ReadonlyArray<string>> = [];
   const spawnedOptions: Array<{
     readonly args: ReadonlyArray<string>;
-    readonly env: Record<string, string | undefined> | undefined;
+    readonly env: Record<string, string | Redacted.Redacted<string> | undefined> | undefined;
     readonly extendEnv: boolean | undefined;
     readonly stdin: ChildProcess.CommandInput | ChildProcess.StdinConfig | undefined;
   }> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       if (command._tag === "StandardCommand") {
         spawnedOptions.push({
@@ -142,7 +131,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map((containerId) => {
@@ -185,12 +174,12 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map(() => {
           const create = mock.spawned.find((args) => args[0] === "create");
-          expect(create).toContain(`com.supabase.cli.workdir=${workdir}`);
+          expect(create).toContain(`com.supabase.cli.workdir=${workdir.current}`);
         }),
       );
     },
@@ -207,7 +196,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map(() => {
@@ -233,7 +222,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map(() => {
@@ -252,7 +241,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: true,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map(() => {
@@ -275,7 +264,7 @@ describe("createContainer", () => {
     return createContainer(mock.spawner, baseSpec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -296,7 +285,7 @@ describe("createContainer", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -306,6 +295,65 @@ describe("createContainer", () => {
         expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
       }),
     );
+  });
+
+  describe("Docker's first health check", () => {
+    const steady = { test: ["CMD", "true"], intervalSeconds: 10, timeoutSeconds: 2, retries: 3 };
+    const steadyFlags = {
+      "--health-cmd": "true",
+      "--health-interval": "10s",
+      "--health-timeout": "2s",
+      "--health-retries": "3",
+    };
+    const startFlags = { "--health-start-period": "10s", "--health-start-interval": "1s" };
+
+    it.live.each([
+      {
+        name: "adds start flags where the engine takes them",
+        healthcheck: steady,
+        supported: true,
+        expected: { ...steadyFlags, ...startFlags },
+      },
+      {
+        name: "keeps a service's own start period",
+        healthcheck: { ...steady, startPeriodSeconds: 20 },
+        supported: true,
+        expected: { ...steadyFlags, ...startFlags, "--health-start-period": "20s" },
+      },
+      {
+        name: "adds none where the engine rejects them",
+        healthcheck: steady,
+        supported: false,
+        expected: steadyFlags,
+      },
+      {
+        name: "adds none for a caller that never asked",
+        healthcheck: steady,
+        expected: steadyFlags,
+      },
+      { name: "adds none without a healthcheck", supported: true, expected: {} },
+    ])("$name", ({ healthcheck, supported, expected }) => {
+      const mock = alwaysSucceed();
+      return createContainer(
+        mock.spawner,
+        { ...baseSpec, binds: [], ...(healthcheck === undefined ? {} : { healthcheck }) },
+        {
+          projectId: "proj",
+          isBitbucketPipeline: false,
+          workdir: workdir.current,
+          extraHosts: [],
+          ...(supported === undefined ? {} : { healthStartInterval: supported }),
+        },
+      ).pipe(
+        Effect.map(() => {
+          const args = mock.spawned.find((spawned) => spawned[0] === "create") ?? [];
+          const flags = args.flatMap((arg, index) =>
+            arg.startsWith("--health-") ? [[arg, args[index + 1]]] : [],
+          );
+          expect(Object.fromEntries(flags)).toEqual(expected);
+        }),
+      );
+    });
   });
 
   it.live("fails with ContainerStartError, unmodified, on a plain start failure", () => {
@@ -318,7 +366,7 @@ describe("createContainer", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -349,7 +397,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.flip,
@@ -357,7 +405,7 @@ describe("createContainer", () => {
           expect(error).toBeInstanceOf(ContainerStartError);
           expect(error.message).toContain('failed to start docker container "supabase_db_proj"');
           expect(error.message).toContain("0.0.0.0:5432");
-          expect(error.message).toContain("db port in supabase/config.toml");
+          expect(error.message).toContain("db port in your config file");
         }),
       );
     },
@@ -391,7 +439,7 @@ describe("createContainer secretFiles", () => {
       const containerId = yield* createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       });
 
@@ -459,7 +507,7 @@ describe("createContainer secretFiles", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -493,7 +541,7 @@ describe("createContainer secretFiles", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -523,7 +571,7 @@ describe("createContainer secretFiles", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -534,6 +582,40 @@ describe("createContainer secretFiles", () => {
       }),
     );
   });
+});
+
+describe("createContainer beforeStart", () => {
+  it.live(
+    "runs the hook with the created container id after the secret copy and before start",
+    () => {
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") return { exitCode: 0, stdout: "container-id-hook\n" };
+        return { exitCode: 0 };
+      });
+      const spec: StartContainerSpec = {
+        ...baseSpec,
+        binds: [],
+        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+      };
+
+      return createContainer(
+        mock.spawner,
+        spec,
+        { projectId: "proj", isBitbucketPipeline: false, workdir: workdir.current, extraHosts: [] },
+        (containerId) => postgresDataInitialized(mock.spawner, containerId).pipe(Effect.asVoid),
+      ).pipe(
+        Effect.map((containerId) => {
+          expect(containerId).toBe("container-id-hook");
+          expect(mock.spawned).toEqual([
+            expect.arrayContaining(["create"]),
+            ["cp", "-", "container-id-hook:/"],
+            ["cp", "container-id-hook:/var/lib/postgresql/data/PG_VERSION", "-"],
+            ["start", "container-id-hook"],
+          ]);
+        }),
+      );
+    },
+  );
 });
 
 describe("ensureNetwork", () => {
@@ -585,11 +667,7 @@ describe("ensureNetwork", () => {
       stderr:
         "Error response from daemon: network with name supabase_network_proj already exists\n",
     }));
-    return ensureNetwork(mock.spawner, "supabase_network_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return ensureNetwork(mock.spawner, "supabase_network_proj", {});
   });
 
   it.live("fails with NetworkCreateError on any other failure", () => {
@@ -649,11 +727,7 @@ describe("ensureVolume", () => {
       exitCode: 125,
       stderr: "Error: volume with name supabase_db_proj already exists: volume already exists\n",
     }));
-    return ensureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return ensureVolume(mock.spawner, "supabase_db_proj", {});
   });
 
   it.live("treats an already-exists rejection without the trailing sentinel as success", () => {
@@ -661,11 +735,7 @@ describe("ensureVolume", () => {
       exitCode: 125,
       stderr: "volume with name supabase_db_proj already exists\n",
     }));
-    return ensureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return ensureVolume(mock.spawner, "supabase_db_proj", {});
   });
 
   it.live("fails with VolumeCreateError on any other failure", () => {
@@ -720,17 +790,14 @@ describe("volumeExists", () => {
     );
   });
 
-  it.live(
-    "resolves true (protected, not fresh) on an ambiguous inspect failure, matching Go's IsNotFound gate",
-    () => {
-      const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
-      return volumeExists(mock.spawner, "supabase_db_proj").pipe(
-        Effect.map((exists) => {
-          expect(exists).toBe(true);
-        }),
-      );
-    },
-  );
+  it.live("resolves true (protected, not fresh) on an ambiguous inspect failure", () => {
+    const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
+    return volumeExists(mock.spawner, "supabase_db_proj").pipe(
+      Effect.map((exists) => {
+        expect(exists).toBe(true);
+      }),
+    );
+  });
 
   it.live("fails with VolumeInspectError when no runtime can be spawned", () => {
     const spawner = ChildProcessSpawner.make(() =>
@@ -747,6 +814,88 @@ describe("volumeExists", () => {
       Effect.flip,
       Effect.map((error) => {
         expect(error).toBeInstanceOf(VolumeInspectError);
+      }),
+    );
+  });
+});
+
+describe("postgresDataInitialized", () => {
+  const pgVersionProbe = ["cp", "container-id-pg:/var/lib/postgresql/data/PG_VERSION", "-"];
+
+  it.live("resolves true when PG_VERSION can be copied out (cp exits 0)", () => {
+    const mock = mockSpawner(() => ({ exitCode: 0 }));
+    return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+      Effect.map((initialized) => {
+        expect(initialized).toBe(true);
+        expect(mock.spawned).toEqual([pgVersionProbe]);
+      }),
+    );
+  });
+
+  const missingFileStderr = {
+    Docker:
+      "Error response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container container-id-pg\n",
+    Podman:
+      'Error: "/var/lib/postgresql/data/PG_VERSION" could not be found on container container-id-pg: no such file or directory\n',
+    "an older Docker client":
+      "Error: No such container:path: container-id-pg:/var/lib/postgresql/data/PG_VERSION\n",
+    "Docker after a config warning":
+      "WARNING: Error loading config file: open /home/me/.docker/config.json: no such file or directory\nError response from daemon: Could not find the file /var/lib/postgresql/data/PG_VERSION in container container-id-pg\n",
+  };
+  for (const [runtime, stderr] of Object.entries(missingFileStderr)) {
+    it.live(`resolves false when ${runtime} reports the PG_VERSION file missing`, () => {
+      const mock = mockSpawner(() => ({ exitCode: 1, stderr }));
+      return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+        Effect.map((initialized) => {
+          expect(initialized).toBe(false);
+        }),
+      );
+    });
+  }
+
+  const otherFailureStderr = {
+    "a missing container": "Error response from daemon: No such container: container-id-pg\n",
+    "a permission error": "Error response from daemon: permission denied\n",
+    "an unreachable daemon": "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n",
+    "an unreadable Docker CLI config":
+      "open /home/me/.docker/config.json: no such file or directory\n",
+    "a Docker socket that does not exist":
+      'error during connect: Head "http://%2Fvar%2Frun%2Fdocker.sock/_ping": dial unix /var/run/docker.sock: connect: no such file or directory\n',
+    "a Docker socket that does not exist when requesting the PG_VERSION archive":
+      'error during connect: Head "http://%2Fvar%2Frun%2Fdocker.sock/v1.47/containers/container-id-pg/archive?path=%2Fvar%2Flib%2Fpostgresql%2Fdata%2FPG_VERSION": dial unix /var/run/docker.sock: connect: no such file or directory\n',
+    "a Podman socket that does not exist":
+      'Error: unable to connect to Podman socket: Get "http://d/v5.2.0/libpod/_ping": dial unix /run/user/1000/podman/podman.sock: connect: no such file or directory\n',
+    "a Podman socket that does not exist when requesting the PG_VERSION archive":
+      'Error: unable to connect to Podman socket: Get "http://d/v5.2.0/libpod/containers/container-id-pg/archive?path=%2Fvar%2Flib%2Fpostgresql%2Fdata%2FPG_VERSION": dial unix /run/user/1000/podman/podman.sock: connect: no such file or directory\n',
+    "a Docker config warning beside an unrelated PG_VERSION error":
+      "WARNING: Error loading config file: open /home/me/.docker/config.json: no such file or directory\nError response from daemon: permission denied reading /var/lib/postgresql/data/PG_VERSION\n",
+    "empty stderr": "",
+  };
+  for (const [cause, stderr] of Object.entries(otherFailureStderr)) {
+    it.live(`resolves true (never re-seeds) on a non-zero exit with ${cause}`, () => {
+      const mock = mockSpawner(() => ({ exitCode: 1, stderr }));
+      return postgresDataInitialized(mock.spawner, "container-id-pg").pipe(
+        Effect.map((initialized) => {
+          expect(initialized).toBe(true);
+        }),
+      );
+    });
+  }
+
+  it.live("resolves true when no container runtime can be spawned", () => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.fail(
+        PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: "spawn ENOENT",
+        }),
+      ),
+    );
+    return postgresDataInitialized(spawner, "container-id-pg").pipe(
+      Effect.map((initialized) => {
+        expect(initialized).toBe(true);
       }),
     );
   });
@@ -852,7 +1001,7 @@ describe("createContainer with an empty containerName (the shadow database)", ()
       return createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map((containerId) => {

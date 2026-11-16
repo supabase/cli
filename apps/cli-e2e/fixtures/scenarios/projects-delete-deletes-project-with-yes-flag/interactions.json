@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "DELETE",
-      "path": "/v1/projects/__PROJECT_REF__",
+      "path": "/v1/projects/replayfixtureprojref",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -20,7 +20,7 @@
       "body": {
         "id": 1,
         "name": "cli-e2e-test",
-        "ref": "__PROJECT_REF__"
+        "ref": "replayfixtureprojref"
       }
     }
   }

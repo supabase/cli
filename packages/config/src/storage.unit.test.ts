@@ -5,7 +5,7 @@ import { storage } from "./storage.ts";
 describe("storage schema", () => {
   const decodeStorage = Schema.decodeUnknownSync(storage);
 
-  describe("file_size_limit accepts numeric and string forms (Go sizeInBytes parity)", () => {
+  describe("file_size_limit accepts numeric and string forms", () => {
     test("accepts a bare byte count and normalizes it to a string", () => {
       expect(decodeStorage({ file_size_limit: 5000000 }).file_size_limit).toBe("5000000");
     });
@@ -28,7 +28,7 @@ describe("storage schema", () => {
     });
   });
 
-  describe("default-enabled values match Go's merged template", () => {
+  describe("default-enabled values match the merged template", () => {
     test("vector.enabled defaults to true when omitted", () => {
       // The template config.toml (enabled = true) is the base layer, so an omitted key resolves
       // to true; partial configs commonly declare [storage.vector.buckets.*] without it.

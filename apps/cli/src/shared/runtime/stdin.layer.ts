@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- no effect or platform-bun stream reads fd 0 with backpressure and non-blocking EAGAIN handling (#6287).
 import { createReadStream } from "node:fs";
 import { BunStream } from "@effect/platform-bun";
 import {
@@ -84,19 +85,19 @@ const makeStdin = Effect.fnUntraced(function* (stdin: Stream.Stream<Uint8Array, 
   const scope = yield* Effect.scope;
   const lineStream = source.pipe(boundPendingLine, Stream.decodeText(), Stream.splitLines);
 
-  const lineReader = Effect.gen(function* () {
-    // One line per pull: `flattenArray` holds the rest of a multi-line chunk for the next
-    // pull, and `toPull` serializes pulls, so prompts running at once still take turns.
-    const pull = yield* Channel.toPull(Channel.flattenArray(Stream.toChannel(lineStream))).pipe(
-      Scope.provide(scope),
-    );
+  // One line per pull: `flattenArray` holds the rest of a multi-line chunk for the next
+  // pull, and `toPull` serializes pulls, so prompts running at once still take turns.
+  const lineReader = Channel.toPull(Channel.flattenArray(Stream.toChannel(lineStream))).pipe(
+    Scope.provide(scope),
     // EOF, read errors and the line bound arrive as typed failures and become the prompt's
     // default; a defect or an interrupt propagates rather than silently answering a prompt.
-    return pull.pipe(
-      Effect.map(Option.some),
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
-  });
+    Effect.map((pull) =>
+      pull.pipe(
+        Effect.map(Option.some),
+        Effect.orElseSucceed(() => Option.none<string>()),
+      ),
+    ),
+  );
 
   // Persistent, lazily-opened (via `Effect.cached`) line reader shared by every `readLine`
   // call, so successive prompts read successive piped lines instead of restarting the pipe.
@@ -135,7 +136,7 @@ const makeStdin = Effect.fnUntraced(function* (stdin: Stream.Stream<Uint8Array, 
       // Outer `None` = timed out; inner `None` = EOF / read error; either way the
       // prompt takes its default.
       const line = yield* take.pipe(Effect.timeoutOption(Duration.millis(timeoutMillis)));
-      return Option.map(Option.flatten(line), (value) => value.trim());
+      return Option.flatten(line);
     });
 
   // Streams piped stdin without collecting it. Unlike `readPipedBytes`, read errors PROPAGATE

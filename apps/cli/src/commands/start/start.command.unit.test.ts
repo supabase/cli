@@ -5,7 +5,7 @@ import { describe, expect } from "vitest";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { startExcludeFlag } from "./start.command.ts";
 
-describe("start --exclude flag (pflag StringSlice parity)", () => {
+describe("start --exclude flag", () => {
   it.effect("splits a comma-separated value into multiple exclusions", () =>
     Effect.gen(function* () {
       const [, exclude] = yield* startExcludeFlag
@@ -36,7 +36,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("keeps only the first CSV record of a multiline value (pflag reads ONE record)", () =>
+  it.effect("keeps only the first CSV record of a multiline value (only ONE record is read)", () =>
     Effect.gen(function* () {
       const [, exclude] = yield* startExcludeFlag
         .parse({ flags: { exclude: ['a\nb"c'] }, arguments: [] })
@@ -46,7 +46,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("rejects malformed CSV with pflag's shorthand-framed diagnostic", () =>
+  it.effect("rejects malformed CSV with the shorthand-framed diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* startExcludeFlag
         .parse({ flags: { exclude: ['a"b'] }, arguments: [] })
@@ -61,7 +61,7 @@ describe("start --exclude flag (pflag StringSlice parity)", () => {
     }),
   );
 
-  it.effect("rejects a blank-only value with pflag's EOF diagnostic", () =>
+  it.effect("rejects a blank-only value with the EOF diagnostic", () =>
     Effect.gen(function* () {
       const exit = yield* startExcludeFlag
         .parse({ flags: { exclude: ["\n"] }, arguments: [] })

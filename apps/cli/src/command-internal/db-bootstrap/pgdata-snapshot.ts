@@ -13,19 +13,14 @@
  */
 
 import { Effect, Option, Stream, type FileSystem } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { collectText, describeContainerCliFailure, spawnContainerCli } from "../container-cli.ts";
 import { dockerCopyArchiveIntoContainer } from "./container-lifecycle.ts";
 import type { StartContainerSpec } from "./docker-create-args.ts";
+import { POSTGRES_DATA_DIR } from "./postgres.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
-
-/**
- * PGDATA path inside every `supabase/postgres` image. Hardcoded rather than read from the
- * container's own `PGDATA` env, since the tar layout depends on this exact value.
- */
-export const PGDATA_PATH = "/var/lib/postgresql/data";
 
 /**
  * `docker cp` unpacks an archive's members relative to `dest`, and the export tar has `data/` as
@@ -38,7 +33,7 @@ export const PGDATA_PARENT_PATH = "/var/lib/postgresql";
  * PGDATA's own directory name — `docker cp <id>:<dir> -` names its members after the source
  * basename, so `data/` is the export tar's top-level entry.
  */
-const PGDATA_DIR_NAME = PGDATA_PATH.slice(PGDATA_PARENT_PATH.length + 1);
+const PGDATA_DIR_NAME = POSTGRES_DATA_DIR.slice(PGDATA_PARENT_PATH.length + 1);
 
 /**
  * Proves an archive carries an exported cluster: every Postgres data directory has a
@@ -128,13 +123,17 @@ export const stampPgDataBaselineMarker = (
 ): Effect.Effect<void, PgDataSnapshotUnavailable> =>
   Effect.gen(function* () {
     const tar = yield* pgDataBaselineMarkerTar(key);
-    yield* dockerCopyArchiveIntoContainer(spawner, tar, `${containerId}:${PGDATA_PATH}`, (detail) =>
-      pgDataSnapshotUnavailable(`failed to stamp ${PGDATA_BASELINE_MARKER_ENTRY}: ${detail}`),
+    yield* dockerCopyArchiveIntoContainer(
+      spawner,
+      tar,
+      `${containerId}:${POSTGRES_DATA_DIR}`,
+      (detail) =>
+        pgDataSnapshotUnavailable(`failed to stamp ${PGDATA_BASELINE_MARKER_ENTRY}: ${detail}`),
     );
   });
 
 /**
- * Streams `docker cp <containerId>:${PGDATA_PATH} -` to a temp file next to `tarPath` and
+ * Streams `docker cp <containerId>:${POSTGRES_DATA_DIR} -` to a temp file next to `tarPath` and
  * `rename`s it into place, so a partially written tar is never visible under the final name;
  * any failure removes the temp file. The container must already be stopped (callers own the
  * stop/start), and the temp name is scoped by pid alone, so concurrent exports to the same
@@ -155,12 +154,12 @@ export const exportPgDataTar = (
       Effect.gen(function* () {
         const child = yield* spawnContainerCli(
           spawner,
-          ["cp", `${containerId}:${PGDATA_PATH}`, "-"],
+          ["cp", `${containerId}:${POSTGRES_DATA_DIR}`, "-"],
           { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
         ).pipe(
           Effect.mapError((cause) =>
             pgDataSnapshotUnavailable(
-              `failed to export ${PGDATA_PATH}: ${describeContainerCliFailure(cause)}`,
+              `failed to export ${POSTGRES_DATA_DIR}: ${describeContainerCliFailure(cause)}`,
             ),
           ),
         );
@@ -181,7 +180,7 @@ export const exportPgDataTar = (
         ).pipe(
           Effect.mapError((cause) =>
             pgDataSnapshotUnavailable(
-              `failed to export ${PGDATA_PATH}: ${describeContainerCliFailure(cause)}`,
+              `failed to export ${POSTGRES_DATA_DIR}: ${describeContainerCliFailure(cause)}`,
             ),
           ),
         );
@@ -202,7 +201,10 @@ export const exportPgDataTar = (
           pgDataSnapshotUnavailable(`failed to publish ${tarPath}: ${cause.message}`),
         ),
       );
-  }).pipe(Effect.onError(() => fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined))));
+  }).pipe(
+    Effect.onError(() => fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined))),
+    Effect.withSpan("PgDataSnapshot.export"),
+  );
 };
 
 /** POSIX tar's fixed block size: headers, file content, and the end marker are all multiples of it. */
@@ -507,6 +509,13 @@ export const validatePgDataArchive = (
     Effect.mapError((cause) =>
       pgDataSnapshotUnavailable(`failed to read ${tarPath}: ${cause.message}`),
     ),
+    Effect.tap((problem) =>
+      Effect.annotateCurrentSpan(
+        "snapshot.problem",
+        Option.isSome(problem) ? problem.value._tag : "none",
+      ),
+    ),
+    Effect.withSpan("PgDataSnapshot.validate"),
   );
 
 /** {@link validatePgDataArchive}'s verdict, split out so it is pure and directly testable. */

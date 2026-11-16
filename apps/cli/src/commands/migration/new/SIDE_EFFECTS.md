@@ -57,7 +57,7 @@ Same structured result as `json`, delivered as an NDJSON `result` event.
   migration file, including any trailing newline. A TTY (or an empty pipe) writes an
   empty file.
 - The file is written with mode `0644`.
-- **Path-traversal hardening (TS-only):** the name is rejected before any write if
+- **Path-traversal hardening :** the name is rejected before any write if
   `<workdir>/supabase/migrations/<timestamp>_<name>.sql` resolves outside the
   migrations directory (e.g. a `..`-laden name). This is a new check with no effect
   on legitimate names (simple identifiers) and only closes the arbitrary-write

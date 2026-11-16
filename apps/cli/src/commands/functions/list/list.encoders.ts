@@ -1,35 +1,37 @@
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { Predicate, Result } from "effect";
+
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goBool,
-  goInt,
-  goPtr,
-  goSlice,
-  goString,
-  goStruct,
-  goTomlListWrapper,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeBool,
+  shapeInt,
+  shapePtr,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+  shapeTomlListWrapper,
+} from "../../../command-internal/struct-output.encoders.ts";
 
 /** Struct spec for the function response. */
-const GO_FUNCTION_RESPONSE = goStruct([
-  ["created_at", goInt],
-  ["entrypoint_path", goPtr(goString)],
-  ["ezbr_sha256", goPtr(goString)],
-  ["id", goString],
-  ["import_map", goPtr(goBool)],
-  ["import_map_path", goPtr(goString)],
-  ["name", goString],
-  ["slug", goString],
-  ["status", goString],
-  ["updated_at", goInt],
-  ["verify_jwt", goPtr(goBool)],
-  ["version", goInt],
+const FUNCTION_RESPONSE_SHAPE = shapeStruct([
+  ["created_at", shapeInt],
+  ["entrypoint_path", shapePtr(shapeString)],
+  ["ezbr_sha256", shapePtr(shapeString)],
+  ["id", shapeString],
+  ["import_map", shapePtr(shapeBool)],
+  ["import_map_path", shapePtr(shapeString)],
+  ["name", shapeString],
+  ["slug", shapeString],
+  ["status", shapeString],
+  ["updated_at", shapeInt],
+  ["verify_jwt", shapePtr(shapeBool)],
+  ["version", shapeInt],
 ]);
 
-const GO_FUNCTIONS_LIST = goSlice(GO_FUNCTION_RESPONSE);
+const FUNCTIONS_LIST_SHAPE = shapeSlice(FUNCTION_RESPONSE_SHAPE);
 
-const GO_FUNCTIONS_TOML_WRAPPER = goTomlListWrapper("functions", GO_FUNCTION_RESPONSE);
+const FUNCTIONS_TOML_WRAPPER_SHAPE = shapeTomlListWrapper("functions", FUNCTION_RESPONSE_SHAPE);
 
 interface FunctionRecord {
   readonly id: string;
@@ -55,10 +57,6 @@ export type ParsedFunctions = {
 const INVALID_FIELD = Symbol("invalid function field");
 type InvalidField = typeof INVALID_FIELD;
 const EMPTY_FUNCTION_RECORD: Record<string, unknown> = {};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function readOptionalBoolean(
   record: Record<string, unknown>,
@@ -87,13 +85,13 @@ function readOptionalNullableString(
   return value === null || typeof value === "string" ? value : INVALID_FIELD;
 }
 
-function readGoString(record: Record<string, unknown>, key: string): string | InvalidField {
+function readStringField(record: Record<string, unknown>, key: string): string | InvalidField {
   const value = record[key];
   if (value === undefined || value === null) return "";
   return typeof value === "string" ? value : INVALID_FIELD;
 }
 
-function readGoInteger(record: Record<string, unknown>, key: string): number | InvalidField {
+function readIntegerField(record: Record<string, unknown>, key: string): number | InvalidField {
   const value = record[key];
   if (value === undefined || value === null) return 0;
   return typeof value === "number" && Number.isSafeInteger(value) ? value : INVALID_FIELD;
@@ -107,13 +105,13 @@ function readRequiredFunctionFields(
       "verify_jwt" | "import_map" | "entrypoint_path" | "import_map_path" | "ezbr_sha256"
     >
   | undefined {
-  const id = readGoString(record, "id");
-  const slug = readGoString(record, "slug");
-  const name = readGoString(record, "name");
-  const status = readGoString(record, "status");
-  const version = readGoInteger(record, "version");
-  const createdAt = readGoInteger(record, "created_at");
-  const updatedAt = readGoInteger(record, "updated_at");
+  const id = readStringField(record, "id");
+  const slug = readStringField(record, "slug");
+  const name = readStringField(record, "name");
+  const status = readStringField(record, "status");
+  const version = readIntegerField(record, "version");
+  const createdAt = readIntegerField(record, "created_at");
+  const updatedAt = readIntegerField(record, "updated_at");
   if (
     id === INVALID_FIELD ||
     slug === INVALID_FIELD ||
@@ -148,7 +146,7 @@ function baseFunctionFields(function_: Functions[number]) {
   };
 }
 
-function optionalGoJsonFields(function_: Functions[number]) {
+function optionalJsonFields(function_: Functions[number]) {
   return {
     ...(function_.entrypoint_path != null ? { entrypoint_path: function_.entrypoint_path } : {}),
     ...(function_.ezbr_sha256 != null ? { ezbr_sha256: function_.ezbr_sha256 } : {}),
@@ -167,7 +165,8 @@ function parseFunctionsResponse(value: unknown): ParsedFunctions | undefined {
   }
   const functions: FunctionRecord[] = [];
   for (const item of value) {
-    const record = item === null ? EMPTY_FUNCTION_RECORD : isRecord(item) ? item : undefined;
+    const record =
+      item === null ? EMPTY_FUNCTION_RECORD : Predicate.isObject(item) ? item : undefined;
     if (record === undefined) {
       return undefined;
     }
@@ -201,26 +200,17 @@ function parseFunctionsResponse(value: unknown): ParsedFunctions | undefined {
   return { functions, isNil: false };
 }
 
-export function decodeFunctionsResponse(
-  rawBody: string,
-):
-  | { readonly ok: true; readonly value: ParsedFunctions }
-  | { readonly ok: false; readonly message: string } {
+export function decodeFunctionsResponse(rawBody: string): Result.Result<ParsedFunctions, string> {
   try {
     const parsed = parseFunctionsResponse(JSON.parse(rawBody));
     if (parsed === undefined) {
-      return {
-        ok: false,
-        message:
-          "failed to list functions: response body did not match the expected function array shape",
-      };
+      return Result.fail(
+        "failed to list functions: response body did not match the expected function array shape",
+      );
     }
-    return { ok: true, value: parsed };
+    return Result.succeed(parsed);
   } catch (cause) {
-    return {
-      ok: false,
-      message: `failed to list functions: ${String(cause)}`,
-    };
+    return Result.fail(`failed to list functions: ${String(cause)}`);
   }
 }
 
@@ -230,7 +220,7 @@ export function hasJsonContentType(response: {
   return (response.headers["content-type"] ?? "").includes("json");
 }
 
-function toGoJsonFunction(function_: Functions[number]) {
+function toJsonFunction(function_: Functions[number]) {
   const base = baseFunctionFields(function_);
   return {
     created_at: base.created_at,
@@ -240,24 +230,25 @@ function toGoJsonFunction(function_: Functions[number]) {
     status: base.status,
     updated_at: base.updated_at,
     version: base.version,
-    ...optionalGoJsonFields(function_),
+    ...optionalJsonFields(function_),
   };
 }
 
-export function encodeFunctionsGoJson(parsed: ParsedFunctions): string {
-  return parsed.isNil ? encodeGoJson(null) : encodeGoJson(parsed.functions.map(toGoJsonFunction));
+export function encodeFunctionsListJson(parsed: ParsedFunctions): string {
+  return parsed.isNil
+    ? encodeSortedJson(null)
+    : encodeSortedJson(parsed.functions.map(toJsonFunction));
 }
 
-export function encodeFunctionsGoYaml(functions: Functions): string {
-  return encodeGoYaml(functions, GO_FUNCTIONS_LIST);
+export function encodeFunctionsListYaml(functions: Functions): string {
+  return encodeStructYaml(functions, FUNCTIONS_LIST_SHAPE);
 }
 
-export function encodeFunctionsGoToml(parsed: ParsedFunctions): string {
-  // Go encodes `Functions: *resp.JSON200` — a JSON `null` body decodes to a
-  // nil slice (BurntSushi emits nothing), while `[]` decodes to a non-nil
-  // empty slice (`functions = []`).
-  return encodeGoToml(
+export function encodeFunctionsListToml(parsed: ParsedFunctions): string {
+  // A JSON `null` body is a nil list (nothing is emitted), while `[]` is a
+  // non-nil empty list (`functions = []`).
+  return encodeStructToml(
     { functions: parsed.isNil ? undefined : parsed.functions },
-    GO_FUNCTIONS_TOML_WRAPPER,
+    FUNCTIONS_TOML_WRAPPER_SHAPE,
   );
 }

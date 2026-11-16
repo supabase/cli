@@ -27,7 +27,7 @@ function isComputeRuntime(value: string): value is ComputeRuntime {
 /**
  * Parses a config-file `[compute.<name>] runtime` value case-insensitively (hand-written casing
  * like `Runtime = "Node"` should still mean `node`). Not used for `--runtime`, which validates
- * through a `Flag.choice` over the same catalog instead.
+ * through a `Flag.Literals` over the same catalog instead.
  */
 export function parseComputeRuntime(value: string): ComputeRuntime | undefined {
   const canonical = value.trim().toLowerCase();
@@ -39,6 +39,36 @@ export const COMPUTE_RUNTIME_DESCRIPTIONS: Record<ComputeRuntime, string> = {
   dockerfile: "Build the directory's own Dockerfile; it serves plain HTTP on $PORT.",
   node: "Node.js catalog runtime (Web-standard fetch handler).",
   deno: "Deno catalog runtime (Web-standard fetch handler).",
+};
+
+/**
+ * The `[compute.<name>] exclude` patterns `new` records for each runtime, read the way
+ * `.gitignore` reads them (see `./compute-exclude.ts`).
+ *
+ * Written into `config.toml` at scaffold time rather than applied silently at `push` time, so
+ * the list is visible, editable, and the same on every machine — a built-in default nobody
+ * could see would be a second, invisible source of truth for what ships. `push` therefore
+ * excludes nothing a project did not ask for, including for a compute scaffolded by an older
+ * CLI.
+ *
+ * Every runtime keeps environment files and version-control metadata out: both are secrets or
+ * noise in an image whose context is uploaded to the platform, whichever runtime builds it.
+ * Beyond that the lists diverge by how each runtime resolves dependencies, so a runtime's own
+ * entry is the only place a pattern belongs.
+ */
+export const COMPUTE_RUNTIME_EXCLUSIONS: Record<ComputeRuntime, ReadonlyArray<string>> = {
+  // The context is the user's own build context and their `Dockerfile` decides what it copies,
+  // so nothing beyond secrets and VCS metadata is assumed about its shape.
+  dockerfile: [".env", ".env.*", ".git"],
+  // The build resolves dependencies, so uploading a locally installed tree only ships this
+  // machine's platform-specific binaries. `*.log` covers the crash logs npm and yarn drop into
+  // the project root on a failed install.
+  node: [".env", ".env.*", ".git", "node_modules", "*.log"],
+  // Deno resolves remote dependencies into a cache outside the project, so there is no
+  // installed tree here to drop; `node_modules` appears only under an opt-in `nodeModulesDir`.
+  // `*.log` is kept for the same reason as above, since a Deno compute may still be installed
+  // from npm.
+  deno: [".env", ".env.*", ".git", "*.log"],
 };
 
 /**
@@ -98,6 +128,62 @@ function isComputeExposure(value: string): value is ComputeExposure {
 export function parseComputeExposure(value: string): ComputeExposure | undefined {
   const canonical = value.trim().toLowerCase();
   return isComputeExposure(canonical) ? canonical : undefined;
+}
+
+/**
+ */
+export const COMPUTE_SECRETS_SCOPE = ["all", "supabase", "none"] as const;
+
+export const COMPUTE_SECRETS_SCOPE_ENUM = [...COMPUTE_SECRETS_SCOPE, "custom"] as const;
+
+export type ComputeSecretsScopeEnum = (typeof COMPUTE_SECRETS_SCOPE_ENUM)[number];
+
+export type ComputeSecretsScope = (typeof COMPUTE_SECRETS_SCOPE)[number] | string[];
+
+/**
+ */
+export const DEFAULT_COMPUTE_SECRETS_SCOPE: ComputeSecretsScope = "all";
+
+/**  */
+export const COMPUTE_SECRETS_SCOPE_DESCRIPTIONS: Record<ComputeSecretsScopeEnum, string> = {
+  all: "Gives access to all defined secrets",
+  supabase: "Exposes only the SUPABASE_* defaults",
+  none: "Hides all secrets",
+  custom: "Exposes only the specified secret names",
+};
+
+function isComputeSecretScope(value: string | string[]): value is ComputeSecretsScope {
+  if (typeof value === "string") {
+    return COMPUTE_SECRETS_SCOPE.some((scope) => scope === value);
+  }
+
+  return Array.isArray(value) && value.every((secretName) => typeof secretName === "string");
+}
+
+/** As {@link parseComputeRuntime}, for secrets_scope. */
+export function parseComputeSecretsScope(
+  value: string | string[],
+): ComputeSecretsScope | undefined {
+  const canonical = typeof value === "string" ? value.trim().toLowerCase() : value;
+  return isComputeSecretScope(canonical) ? canonical : undefined;
+}
+
+export function parseSecretsScopeCustom(secretsNames: string) {
+  if (typeof secretsNames !== "string") {
+    return [];
+  }
+
+  const secretsNamesArray = secretsNames
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => !!name);
+
+  // Apply Set to create a distinct array with unique secret names
+  return [...new Set(secretsNamesArray)];
+}
+
+export function formatSecretsScope(secretsScope: string | string[]) {
+  return typeof secretsScope === "string" ? secretsScope : secretsScope.join(", ");
 }
 
 const VCPU_FOR_SIZE: Record<ComputeSize, number> = { "2gb": 1, "4gb": 2 };

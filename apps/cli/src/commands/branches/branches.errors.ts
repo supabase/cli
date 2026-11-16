@@ -6,6 +6,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 
 export class BranchesListNetworkError extends Data.TaggedError("BranchesListNetworkError")<{
   readonly message: string;
@@ -47,18 +48,14 @@ export class BranchesCreateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // A non-gated 409 means the branch name already exists (user input, not a raw API status);
-    // the gate check stays ahead so a plan-limited 409 still classifies as plan_limit.
-    if (this.upgradeSuggested !== true && this.status === 409) {
+    // A 409 means the branch name already exists (user input, not a raw API status).
+    if (this.status === 409) {
       return { ...actionability.invalidInput, fingerprint_suffix: "conflict" };
     }
-    return statusCodeActionability(this.status, {
-      upgradeSuggested: this.upgradeSuggested,
-      notFoundIsInvalidInput: true,
-    });
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -183,11 +180,10 @@ export class BranchesUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, {
-      upgradeSuggested: this.upgradeSuggested,
       notFoundIsInvalidInput: true,
     });
   }
@@ -290,14 +286,6 @@ export class BranchesEnvNotSupportedError extends Data.TaggedError("BranchesEnvN
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
-  }
-}
-
-export class BranchesCreateCancelledError extends Data.TaggedError("BranchesCreateCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }
 

@@ -1,5 +1,7 @@
 # `supabase projects delete`
 
+Target: account, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                   | Format                    | When                                                       |
@@ -17,7 +19,7 @@
 > ever stores the profile-scoped access token in the keyring (never a per-ref
 > entry), so the delete always targets a non-existent entry — a no-op. The
 > "Keyring is not supported on WSL" stderr line (system keyring unavailable,
-> e.g. headless CI) is keyring-backend noise normalized away in the parity
+> e.g. headless CI) is keyring-backend noise normalized away in the cli-e2e
 > harness.
 
 ## API Routes
@@ -28,21 +30,25 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| Variable                      | Purpose                                                                                                                                | Required?                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`       | auth token (bypasses credential file/keyring lookup)                                                                                   | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`            | built-in profile name or YAML file path                                                                                                | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| `SUPABASE_EXPERIMENTAL_STACK` | `1` or `0` selects stack project-state mode over `[experimental] stack`; any other non-empty value fails before the project is deleted | no (unset or empty uses `[experimental] stack`)         |
 
 ## Exit Codes
 
-| Code | Condition                                                  |
-| ---- | ---------------------------------------------------------- |
-| `0`  | success — project deleted                                  |
-| `1`  | authentication error — no valid token found                |
-| `1`  | project not found — 404 response from `/v1/projects/{ref}` |
-| `1`  | API error — non-2xx/404 response from `/v1/projects/{ref}` |
-| `1`  | network / connection failure                               |
-| `1`  | declined confirmation (cancellation) / no ref on a non-TTY |
+| Code | Condition                                                                                                |
+| ---- | -------------------------------------------------------------------------------------------------------- |
+| `0`  | success — project deleted                                                                                |
+| `1`  | authentication error — no valid token found                                                              |
+| `1`  | project not found — 404 response from `/v1/projects/{ref}`                                               |
+| `1`  | API error — non-2xx/404 response from `/v1/projects/{ref}`                                               |
+| `1`  | network / connection failure                                                                             |
+| `1`  | confirmation declined                                                                                    |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes`                                            |
+| `1`  | no ref on a non-TTY                                                                                      |
+| `1`  | `SUPABASE_EXPERIMENTAL_STACK` is set to a non-empty value other than `0` or `1` (before the DELETE call) |
 
 ## Telemetry Events Fired
 
@@ -60,13 +66,14 @@
 
 ### `--output-format text`
 
-Prompts `Do you want to delete project <ref>? This action is irreversible.` (default
-**No**, honours the global `--yes`), then on success prints `Deleted project: <name>`
-to stdout.
+Prints `This action is irreversible.` and asks `Delete project <ref>?` (default
+**No**), then on success prints `Deleted project: <name>` to stdout. Under `--yes` it prints
+`Confirmed by --yes: Delete project <ref>` on stderr instead of asking.
 
 ### `--output-format json`
 
-`success("Deleted project", { name })`.
+Requires `--yes`: a machine format can't prompt, so without it the command fails with
+the consent-required error before any `DELETE`. On success, `success("Deleted project", { name })`.
 
 ```json
 { "name": "my-project" }
@@ -86,11 +93,26 @@ On failure, an `error` event is emitted instead:
 {"type":"error","code":"ApiError","message":"…"}
 ```
 
+## Stack mode
+
+In stack project-state mode the best-effort cleanup reads `supabase/.link.json` and removes it
+only when its `project.ref` or `active_branch.ref` equals the deleted ref; `supabase/.temp/` is
+not consulted. The mode is resolved before the DELETE call, so an invalid
+`SUPABASE_EXPERIMENTAL_STACK` fails before the project is deleted.
+
+When the link matches, the file is removed under the project lease `supabase/.supabase.lock.lease`
+(the lease `supabase link` publishes `.link.json` under), after reading the link again and
+re-checking the ref, so a concurrent `link` to another project keeps its link. A lease that stays
+busy fails the command with `LockResolutionError` reason `lease-busy` and exit code `1` after the
+project was deleted; the link document is left in place. The lease file is created, and
+`supabase/.gitignore` gains the lease and staged-write entries (`.supabase.lock.lease`,
+`.supabase.lock.*.tmp`), whenever the command takes the project lease, which is only when the link
+matches.
+
 ## Notes
 
 - In interactive mode (when stdin is a TTY and no ref is provided), the CLI prompts the
   user to select a project to delete.
 - In non-interactive mode (when stdin is not a TTY), the project ref positional argument
   is required.
-- A `PreRun` check is performed before the DELETE call to validate the project ref and
-  display a confirmation prompt in interactive mode.
+- The confirmation runs after the project ref is resolved and before the DELETE call.

@@ -7,8 +7,9 @@ import {
   type ApiClient,
 } from "@supabase/api/effect";
 import { Duration, Effect, Option, Schedule } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { block } from "../../command-internal/command-permissions/model.ts";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import {
   bodyText,
   decodeJsonBody,
@@ -49,6 +50,10 @@ import {
  * so the caller can read it as "not deployed".
  */
 
+type ComputeResourceData = typeof V2GetAComputeInstanceOutput.Type extends { data: infer D }
+  ? D
+  : never;
+
 /** The compute shape the API returns, flattened out of its JSON:API envelope. */
 export interface ComputeRecord {
   readonly name: string;
@@ -56,10 +61,11 @@ export interface ComputeRecord {
     readonly runtime?: string;
     readonly size: string;
     readonly exposure: string;
+    readonly secrets_scope?: ComputeResourceData["attributes"]["spec"]["secrets_scope"];
     readonly instances: number;
     readonly backend?: string;
   };
-  readonly buildState: "building" | "active" | "failed";
+  readonly buildState: ComputeResourceData["attributes"]["build_state"];
   readonly stateReason?: string;
   readonly imageVersion?: string;
   readonly deleting?: boolean;
@@ -81,17 +87,33 @@ export interface ComputeUploadSlot {
   readonly expiresAt: string;
 }
 
+const COMPUTE_SECRETS_SCOPE = ["all", "supabase", "none"] as const;
+type ComputeSecretsScope = (typeof COMPUTE_SECRETS_SCOPE)[number];
+
 /** The `spec` a deploy sends. Mirrors the API's own field names exactly. */
 export interface ComputeDeploySpec {
   readonly runtime?: string;
   readonly size: string;
   readonly exposure: string;
+  readonly secrets_scope?:
+    | ComputeSecretsScope
+    | {
+        readonly secret_name: string;
+      }[];
   readonly instances: number;
 }
 
-type ComputeResourceData = typeof V2GetAComputeInstanceOutput.Type extends { data: infer D }
-  ? D
-  : never;
+export function parseComputeSecretsScopeToAPIFormat(
+  value: string | string[],
+): ComputeDeploySpec["secrets_scope"] | undefined {
+  if (typeof value === "string" && COMPUTE_SECRETS_SCOPE.includes(value as ComputeSecretsScope)) {
+    return value as ComputeSecretsScope;
+  }
+
+  if (Array.isArray(value) && value.every((i) => typeof i === "string")) {
+    return value.map((secret_name) => ({ secret_name }));
+  }
+}
 
 function toComputeRecord(data: ComputeResourceData): ComputeRecord {
   return {
@@ -167,6 +189,11 @@ export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectR
   return decoded.data.map(toComputeRecord);
 });
 
+/** The Management API call `getCompute` makes. */
+export const computeRead = block("compute-read", [
+  { operationId: "v2-get-a-compute-instance", kind: "required" },
+]);
+
 /** One compute, or `None` when this project has no record of it — see the 404 notes above. */
 export const getCompute = Effect.fnUntraced(function* (
   api: ApiClient,
@@ -217,15 +244,17 @@ export const createComputeUpload = Effect.fnUntraced(function* (
 });
 
 /**
- * PUTs the archive straight at the presigned slot, with no Supabase credentials attached — the
+ * Sends the archive straight to the presigned slot (POST or PUT, as the slot says), with no Supabase credentials attached — the
  * signature in the URL is the authorization. That's also why `httpClientLayer` redacts query
  * strings before logging: under `--debug` this URL is a write-capable credential.
  */
-export const uploadBuildContext = Effect.fnUntraced(function* (
+export const uploadBuildContext = Effect.fn("Compute.uploadContext")(function* (
   slot: ComputeUploadSlot,
   archive: Uint8Array,
 ) {
   const client = yield* HttpClient.HttpClient;
+
+  yield* Effect.annotateCurrentSpan({ "upload.bytes": archive.byteLength });
 
   // The slot names its own method; anything other than `POST` falls back to `PUT`, the only
   // method documented for a presigned object-store destination.
@@ -248,6 +277,7 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
         }),
     ),
   );
+  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status < 200 || response.status >= 300) {
     const body = yield* bodyText(response);
@@ -410,7 +440,7 @@ function settled(compute: ComputeRecord): ComputeRecord | undefined {
  * and a rollout that never converged have different remedies, and reporting the second as the
  * first sends people to their Dockerfile.
  */
-export const awaitComputeServing = Effect.fnUntraced(function* (
+export const awaitComputeServing = Effect.fn("Compute.awaitServing")(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -430,8 +460,10 @@ export const awaitComputeServing = Effect.fnUntraced(function* (
   // The last thing a poll actually saw, so an exhausted budget can say which stage it gave up
   // in rather than assuming the build.
   let last: ComputeRecord | undefined;
-
+  let attempts = 0;
+  // Polls emit no request spans; this span's attempt count stands in for them.
   const poll = Effect.gen(function* () {
+    attempts += 1;
     // A build runs for minutes; one blip on one read must not abandon a deploy that is fine.
     const compute = yield* getCompute(api, projectRef, name).pipe(
       Effect.retry({
@@ -448,7 +480,7 @@ export const awaitComputeServing = Effect.fnUntraced(function* (
       yield* options.onPoll(compute.value);
     }
     return settled(compute.value);
-  });
+  }).pipe(Effect.withTracerEnabled(false));
 
   const result = yield* poll.pipe(
     Effect.repeat({
@@ -456,6 +488,7 @@ export const awaitComputeServing = Effect.fnUntraced(function* (
       until: (value) => value !== undefined,
     }),
   );
+  yield* Effect.annotateCurrentSpan({ "poll.attempt_count": attempts });
 
   if (result === undefined) {
     const refSuffix = options.refSuffix ?? "";

@@ -2,28 +2,29 @@
 
 ## Files Read
 
-| Path                                            | Format     | When                                                                                                                                   |
-| ----------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/profile`                           | plain text | when `--profile` and `SUPABASE_PROFILE` are both unset                                                                                 |
-| `<profile>.yaml`                                | YAML       | when `SUPABASE_PROFILE` or `--profile` points to a file                                                                                |
-| `<workdir>/supabase/config.toml`                | TOML       | best-effort when resolving template values, detecting existing `[functions.<name>]` declarations, and scanning declared function slugs |
-| `<workdir>/supabase/functions/*/index.ts`       | TypeScript | when checking whether this is the first local function                                                                                 |
-| `<workdir>/.vscode/extensions.json`             | JSONC      | when merging VS Code recommendations into an existing file                                                                             |
-| `<workdir>/.vscode/settings.json`               | JSONC      | when merging Deno settings into an existing file                                                                                       |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON       | when present, before post-run telemetry state is refreshed                                                                             |
+| Path                                                              | Format              | When                                                                                                                                                                                      |
+| ----------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/profile`                                             | plain text          | when `--profile` and `SUPABASE_PROFILE` are both unset                                                                                                                                    |
+| `<profile>.yaml`                                                  | YAML                | when `SUPABASE_PROFILE` or `--profile` points to a file                                                                                                                                   |
+| `<workdir>/supabase/config.json`, `config.jsonc` or `config.toml` | JSON / JSONC / TOML | best-effort when resolving template values, detecting existing `functions.<name>` declarations, and scanning declared function slugs; `config.json`/`config.jsonc` win over `config.toml` |
+| `<workdir>/supabase/functions/*/index.ts`                         | TypeScript          | when checking whether this is the first local function                                                                                                                                    |
+| `<workdir>/.vscode/extensions.json`                               | JSONC               | when merging VS Code recommendations into an existing file                                                                                                                                |
+| `<workdir>/.vscode/settings.json`                                 | JSONC               | when merging Deno settings into an existing file (nested objects merge key by key, template values win)                                                                                   |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`                   | JSON                | when present, before post-run telemetry state is refreshed                                                                                                                                |
 
 ## Files Written
 
-| Path                                            | Format     | When                                                                                                               |
-| ----------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/functions/<name>/index.ts`  | TypeScript | always                                                                                                             |
-| `<workdir>/supabase/functions/<name>/deno.json` | JSON       | always                                                                                                             |
-| `<workdir>/supabase/functions/<name>/.npmrc`    | plain text | always                                                                                                             |
-| `<workdir>/supabase/config.toml`                | TOML       | always unless `[functions.<name>]` is already declared                                                             |
-| `<workdir>/.vscode/extensions.json`             | JSON       | text mode only, when this is the first function and VS Code settings are accepted or auto-accepted                 |
-| `<workdir>/.vscode/settings.json`               | JSON       | text mode only, when this is the first function and VS Code settings are accepted or auto-accepted                 |
-| `<workdir>/.idea/deno.xml`                      | XML        | text mode only, when this is the first function, VS Code settings are declined, and IntelliJ settings are accepted |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON       | after command completion, flushed on both success and failure paths                                                |
+| Path                                               | Format       | When                                                                                                                                                |
+| -------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/functions/<name>/index.ts`     | TypeScript   | always                                                                                                                                              |
+| `<workdir>/supabase/functions/<name>/deno.json`    | JSON         | always                                                                                                                                              |
+| `<workdir>/supabase/functions/<name>/.npmrc`       | plain text   | always                                                                                                                                              |
+| `<workdir>/supabase/config.toml`                   | TOML         | always unless `[functions.<name>]` is already declared; skipped when a `config.json`/`config.jsonc` exists                                          |
+| `<workdir>/supabase/config.json` or `config.jsonc` | JSON / JSONC | when one exists, instead of `config.toml`: gains `functions.<name>` unless already declared; comments, trailing commas and untouched bytes are kept |
+| `<workdir>/.vscode/extensions.json`                | JSON         | text mode only, when this is the first function and VS Code settings are accepted or auto-accepted                                                  |
+| `<workdir>/.vscode/settings.json`                  | JSON         | text mode only, when this is the first function and VS Code settings are accepted or auto-accepted                                                  |
+| `<workdir>/.idea/deno.xml`                         | XML          | text mode only, when this is the first function, VS Code settings are declined, and IntelliJ settings are accepted                                  |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`    | JSON         | after command completion, flushed on both success and failure paths                                                                                 |
 
 ## API Routes
 
@@ -49,7 +50,7 @@
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`FunctionsNewWorkdirError`) — beats slug validation and every filesystem write |
 | `1`  | invalid function name                                                                                                                                      |
 | `1`  | function entrypoint already exists                                                                                                                         |
-| `1`  | local file write failed                                                                                                                                    |
+| `1`  | local file write failed, or the JSON/JSONC config edit was refused (`FunctionsNewWriteError`)                                                              |
 
 ## Telemetry Events Fired
 
@@ -76,9 +77,11 @@ Emits a structured success result event with `path`, `function_name`, and `auth`
 - Creates a new Edge Function scaffold locally.
 - Requires exactly one argument: the function name.
 - `--auth` selects the auth-mode template (`none` | `apikey` | `user`, default: `apikey`).
-- Best-effort config parsing is intentionally non-fatal here: malformed `config.toml` does not block scaffolding or config append.
+- The example `curl` URL port and publishable key come from the shared resolved config, so `SUPABASE_API_PORT` and the other `SUPABASE_*` config overrides apply; a config that fails to load (unparsable file or invalid value) fails before anything is written. Without a config file the defaults apply.
 - The `[functions.<name>]` config section is **appended** (`O_APPEND` semantics, `flag: "a"`), never rewritten, so the existing file is left byte-for-byte untouched and a partial write cannot truncate it.
-- Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than a parsed config map. This is a deliberate design choice: config loading here is non-fatal, so a raw-text scan stays deterministic even when the file fails to parse. For all well-formed configs the two approaches agree.
+- Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than a parsed config map. For all well-formed configs the two approaches agree.
 - IDE settings scaffolding (`.vscode`, `.idea`) only runs in `--output-format text`; json / stream-json runs are payload-only.
+- The VS Code settings come from the shared `init` helper, so `.vscode/settings.json` also includes `json.schemaDownload.trustedDomains` trusting `https://supabase.com/schemas/`.
 - No Management API requests are made; all behavior is local filesystem work plus telemetry flush.
 - A non-existent `--workdir`/`SUPABASE_WORKDIR` now fails before any directory or file is created (CLI-2285) — previously a typo'd `--workdir` could scaffold a fresh `supabase/functions/…` tree (plus a new `config.toml`) at the wrong path.
+- With a `config.json`/`config.jsonc` project the `functions.<name>` entry (`enabled`, `verify_jwt`, `import_map`, `entrypoint`) is span-edited into that file via `applyConfigEdits`; the file is never rewritten wholesale and no `config.toml` is created. A refused edit fails the command instead of falling back.

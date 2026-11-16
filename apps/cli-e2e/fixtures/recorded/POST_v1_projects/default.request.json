@@ -13,7 +13,7 @@
   "body": {
     "db_pass": "cli-e2e-password-123",
     "name": "cli-e2e-test",
-    "organization_slug": "__PROJECT_REF__",
+    "organization_slug": "replayfixtureprojref",
     "region": "us-east-1"
   }
 }

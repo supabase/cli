@@ -8,6 +8,7 @@ import {
   awaitLiveBranchEffect,
   awaitLiveBranchRemovedEffect,
   removeLiveBranchByNameEffect,
+  runLiveBranchCreateEffect,
 } from "../../../../tests/helpers/branches-live.ts";
 
 const CreatedBranchRef = Schema.Struct({ project_ref: Schema.String });
@@ -20,16 +21,7 @@ test("creates a preview branch", ({ cliEffect, project }) =>
       let branchRef: string | undefined;
 
       const target = Effect.gen(function* () {
-        const result = yield* cliEffect([
-          "branches",
-          "create",
-          name,
-          "--project-ref",
-          project.ref,
-          "--output-format",
-          "json",
-        ]);
-        expect(result.exitCode, result.stderr).toBe(0);
+        const result = yield* runLiveBranchCreateEffect(cliEffect, project, name);
         const refBody = yield* Schema.decodeEffect(Schema.fromJsonString(CreatedBranchRef))(
           result.stdout,
         );

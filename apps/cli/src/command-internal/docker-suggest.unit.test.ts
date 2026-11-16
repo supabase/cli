@@ -4,7 +4,7 @@ import { containerRuntimeNotFoundMessage } from "./container-cli.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "./docker-suggest.ts";
 
 describe("isDockerDaemonUnreachable", () => {
-  it("detects the docker/podman daemon-down CLI messages (Go's IsErrConnectionFailed)", () => {
+  it("detects the docker/podman daemon-down CLI messages", () => {
     expect(
       isDockerDaemonUnreachable(
         "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
@@ -28,6 +28,11 @@ describe("isDockerDaemonUnreachable", () => {
         "error during connect: in the default daemon configuration on Windows, the docker client must be run with elevated privileges to connect: open //./pipe/docker_engine: Access is denied.",
       ),
     ).toBe(true);
+    expect(
+      isDockerDaemonUnreachable(
+        "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory",
+      ),
+    ).toBe(true);
   });
 
   it("does not flag an unrelated inspect failure", () => {
@@ -35,7 +40,7 @@ describe("isDockerDaemonUnreachable", () => {
     expect(isDockerDaemonUnreachable("")).toBe(false);
   });
 
-  it("exposes Go's install hint verbatim", () => {
+  it("exposes the install hint verbatim", () => {
     expect(SUGGEST_DOCKER_INSTALL).toContain("https://docs.docker.com/desktop");
   });
 });

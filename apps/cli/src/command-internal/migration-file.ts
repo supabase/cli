@@ -1,4 +1,4 @@
-import type { Path } from "effect";
+import { DateTime, type Path } from "effect";
 
 import { splitAndTrim } from "./sql-split.ts";
 
@@ -43,7 +43,7 @@ export function parseMigrationContent(content: string): ParsedMigrationContent {
  * `Clock.currentTimeMillis`) so it stays deterministic under test.
  */
 export function formatMigrationTimestamp(millis: number): string {
-  return new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
+  return DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/gu, "").slice(0, 14);
 }
 
 /**

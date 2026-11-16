@@ -135,6 +135,8 @@ export function buildStorageEnv(input: StorageEnvInput): Record<string, string> 
 }
 
 export interface StorageContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /** The sanitized project id. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`'s target; resolved once per `start` run, not per-container. */
@@ -190,7 +192,7 @@ export function buildStorageContainerSpec(input: StorageContainerSpecInput): Sta
     env,
     binds: [`${containerName}:${STORAGE_DOCKER_PATH}`],
     // IPv4 loopback: localhost can resolve to IPv6 on GitPod and miss the listener.
-    healthcheck: usesSlimImageRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image, input.slim)
       ? slimWgetHealthcheck("http://127.0.0.1:5000/status")
       : {
           test: [

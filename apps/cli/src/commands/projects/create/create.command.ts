@@ -1,10 +1,19 @@
 import { V1CreateAProjectInput } from "@supabase/api/effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withContext,
+} from "../../../command-internal/command-permissions/model.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { organizationPicker } from "../../../command-internal/organization-picker.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsCreate } from "./create.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const AWS_REGIONS = [
   "ap-east-1",
@@ -54,54 +63,61 @@ const INSTANCE_SIZES = [
 ] as const;
 
 const config = {
-  name: Argument.string("name").pipe(
+  name: Argument.String("name").pipe(
     Argument.withDescription("Name of the project to create."),
     Argument.optional,
   ),
-  orgId: Flag.string("org-id").pipe(
+  orgId: Flag.String("org-id").pipe(
     Flag.withDescription("Organization ID to create the project in."),
     Flag.optional,
   ),
-  dbPassword: Flag.string("db-password").pipe(
+  dbPassword: Flag.String("db-password").pipe(
     Flag.withDescription("Database password of the project."),
     Flag.optional,
   ),
-  region: Flag.choice("region", AWS_REGIONS).pipe(
+  region: Flag.Literals("region", AWS_REGIONS).pipe(
     Flag.withDescription("Select a region close to you for the best performance."),
     Flag.optional,
   ),
-  size: Flag.choice("size", INSTANCE_SIZES).pipe(
+  size: Flag.Literals("size", INSTANCE_SIZES).pipe(
     Flag.withDescription("Select a desired instance size for your project."),
     Flag.optional,
   ),
-  highAvailability: Flag.boolean("high-availability").pipe(
+  highAvailability: Flag.Boolean("high-availability").pipe(
     Flag.withDescription("Enable high availability for the project."),
     Flag.optional,
   ),
   // Hidden and `--experimental`-gated: the upstream OpenAPI spec marks these fields deprecated
   // even though the API accepts them, restored via `packages/api/scripts/openapi-overrides.json`.
-  releaseChannel: Flag.choice("release-channel", RELEASE_CHANNELS).pipe(
+  releaseChannel: Flag.Literals("release-channel", RELEASE_CHANNELS).pipe(
     Flag.withDescription("Select a release channel for the project."),
     Flag.optional,
     Flag.withHidden,
   ),
-  postgresEngine: Flag.choice("postgres-engine", POSTGRES_ENGINES).pipe(
+  postgresEngine: Flag.Literals("postgres-engine", POSTGRES_ENGINES).pipe(
     Flag.withDescription("Select the Postgres engine for the project."),
     Flag.optional,
     Flag.withHidden,
   ),
-  interactive: Flag.boolean("interactive").pipe(
+  interactive: Flag.Boolean("interactive").pipe(
     Flag.withDescription("Enables interactive mode."),
     Flag.withAlias("i"),
     Flag.optional,
     Flag.withHidden,
   ),
-  plan: Flag.string("plan").pipe(
+  plan: Flag.String("plan").pipe(
     Flag.withDescription("Select a plan that suits your needs."),
     Flag.optional,
     Flag.withHidden,
   ),
 };
+// `--interactive` is read as `interactive ?? true`: absent and `true` can prompt, `false` cannot;
+// an optional boolean can't be tested with `is`, so the present entry names the value in its context.
+const interactivePicker = withContext(
+  organizationPicker,
+  "an interactive terminal (stdin TTY and text output)",
+);
+
 export type ProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const projectsCreateCommand = Command.make("create", config).pipe(
@@ -114,14 +130,37 @@ export const projectsCreateCommand = Command.make("create", config).pipe(
       description: "Create a new project",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-create-a-project", kind: "required" }],
+        noApiEffectFlags: [
+          "db-password",
+          "region",
+          "size",
+          "high-availability",
+          "release-channel",
+          "postgres-engine",
+          "plan",
+        ],
+      },
+      withCondition(interactivePicker, { flag: "interactive", present: false }),
+      withCondition(withContext(interactivePicker, "--interactive is true, not false"), {
+        flag: "interactive",
+        present: true,
+      }),
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     projectsCreate(flags).pipe(
       // `high-availability` is omitted from `safeFlags` since boolean flags are always logged
       // verbatim regardless of that list. `config` auto-detects `region`/`size`/`release-channel`/
-      // `postgres-engine` as safe since they're `Flag.choice`.
+      // `postgres-engine` as safe since they're `Flag.Literals`.
       withCommandTelemetry({ flags, safeFlags: ["org-id"], config }),
       withJsonErrorHandling,
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["projects", "create"])),
+  withTargetPolicy({ group: "account", consent: "yes" }),
 );

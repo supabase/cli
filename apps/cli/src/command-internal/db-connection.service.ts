@@ -33,8 +33,8 @@ export interface PgConnInput {
   readonly runtimeParams?: Readonly<Record<string, string>>;
   /**
    * libpq `sslmode`, parsed from a `--db-url` query string. Controls whether the driver layer
-   * negotiates TLS and verifies the server certificate. Absent → TLS without certificate
-   * verification (libpq's `prefer`/`require` default).
+   * negotiates TLS and verifies the server certificate. Absent → TLS first, then plaintext if
+   * that fails (libpq's `prefer` default).
    */
   readonly sslmode?: string;
   /**
@@ -143,7 +143,7 @@ export interface QueryResult {
   readonly fields: ReadonlyArray<string>;
   /**
    * Postgres type OID per column. Lets the table/CSV formatter render `float4`/`float8` columns
-   * with `%g`-style formatting while integer columns stay plain. Optional so other `queryRaw`
+   * in shortest round-trip form (exponent notation for very large or small magnitudes) while integer columns stay plain. Optional so other `queryRaw`
    * callers/mocks need not set it.
    */
   readonly fieldTypeIds?: ReadonlyArray<number>;

@@ -1,7 +1,7 @@
 import { markSupabaseApiInputErrorAsUserInput, SupabaseApiInputError } from "@supabase/api/effect";
 import { Effect, Option, Schema } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { CLI_UPGRADE_GUIDE_URL } from "../cli/version.ts";
 import {
   ComputeApiNetworkError,

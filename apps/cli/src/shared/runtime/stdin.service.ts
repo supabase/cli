@@ -20,7 +20,8 @@ interface StdinShape {
   readonly pipedBytesStream: Stream.Stream<Uint8Array, PlatformError>;
   readonly readPipedText: Effect.Effect<Option.Option<string>>;
   /**
-   * Reads the *next* line from stdin (trimmed), bounded by `timeoutMillis` — callers pass 10
+   * Reads the *next* line from stdin (untrimmed, so a whitespace-only answer stays
+   * distinguishable from an empty one), bounded by `timeoutMillis` — callers pass 10
    * minutes on a TTY and 100 ms otherwise. Backed by a single persistent, lazily-opened
    * reader, so successive calls return successive lines and a command that only prompts on a
    * TTY never grabs stdin before it needs to. A timeout, EOF, or a read error all return

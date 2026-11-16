@@ -1,6 +1,4 @@
-import * as nodePath from "node:path";
-
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, type Path } from "effect";
 
 import { detectContentType } from "./detect-content-type.ts";
 
@@ -30,7 +28,7 @@ export const readSniffBytes = Effect.fnUntraced(function* (
     }),
   ).pipe(
     Effect.map(Option.getOrElse(() => new Uint8Array(0))),
-    Effect.catch(() => Effect.succeed(new Uint8Array(0))),
+    Effect.orElseSucceed(() => new Uint8Array(0)),
   );
 });
 
@@ -39,9 +37,13 @@ export const readSniffBytes = Effect.fnUntraced(function* (
  * `text/plain`. Applied to both the sniffed type and an explicit
  * `--content-type` value.
  */
-export function refineUploadContentType(contentType: string, filePath: string): string {
+export function refineUploadContentType(
+  path: Path.Path,
+  contentType: string,
+  filePath: string,
+): string {
   if (contentType.includes("text/plain")) {
-    const ext = nodePath.extname(filePath).toLowerCase();
+    const ext = path.extname(filePath).toLowerCase();
     const refined = MIME_BY_EXTENSION[ext];
     if (refined !== undefined && refined !== "") return refined;
   }
@@ -49,8 +51,8 @@ export function refineUploadContentType(contentType: string, filePath: string): 
 }
 
 /** Resolves the upload content-type from sniffed bytes, refining a generic `text/plain` by extension. */
-export function contentTypeForUpload(sniff: Uint8Array, filePath: string): string {
-  return refineUploadContentType(detectContentType(sniff), filePath);
+export function contentTypeForUpload(path: Path.Path, sniff: Uint8Array, filePath: string): string {
+  return refineUploadContentType(path, detectContentType(sniff), filePath);
 }
 
 // Built-in extension-to-MIME table used only to refine a generic `text/plain`

@@ -11,9 +11,10 @@
 
 import type { CliConfig } from "@supabase/config";
 import { Data, Effect, type FileSystem, Option, type Path, Schedule } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import {
@@ -22,16 +23,21 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
-import type { DbConnectError } from "../db-connection.errors.ts";
+import type { DbConnectError, DbExecError } from "../db-connection.errors.ts";
+import type {
+  CliConfigFlagConflictError,
+  CliConfigValueError,
+} from "../../config/cli-config.errors.ts";
+import type { ProjectRefReadError } from "../../shared/config/legacy-project-state.service.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
-import { checkDbToml, resolveSeedSqlPath } from "../db-config.toml-read.ts";
+import { checkDbConfig } from "../db-config.read.ts";
 import { CLI_PROJECT_LABEL, localDbContainerId } from "../docker-ids.ts";
 import { DockerRun, type DockerRunOpts } from "../docker-run.service.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { MigrationApplyError, execSqlFile } from "../migration-apply.ts";
 import { readMigrationTable } from "../migration-history.ts";
 import { statementInstallsPgNet } from "../pg-net-guidance.ts";
-import type { MigrationSeedError, SeedConfig } from "../seed.ts";
+import type { MigrationSeedError } from "../seed.ts";
 import { ramInBytes } from "../size-units.ts";
 import { MigrationVaultError, type VaultSecret, upsertVaultSecrets } from "../vault.ts";
 import { ensureImagesCached, type ImagePrepullError } from "./image-prepull.ts";
@@ -39,9 +45,10 @@ import { resolvePinnedImage } from "./pinned-image.ts";
 import { COMPOSE_PROJECT_LABEL } from "./container-lifecycle.ts";
 import { REALTIME_TENANT_ID, buildRealtimeEnv } from "./realtime-env.ts";
 import { START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
-import { START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
 import { START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
+import { STACK_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { startInternalDbPassword, startInternalDbUrl } from "./internal-db-connection.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -115,6 +122,9 @@ function dbSetupDockerReason(
 /** Every failure {@link startSetupLocalDatabase} can produce. */
 export type StartSetupLocalDatabaseError =
   | DbConfigLoadError
+  | ProjectRefReadError
+  | CliConfigValueError
+  | CliConfigFlagConflictError
   | DbSetupError
   | MigrationVaultError
   | MigrationApplyError
@@ -139,11 +149,12 @@ export interface StartDbSetupImages {
  */
 function resolveDbSetupImages(
   serviceVersionOverrides: LocalServiceVersionOverrides,
+  slim: boolean,
 ): StartDbSetupImages {
   return {
-    realtime: resolvePinnedImage("realtime", "realtime", serviceVersionOverrides),
-    storage: resolvePinnedImage("storage", "storage", serviceVersionOverrides),
-    auth: resolvePinnedImage("gotrue", "auth", serviceVersionOverrides),
+    realtime: resolvePinnedImage("realtime", "realtime", serviceVersionOverrides, slim),
+    storage: resolvePinnedImage("storage", "storage", serviceVersionOverrides, slim),
+    auth: resolvePinnedImage("gotrue", "auth", serviceVersionOverrides, slim),
   };
 }
 
@@ -157,7 +168,7 @@ function resolveDbSetupImages(
  *
  * The banner prints before `jwks` resolves, so a JWKS failure (an unreachable `third_party`
  * provider) surfaces after the banner instead of before it. The `majorVersion >= 15` gate means
- * JWKS's potential live HTTP request never runs at all on PG13/14, even with realtime enabled.
+ * JWKS's potential live HTTP request never runs at all on PG14, even with realtime enabled.
  */
 export const resolveDbSetupPrelude = <E>(setup: {
   readonly majorVersion: number;
@@ -169,7 +180,7 @@ export const resolveDbSetupPrelude = <E>(setup: {
     const output = yield* Output;
     yield* output.raw("Initialising schema...\n", "stderr");
     const jwks = setup.majorVersion >= 15 && setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
-    const images = resolveDbSetupImages(setup.serviceVersionOverrides);
+    const images = resolveDbSetupImages(setup.serviceVersionOverrides, yield* slimImagesEnabled);
     return { jwks, images };
   });
 
@@ -195,7 +206,7 @@ export interface SetupDatabaseInput {
   readonly config: CliConfig;
   /** Effective `[experimental.webhooks].enabled`, including supported environment overrides. */
   readonly webhooksEnabled: boolean;
-  /** `db.major_version` (13-17), resolved by the caller once, ahead of the `db` container's own image tag selection. */
+  /** `db.major_version` (14-17), resolved by the caller once, ahead of the `db` container's own image tag selection. */
   readonly majorVersion: number;
   /**
    * The internal Docker-network address the PG15+ one-shot jobs connect through. The real local
@@ -277,32 +288,6 @@ export interface StartSetupLocalDatabaseInput extends Omit<
    * `db reset`'s PG15 recreate passes its own resolved reset version instead.
    */
   readonly version: string;
-  /**
-   * `db reset`'s `--no-seed`/`--sql-paths` overrides. `db start` has neither flag, so its caller
-   * passes `{ noSeed: false, sqlPaths: [] }`, which {@link resolveResetSeedConfig} reduces to the
-   * loaded `[db.seed]` config unchanged.
-   */
-  readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
-}
-
-/**
- * Applies `db reset`'s `--no-seed`/`--sql-paths` overrides to an already-resolved `[db.seed]`
- * config: `--no-seed` disables seeding outright; otherwise a non-empty `--sql-paths` force-enables
- * seeding and overrides `sqlPaths` (each pattern resolved against `supabase/`); an empty
- * `--sql-paths` is a no-op. The two flags are mutually exclusive, validated by the caller before
- * this runs.
- */
-export function resolveResetSeedConfig(
-  seed: SeedConfig,
-  override: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> },
-  path: Path.Path,
-): SeedConfig {
-  if (override.noSeed) return { ...seed, enabled: false };
-  if (override.sqlPaths.length === 0) return seed;
-  return {
-    enabled: true,
-    sqlPaths: override.sqlPaths.map((pattern) => resolveSeedSqlPath(path, pattern)),
-  };
 }
 
 const errMessage = (e: unknown): string =>
@@ -352,11 +337,15 @@ export const initSchema14 = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   tmpDir: string,
-  majorVersion: number,
 ) {
-  const schemaSql =
-    majorVersion === 13 ? START_DB_INITIAL_SCHEMA_13_SQL : START_DB_INITIAL_SCHEMA_14_SQL;
-  yield* execSqlConstant(session, fs, path, tmpDir, "initial-schema.sql", schemaSql);
+  yield* execSqlConstant(
+    session,
+    fs,
+    path,
+    tmpDir,
+    "initial-schema.sql",
+    START_DB_INITIAL_SCHEMA_14_SQL,
+  );
 });
 
 /**
@@ -369,10 +358,9 @@ const startInitSchemaPre15 = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   tmpDir: string,
-  majorVersion: number,
 ) {
   yield* execSqlConstant(session, fs, path, tmpDir, "globals.sql", START_DB_GLOBALS_SQL);
-  yield* initSchema14(session, fs, path, tmpDir, majorVersion);
+  yield* initSchema14(session, fs, path, tmpDir);
 });
 
 /**
@@ -385,7 +373,7 @@ const startInitSchemaPre15 = Effect.fnUntraced(function* (
  * long-running containers' own ambient-only resolver never sees `opts.projectEnvValues`, and
  * neither caller pre-pulls these three images as a batch.
  */
-const runStartMigrateJob = Effect.fnUntraced(function* (
+const runStartMigrateJob = Effect.fn("DbSetup.runMigrateJob")(function* (
   spawner: Spawner,
   opts: {
     readonly image: string;
@@ -398,6 +386,7 @@ const runStartMigrateJob = Effect.fnUntraced(function* (
     readonly debug: boolean;
   },
 ) {
+  yield* Effect.annotateCurrentSpan("image.name", opts.image);
   const docker = yield* DockerRun;
   const runtimeInfo = yield* RuntimeInfo;
   const resolvedImages = yield* ensureImagesCached(spawner, [opts.image], opts.projectEnvValues);
@@ -435,12 +424,10 @@ const runStartMigrateJob = Effect.fnUntraced(function* (
       ),
     );
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new DbSetupError({
-        message: `error running container: exit ${result.exitCode}`,
-        reason: "database",
-      }),
-    );
+    return yield* new DbSetupError({
+      message: `error running container: exit ${result.exitCode}`,
+      reason: "database",
+    });
   }
 });
 
@@ -589,13 +576,14 @@ const startInitSchema15 = Effect.fnUntraced(function* (
  * Branches on `majorVersion`. The setup banner prints from {@link resolveDbSetupPrelude}, the
  * caller-side step that runs immediately before this one, not from here.
  */
-const startInitSchema = Effect.fnUntraced(function* (
+const startInitSchema = Effect.fn("DbSetup.initSchema")(function* (
   spawner: Spawner,
   input: SetupDatabaseInput,
   tmpDir: string,
 ) {
+  yield* Effect.annotateCurrentSpan("db.major_version", input.majorVersion);
   if (input.majorVersion <= 14) {
-    yield* startInitSchemaPre15(input.session, input.fs, input.path, tmpDir, input.majorVersion);
+    yield* startInitSchemaPre15(input.session, input.fs, input.path, tmpDir);
     return;
   }
   yield* startInitSchema15(spawner, input);
@@ -647,6 +635,38 @@ export const applyDatabaseWebhooks = Effect.fnUntraced(function* (
   );
 });
 
+const WEBHOOK_SCHEMA_LOCK_ID_SQL = "hashtext('supabase_internal.supabase_functions')";
+
+/**
+ * Creates the `supabase_functions` schema on stack databases, which never run the PG15+ entrypoint
+ * that creates it. Runs under an advisory lock and skips when the schema exists, since the template
+ * is not re-runnable.
+ */
+export const ensureStackWebhookSchema = Effect.fn("DbSetup.ensureStackWebhookSchema")(function* (
+  session: DbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tmpDir: string,
+) {
+  const databaseError = (error: DbExecError) =>
+    new DbSetupError({ message: error.message, reason: "database" });
+  const exec = (sql: string) => session.exec(sql).pipe(Effect.mapError(databaseError));
+  yield* Effect.acquireUseRelease(
+    Effect.interruptible(exec(`select pg_advisory_lock(${WEBHOOK_SCHEMA_LOCK_ID_SQL})`)),
+    () =>
+      Effect.gen(function* () {
+        const rows = yield* session
+          .query("select pg_catalog.to_regnamespace('supabase_functions') is null as missing")
+          .pipe(Effect.mapError(databaseError));
+        const missing = rows[0]?.["missing"] === true;
+        if (missing)
+          yield* execSqlConstant(session, fs, path, tmpDir, "webhook.sql", STACK_DB_WEBHOOK_SQL);
+        yield* Effect.annotateCurrentSpan("db.webhook_schema.created", missing);
+      }),
+    () => exec(`select pg_advisory_unlock(${WEBHOOK_SCHEMA_LOCK_ID_SQL})`),
+  );
+});
+
 /**
  * Drops pg_net; shared by the fresh-setup PG14 dump cleanup, `db reset`'s PG14 path, and the
  * existing-volume webhooks convergence, so all three run the identical statement.
@@ -672,43 +692,24 @@ export const removeDatabaseWebhooks = Effect.fnUntraced(function* (
  * separately from {@link startSetupLocalDatabase} because callers invoke it unconditionally, not
  * just on a fresh volume.
  */
-export const startInitCurrentBranch = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-) {
-  const currentBranchPath = path.join(workdir, "supabase", ".branches", "_current_branch");
-  const exists = yield* fs.exists(currentBranchPath).pipe(
-    Effect.mapError(
-      (error) =>
-        new DbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
-  if (exists) return;
-  yield* fs.makeDirectory(path.dirname(currentBranchPath), { recursive: true }).pipe(
-    Effect.mapError(
-      (error) =>
-        new DbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
-  // Explicit mode: without it, `writeFileString` falls back to Node's default (`0666` before the
-  // umask), which under a permissive umask could leave this file group/world-writable.
-  yield* fs.writeFileString(currentBranchPath, "main", { mode: 0o644 }).pipe(
-    Effect.mapError(
-      (error) =>
-        new DbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
-});
+export const startInitCurrentBranch = Effect.fnUntraced(
+  function* (fs: FileSystem.FileSystem, path: Path.Path, workdir: string) {
+    const currentBranchPath = path.join(workdir, "supabase", ".branches", "_current_branch");
+    const exists = yield* fs.exists(currentBranchPath);
+    if (exists) return;
+    yield* fs.makeDirectory(path.dirname(currentBranchPath), { recursive: true });
+    // Explicit mode: without it, `writeFileString` falls back to Node's default (`0666` before the
+    // umask), which under a permissive umask could leave this file group/world-writable.
+    yield* fs.writeFileString(currentBranchPath, "main", { mode: 0o644 });
+  },
+  Effect.mapError(
+    (error) =>
+      new DbSetupError({
+        message: `failed init current branch: ${errMessage(error)}`,
+        reason: "filesystem",
+      }),
+  ),
+);
 
 export interface ApplyDatabaseOverlayInput {
   readonly webhooksEnabled: boolean;
@@ -777,7 +778,11 @@ export const applyDatabaseOverlay = (
         (message) => new DbSetupError({ message, reason: "database" }),
       );
     }
-  });
+  }).pipe(
+    Effect.withSpan("DbSetup.applyOverlay", {
+      attributes: { "vault.secret_count": overlay.vault.length },
+    }),
+  );
 
 /**
  * Runs schema init through the custom-roles seed; see {@link SetupDatabaseInput} for exactly
@@ -828,7 +833,7 @@ export const setupDatabase = (
       vault: input.vault,
       webhooks: options.webhooks,
     });
-  });
+  }).pipe(Effect.withSpan("DbSetup.setupDatabase"));
 
 /**
  * Runs the full setup sequence described in this module's header. Call once, right after the
@@ -843,15 +848,15 @@ export const startSetupLocalDatabase = (
   // Rides alongside the alias because a pooled-connection acquire failure surfaces the driver's
   // connect error verbatim, suggestion included.
   StartSetupLocalDatabaseError | DbConnectError,
-  Output | DockerRun | RuntimeInfo | FileSystem.FileSystem | Path.Path
+  Output | DockerRun | RuntimeInfo | FileSystem.FileSystem | Path.Path | CliConfigValues
 > =>
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
 
-    // `warnOnUnresolvedEnv: false`: the caller's own handler already ran an earlier `checkDbToml`
+    // `warnOnUnresolvedEnv: false`: the caller's own handler already ran an earlier `checkDbConfig`
     // pass before reaching this fresh-volume setup, which already printed any unresolved-env
     // warning. Without this, this module's own duplicate config-load pass would print it twice.
-    const toml = yield* checkDbToml(fs, path, workdir, undefined, {
+    const toml = yield* checkDbConfig(fs, path, workdir, undefined, {
       warnOnUnresolvedEnv: false,
     });
 
@@ -866,11 +871,12 @@ export const startSetupLocalDatabase = (
     // env-overridden config, not re-read from the caller's raw `CliConfig`.
     yield* migrateAndSeed(session, fs, path, workdir, input.version, {
       migrationsEnabled: toml.migrationsEnabled,
-      seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
+      seed: toml.seed,
       experimental: input.experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
       schemaPaths: toml.schemaPaths,
       localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+      configFile: toml.configFile,
     });
   });
 
@@ -904,31 +910,35 @@ export interface FreshDbSetupInput<E> {
   readonly debug: boolean;
 }
 
-const connectLocalPostgres = (input: {
+const connectLocalPostgres = Effect.fn("DbSetup.connectLocalPostgres")(function* (input: {
   readonly hostname: string;
   readonly dbPort: number;
   readonly password: string;
-}) =>
-  Effect.gen(function* () {
-    const dbConnection = yield* DbConnection;
-    return yield* dbConnection
-      .connect(
-        {
-          host: input.hostname,
-          port: input.dbPort,
-          user: "postgres",
-          password: input.password,
-          database: "postgres",
-        },
-        { isLocal: true, dnsResolver: "native" },
-      )
-      .pipe(
-        Effect.retry({
-          schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
-          while: (error) => error.retryable === true,
-        }),
-      );
-  });
+}) {
+  const dbConnection = yield* DbConnection;
+  let attempts = 0;
+  return yield* Effect.suspend(() => {
+    attempts += 1;
+    return dbConnection.connect(
+      {
+        host: input.hostname,
+        port: input.dbPort,
+        user: "postgres",
+        password: input.password,
+        database: "postgres",
+      },
+      { isLocal: true, dnsResolver: "native" },
+    );
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
+      while: (error) => error.retryable === true,
+    }),
+    Effect.ensuring(
+      Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", attempts)),
+    ),
+  );
+});
 
 /** Converges pg_net while preserving extensions installed by user migrations. */
 export const runDatabaseWebhooksSetup = (input: {
@@ -978,13 +988,17 @@ export const runDatabaseWebhooksSetup = (input: {
       }
       yield* applyDatabaseWebhooks(session, input.fs, input.path, tmpDir, input.enabled);
     }),
+  ).pipe(
+    Effect.withSpan("DbSetup.runDatabaseWebhooksSetup", {
+      attributes: { "webhooks.enabled": input.enabled },
+    }),
   );
 
 /**
  * Runs {@link startSetupLocalDatabase} against a freshly-provisioned local Postgres: dials the
  * host-facing session, resolves the {@link resolveDbSetupPrelude} prelude, then runs the setup
- * pipeline. `version`/`seedFlags` are the one difference between callers — `db start` always
- * passes `""`/a no-op override, `db reset` passes its own resolved reset version and flags.
+ * pipeline. `version` is the one difference between callers — `db start` always passes `""`,
+ * `db reset` passes its own resolved reset version.
  */
 export const runFreshDbSetup = <E>(
   spawner: Spawner,
@@ -997,13 +1011,18 @@ export const runFreshDbSetup = <E>(
     readonly hostname: string;
     readonly dbPort: number;
     readonly version: string;
-    readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
     readonly setup: FreshDbSetupInput<E>;
   },
 ): Effect.Effect<
   void,
   StartSetupLocalDatabaseError | DbConnectError | ImagePrepullError | E,
-  Output | DbConnection | DockerRun | RuntimeInfo | FileSystem.FileSystem | Path.Path
+  | Output
+  | DbConnection
+  | DockerRun
+  | RuntimeInfo
+  | FileSystem.FileSystem
+  | Path.Path
+  | CliConfigValues
 > =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1044,7 +1063,10 @@ export const runFreshDbSetup = <E>(
         projectEnvValues: setup.projectEnvValues,
         debug: setup.debug,
         version: input.version,
-        seedFlags: input.seedFlags,
       });
+    }),
+  ).pipe(
+    Effect.withSpan("DbSetup.runFreshDbSetup", {
+      attributes: { "db.major_version": input.setup.majorVersion },
     }),
   );

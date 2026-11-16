@@ -45,7 +45,7 @@ const FULL_VALUES: Record<string, string> = {
 };
 
 describe("renderStatusPretty", () => {
-  it("matches the Go rounded-table fixture for a fully running stack", () => {
+  it("matches the rounded-table fixture for a fully running stack", () => {
     const out = stripAnsi(renderStatusPretty(FULL_VALUES, NAMES));
 
     const expected = [
@@ -94,7 +94,7 @@ describe("renderStatusPretty", () => {
   });
 
   // All other groups are empty in this fixture, so only the Database box should appear.
-  it("matches the Go rounded-table fixture for a single-row group", () => {
+  it("matches the rounded-table fixture for a single-row group", () => {
     const out = stripAnsi(
       renderStatusPretty({ DB_URL: FULL_VALUES.DB_URL ?? "" }, { ...NAMES, dbUrl: "DB_URL" }),
     );
@@ -112,7 +112,7 @@ describe("renderStatusPretty", () => {
   });
 
   // All other groups are empty in this fixture; only Project URL is present in APIs.
-  it("matches the Go rounded-table fixture for a partial APIs group", () => {
+  it("matches the rounded-table fixture for a partial APIs group", () => {
     const out = stripAnsi(renderStatusPretty({ API_URL: "http://127.0.0.1:54321" }, NAMES));
 
     const expectedTable = [

@@ -1,218 +1,990 @@
-import { BunServices } from "@effect/platform-bun";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { LogsClipboard } from "../../../logs/logs.clipboard.ts";
+import { Command } from "effect/cli";
+import { stackLogsCommand } from "./logs.command.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+} from "../../../../../tests/helpers/command-mocks.ts";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Ref, Stream } from "effect";
-import type { Stack } from "@supabase/stack/effect";
+import { TestClock } from "effect/testing";
+import {
+  Clock,
+  ConfigProvider,
+  Cause,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Ref,
+  Schema,
+  Stdio,
+  Stream,
+  Queue,
+  Terminal,
+} from "effect";
+import {
+  streamStackLogs,
+  type LogRecord,
+  type ReadLogsOptions,
+  type SavedStack,
+  type ServiceInstance,
+} from "@supabase/stack/effect";
+import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
+import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
+import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
+import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
+import type { StackLogsFlags } from "./logs.handler.ts";
 import { stackLogs } from "./logs.handler.ts";
+import { logs, logsSources } from "../../../logs/logs.handler.ts";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
+import { TargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { OutputFlag, OutputFormatFlag } from "../../../../command-internal/global-flags.ts";
+import { projectStateModeLayer } from "../../../../shared/config/project-state-mode.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
-const fixture = Effect.fn("StackLogsTest.fixture")(function* (
-  format: "text" | "stream-json" | "json" = "text",
-) {
+const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
+
+type SavedInstance = SavedStack["instances"][number];
+const mail = (id: string): SavedInstance => ({
+  id,
+  creation: { service: "mail", pin: selection.mail, config: {}, endpoints: {} },
+});
+const rest = (id: string): SavedInstance => ({
+  id,
+  creation: {
+    service: "rest",
+    pin: selection.rest,
+    config: {},
+    endpoints: { http: { port: "auto" } },
+  },
+});
+const database = (id: string): SavedInstance => ({
+  id,
+  creation: {
+    service: "database",
+    pin: selection.database,
+    config: {
+      databasePassword: Redacted.make("stack-logs-test"),
+      jwtSecret: Redacted.make("stack-logs-test-jwt-secret"),
+      jwtExpiry: 3600,
+    },
+    endpoints: {},
+  },
+});
+
+const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
+const line = (millis: number, kind: "stdout" | "stderr", text: string, launchId = 1) =>
+  `${iso(millis)} ${kind} ${launchId} | ${text}`;
+const launch = (millis: number, launchId = 1) => `${iso(millis)} launch ${launchId} | `;
+const lost = (millis: number, count: number, launchId = 1) =>
+  `${iso(millis)} lost ${launchId} | ${count} output`;
+
+const baseFlags = (stackId: string): StackLogsFlags => ({
+  stack: Option.none(),
+  stackId: Option.some(stackId),
+  service: [],
+  follow: false,
+  tail: 200,
+  since: Option.none(),
+});
+
+const followingMail = (
+  id: string,
+  readLogs: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, never>,
+): ServiceInstance<"mail"> => ({
+  id,
+  service: "mail",
+  start: Effect.die("unused"),
+  ready: Effect.die("unused"),
+  stop: Effect.die("unused"),
+  restart: () => Effect.die("unused"),
+  destroy: Effect.die("unused"),
+  prepare: Effect.die("unused"),
+  status: Effect.die("unused"),
+  followStatus: Stream.die("unused"),
+  readLogs,
+  credentials: () => Effect.die("unused"),
+});
+
+/** A saved stack with fixed definitions, a fake owner, and log segments written to disk. */
+const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
+  readonly instances: ReadonlyArray<SavedInstance>;
+  readonly members: ReadonlyArray<string>;
+  readonly running?: boolean;
+  readonly handles?: (stack: {
+    readonly stateRoot: string;
+    readonly stackId: string;
+  }) => ReadonlyArray<ServiceInstance<"mail">>;
+  readonly gatewayLogs?: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, never>;
+}) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-logs-" });
   const api = yield* StackApi;
-  const locations = { stateRoot: path.join(root, "stacks"), cacheRoot: path.join(root, "cache") };
-  const stack = yield* api.create({ ...locations, projectRoot: root, runtime: "native" });
-  const output = mockOutput({ format });
-  const telemetry = mockTelemetryStateTracked();
-  const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
-  const layer = Layer.mergeAll(
-    output.layer,
-    telemetry.layer,
-    settings,
-    stackTargetResolverLayer.pipe(Layer.provide(settings)),
-  );
-  return {
-    api,
-    locations,
-    stack,
-    output,
-    telemetry,
-    layer,
-    flags: {
-      stack: Option.none<string>(),
-      stackId: Option.some(stack.id),
-      service: Option.none<string>(),
+  const stateRoot = path.join(root, "stacks");
+  const stack = yield* api.create({
+    stateRoot,
+    cacheRoot: path.join(root, "cache"),
+    projectRoot: root,
+    runtime: "native",
+  });
+  const found = yield* api.find({ stateRoot, id: stack.id });
+  if (Option.isNone(found)) return yield* Effect.die("created stack missing");
+  const definition: SavedStack = {
+    ...found.value.definition,
+    instances: options.instances,
+    composition: {
+      members: options.members.map((id) => ({ id, activation: "eager" as const })),
+      dependencies: [],
     },
   };
-});
-const loggingApi = (
-  api: StackApi["Service"],
-  stack: Stack,
-  instances: Effect.Success<Stack["services"]["list"]>,
-) =>
-  Layer.succeed(
+  const opened = yield* Ref.make(0);
+  const fakeApi = Layer.succeed(
     StackApi,
     StackApi.of({
       ...api,
+      find: () =>
+        Effect.succeed(
+          Option.some({
+            definition,
+            host:
+              options.running === true
+                ? {
+                    stackId: stack.id,
+                    identity: definition.identity,
+                    pid: 1,
+                    port: 1,
+                    release: "test",
+                  }
+                : undefined,
+          }),
+        ),
       open: () =>
-        Effect.succeed({
-          ...stack,
-          services: { ...stack.services, list: Effect.succeed([...instances]) },
-        }),
+        Ref.update(opened, (count) => count + 1).pipe(
+          Effect.as({
+            ...stack,
+            services: {
+              ...stack.services,
+              list: Effect.succeed(options.handles?.({ stateRoot, stackId: stack.id }) ?? []),
+            },
+            gateway: { readLogs: options.gatewayLogs ?? stack.gateway.readLogs },
+          }),
+        ),
     }),
   );
-
-describe("stack logs", () => {
-  it.live("rejects finite JSON before starting an owner", () =>
+  const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
+  const writeSegment = (service: string, instanceId: string, records: ReadonlyArray<string>) =>
     Effect.gen(function* () {
-      const f = yield* fixture("json");
-      const error = yield* stackLogs(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
-      expect(error.reason).toBe("flags");
-      expect(error.suggestion).toBe("Use --output-format stream-json.");
-      expect((yield* f.api.discover(f.locations))[0]?.host).toBeUndefined();
-    }).pipe(Effect.provide(live)),
-  );
-
-  it.live("selects all instances of a kind and sanitizes terminal text", () =>
+      const directory = path.join(stateRoot, stack.id, "logs", service, instanceId);
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(directory, "0000000001.log"),
+        records.map((record) => `${record}\n`).join(""),
+      );
+    });
+  const run = (
+    flags: Partial<StackLogsFlags>,
+    format: "text" | "stream-json" | "json" = "text",
+    mode: "reader" | "unified" | "legacy" | "browser" = "reader",
+    legacyOutput?: "json",
+  ) =>
     Effect.gen(function* () {
-      const f = yield* fixture();
-      yield* Effect.acquireUseRelease(
-        Effect.succeed(f.stack),
-        (stack) =>
+      const output = mockOutput({ format, interactive: mode === "browser" });
+      const screens: string[] = [];
+      const input = yield* Queue.unbounded<Terminal.UserInput>();
+      let openedDetails = false;
+      const terminal = Terminal.make({
+        columns: Effect.succeed(100),
+        rows: Effect.succeed(30),
+        size: Queue.unbounded<Terminal.Size, Cause.Done>(),
+        readInput: Effect.succeed(input),
+        readLine: Effect.die("unused"),
+        display: (text) =>
           Effect.gen(function* () {
-            const first = yield* stack.services.create({
-              service: "mail",
-              config: {},
-              endpoints: {},
-            });
-            const second = yield* stack.services.create({
-              service: "mail",
-              config: {},
-              endpoints: {},
-            });
-            const api = loggingApi(
-              f.api,
-              stack,
-              [first, second].map((instance) => ({
-                ...instance,
-                logs: Stream.make({
-                  stream: "stderr" as const,
-                  bytes: new TextEncoder().encode("\u001b[31mwarning\u001b[0m\n"),
+            screens.push(text);
+            if (
+              !openedDetails &&
+              text.includes(" | ready") &&
+              text.includes("local browser payload")
+            ) {
+              openedDetails = true;
+              yield* Queue.offer(input, {
+                input: Option.none(),
+                key: { name: "return", ctrl: false, meta: false, shift: false },
+              });
+            } else if (text.includes("Log details")) {
+              yield* Queue.offer(input, {
+                input: Option.none(),
+                key: { name: "q", ctrl: false, meta: false, shift: false },
+              });
+            }
+          }),
+      });
+      const telemetry = mockTelemetryStateTracked();
+      const layer = Layer.mergeAll(
+        commandRuntimeLayer(["stack", "logs"]),
+        output.layer,
+        Layer.succeed(OutputFlag, Option.fromUndefinedOr(legacyOutput)),
+        Layer.succeed(OutputFormatFlag, Option.none()),
+        ConfigProvider.layer(ConfigProvider.fromUnknown({})),
+        Layer.mock(LogsClipboard, {}),
+        telemetry.layer,
+        projectStateModeLayer("stack"),
+        Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
+      );
+      const legacyArgs = ["logs", "--stack-id", stack.id];
+      const runLogs = Effect.gen(function* () {
+        if (mode === "legacy")
+          return yield* Command.runWith(
+            Command.make("supabase").pipe(Command.withSubcommands([stackLogsCommand])),
+            { version: "test" },
+          )(legacyArgs).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                buildTestRuntime({
+                  out: output,
+                  api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
+                  cliSettings: settings,
+                  commandPath: ["stack", "logs"],
                 }),
-              })),
-            );
-            yield* stackLogs({ ...f.flags, service: Option.some("mail") }).pipe(
-              Effect.provide(Layer.provideMerge(f.layer, api)),
-            );
-            expect(f.output.stdoutText).toContain(`mail/${first.id}/stderr: warning\n`);
-            expect(f.output.stdoutText).toContain(`mail/${second.id}/stderr: warning\n`);
-            expect(f.output.stdoutText).not.toContain("\u001b");
-            const error = yield* stackLogs({ ...f.flags, service: Option.some("missing") }).pipe(
-              Effect.provide(f.layer),
-              Effect.flip,
-            );
-            expect(error.message).toBe("No service matches missing.");
-          }),
-        (stack) => stack.destroy,
-      );
-    }).pipe(Effect.provide(live)),
-  );
-
-  it.live("frames split UTF-8 and stdout/stderr lines with instance identity", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture("stream-json");
-      yield* Effect.acquireUseRelease(
-        Effect.succeed(f.stack),
-        (stack) =>
-          Effect.gen(function* () {
-            const member = yield* stack.services.create({
-              service: "mail",
-              config: {},
-              endpoints: {},
-            });
-            const standalone = yield* stack.services.create({
-              service: "mail",
-              config: {},
-              endpoints: {},
-            });
-            yield* stack.composition.configure({
-              members: [{ id: member.id, activation: "eager" }],
-              dependencies: [],
-            });
-            const utf8 = new TextEncoder().encode("hello 🐘\nlast line");
-            const memberLogs = Stream.make(
-              { stream: "stdout" as const, bytes: utf8.slice(0, 8) },
-              { stream: "stderr" as const, bytes: new TextEncoder().encode("warning\n") },
-              { stream: "stdout" as const, bytes: utf8.slice(8) },
-            );
-            const api = loggingApi(f.api, stack, [
-              { ...member, logs: memberLogs },
-              { ...standalone, logs: Stream.die("standalone must not be subscribed") },
-            ]);
-            yield* stackLogs(f.flags).pipe(Effect.provide(Layer.provideMerge(f.layer, api)));
-            const entries = f.output.events.filter((entry) => entry.type === "log-entry");
-            expect(entries).toHaveLength(3);
-            expect(entries.map(({ line }) => line)).toEqual(
-              expect.arrayContaining(["hello 🐘", "last line", "warning"]),
-            );
-            expect(
-              entries.every(
-                (entry) =>
-                  entry.instance_id === member.id &&
-                  entry.service === "mail" &&
-                  entry.source === "live",
+                Stdio.layerTest({ args: Effect.succeed(legacyArgs) }),
               ),
-            ).toBe(true);
-            expect(entries.find(({ line }) => line === "warning")?.stream).toBe("stderr");
-            expect(f.telemetry.flushed).toBe(true);
-          }),
-        (stack) => stack.destroy,
+            ),
+          );
+        if (mode === "unified" || mode === "browser")
+          return yield* logs({
+            remote: Option.none(),
+            projectRef: Option.none(),
+            local: false,
+            linked: false,
+            stack: Option.none(),
+            stackId: Option.some(stack.id),
+            service: flags.service ?? ["postgres"],
+            resource: Option.none(),
+            kind: Option.none(),
+            level: [],
+            search: Option.none(),
+            since: flags.since ?? Option.some("start"),
+            limit: flags.tail ?? 100,
+            from: Option.none(),
+            to: Option.none(),
+            sql: Option.none(),
+            file: Option.none(),
+          }).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(OutputFlag, Option.none()),
+                Layer.succeed(Stdin, {
+                  isTTY: mode === "browser",
+                  readPipedText: Effect.succeed(Option.none()),
+                  readPipedBytes: Effect.succeed(Option.none()),
+                  pipedBytesStream: Stream.empty,
+                  readLine: () => Effect.succeed(Option.none()),
+                }),
+                Layer.succeed(Tty, {
+                  stdinIsTty: mode === "browser",
+                  stdoutIsTty: mode === "browser",
+                  stdoutIsPipe: false,
+                }),
+                Layer.succeed(Terminal.Terminal, terminal),
+                Layer.mock(LinkedProjectCache, {}),
+                Layer.mock(ProjectRefResolver, {}),
+                Layer.mock(ProcessControl, {}),
+                Layer.succeed(TargetPolicy, {
+                  group: "selectable",
+                  consent: "none",
+                  consentExemptReason: "read logs",
+                }),
+                Layer.succeed(CommandPlatformApiFactory, {
+                  make: Effect.die("local logs must not resolve hosted credentials"),
+                }),
+              ),
+            ),
+          );
+        return yield* stackLogs({ ...baseFlags(stack.id), ...flags });
+      });
+      const exit = yield* runLogs.pipe(Effect.provide(layer), Effect.exit);
+      return { exit, output, telemetry, screens };
+    });
+  const sources = () =>
+    Effect.gen(function* () {
+      const output = mockOutput({ format: "json" });
+      const telemetry = mockTelemetryStateTracked();
+      const layer = Layer.mergeAll(
+        commandRuntimeLayer(["logs", "sources"]),
+        output.layer,
+        telemetry.layer,
+        projectStateModeLayer("stack"),
+        Layer.succeed(OutputFlag, Option.none()),
+        Layer.mock(ProjectRefResolver, {}),
+        Layer.succeed(TargetPolicy, {
+          group: "selectable",
+          consent: "none",
+          consentExemptReason: "Read logs",
+        }),
+        Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
       );
-    }).pipe(Effect.provide(live)),
+      yield* logsSources({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        local: false,
+        linked: false,
+        stack: Option.none(),
+        stackId: Option.some(stack.id),
+        service: Option.none(),
+      }).pipe(Effect.provide(layer));
+      return output.stdoutText;
+    });
+  return { stackId: stack.id, stateRoot, opened, writeSegment, run, sources };
+});
+
+const failure = <E>(exit: Exit.Exit<void, E>) =>
+  Exit.isFailure(exit) ? Option.getOrUndefined(Exit.findErrorOption(exit)) : undefined;
+const lines = (text: string) => text.split("\n").filter((value) => value.length > 0);
+const eventLines = (events: ReadonlyArray<{ readonly type: string; readonly line?: unknown }>) =>
+  events.filter(({ type }) => type === "log-entry").map(({ line: text }) => text);
+
+describe("retained local logs", () => {
+  const t0 = Date.parse("2026-09-29T10:00:00.000Z");
+
+  it.effect("reads 200 retained lines without a time filter and warns once with legacy JSON", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0),
+        ...Array.from({ length: 201 }, (_, i) => line(t0 + i + 1, "stdout", `retained ${i}`)),
+      ]);
+      const { exit, output } = yield* f.run({}, "json", "legacy");
+      expect(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toBe(true);
+      expect(output.stdoutText.startsWith("[{")).toBe(true);
+      const rows = decodeRows(output.stdoutText);
+      expect(rows).toHaveLength(200);
+      expect(rows[0]).toMatchObject({
+        type: "log-entry",
+        timestamp: iso(t0 + 2),
+        source: "history",
+        service: "mail",
+        instance_id: "mail-a",
+        stream: "stdout",
+        line: "retained 1",
+      });
+      expect(output.stderrText.match(/Warning: stack logs is deprecated/g)).toHaveLength(1);
+      expect(output.stderrText).toContain("removed in v4");
+      expect(output.stdoutText).not.toContain("deprecated");
+      expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("interrupts a selected log subscription without stopping or destroying its service", () =>
+  it.effect("browses real retained local records with full positions and instance details", () =>
     Effect.gen(function* () {
-      const f = yield* fixture();
-      yield* Effect.acquireUseRelease(
-        Effect.succeed(f.stack),
-        (stack) =>
-          Effect.gen(function* () {
-            const service = yield* stack.services.create({
-              service: "mail",
-              config: {},
-              endpoints: {},
-            });
-            const subscribed = yield* Deferred.make<void>();
-            const released = yield* Ref.make(false);
-            const logs = Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+      yield* TestClock.setTime(t0 + 100);
+      const f = yield* fixture({ instances: [database("db-browser")], members: ["db-browser"] });
+      yield* f.writeSegment("database", "db-browser", [
+        launch(t0),
+        line(t0 + 1, "stdout", "local browser payload"),
+      ]);
+      const { exit, output, screens } = yield* f.run({}, "text", "browser");
+      expect(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toBe(true);
+      const details = screens.find((screen) => screen.includes("Log details"));
+      expect(details).toContain("local browser payload");
+      expect(details).toContain("db-browser");
+      expect(details).toContain('"byteOffset"');
+      expect(
+        screens.some((screen) =>
+          screen.includes("Sep 29 - 10:00:00 UTC database local browser payload"),
+        ),
+      ).toBe(true);
+      expect(screens.at(-1)).toContain("?1049l");
+      expect(output.stdoutText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("advertises the accepted local log limit for instances and gateway", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
+      });
+      const sources = decodeRows(yield* f.sources());
+      const instance = sources.find((source) => source.resource === "mail-a");
+      const gateway = sources.find((source) => source.service === "gateway");
+      expect(instance?.filters).toEqual(["service", "resource", "since", "limit"]);
+      expect(gateway?.filters).toEqual(["service", "since", "limit"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect.each([
+    { since: Option.none<string>(), expected: "Window: Nov 03 11:00:00–12:00:00 UTC" },
+    {
+      since: Option.some("2026-11-03T10:00:00Z"),
+      expected: "Window: Nov 03 10:00:00–12:00:00 UTC",
+    },
+    {
+      since: Option.some("start"),
+      expected: "Window: since each service's latest launch → Nov 03 2026 12:00:00 UTC",
+    },
+  ])(
+    "shows the frozen local lower bound and captured snapshot end: $expected",
+    ({ since, expected }) =>
+      Effect.gen(function* () {
+        const readTime = Date.parse("2026-11-03T12:00:00Z");
+        yield* TestClock.setTime(readTime);
+        const f = yield* fixture({ instances: [database("db-window")], members: ["db-window"] });
+        yield* f.writeSegment("database", "db-window", [
+          launch(readTime - 2000),
+          line(readTime - 1000, "stdout", "local browser payload"),
+        ]);
+        const { exit, screens } = yield* f.run({ since }, "text", "browser");
+        expect(Exit.isSuccess(exit)).toBe(true);
+        const windows = screens
+          .filter((screen) => screen.includes("Window:") && !screen.includes("resolving…"))
+          .map((screen) => screen.split("\r\n").find((line) => line.startsWith("Window:")));
+        expect(screens.some((screen) => screen.includes("Local stack "))).toBe(true);
+        expect(windows.length).toBeGreaterThan(0);
+        expect(windows.every((window) => window === expected)).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("preserves full retained records and markers in native JSON while stopped", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(t0 + 100);
+      const f = yield* fixture({ instances: [database("db-a")], members: ["db-a"] });
+      yield* f.writeSegment("database", "db-a", [
+        launch(t0),
+        line(t0 + 1, "stdout", "retained"),
+        lost(t0 + 2, 3),
+      ]);
+      const { exit, output } = yield* f.run({}, "json", "unified");
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(output.stdoutText.startsWith("[\n  {\n")).toBe(true);
+      const rows = decodeRows(output.stdoutText);
+      expect(rows.map((row) => row.kind)).toEqual(["launch", "stdout", "lost"]);
+      expect(rows[1]).toMatchObject({
+        instanceId: "db-a",
+        service: "database",
+        launchId: 1,
+        text: "retained",
+      });
+      expect(rows[1]?.position).toMatchObject({ generation: 1 });
+      expect(rows[2]).toMatchObject({ count: 3 });
+      expect(output.stderrText).not.toContain("deprecated");
+      expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("prints the newest lines across services with aligned labels, offline", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), database("db-a")],
+        members: ["mail-a", "db-a"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0 - 1),
+        ...Array.from({ length: 149 }, (_, index) =>
+          line(t0 + index * 2, "stdout", `mail line ${index}`),
+        ),
+        line(t0 + 149 * 2, "stderr", "\u001b[31mwarning\u001b[0m"),
+      ]);
+      yield* f.writeSegment("database", "db-a", [
+        launch(t0 - 1),
+        ...Array.from({ length: 100 }, (_, index) =>
+          line(t0 + index * 2 + 1, "stdout", `database line ${index}`),
+        ),
+      ]);
+
+      const { exit, output, telemetry } = yield* f.run({});
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const printed = lines(output.stdoutText);
+      expect(printed).toHaveLength(200);
+      expect(printed[0]).toMatch(/^mail {5}\| \d{2}:\d{2}:\d{2}\.\d{3} mail line 25$/u);
+      expect(printed[1]).toMatch(/^database \| \d{2}:\d{2}:\d{2}\.\d{3} database line 25$/u);
+      expect(printed.at(-1)).toMatch(/^mail {5}\| \S+ warning$/u);
+      expect(output.stdoutText).not.toContain("\u001b");
+      expect(output.stderrText).toBe("showing last 200 of 250 lines, use --tail/--since\n");
+      expect(yield* Ref.get(f.opened)).toBe(0);
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("selects history with --tail, --since, and repeated --service", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1_767_225_600_000);
+      const now = yield* Clock.currentTimeMillis;
+      const minutes = (count: number) => now - count * 60_000;
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b"), mail("mail-c"), database("db-a")],
+        members: ["mail-a", "db-a"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(minutes(180)),
+        line(minutes(120), "stdout", "a old"),
+        launch(minutes(30), 2),
+        line(minutes(20), "stdout", "a new", 2),
+      ]);
+      yield* f.writeSegment("database", "db-a", [
+        launch(minutes(10)),
+        line(minutes(5), "stdout", "d recent"),
+      ]);
+      yield* f.writeSegment("mail", "mail-b", [
+        launch(minutes(3)),
+        line(minutes(1), "stdout", "b standalone"),
+      ]);
+      // Retention removed this instance's launch record along with its oldest segment.
+      yield* f.writeSegment("mail", "mail-c", [line(minutes(2), "stdout", "c retained")]);
+      const read = (flags: Partial<StackLogsFlags>) =>
+        f.run(flags, "stream-json").pipe(Effect.map(({ output }) => eventLines(output.events)));
+
+      expect(yield* read({})).toEqual(["a old", "a new", "d recent"]);
+      expect(yield* read({ since: Option.some("1h") })).toEqual(["a new", "d recent"]);
+      expect(yield* read({ since: Option.some(iso(minutes(25))) })).toEqual(["a new", "d recent"]);
+      expect(yield* read({ since: Option.some("start") })).toEqual(["a new", "d recent"]);
+      expect(yield* read({ service: ["mail-c"], since: Option.some("start") })).toEqual([
+        "c retained",
+      ]);
+      expect(yield* read({ service: ["mail"], tail: 1 })).toEqual(["b standalone"]);
+      expect(yield* read({ service: ["mail-b", "database"] })).toEqual([
+        "d recent",
+        "b standalone",
+      ]);
+      const truncated = yield* f.run({ service: ["mail"], tail: 1 });
+      expect(truncated.output.stderrText).toBe("showing last 1 of 4 lines, use --tail/--since\n");
+      const unknown = yield* f.run({ service: ["mail", "missing"] });
+      expect(failure(unknown.exit)).toMatchObject({
+        reason: "flags",
+        message: "No service matches missing.",
+      });
+      const invalid = yield* f.run({ since: Option.some("soon") });
+      expect(failure(invalid.exit)).toMatchObject({ reason: "flags" });
+      expect(invalid.output.stdoutText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("starts --since start at each instance's highest launch record", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b")],
+        members: ["mail-a", "mail-b"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0, 2),
+        line(t0 + 1, "stdout", "a only launch", 2),
+      ]);
+      yield* f.writeSegment("mail", "mail-b", [
+        launch(t0 + 2, 1),
+        line(t0 + 3, "stdout", "b previous launch", 1),
+        launch(t0 + 4, 2),
+        line(t0 + 5, "stdout", "b current launch", 2),
+      ]);
+
+      const { output } = yield* f.run({ since: Option.some("start") }, "stream-json");
+
+      expect(
+        output.events.map(({ instance_id, kind, line: text }) => [instance_id, kind ?? text]),
+      ).toEqual([
+        ["mail-a", "launch"],
+        ["mail-a", "a only launch"],
+        ["mail-b", "launch"],
+        ["mail-b", "b current launch"],
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("keeps the log-entry fields and reports markers in every output mode", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0),
+        line(t0 + 1, "stdout", "hello"),
+        line(t0 + 2, "stderr", "oops"),
+        lost(t0 + 3, 3),
+      ]);
+      const subject = { service: "mail", instance_id: "mail-a", source: "history" };
+      const expected = [
+        { type: "log-marker", timestamp: iso(t0), ...subject, kind: "launch" },
+        {
+          type: "log-entry",
+          timestamp: iso(t0 + 1),
+          ...subject,
+          stream: "stdout",
+          line: "hello",
+        },
+        { type: "log-entry", timestamp: iso(t0 + 2), ...subject, stream: "stderr", line: "oops" },
+        {
+          type: "log-marker",
+          timestamp: iso(t0 + 3),
+          ...subject,
+          kind: "lost",
+          count: 3,
+        },
+      ];
+
+      const streamed = yield* f.run({}, "stream-json");
+      const finite = yield* f.run({}, "json");
+      const text = yield* f.run({});
+
+      expect(streamed.output.events.map(({ data: _data, ...event }) => event)).toEqual(expected);
+      expect(streamed.output.events).toMatchObject([
+        { data: { kind: "launch", launchId: 1, instanceId: "mail-a", service: "mail" } },
+        {
+          data: {
+            kind: "stdout",
+            text: "hello",
+            launchId: 1,
+            instanceId: "mail-a",
+            service: "mail",
+            position: { generation: 1 },
+          },
+        },
+        { data: { kind: "stderr", text: "oops", launchId: 1 } },
+        { data: { kind: "lost", count: 3 } },
+      ]);
+      expect(decodeRows(finite.output.stdoutText)).toMatchObject([
+        { type: "log-marker", kind: "launch", source: "history", service: "mail" },
+        { type: "log-entry", line: "hello", stream: "stdout", source: "history" },
+        { type: "log-entry", line: "oops", stream: "stderr", source: "history" },
+        { type: "log-marker", kind: "lost", count: 3, source: "history" },
+      ]);
+      expect(
+        lines(text.output.stdoutText).map((value) => value.replace(/\d{2}:\S+ /u, "")),
+      ).toEqual([
+        "mail | --- launch 1 ---",
+        "mail | hello",
+        "mail | oops",
+        "mail | --- 3 output chunks lost ---",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("preserves the legacy output rejection and format suggestion", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      const { exit, output } = yield* f.run({}, "text", "reader", "json");
+      expect(failure(exit)).toMatchObject({
+        reason: "flags",
+        message: "The legacy -o/--output flag is not supported here; use --output-format json.",
+        suggestion:
+          "Use --output-format json, --output-format text, or --output-format stream-json.",
+      });
+      expect(output.stdoutText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("fails --follow without a running owner before printing anything", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "retained")]);
+
+      const followed = yield* f.run({ follow: true });
+      const finite = yield* f.run({ follow: true }, "json");
+
+      expect(failure(followed.exit)).toMatchObject({
+        reason: "lifecycle",
+        suggestion:
+          "Run supabase stack logs without --follow to read retained logs, or supabase stack start first.",
+      });
+      expect(followed.output.stdoutText).toBe("");
+      expect(followed.output.stderrText).toBe("");
+      expect(followed.telemetry.flushed).toBe(true);
+      expect(failure(finite.exit)).toMatchObject({
+        reason: "flags",
+        suggestion: "Use --output-format stream-json, or omit --follow.",
+      });
+      expect(yield* Ref.get(f.opened)).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("follows each service after its printed history without repeating it", () =>
+    Effect.gen(function* () {
+      // Serves the history like an owner, from `from` inclusive or none for `tail: 0`, then one new record.
+      const owner =
+        (stack: { readonly stateRoot: string; readonly stackId: string }) =>
+        (id: string, text: string) =>
+          followingMail(id, (options) =>
+            streamStackLogs({ ...stack, instances: [id] }).pipe(
+              Stream.orDie,
+              Stream.filter(
+                ({ position }) =>
+                  options?.tail !== 0 &&
+                  (options?.from === undefined ||
+                    (position !== undefined && position.byteOffset >= options.from.byteOffset)),
+              ),
+              Stream.concat(
+                Stream.make({
+                  kind: "stdout" as const,
+                  timestamp: iso(t0 + 100),
+                  launchId: 1,
+                  text,
+                  position: { generation: 1, byteOffset: 1_000_000 },
+                }),
+              ),
+              Stream.provide(Layer.merge(BunServices.layer, BunCrypto.layer)),
+            ),
+          );
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b")],
+        members: ["mail-a", "mail-b"],
+        running: true,
+        handles: (stack) => [owner(stack)("mail-a", "a live"), owner(stack)("mail-b", "b live")],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0),
+        line(t0 + 1, "stdout", "a first"),
+        line(t0 + 2, "stdout", "a second"),
+      ]);
+
+      const { exit, output } = yield* f.run({ follow: true }, "stream-json");
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const entries = output.events.filter(({ type }) => type === "log-entry");
+      expect(entries.map(({ line: text, source }) => [text, source])).toEqual(
+        expect.arrayContaining([
+          ["a first", "history"],
+          ["a second", "history"],
+          ["a live", "live"],
+          ["b live", "live"],
+        ]),
+      );
+      expect(entries).toHaveLength(4);
+      expect(entries.slice(0, 2).map(({ line: text }) => text)).toEqual(["a first", "a second"]);
+      expect(yield* Ref.get(f.opened)).toBe(1);
+
+      const liveOnly = yield* f.run({ follow: true, tail: 0 });
+
+      expect(Exit.isSuccess(liveOnly.exit)).toBe(true);
+      expect(
+        lines(liveOnly.output.stdoutText)
+          .map((value) => value.replace(/^\S+\s+\| \S+ /u, ""))
+          .toSorted(),
+      ).toEqual(["a live", "b live"]);
+      expect(liveOnly.output.stderrText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  const request =
+    '127.0.0.1 - - [29/Sep/2026:10:00:00 +0000] "GET /rest/v1/ HTTP/1.1" 200 2 "-" "curl/8.7.1" 3ms';
+
+  it.effect("includes the gateway's requests by default and selects them with --service", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "mail up")]);
+      yield* f.writeSegment("gateway", "gateway", [launch(t0), line(t0 + 2, "stdout", request)]);
+
+      const all = yield* f.run({});
+      const gateway = yield* f.run({ service: ["gateway"] }, "stream-json");
+
+      expect(lines(all.output.stdoutText).map((value) => value.replace(/\d{2}:\S+ /u, ""))).toEqual(
+        [
+          "gateway | --- launch 1 ---",
+          "mail    | --- launch 1 ---",
+          "mail    | mail up",
+          `gateway | ${request}`,
+        ],
+      );
+      expect(eventLines(gateway.output.events)).toEqual([request]);
+      expect(gateway.output.events.at(-1)).toMatchObject({
+        service: "gateway",
+        instance_id: "gateway",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("rejects --service gateway when the stack has no shared API listener", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "mail up")]);
+
+      const selected = yield* f.run({ service: ["gateway"] });
+      const all = yield* f.run({}, "stream-json");
+
+      expect(failure(selected.exit)).toMatchObject({
+        reason: "flags",
+        message: "No service matches gateway.",
+      });
+      expect(eventLines(all.output.events)).toEqual(["mail up"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("follows the gateway's new requests through the owner", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [rest("rest-a")],
+        members: ["rest-a"],
+        running: true,
+        gatewayLogs: () =>
+          Stream.make({
+            kind: "stdout" as const,
+            timestamp: iso(t0 + 100),
+            launchId: 1,
+            text: request,
+            position: { generation: 1, byteOffset: 1_000 },
+          }),
+      });
+
+      const { exit, output } = yield* f.run({ follow: true, tail: 0 }, "stream-json");
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(output.events).toEqual([
+        expect.objectContaining({ service: "gateway", line: request, source: "live" }),
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("keeps only the current owner run's gateway requests with --since start", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0, 1),
+        line(t0 + 1, "stdout", "mail old", 1),
+        launch(t0 + 10, 2),
+        line(t0 + 11, "stdout", "mail new", 2),
+      ]);
+      yield* f.writeSegment("gateway", "gateway", [
+        launch(t0, 1),
+        line(t0 + 2, "stdout", "first run request", 1),
+        launch(t0 + 10, 2),
+        line(t0 + 12, "stdout", "second run request", 2),
+      ]);
+
+      const { output } = yield* f.run({ since: Option.some("start") }, "stream-json");
+
+      expect(eventLines(output.events)).toEqual(["mail new", "second run request"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("follows --since start without delayed records of an earlier launch", () =>
+    Effect.gen(function* () {
+      const record = (offset: number, launchId: number, text: string): LogRecord => ({
+        kind: "stdout",
+        timestamp: iso(t0 + offset),
+        launchId,
+        text,
+        position: { generation: 1, byteOffset: offset },
+      });
+      const f = yield* fixture({
+        instances: [mail("mail-a")],
+        members: ["mail-a"],
+        running: true,
+        handles: () => [
+          followingMail("mail-a", () =>
+            Stream.make(
+              record(100, 3, "current launch"),
+              record(101, 2, "delayed earlier launch"),
+              record(102, 4, "newer launch"),
+            ),
+          ),
+        ],
+      });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0 - 1, 3)]);
+
+      const { exit, output } = yield* f.run(
+        { follow: true, since: Option.some("start") },
+        "stream-json",
+      );
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(eventLines(output.events)).toEqual(["current launch", "newer launch"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("follows the services the running stack serves and names the others", () =>
+    Effect.gen(function* () {
+      const served = (text: string) =>
+        Stream.make({
+          kind: "stdout" as const,
+          timestamp: iso(t0),
+          launchId: 1,
+          text,
+          position: { generation: 1, byteOffset: 0 },
+        });
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b")],
+        members: ["mail-a", "mail-b"],
+        running: true,
+        handles: () => [followingMail("mail-a", () => served("a live"))],
+      });
+
+      const { exit, output } = yield* f.run({ follow: true, tail: 0 }, "stream-json");
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(eventLines(output.events)).toEqual(["a live"]);
+      expect(output.messages).toContainEqual({
+        type: "warn",
+        message: "Not following mail (mail-b), which the running stack does not serve.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("fails --follow when the running stack serves none of the selected services", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a")],
+        members: ["mail-a"],
+        running: true,
+        handles: () => [],
+      });
+
+      const { exit } = yield* f.run({ follow: true, tail: 0 });
+
+      expect(failure(exit)).toMatchObject({
+        reason: "lifecycle",
+        message:
+          "The running stack serves none of the selected services, so there are no new lines to follow.",
+        suggestion: "Run supabase stack logs without --follow to read retained logs.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("interrupts a follow and releases its subscriptions", () =>
+    Effect.gen(function* () {
+      const subscribed = yield* Deferred.make<void>();
+      const released = yield* Ref.make(false);
+      const f = yield* fixture({
+        instances: [mail("mail-a")],
+        members: ["mail-a"],
+        running: true,
+        handles: () => [
+          followingMail("mail-a", () =>
+            Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
               Stream.drain,
               Stream.concat(Stream.never),
               Stream.ensuring(Ref.set(released, true)),
-            );
-            const api = loggingApi(f.api, stack, [{ ...service, logs }]);
-            const fiber = yield* stackLogs({ ...f.flags, service: Option.some(service.id) }).pipe(
-              Effect.provide(Layer.provideMerge(f.layer, api)),
-              Effect.forkChild,
-            );
-            yield* Deferred.await(subscribed);
-            yield* Fiber.interrupt(fiber);
-            expect(yield* Ref.get(released)).toBe(true);
-            expect((yield* service.status).registered).toBe(true);
-            expect((yield* f.api.discover(f.locations))[0]?.host).toBeDefined();
-            expect(f.telemetry.flushed).toBe(true);
-          }),
-        (stack) => stack.destroy,
-      );
-    }).pipe(Effect.provide(live)),
-  );
+            ),
+          ),
+        ],
+      });
 
-  it.live("reports unavailable logs without starting an offline owner", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture();
-      const error = yield* stackLogs(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
-      expect(error.reason).toBe("lifecycle");
-      expect((yield* f.api.discover(f.locations))[0]?.host).toBeUndefined();
-      expect(f.output.stdoutText).toBe("");
-      expect(f.telemetry.flushed).toBe(true);
-    }).pipe(Effect.provide(live)),
+      const fiber = yield* f.run({ follow: true }).pipe(Effect.forkChild);
+      yield* Deferred.await(subscribed);
+      yield* Fiber.interrupt(fiber);
+
+      expect(yield* Ref.get(released)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(live)),
   );
 });

@@ -4,8 +4,12 @@
     "strictTaskEntrypointSelection": true
   },
   "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
     "types:check": {
-      "cache": true
+      "cache": true,
+      "dependsOn": ["transit"]
     },
     "lint:check": {
       "cache": false
@@ -13,10 +17,7 @@
     "lint:fix": {
       "cache": false
     },
-    "lint:effect:check": {
-      "cache": false
-    },
-    "lint:effect:fix": {
+    "lint:actions:check": {
       "cache": false
     },
     "fmt:check": {
@@ -31,10 +32,6 @@
     "knip:fix": {
       "cache": false
     },
-    "@supabase/docs#types:check": {
-      "cache": true,
-      "outputs": [".source/**"]
-    },
     "test:unit:run": {
       "cache": false,
       "passThroughEnv": ["*"]
@@ -47,26 +44,21 @@
       "cache": false,
       "passThroughEnv": ["*"]
     },
-    "@supabase/cli-go#build": {
-      "cache": true,
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/mise.toml", "$TURBO_ROOT$/mise.lock"],
-      "outputs": ["supabase-go"],
-      "env": ["GO*", "CGO_*", "CC", "CXX"]
-    },
     "supabase#build": {
       "cache": true,
-      "dependsOn": ["@supabase/config#build", "@supabase/cli-go#build"],
+      "dependsOn": ["supabase#schemas:generate"],
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/.bun-version",
         "$TURBO_ROOT$/mise.lock",
-        "$TURBO_ROOT$/packages/api/**"
+        "$TURBO_ROOT$/packages/api/**",
+        "$TURBO_ROOT$/packages/stack/package.json",
+        "$TURBO_ROOT$/packages/stack/src/**"
       ],
       "outputs": ["dist/**"]
     },
     "@supabase/config#build": {
       "cache": true,
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.bun-version", "$TURBO_ROOT$/mise.lock"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/mise.lock"],
       "outputs": ["dist/**"]
     },
     "@supabase/api#generate": {
@@ -74,35 +66,21 @@
       "outputs": ["src/generated/**", "scripts/openapi-source.json"],
       "env": ["SUPABASE_API_URL"]
     },
-    "@supabase/docs#generate": {
-      "cache": true,
-      "dependsOn": ["supabase#build", "@supabase/config#build"],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "!content/docs/commands/**",
-        "!public/cli/config.schema.json",
-        "!public/cli/project-config.schema.json",
-        "$TURBO_ROOT$/.bun-version",
-        "$TURBO_ROOT$/mise.lock"
-      ],
-      "outputs": [
-        "content/docs/commands/**",
-        "public/cli/config.schema.json",
-        "public/cli/project-config.schema.json"
-      ]
+    "@supabase/stack#generate": {
+      "cache": false,
+      "outputs": ["src/functions/generated/**"]
     },
-    "@supabase/docs#build": {
+    "supabase#schemas:generate": {
       "cache": true,
-      "dependsOn": ["generate"],
+      "dependsOn": ["@supabase/config#build"],
       "inputs": [
         "$TURBO_DEFAULT$",
-        "!content/docs/commands/**",
-        "!public/cli/config.schema.json",
-        "!public/cli/project-config.schema.json",
-        "$TURBO_ROOT$/.bun-version",
-        "$TURBO_ROOT$/mise.lock"
+        "!schemas/**",
+        "$TURBO_ROOT$/mise.lock",
+        "$TURBO_ROOT$/packages/stack/package.json",
+        "$TURBO_ROOT$/packages/stack/src/**"
       ],
-      "outputs": [".next/**"]
+      "outputs": ["schemas/**"]
     },
     "supabase#test:live": {
       "cache": false,
@@ -117,11 +95,6 @@
     "supabase#test:smoke": {
       "cache": false,
       "passThroughEnv": ["*"]
-    },
-    "@supabase/docs#dev": {
-      "cache": false,
-      "dependsOn": ["@supabase/docs#generate"],
-      "persistent": true
     },
     "supabase#test:e2e:run": {
       "cache": false,

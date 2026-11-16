@@ -23,7 +23,7 @@ export const quietProgressTextOutputLayer = Layer.effect(
           fail: () => Effect.void,
           info: () => Effect.void,
           cancel: () => Effect.void,
-          clear: () => Effect.void,
+          clear: Effect.void,
         }),
       progress: () =>
         Effect.succeed({

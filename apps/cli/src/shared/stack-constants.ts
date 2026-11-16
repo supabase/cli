@@ -1,6 +1,13 @@
-export const defaultPublishableKey = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH";
-export const defaultSecretKey = "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz";
-export const defaultJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long";
+import { DOCKER_DAEMON_CONNECTION_FAILURE_PATTERN } from "../command-internal/docker-suggest.ts";
+import {
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_LOCAL_PUBLISHABLE_KEY,
+  DEFAULT_LOCAL_SECRET_KEY,
+} from "@supabase/stack/defaults";
+
+export const defaultPublishableKey = DEFAULT_LOCAL_PUBLISHABLE_KEY;
+export const defaultSecretKey = DEFAULT_LOCAL_SECRET_KEY;
+export const defaultJwtSecret = DEFAULT_LOCAL_JWT_SECRET;
 
 const desiredNofile = 65536;
 
@@ -42,5 +49,6 @@ export const edgeRuntimeNofileUlimit = (
 };
 
 export const isDockerDaemonDownMessage = (message: string): boolean =>
-  /docker|container engine|daemon/i.test(message) &&
-  /not running|unavailable|cannot connect|down/i.test(message);
+  (/docker|container engine|daemon/i.test(message) &&
+    /not running|unavailable|cannot connect|down/i.test(message)) ||
+  DOCKER_DAEMON_CONNECTION_FAILURE_PATTERN.test(message);

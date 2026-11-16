@@ -1,0 +1,208 @@
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { it } from "@effect/vitest";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { describe, expect, test } from "vitest";
+import { DEFAULT_DURATION_MS, fallbackDuration, packShards, readTimings } from "./e2e-sequencer.ts";
+
+const files = ["src/a.e2e.test.ts", "src/b.e2e.test.ts", "src/c.e2e.test.ts", "src/d.e2e.test.ts"];
+
+const sortedShards = (shards: readonly (readonly string[])[]) =>
+  shards.map((shard) => [...shard].sort());
+
+const concurrent = (keys: readonly string[]) => keys.map((key) => ({ key, exclusive: false }));
+
+describe("packShards", () => {
+  test.each([1, files.length, files.length + 3])(
+    "partitions every file into exactly one of %i shards",
+    (count) => {
+      const shards = packShards(concurrent(files), { "src/a.e2e.test.ts": 100 }, count, 1);
+
+      expect(shards).toHaveLength(count);
+      expect(shards.flat().sort()).toEqual([...files].sort());
+    },
+  );
+
+  test("leaves trailing shards empty when there are more shards than files", () => {
+    const shards = packShards(concurrent(["src/a.e2e.test.ts", "src/b.e2e.test.ts"]), {}, 4, 1);
+
+    expect(shards).toEqual([["src/a.e2e.test.ts"], ["src/b.e2e.test.ts"], [], []]);
+  });
+
+  test("produces the same partition regardless of input order", () => {
+    const timings = {
+      "src/a.e2e.test.ts": 500,
+      "src/b.e2e.test.ts": 200,
+      "src/c.e2e.test.ts": 900,
+    };
+
+    const forward = packShards(concurrent(files), timings, 2, 1);
+    const reversed = packShards(concurrent([...files].reverse()), timings, 2, 1);
+
+    expect(reversed).toEqual(forward);
+  });
+
+  test("isolates a file that outweighs all the others combined", () => {
+    const timings = {
+      "src/a.e2e.test.ts": 10,
+      "src/b.e2e.test.ts": 1_000,
+      "src/c.e2e.test.ts": 10,
+      "src/d.e2e.test.ts": 10,
+    };
+
+    const shards = packShards(concurrent(files), timings, 2, 1);
+
+    expect(sortedShards(shards)).toEqual([
+      ["src/b.e2e.test.ts"],
+      ["src/a.e2e.test.ts", "src/c.e2e.test.ts", "src/d.e2e.test.ts"],
+    ]);
+  });
+
+  test("packs concurrent files beside a long one while an exclusive file runs alone", () => {
+    const timings = {
+      "src/long.e2e.test.ts": 90,
+      "src/exclusive.e2e.test.ts": 80,
+      "src/a.e2e.test.ts": 20,
+      "src/b.e2e.test.ts": 20,
+      "src/c.e2e.test.ts": 20,
+    };
+    const shardFiles = Object.keys(timings).map((key) => ({
+      key,
+      exclusive: key === "src/exclusive.e2e.test.ts",
+    }));
+
+    const shards = packShards(shardFiles, timings, 2, 4);
+
+    expect(sortedShards(shards)).toEqual([
+      ["src/a.e2e.test.ts", "src/b.e2e.test.ts", "src/c.e2e.test.ts", "src/long.e2e.test.ts"],
+      ["src/exclusive.e2e.test.ts"],
+    ]);
+  });
+
+  test("weights an unmeasured file at the median of the measured ones", () => {
+    const timings = {
+      "src/a.e2e.test.ts": 100,
+      "src/b.e2e.test.ts": 300,
+      "src/c.e2e.test.ts": 500,
+    };
+
+    // d is unmeasured; at the median (300) it ties with b and follows it into the second shard.
+    const shards = packShards(concurrent(files), timings, 2, 1);
+
+    expect(sortedShards(shards)).toEqual([
+      ["src/a.e2e.test.ts", "src/c.e2e.test.ts"],
+      ["src/b.e2e.test.ts", "src/d.e2e.test.ts"],
+    ]);
+  });
+
+  test("weights every file at the default duration when nothing has been measured", () => {
+    const allDefault = Object.fromEntries(files.map((file) => [file, DEFAULT_DURATION_MS]));
+
+    expect(packShards(concurrent(files), {}, 3, 1)).toEqual(
+      packShards(concurrent(files), allDefault, 3, 1),
+    );
+  });
+
+  test("breaks duration ties by key so equal files spread deterministically", () => {
+    const timings = { "src/c.e2e.test.ts": 50, "src/a.e2e.test.ts": 50, "src/b.e2e.test.ts": 50 };
+
+    const shards = packShards(concurrent(Object.keys(timings)), timings, 3, 1);
+
+    expect(shards).toEqual([["src/a.e2e.test.ts"], ["src/b.e2e.test.ts"], ["src/c.e2e.test.ts"]]);
+  });
+});
+
+describe("fallbackDuration", () => {
+  test("is the default duration when nothing has been measured", () => {
+    expect(fallbackDuration({})).toBe(DEFAULT_DURATION_MS);
+  });
+
+  test("is the middle value for an odd number of measurements", () => {
+    expect(fallbackDuration({ a: 900, b: 100, c: 300 })).toBe(300);
+  });
+
+  test("is the mean of the two middle values for an even number of measurements", () => {
+    expect(fallbackDuration({ a: 100, b: 200, c: 400, d: 900 })).toBe(300);
+  });
+});
+
+describe("readTimings", () => {
+  const fsLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
+  const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+  const timingsRoot = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "e2e-timings-" });
+    yield* fs.makeDirectory(path.join(root, "tests"));
+    const writeTimings = (content: string) =>
+      fs.writeFileString(path.join(root, "tests", "e2e-timings.json"), content);
+    return { root, writeTimings };
+  });
+
+  it.effect("reads the files map from a version 1 envelope", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings(
+        yield* encodeJson({
+          version: 1,
+          files: { "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 },
+        }),
+      );
+
+      expect(yield* readTimings(root)).toEqual({
+        "src/a.e2e.test.ts": 1200,
+        "src/b.e2e.test.ts": 300,
+      });
+    }).pipe(Effect.provide(fsLayer)),
+  );
+
+  it.effect("reads as absent when the file is missing", () =>
+    Effect.gen(function* () {
+      const { root } = yield* timingsRoot;
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
+
+  it.effect("reads as absent rather than half-applying when any duration is not a number", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings(
+        yield* encodeJson({
+          version: 1,
+          files: { "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": "300" },
+        }),
+      );
+
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
+
+  it.effect("reads as absent when the file is not JSON", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings("{ not json");
+
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
+
+  it.effect("reads as absent for a flat map with no envelope", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings(
+        yield* encodeJson({ "src/a.e2e.test.ts": 1200, "src/b.e2e.test.ts": 300 }),
+      );
+
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
+
+  it.effect("reads as absent for an unknown envelope version", () =>
+    Effect.gen(function* () {
+      const { root, writeTimings } = yield* timingsRoot;
+      yield* writeTimings(yield* encodeJson({ version: 2, files: { "src/a.e2e.test.ts": 1200 } }));
+
+      expect(yield* readTimings(root)).toBeUndefined();
+    }).pipe(Effect.provide(fsLayer)),
+  );
+});

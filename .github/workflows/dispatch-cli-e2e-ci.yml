@@ -37,6 +37,7 @@ jobs:
           CLI_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          set -o pipefail
           echo "Dispatching cli-e2e-ci live run for PR #${PR_NUMBER} @ ${CLI_SHA}"
           # Build the nested client_payload with jq — `gh api -f` sends a flat
           # body and would not nest `client_payload.*` correctly.

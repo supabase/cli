@@ -32,7 +32,8 @@ function getHostnameStatus(response: HostnameResponse): HostnameStatus | undefin
  * Trailing-newline presence differs by branch and is part of the established output.
  */
 export function formatHostnameStatus(response: HostnameResponse): string {
-  switch (getHostnameStatus(response)) {
+  const status = getHostnameStatus(response);
+  switch (status) {
     case "5_services_reconfigured":
       return response.custom_hostname
         ? `Custom hostname setup completed. Project is now accessible at ${response.custom_hostname}.`
@@ -79,8 +80,10 @@ ${customHostname} CNAME -> ${customOriginServer}`;
     }
     case "1_not_started":
       return "Custom hostname configuration not started.\n";
-    default:
+    case undefined:
       return "";
+    default:
+      return `${status}\n`;
   }
 }
 

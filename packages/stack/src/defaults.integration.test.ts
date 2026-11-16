@@ -1,30 +1,25 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
-import { tmpdir } from "node:os";
-import {
-  create as createEffect,
-  DEFAULT_LOCAL_JWT_SECRET,
-  DEFAULT_POSTGRES_ROOT_KEY,
-  StackError,
-} from "./effect.ts";
-import {
-  create as createPromise,
-  DEFAULT_LOCAL_JWT_SECRET as PROMISE_DEFAULT_JWT_SECRET,
-  DEFAULT_POSTGRES_ROOT_KEY as PROMISE_DEFAULT_ROOT_KEY,
-} from "./index.ts";
+import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
+import { create as createEffect, StackError } from "./effect.ts";
+import { create as createPromise } from "./index.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
-const artifactCacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
-const effectLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const artifactCacheRoot = testArtifactCacheRoot;
+const effectLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NodeHttpClient.layerNodeHttp,
+);
 
 const effectDatabaseConfig = {
-  version: "17",
   databasePassword: Redacted.make("defaults-test-password"),
   jwtExpiry: 3600,
 } as const;
 
 const promiseDatabaseConfig = {
-  version: "17",
   databasePassword: "defaults-test-password",
   jwtExpiry: 3600,
 } as const;
@@ -51,6 +46,7 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
             Effect.gen(function* () {
               const database = yield* current.services.create({
                 service: "database",
+                pin: selection.database,
                 config: effectDatabaseConfig,
               });
               const initial = yield* database.status;
@@ -73,22 +69,15 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
 
               const customJwt = Redacted.make("custom-defaults-jwt");
               const customRoot = Redacted.make("b".repeat(64));
-              yield* database.restart({
-                config: { ...effectDatabaseConfig, jwtSecret: customJwt, rootKey: customRoot },
-              });
-              yield* database.ready;
-              const overridden = yield* database.status;
-              if (overridden.config.service !== "database")
-                return yield* Effect.die("Expected an overridden database status");
-              expect(redactedValue(overridden.config.config.jwtSecret)).toBe(
-                Redacted.value(customJwt),
+              const conflict = yield* Effect.flip(
+                database.restart({
+                  config: { ...effectDatabaseConfig, jwtSecret: customJwt, rootKey: customRoot },
+                }),
               );
-              expect(redactedValue(overridden.config.config.rootKey)).toBe(
-                Redacted.value(customRoot),
-              );
+              expect(conflict.message).toContain("conflicts with the saved stack value");
               yield* database.destroy;
               const composed = yield* current.composition.supabase([
-                { service: "database", config: effectDatabaseConfig },
+                { service: "database", pin: selection.database, config: effectDatabaseConfig },
               ]);
               const composedStatus = yield* composed[0]!.status;
               if (composedStatus.config.service !== "database")
@@ -134,6 +123,7 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               const database = yield* promise(() =>
                 current.services.create({
                   service: "database",
+                  pin: selection.database,
                   config: promiseDatabaseConfig,
                 }),
               );
@@ -141,10 +131,8 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               expect(initial.config.service).toBe("database");
               if (initial.config.service !== "database")
                 return yield* Effect.die("Expected a database status");
-              expect(redactedValue(initial.config.config.jwtSecret)).toBe(
-                PROMISE_DEFAULT_JWT_SECRET,
-              );
-              expect(redactedValue(initial.config.config.rootKey)).toBe(PROMISE_DEFAULT_ROOT_KEY);
+              expect(redactedValue(initial.config.config.jwtSecret)).toBe(DEFAULT_LOCAL_JWT_SECRET);
+              expect(redactedValue(initial.config.config.rootKey)).toBe(DEFAULT_POSTGRES_ROOT_KEY);
 
               yield* promise(() => database.restart({ config: promiseDatabaseConfig }));
               yield* promise(() => database.ready());
@@ -153,30 +141,28 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               if (restarted.config.service !== "database")
                 return yield* Effect.die("Expected a restarted database status");
               expect(redactedValue(restarted.config.config.jwtSecret)).toBe(
-                PROMISE_DEFAULT_JWT_SECRET,
+                DEFAULT_LOCAL_JWT_SECRET,
               );
-              expect(redactedValue(restarted.config.config.rootKey)).toBe(PROMISE_DEFAULT_ROOT_KEY);
+              expect(redactedValue(restarted.config.config.rootKey)).toBe(
+                DEFAULT_POSTGRES_ROOT_KEY,
+              );
 
-              yield* promise(() =>
-                database.restart({
-                  config: {
-                    ...promiseDatabaseConfig,
-                    jwtSecret: "custom-defaults-jwt",
-                    rootKey: "c".repeat(64),
-                  },
-                }),
+              const conflict = yield* Effect.flip(
+                promise(() =>
+                  database.restart({
+                    config: {
+                      ...promiseDatabaseConfig,
+                      jwtSecret: "custom-defaults-jwt",
+                      rootKey: "c".repeat(64),
+                    },
+                  }),
+                ),
               );
-              yield* promise(() => database.ready());
-              const overridden = yield* promise(() => database.status());
-              expect(overridden.config.service).toBe("database");
-              if (overridden.config.service !== "database")
-                return yield* Effect.die("Expected an overridden database status");
-              expect(redactedValue(overridden.config.config.jwtSecret)).toBe("custom-defaults-jwt");
-              expect(redactedValue(overridden.config.config.rootKey)).toBe("c".repeat(64));
+              expect(conflict.message).toContain("conflicts with the saved stack value");
               yield* promise(() => database.destroy());
               const composed = yield* promise(() =>
                 current.composition.supabase([
-                  { service: "database", config: promiseDatabaseConfig },
+                  { service: "database", pin: selection.database, config: promiseDatabaseConfig },
                 ]),
               );
               const composedStatus = yield* promise(() => composed[0]!.status());
@@ -184,10 +170,10 @@ describe("database configuration defaults", { timeout: 180_000 }, () => {
               if (composedStatus.config.service !== "database")
                 return yield* Effect.die("Expected a composed database status");
               expect(redactedValue(composedStatus.config.config.jwtSecret)).toBe(
-                PROMISE_DEFAULT_JWT_SECRET,
+                DEFAULT_LOCAL_JWT_SECRET,
               );
               expect(redactedValue(composedStatus.config.config.rootKey)).toBe(
-                PROMISE_DEFAULT_ROOT_KEY,
+                DEFAULT_POSTGRES_ROOT_KEY,
               );
             }),
           (current) =>

@@ -23,6 +23,7 @@ test("applies an override with --no-restart and get proves it", ({ cli, cliEffec
         const updated = yield* cliEffect([
           "postgres-config",
           "update",
+          "--yes",
           "--config",
           "work_mem=7MB",
           ...flags,

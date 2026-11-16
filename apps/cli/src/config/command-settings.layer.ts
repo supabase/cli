@@ -1,6 +1,17 @@
-import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { findCliProjectRoot } from "@supabase/config/effect";
+import {
+  Config,
+  ConfigProvider,
+  Data,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+} from "effect";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
-import { lastExplicitLongFlagValue } from "../shared/cli/cobra-flag-groups.ts";
+import { lastExplicitLongFlagValue } from "../shared/cli/flag-groups.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { ProfileFlag, WorkdirFlag } from "../command-internal/global-flags.ts";
 import {
@@ -8,10 +19,25 @@ import {
   type LoadedProfile,
   type ProfileLoadError,
 } from "../command-internal/profile-load.ts";
-import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger, type DebugLoggerShape } from "../shared/output/debug-logger.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { CliEnvNames } from "./cli-config-keys.ts";
 import { CommandSettings } from "./command-settings.service.ts";
 import { resolveSupabaseHomeValue } from "../shared/config/supabase-home.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../shared/telemetry/error-actionability.ts";
+
+/** A `SUPABASE_API_MAX_RETRIES` that is not a non-negative integer, rejected before any API request. */
+export class ApiMaxRetriesError extends Data.TaggedError("ApiMaxRetriesError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 function unknownMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -47,7 +73,13 @@ function resolveProfile(
         Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
         Effect.map(Option.some),
         Effect.catch((error) =>
-          debugLogger.debug(unknownMessage(error)).pipe(Effect.as(Option.none<string>())),
+          debugLogger
+            .debug(
+              error.reason._tag === "NotFound"
+                ? `No profile file at ${filePath}; using the default profile.`
+                : unknownMessage(error),
+            )
+            .pipe(Effect.as(Option.none<string>())),
         ),
       );
       token = Option.match(content, {
@@ -60,7 +92,7 @@ function resolveProfile(
     }
 
     return yield* loadProfile(token, fs);
-  });
+  }).pipe(Effect.withSpan("CommandSettings.resolveProfile"));
 }
 
 /**
@@ -68,37 +100,24 @@ function resolveProfile(
  * string (e.g. `.`), but downstream readers such as the project-id cwd-basename fallback need
  * a real directory name, not a relative fragment that would sanitize to an empty project id.
  *
- * `explicit` is true only when the flag/env value was used verbatim, without walking up to find
- * `supabase/config.toml`; some config loads use it to skip a redundant ancestor search.
+ * `explicit` is true only when the flag/env value was used verbatim. Otherwise the nearest
+ * ancestor holding `supabase/config.json` or `supabase/config.toml` wins, falling back to `cwd`.
  */
-export function resolveWorkdir(
+export const resolveWorkdir = Effect.fn("CommandSettings.resolveWorkdir")(function* (
   flagValue: Option.Option<string>,
   envValue: Option.Option<string>,
   cwd: string,
-  configTomlExists: (path: string) => Effect.Effect<boolean>,
   path: Path.Path,
-): Effect.Effect<{ readonly workdir: string; readonly explicit: boolean }> {
-  return Effect.gen(function* () {
-    if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-      return { workdir: path.resolve(cwd, flagValue.value), explicit: true };
-    }
-    if (Option.isSome(envValue) && envValue.value.length > 0) {
-      return { workdir: path.resolve(cwd, envValue.value), explicit: true };
-    }
-    let current = cwd;
-    while (true) {
-      const candidate = path.join(current, "supabase", "config.toml");
-      if (yield* configTomlExists(candidate)) {
-        return { workdir: current, explicit: false };
-      }
-      const parent = path.dirname(current);
-      if (parent === current) {
-        return { workdir: cwd, explicit: false };
-      }
-      current = parent;
-    }
-  });
-}
+) {
+  if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+    return { workdir: path.resolve(cwd, flagValue.value), explicit: true };
+  }
+  if (Option.isSome(envValue) && envValue.value.length > 0) {
+    return { workdir: path.resolve(cwd, envValue.value), explicit: true };
+  }
+  const projectRoot = yield* findCliProjectRoot(cwd);
+  return { workdir: projectRoot ?? cwd, explicit: false };
+});
 
 export const commandSettingsLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -111,15 +130,20 @@ export const commandSettingsLayer = Layer.unwrap(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+
         const runtimeInfo = yield* RuntimeInfo;
         const provider = yield* ConfigProvider.ConfigProvider;
         const read = <A>(config: Config.Config<A>) => config.parse(provider);
-        const profileEnvValue = yield* read(Config.option(Config.string("SUPABASE_PROFILE")));
-        const supabaseHome = yield* read(Config.option(Config.string("SUPABASE_HOME")));
-        const resolvedSupabaseHome = resolveSupabaseHomeValue(supabaseHome, runtimeInfo.homeDir);
+        const profileEnvValue = yield* read(Config.option(Config.String("SUPABASE_PROFILE")));
+        const supabaseHome = yield* read(Config.option(Config.String("SUPABASE_HOME")));
+        const resolvedSupabaseHome = resolveSupabaseHomeValue(
+          path,
+          supabaseHome,
+          runtimeInfo.homeDir,
+        );
 
         // Optional service: tests without argv default to "not explicit". An empty command
-        // path scans all of argv up to `--`, matching pflag.
+        // path scans all of argv up to `--`.
         const cliArgs = yield* Effect.serviceOption(CliArgs);
         const explicitProfileFlag = Option.match(cliArgs, {
           onNone: () => undefined,
@@ -141,34 +165,53 @@ export const commandSettingsLayer = Layer.unwrap(
           debugLogger,
         );
 
-        const rawDbPassword = yield* read(Config.option(Config.string("SUPABASE_DB_PASSWORD")));
-        const dbPassword = Option.filter(rawDbPassword, (value) => value.length > 0).pipe(
-          Option.map((value) => Redacted.make(value, { label: "SUPABASE_DB_PASSWORD" })),
-        );
-
-        const rawGithubToken = yield* read(Config.option(Config.string("GITHUB_TOKEN")));
+        const rawGithubToken = yield* read(Config.option(Config.String("GITHUB_TOKEN")));
         const githubToken = Option.filter(rawGithubToken, (value) => value.length > 0).pipe(
           Option.map((value) => Redacted.make(value, { label: "GITHUB_TOKEN" })),
         );
 
-        const rawAccessToken = yield* read(Config.option(Config.string("SUPABASE_ACCESS_TOKEN")));
+        const rawAccessToken = yield* read(Config.option(Config.String("SUPABASE_ACCESS_TOKEN")));
         const accessToken = Option.filter(rawAccessToken, (value) => value.length > 0).pipe(
           Option.map((value) => Redacted.make(value, { label: "SUPABASE_ACCESS_TOKEN" })),
         );
 
-        const rawProjectId = yield* read(Config.option(Config.string("SUPABASE_PROJECT_ID")));
+        const rawProjectId = yield* read(Config.option(Config.String(CliEnvNames.projectId.name)));
         const projectId = Option.filter(rawProjectId, (value) => value.length > 0);
 
-        const workdirEnvValue = yield* read(Config.option(Config.string("SUPABASE_WORKDIR")));
+        const workdirEnvValue = yield* read(Config.option(Config.String("SUPABASE_WORKDIR")));
         const { workdir, explicit: explicitWorkdir } = yield* resolveWorkdir(
           workdirFlag,
           workdirEnvValue,
           runtimeInfo.cwd,
-          (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
           path,
         );
 
+        // Empty means unset, like the other SUPABASE_* settings; anything else must be plain
+        // digits, rejected here before a command reaches the network.
+        const rawApiMaxRetries = yield* read(
+          Config.option(Config.String("SUPABASE_API_MAX_RETRIES")),
+        );
+        const apiMaxRetries = yield* Option.match(
+          Option.filter(rawApiMaxRetries, (value) => value.length > 0),
+          {
+            onNone: () => Effect.succeed(Option.none<number>()),
+            onSome: (value) =>
+              /^\d+$/.test(value) && Number.isSafeInteger(Number(value))
+                ? Effect.succeed(Option.some(Number(value)))
+                : Effect.fail(
+                    new ApiMaxRetriesError({
+                      message: `invalid SUPABASE_API_MAX_RETRIES "${value}": expected a non-negative integer`,
+                    }),
+                  ),
+          },
+        );
+
         const userAgent = `SupabaseCLI/${CLI_VERSION}`;
+
+        yield* Effect.annotateCurrentSpan({
+          "config.workdir_explicit": explicitWorkdir,
+          "config.access_token_from_env": Option.isSome(accessToken),
+        });
 
         return CommandSettings.of({
           profile,
@@ -179,15 +222,15 @@ export const commandSettingsLayer = Layer.unwrap(
           poolerHost,
           dashboardUrl,
           accessToken,
-          dbPassword,
           githubToken,
           projectId,
           workdir,
           explicitWorkdir,
           workdirEnvValue,
           userAgent,
+          apiMaxRetries,
         });
-      }),
+      }).pipe(Effect.withSpan("CommandSettings.load")),
     );
   }),
 );

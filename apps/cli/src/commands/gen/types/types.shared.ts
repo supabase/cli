@@ -1,14 +1,11 @@
-import { Config, Effect, Option } from "effect";
+import { Effect, Schema } from "effect";
 import { InvalidGenTypesDurationError } from "./types.errors.ts";
-import caProd2021 from "./templates/prod-ca-2021.ts";
-import caProd2025 from "./templates/prod-ca-2025.ts";
-import caStaging2021 from "./templates/staging-ca-2021.ts";
 
 // Local Docker resource ids are hoisted to `command-internal` so the declarative seam
 // can derive the same `supabase_db_<id>` name when checking the local stack.
 export { localDbContainerId, localNetworkId } from "../../../command-internal/docker-ids.ts";
 
-const DURATION_UNITS_TO_MILLIS = {
+const DURATION_UNITS_TO_MILLIS: Readonly<Record<string, number>> = {
   ns: 1 / 1_000_000,
   us: 1 / 1_000,
   "\u00b5s": 1 / 1_000,
@@ -17,12 +14,17 @@ const DURATION_UNITS_TO_MILLIS = {
   s: 1_000,
   m: 60_000,
   h: 3_600_000,
-} as const;
+};
 
 const DURATION_PART_PATTERN = new RegExp(
   String.raw`([+-]?(?:\d+\.?\d*|\.\d+))(ns|us|\u00b5s|\u03bcs|ms|s|m|h)`,
   "g",
 );
+
+const JsonString = Schema.fromJsonString(Schema.String);
+
+export const quoteJsonString = (raw: string) =>
+  Schema.encodeEffect(JsonString)(raw).pipe(Effect.orDie);
 
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
@@ -34,11 +36,9 @@ export function parseQueryTimeoutMillis(
   return Effect.gen(function* () {
     const input = raw.trim();
     if (input.length === 0) {
-      return yield* Effect.fail(
-        new InvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
+      return yield* new InvalidGenTypesDurationError({
+        message: `invalid duration ${yield* quoteJsonString(raw)}`,
+      });
     }
 
     let totalMillis = 0;
@@ -55,35 +55,25 @@ export function parseQueryTimeoutMillis(
         continue;
       }
       if (match.index !== consumed) {
-        return yield* Effect.fail(
-          new InvalidGenTypesDurationError({
-            message: `invalid duration ${JSON.stringify(raw)}`,
-          }),
-        );
+        return yield* new InvalidGenTypesDurationError({
+          message: `invalid duration ${yield* quoteJsonString(raw)}`,
+        });
       }
       const amount = Number.parseFloat(rawNumber);
-      const unitMillis = DURATION_UNITS_TO_MILLIS[rawUnit as keyof typeof DURATION_UNITS_TO_MILLIS];
+      const unitMillis = DURATION_UNITS_TO_MILLIS[rawUnit];
+      if (unitMillis === undefined) {
+        continue;
+      }
       totalMillis += amount * unitMillis;
       consumed += token.length;
     }
 
     if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
-      return yield* Effect.fail(
-        new InvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
+      return yield* new InvalidGenTypesDurationError({
+        message: `invalid duration ${yield* quoteJsonString(raw)}`,
+      });
     }
 
     return totalMillis;
   });
-}
-
-export const localDbPassword = Effect.fnUntraced(function* () {
-  const value = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
-  return Option.getOrElse(value, () => "postgres");
-});
-
-export function rootCaBundle() {
-  return `${caStaging2021}${caProd2021}${caProd2025}`;
 }

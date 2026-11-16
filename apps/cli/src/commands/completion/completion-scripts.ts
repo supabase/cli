@@ -1,5 +1,5 @@
 /**
- * Byte-for-byte reproductions of cobra v1.10.2's static shell completion script templates,
+ * Static shell completion script templates,
  * which shell back out to `supabase`'s hidden `__complete`/`__completeNoDesc` command for live
  * candidates rather than baking in the command tree.
  */
@@ -10,7 +10,7 @@ const SHELL_COMP_REQUEST_CMD = "__complete";
 const SHELL_COMP_NO_DESC_REQUEST_CMD = "__completeNoDesc";
 type CompletionRequestCmd = typeof SHELL_COMP_REQUEST_CMD | typeof SHELL_COMP_NO_DESC_REQUEST_CMD;
 
-/** Bit values for cobra's `ShellCompDirective` protocol. */
+/** Bit values for the `ShellCompDirective` protocol. */
 const SHELL_COMP_DIRECTIVE_ERROR = 1;
 const SHELL_COMP_DIRECTIVE_NO_SPACE = 2;
 const SHELL_COMP_DIRECTIVE_NO_FILE_COMP = 4;
@@ -57,7 +57,7 @@ __${programName}_get_completion_results() {
 
     if [[ -z \${cur} && \${lastChar} != = ]]; then
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go method.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         requestComp="\${requestComp} ''"
     fi
@@ -95,7 +95,7 @@ __${programName}_process_completion_results() {
 
     if (((directive & shellCompDirectiveError) != 0)); then
         # Error code.  No completion.
-        __${programName}_debug "Received error from custom completion go code"
+        __${programName}_debug "Received error from custom completion code"
         return
     else
         if (((directive & shellCompDirectiveNoSpace) != 0)); then
@@ -265,7 +265,6 @@ __${programName}_handle_completion_types() {
         # Type: menu-complete/menu-complete-backward and insert-completions
         # If the user requested inserting one completion at a time, or all
         # completions at once on the command-line we must remove the descriptions.
-        # https://github.com/spf13/cobra/issues/1508
 
         # If there are no completions, we don't need to do anything
         (( \${#completions[@]} == 0 )) && return 0
@@ -506,7 +505,7 @@ _${programName}()
     requestComp="\${words[1]} ${compCmd} \${words[2,-1]}"
     if [ "\${lastChar}" = "" ]; then
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go completion code.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         requestComp="\${requestComp} \\"\\""
     fi
@@ -702,7 +701,6 @@ function __${programName}_perform_completion
 
     # Some programs may output extra empty lines after the directive.
     # Let's ignore them or else it will break completion.
-    # Ref: https://github.com/spf13/cobra/issues/1279
     for line in $results[-1..1]
         if test (string trim -- $line) = ""
             # Found an empty line, remove it
@@ -914,7 +912,7 @@ complete -k -c ${programName} -n '__${programName}_requires_order_preservation &
 }
 
 // Only the `compCmd` token differs between the desc/no-desc variants. Kept as one template
-// literal since TS, unlike Go raw strings, can escape backticks directly.
+// literal since TS can escape backticks directly.
 function genPowerShellCompletionScript(programName: string, compCmd: CompletionRequestCmd): string {
   return `# powershell completion for ${programName.padEnd(36)} -*- shell-script -*-
 
@@ -986,7 +984,7 @@ filter __${programName}_escapeStringWithSpecialChars {
 
     if ( $WordToComplete -eq "" -And ( -Not $IsEqualFlag )) {
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go method.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __${programName}_debug "Adding extra empty parameter"
         # PowerShell 7.2+ changed the way how the arguments are passed to executables,
         # so for pre-7.2 or when Legacy argument passing is enabled we need to use
@@ -1023,7 +1021,7 @@ filter __${programName}_escapeStringWithSpecialChars {
 
     if (($Directive -band $ShellCompDirectiveError) -ne 0 ) {
         # Error code.  No completion.
-        __${programName}_debug "Received error from custom completion go code"
+        __${programName}_debug "Received error from custom completion code"
         return
     }
 
@@ -1191,7 +1189,7 @@ Register-ArgumentCompleter -CommandName '${programName}' -ScriptBlock \${__${pro
 
 export type CompletionShell = "bash" | "zsh" | "fish" | "powershell";
 
-/** Generates the shell completion script for `shell`, matching cobra v1.10.2's output. */
+/** Generates the shell completion script for `shell`. */
 export function generateCompletionScript(
   shell: CompletionShell,
   options: { readonly noDescriptions: boolean },

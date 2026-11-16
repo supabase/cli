@@ -38,11 +38,12 @@ export class MissingComputeNameError extends Data.TaggedError("MissingComputeNam
 /**
  * A symlink in the compute source points outside the build context.
  *
- * The archive is everything the server gets, with no install step and no view of the surrounding
- * repository, so a link whose target isn't also packaged arrives dangling — the catalog runtimes
- * boot without the dependency, or a Dockerfile build fails on `COPY`, both minutes later with
+ * The archive is everything the server gets, with no view of the surrounding repository, so a
+ * link whose target isn't also packaged arrives dangling — the catalog runtimes boot without
+ * whatever it pointed at, or a Dockerfile build fails on `COPY`, both minutes later with
  * nothing naming the cause. Refused here instead. The common source is a package manager that
- * hoists dependencies to the repository root, outside the compute's own `node_modules`.
+ * hoists dependencies to the repository root, outside the compute's own `node_modules`; adding
+ * the link to `[compute.<name>] exclude` is the other way out.
  */
 export class ComputeSourceEscapingLinkError extends Data.TaggedError(
   "ComputeSourceEscapingLinkError",
@@ -52,6 +53,22 @@ export class ComputeSourceEscapingLinkError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
+  }
+}
+
+/**
+ * `[compute.<name>] exclude` records a pattern the CLI cannot act on.
+ *
+ * Refused rather than skipped, because the setting exists to keep a specific file out of an
+ * archive that is uploaded and built: a pattern read as something other than what it says, or
+ * dropped, ships the secret or the stale dependency tree it was written to withhold.
+ */
+export class InvalidComputeExcludeError extends Data.TaggedError("InvalidComputeExcludeError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 
@@ -97,6 +114,17 @@ export class UnknownComputeExposureError extends Data.TaggedError("UnknownComput
   }
 }
 
+export class UnknownComputeSecretsScopeError extends Data.TaggedError(
+  "UnknownComputeSecretsScopeError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 export class MissingComputeExposureError extends Data.TaggedError("MissingComputeExposureError")<{
   readonly detail: string;
   readonly suggestion: string;
@@ -112,18 +140,6 @@ export class ComputeDirectoryExistsError extends Data.TaggedError("ComputeDirect
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
-  }
-}
-
-/** A compute scaffold cannot safely edit a JSON-authoritative project config. */
-export class ComputeJsonConfigUnsupportedError extends Data.TaggedError(
-  "ComputeJsonConfigUnsupportedError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
   }
 }
 
@@ -276,45 +292,6 @@ export class ComputeApiUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-/** The user answered the `delete` confirmation with something other than the name. */
-export class ComputeDeleteNotConfirmedError extends Data.TaggedError(
-  "ComputeDeleteNotConfirmedError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
-/**
- * `delete` could not ask for confirmation and was not told to skip it.
- *
- * There is nowhere to read a typed answer from without an interactive terminal,
- * and the alternative to refusing is deleting on the strength of the command
- * line alone — so a redirected stdout or a CI runner has to pass `--yes`
- * (or `SUPABASE_YES`) to say that out loud.
- */
-export class ComputeDeleteConfirmationRequiredError extends Data.TaggedError(
-  "ComputeDeleteConfirmationRequiredError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * The logs query itself failed. The analytics endpoint can answer HTTP 200 with a populated
- * `error` field, so this isn't reachable from a status code alone; it also covers the server's
- * 30-second query timeout, which arrives as a non-2xx. Kept apart from {@link
- * ComputeApiUnexpectedStatusError} because the SQL here is the CLI's own, not user input — its
- * own fingerprint keeps a broken projection or filter visible instead of blending into transport
- * noise.
- */
 export class ComputeLogsQueryFailedError extends Data.TaggedError("ComputeLogsQueryFailedError")<{
   readonly detail: string;
   readonly suggestion: string;
@@ -324,7 +301,6 @@ export class ComputeLogsQueryFailedError extends Data.TaggedError("ComputeLogsQu
   }
 }
 
-/** The project has exhausted its log query allowance (402). */
 export class ComputeLogsUsageExceededError extends Data.TaggedError(
   "ComputeLogsUsageExceededError",
 )<{
@@ -336,11 +312,6 @@ export class ComputeLogsUsageExceededError extends Data.TaggedError(
   }
 }
 
-/**
- * The analytics endpoints allow 10 requests per 60 seconds, which `--follow` polls against — so
- * 429 is an ordinary outcome here, not an edge case. Its own error lets the suggestion name the
- * poll interval as the thing to slow down.
- */
 export class ComputeLogsRateLimitedError extends Data.TaggedError("ComputeLogsRateLimitedError")<{
   readonly detail: string;
   readonly suggestion: string;

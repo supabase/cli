@@ -1,6 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, FileSystem, Path, Predicate, Schema } from "effect";
+import { Effect, Option, FileSystem, Path, PlatformError, Predicate, Schema } from "effect";
+import { parseJsonc } from "@supabase/config/internal";
+import * as SmolToml from "smol-toml";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
 import {
   ComputeAlreadyConfiguredError,
@@ -11,8 +13,13 @@ import {
   InvalidComputeSourceError,
   MissingComputeNameError,
   ComputeDirectoryExistsError,
-  ComputeJsonConfigUnsupportedError,
 } from "../../../../shared/compute/compute.errors.ts";
+import {
+  COMPUTE_RUNTIME_EXCLUSIONS,
+  type ComputeRuntime,
+} from "../../../../shared/compute/compute-runtimes.ts";
+import { resolveWorkdir } from "../../../../config/command-settings.layer.ts";
+import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import { computeNew } from "./new.handler.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
@@ -24,6 +31,18 @@ project_id = "demo"
 verify_jwt = false
 `;
 
+/**
+ * The `exclude = [...]` line `new` writes for a runtime, derived from the runtime's own list
+ * rather than restated: which patterns a runtime chooses is asserted where the patterns are
+ * matched, and the claim here is only that the list reaches `config.toml` as a TOML array.
+ */
+function excludeLine(runtime: ComputeRuntime): string {
+  const patterns = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
+  return patterns.length === 0
+    ? ""
+    : `exclude = [${patterns.map((pattern) => `"${pattern}"`).join(", ")}]\n`;
+}
+
 function flags(overrides: Partial<ComputeNewFlags> = {}): ComputeNewFlags {
   return {
     name: Option.some("api"),
@@ -32,8 +51,21 @@ function flags(overrides: Partial<ComputeNewFlags> = {}): ComputeNewFlags {
     exposure: Option.none(),
     instances: Option.none(),
     source: Option.none(),
+    secretsScope: Option.none(),
+    secretsScopeCustom: Option.none(),
     ...overrides,
   };
+}
+
+function writeDenied(target: string) {
+  return Effect.fail(
+    PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "writeFileString",
+      pathOrDescriptor: target,
+    }),
+  );
 }
 
 const project = Effect.fnUntraced(function* (files: Readonly<Record<string, string>> = {}) {
@@ -50,7 +82,7 @@ const project = Effect.fnUntraced(function* (files: Readonly<Record<string, stri
 });
 
 describe("compute new", () => {
-  it.live("scaffolds the runtime's starter files and records the choice", () =>
+  it.effect("scaffolds the runtime's starter files and records the choice", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -63,7 +95,9 @@ describe("compute new", () => {
         const computeDir = path.join(repo.dir, "supabase", "compute", "api");
         expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         expect(yield* repo.config).toBe(
-          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
+          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\nsecrets_scope = "all"\n${excludeLine(
+            "node",
+          )}`,
         );
 
         // Declarative line first, then the detail rows, then the next step —
@@ -75,7 +109,7 @@ describe("compute new", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
-  it.live("asks for the name when the command line carries none", () =>
+  it.effect("asks for the name when the command line carries none", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -102,7 +136,7 @@ describe("compute new", () => {
 
   // The prompt is the last place a mistyped or taken name can be corrected
   // without ending the run, so it refuses both there rather than after asking.
-  it.live("refuses a bad or already-recorded name at the name prompt", () =>
+  it.effect("refuses a bad or already-recorded name at the name prompt", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -130,10 +164,10 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live.each([
+  it.effect.each([
     { label: "not interactive", setup: { interactive: false } },
     // Stdout is a TTY, but claimed by the payload, so a prompt would corrupt it.
-    { label: "-o json", setup: { goOutput: "json" as const } },
+    { label: "-o json", setup: { outputFlag: "json" as const } },
     // `printf 'orders\n' | supabase compute new`: stdout is still a
     // terminal, so `output.interactive` on its own would have fed the pipe
     // straight into the name prompt instead of taking this documented path.
@@ -168,7 +202,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("prompts for runtime, size and exposure when none is given", () =>
+  it.effect("prompts for runtime, size, exposure and secrets scope when none is given", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -185,6 +219,7 @@ describe("compute new", () => {
           "Which runtime should this compute use?",
           "Which instance size should this compute use?",
           "Should this compute be reachable from the internet?",
+          "Which secrets should be available for this compute?",
         ]);
         expect(yield* repo.config).toContain('runtime = "node"');
         expect(yield* repo.config).toContain('size = "4gb"');
@@ -199,7 +234,7 @@ describe("compute new", () => {
   // The whole reason `new` records it: `push` sends a complete spec every time,
   // so an entry with no `exposure` is deployed public by the next bare `push`.
   // Recording the answer is what makes a private compute stay private.
-  it.live("records the chosen exposure so a later push keeps it", () =>
+  it.effect("records the chosen exposure so a later push keeps it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -214,7 +249,7 @@ describe("compute new", () => {
 
   // The count a scaffold cannot guess: `--instances` has no prompt, so it is
   // recorded when given and left out when not.
-  it.live("records an instance count that differs from the default", () =>
+  it.effect("records an instance count that differs from the default", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -234,7 +269,7 @@ describe("compute new", () => {
   // schema types `instances` as one, so a quoted `"3"` renders a config.toml
   // that no longer decodes — which only shows up on the *next* load, not on the
   // write that caused it. Scaffolding a second compute is that next load.
-  it.live("writes a count the config loader can read back", () =>
+  it.effect("writes a count the config loader can read back", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -251,7 +286,7 @@ describe("compute new", () => {
 
   // Zero is an explicit count — it scales the compute to nothing — not an absent
   // one, so it has to survive the "only record a non-default" rule.
-  it.live("records a zero instance count", () =>
+  it.effect("records a zero instance count", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -266,7 +301,7 @@ describe("compute new", () => {
 
   // An absent `instances` and `instances = 1` mean the same thing to `push`, so
   // the scaffold does not commit a line that says nothing.
-  it.live("writes no instance count when nothing names one", () =>
+  it.effect("writes no instance count when nothing names one", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -279,7 +314,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("writes no instance count when the default is named explicitly", () =>
+  it.effect("writes no instance count when the default is named explicitly", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -295,7 +330,7 @@ describe("compute new", () => {
   // Written even when it is the default, the same way `runtime` and `size` are:
   // an absent key and `public` mean the same thing to `push` today, but only the
   // written one survives a change of default.
-  it.live("records the default exposure when nothing names one", () =>
+  it.effect("records the default exposure when nothing names one", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
@@ -308,9 +343,102 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  // Written even when it is the default, the same way `runtime` and `size
+  it.effect("records the default secrets scope when nothing names one", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ name: Option.some("api") }));
+
+        expect(yield* repo.config).toContain('secrets_scope = "all"');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("records a secrets scope that differs from the default", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ secretsScope: Option.some("supabase") }));
+
+        expect(yield* repo.config).toContain('secrets_scope = "supabase"');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("records custom secrets scope as array", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(
+          flags({ secretsScopeCustom: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]) }),
+        );
+
+        expect(yield* repo.config).toContain('secrets_scope = ["STRIPE_KEY", "ANTHROPIC_KEY"]');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // Written into config.toml rather than applied invisibly at push time, so the list is
+  // visible and editable and `push` needs no built-in defaults of its own.
+  describe("the chosen runtime's default exclude patterns", () => {
+    it.effect.each(["node", "deno", "dockerfile"] as const)(
+      "records the %s runtime's own list",
+      (runtime) =>
+        Effect.gen(function* () {
+          const repo = yield* project();
+          const { layer } = setupCompute({ workdir: repo.dir });
+
+          return yield* Effect.gen(function* () {
+            yield* computeNew(flags({ runtime: Option.some(runtime) }));
+
+            expect(yield* repo.config).toContain(excludeLine(runtime).trimEnd());
+          }).pipe(Effect.provide(layer));
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // The written entry has to be loadable, or the scaffold leaves behind a project whose
+    // config nothing can read — the patterns are quoted strings in a TOML array, which is
+    // exactly the shape a hand-rolled renderer gets wrong.
+    it.effect("writes them as a list the config loader reads back", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ runtime: Option.some("node") }));
+
+          expect(SmolToml.parse(yield* repo.config)).toMatchObject({
+            compute: { api: { exclude: [...COMPUTE_RUNTIME_EXCLUSIONS.node] } },
+          });
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("reports them alongside the compute's other dials", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer, out } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ runtime: Option.some("node") }));
+
+          expect(out.stdoutText).toContain("Excluded");
+          expect(out.stdoutText).toContain(".env");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
+
   // The runtime and size prompts do have defaults to fall back on, so a piped
   // stdin must leave them unasked rather than consuming the pipe.
-  it.live("takes the defaults without prompting when stdin is piped", () =>
+  it.effect("takes the defaults without prompting when stdin is piped", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -326,11 +454,12 @@ describe("compute new", () => {
         expect(yield* repo.config).toContain('runtime = "deno"');
         expect(yield* repo.config).toContain('size = "2gb"');
         expect(yield* repo.config).toContain('exposure = "public"');
+        expect(yield* repo.config).toContain('secrets_scope = "all"');
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("falls back to the defaults without prompting when not interactive", () =>
+  it.effect("falls back to the defaults without prompting when not interactive", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir, format: "json" });
@@ -347,7 +476,7 @@ describe("compute new", () => {
 
   // A second `new` for the same name is refused rather than re-recorded. Changing
   // a compute that exists is a `config.toml` edit, and the file is the user's.
-  it.live("refuses a name that config.toml already records", () =>
+  it.effect("refuses a name that config.toml already records", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir });
@@ -359,6 +488,7 @@ describe("compute new", () => {
             runtime: Option.some("deno"),
             size: Option.some("4gb"),
             exposure: Option.some("public"),
+            secretsScope: Option.some("all"),
           }),
         );
         const recorded = yield* repo.config;
@@ -377,7 +507,7 @@ describe("compute new", () => {
 
   // Refused whichever way the entry happens to be written — the decoded config
   // is what answers "does this exist", so no TOML shape matters here.
-  it.live.each(['compute.api.runtime = "node"', "[compute.api]"])(
+  it.effect.each(['compute.api.runtime = "node"', "[compute.api]"])(
     "refuses an entry recorded as %s",
     (entry) =>
       Effect.gen(function* () {
@@ -400,7 +530,7 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses a JSON-only ancestor even when the name is already configured", () =>
+  it.effect("reads a JSON-only ancestor config and refuses a name it already records", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -412,21 +542,25 @@ describe("compute new", () => {
       });
       const sub = path.join(created.dir, "nested", "dir");
       yield* fs.makeDirectory(sub, { recursive: true });
-      const { layer } = setupCompute({ workdir: sub, explicitWorkdir: false });
+      const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
+      const { layer } = setupCompute({
+        workdir: resolved.workdir,
+        explicitWorkdir: resolved.explicit,
+      });
 
       return yield* Effect.gen(function* () {
         const error = yield* computeNew(
           flags({ name: Option.some("api"), runtime: Option.some("deno") }),
         ).pipe(Effect.flip);
 
-        expect(Predicate.isTagged(error, "ComputeJsonConfigUnsupportedError")).toBe(true);
+        expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
         // Nothing was scaffolded at the subdirectory either.
         expect(yield* fs.exists(path.join(sub, "supabase"))).toBe(false);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "does not refuse the same name when --workdir is explicit (writer and reader agree on the same root)",
     () =>
       Effect.gen(function* () {
@@ -454,7 +588,7 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("records a --source compute relative to the project root", () =>
+  it.effect("records a --source compute relative to the project root", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -477,7 +611,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses a --source outside the directories a compute may own", () =>
+  it.effect("refuses a --source outside the directories a compute may own", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -504,7 +638,7 @@ describe("compute new", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
-  it.live("scaffolds in a directory that has no Supabase project yet", () =>
+  it.effect("scaffolds in a directory that has no Supabase project yet", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -517,7 +651,7 @@ describe("compute new", () => {
         const computeDir = path.join(created.dir, "supabase", "compute", "api");
         expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         expect(yield* fs.readFileString(path.join(created.dir, "supabase", "config.toml"))).toBe(
-          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
+          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\nsecrets_scope = "all"\n${excludeLine("node")}`,
         );
         // An EXPLICIT --workdir has no cwd-relative reading, so the success
         // message names the absolute path rather than a project-root-relative one.
@@ -526,7 +660,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses a destination that already has something in it", () =>
+  it.effect("refuses a destination that already has something in it", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -548,7 +682,7 @@ describe("compute new", () => {
 
   // Scaffolding into an empty directory is fine — it is only a destination with
   // contents that is refused.
-  it.live("scaffolds into a directory that exists but is empty", () =>
+  it.effect("scaffolds into a directory that exists but is empty", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -568,7 +702,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("tells the user how to proceed when the destination is occupied", () =>
+  it.effect("tells the user how to proceed when the destination is occupied", () =>
     Effect.gen(function* () {
       const repo = yield* project({ "supabase/compute/api/leftover.txt": "old" });
       const { layer } = setupCompute({ workdir: repo.dir });
@@ -588,7 +722,7 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects a name that could not become a hostname", () =>
+  it.effect("rejects a name that could not become a hostname", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -605,10 +739,10 @@ describe("compute new", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
-  it.live("keeps stdout parseable under -o json", () =>
+  it.effect("keeps stdout parseable under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({ workdir: repo.dir, goOutput: "json" });
+      const { layer, out } = setupCompute({ workdir: repo.dir, outputFlag: "json" });
 
       return yield* Effect.gen(function* () {
         yield* computeNew(flags({ runtime: Option.some("node") }));
@@ -626,6 +760,7 @@ describe("compute new", () => {
           size: "2gb",
           vcpu: 1,
           exposure: "public",
+          secrets_scope: "all",
           instances: 1,
         });
       }).pipe(Effect.provide(layer));
@@ -635,16 +770,17 @@ describe("compute new", () => {
   // The count and the exposure are recorded sparsely — `instances` is left out
   // of config.toml at the default — so the payload is the only place a caller
   // can read what this scaffold will actually deploy as.
-  it.live("reports the chosen exposure and count under -o json", () =>
+  it.effect("reports the chosen exposure, secrets scope and count under -o json", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({ workdir: repo.dir, goOutput: "json" });
+      const { layer, out } = setupCompute({ workdir: repo.dir, outputFlag: "json" });
 
       return yield* Effect.gen(function* () {
         yield* computeNew(
           flags({
             runtime: Option.some("node"),
             exposure: Option.some("private"),
+            secretsScopeCustom: Option.some(["STRIPE_KEY", "ANTHROPIC_KEY"]),
             instances: Option.some(3),
           }),
         );
@@ -653,13 +789,14 @@ describe("compute new", () => {
           yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(out.stdoutText),
         ).toMatchObject({
           exposure: "private",
+          secrets_scope: ["STRIPE_KEY", "ANTHROPIC_KEY"],
           instances: 3,
         });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("shows the exposure and declared count in the details block", () =>
+  it.effect("shows the exposure, secrets scope and declared count in the details block", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({ workdir: repo.dir });
@@ -669,6 +806,7 @@ describe("compute new", () => {
           flags({
             runtime: Option.some("node"),
             exposure: Option.some("private"),
+            secretsScope: Option.some("none"),
             instances: Option.some(3),
           }),
         );
@@ -676,6 +814,11 @@ describe("compute new", () => {
         // `Access`, the way `compute status` and `push` label the same field.
         expect(out.stdoutText).toContain("Access");
         expect(out.stdoutText).toContain("private");
+
+        // `Secrets Scope`, the way `compute status` and `push` label the same field.
+        expect(out.stdoutText).toContain("Secrets Scope");
+        expect(out.stdoutText).toContain("none");
+
         // `declared`, because nothing is running yet — a bare count would read as
         // a live tally.
         expect(out.stdoutText).toContain("3 declared");
@@ -686,7 +829,7 @@ describe("compute new", () => {
   // Why the config edit is planned before the starter files are written: this
   // failure is knowable up front, and discovering it afterwards would leave a
   // scaffold on disk that nothing records.
-  it.live("writes no scaffold at all when the config edit cannot be made", () =>
+  it.effect("writes no scaffold at all when the config edit cannot be made", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -708,54 +851,159 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live.each([false, true])(
-    "refuses JSON before prompts or writes (TOML present: %s)",
-    (withToml) =>
+  it.effect.each([false, true])(
+    "takes the scaffold back when config.toml cannot be written (destination already there: %s)",
+    (destinationExisted) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fs = yield* FileSystem.FileSystem;
-        const configJson = '{"project_id":"demo"}\n';
-        const repo = yield* makeComputeProject({
-          "supabase/config.json": configJson,
-          ...(withToml ? { "supabase/config.toml": CONFIG_WITH_COMMENTS } : {}),
-        });
-        const { layer, out } = setupCompute({ workdir: repo.dir });
+        const repo = yield* project();
+        const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+        if (destinationExisted) yield* fs.makeDirectory(computeDir, { recursive: true });
+        const { layer } = setupCompute({ workdir: repo.dir });
+
         return yield* Effect.gen(function* () {
-          const error = yield* computeNew(flags({ name: Option.none() })).pipe(Effect.flip);
-          expect(error).toBeInstanceOf(ComputeJsonConfigUnsupportedError);
-          expect(out.promptTextCalls).toEqual([]);
-          expect(out.promptSelectCalls).toEqual([]);
-          expect(yield* fs.readFileString(path.join(repo.dir, "supabase", "config.json"))).toBe(
-            configJson,
+          const error = yield* computeNew(
+            flags({ name: Option.some("api"), runtime: Option.some("node") }),
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (target, data, options) =>
+                path.basename(target) === "config.toml"
+                  ? writeDenied(target)
+                  : fs.writeFileString(target, data, options),
+            }),
+            Effect.flip,
           );
-          const tomlPath = path.join(repo.dir, "supabase", "config.toml");
-          if (withToml) expect(yield* fs.readFileString(tomlPath)).toBe(CONFIG_WITH_COMMENTS);
-          else expect(yield* fs.exists(tomlPath)).toBe(false);
-          expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
+
+          expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+          expect(yield* fs.exists(computeDir)).toBe(destinationExisted);
+          if (destinationExisted) expect(yield* fs.readDirectory(computeDir)).toEqual([]);
+          expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+
+          yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
+          expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses an unconfigured JSON-only ancestor before asking for a name", () =>
+  it.effect("takes back the starters it wrote when a later one cannot be written", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      const configJson = '{"project_id":"demo"}\n';
-      const repo = yield* makeComputeProject({ "supabase/config.json": configJson });
-      const child = path.join(repo.dir, "nested");
-      yield* fs.makeDirectory(child);
-      const { layer, out } = setupCompute({ workdir: child, explicitWorkdir: false });
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const starters = Object.keys(COMPUTE_STACKS.dockerfile);
+      const { layer } = setupCompute({ workdir: repo.dir });
+
       return yield* Effect.gen(function* () {
-        const error = yield* computeNew(flags({ name: Option.none() })).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(ComputeJsonConfigUnsupportedError);
-        expect(out.promptTextCalls).toEqual([]);
-        expect(out.promptSelectCalls).toEqual([]);
-        expect(yield* fs.readFileString(path.join(repo.dir, "supabase", "config.json"))).toBe(
-          configJson,
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("dockerfile") }),
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              path.basename(target) === starters.at(-1)
+                ? writeDenied(target)
+                : fs.writeFileString(target, data, options),
+          }),
+          Effect.flip,
         );
-        expect(yield* fs.readDirectory(child)).toEqual([]);
+
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(yield* fs.exists(computeDir)).toBe(false);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+
+        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("dockerfile") }));
+        expect((yield* fs.readDirectory(computeDir)).toSorted()).toEqual(starters.toSorted());
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keeps a file that lands in the destination before the config write fails", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") })).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              path.basename(target) === "config.toml"
+                ? fs
+                    .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
+                    .pipe(Effect.andThen(writeDenied(target)))
+                : fs.writeFileString(target, data, options),
+          }),
+          Effect.flip,
+        );
+
+        expect(yield* fs.readDirectory(computeDir)).toEqual(["notes.txt"]);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("leaves a dangling symlink at the destination in place", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const target = path.join(repo.dir, "supabase", "compute", "missing");
+      yield* fs.makeDirectory(path.dirname(computeDir), { recursive: true });
+      yield* fs.symlink(target, computeDir);
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("node") }),
+        ).pipe(Effect.flip);
+
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(yield* fs.readLink(computeDir)).toBe(target);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect.each([
+    { file: "config.json", source: '{"project_id":"demo"}\n' },
+    { file: "config.jsonc", source: '// keep me\n{"project_id":"demo",}\n' },
+  ])("records the entry in $file and keeps its comments", ({ file, source }) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* makeComputeProject({ [`supabase/${file}`]: source });
+      const { layer } = setupCompute({ workdir: repo.dir });
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
+        const written = yield* fs.readFileString(path.join(repo.dir, "supabase", file));
+        const parsed = parseJsonc(written) as { compute: Record<string, { runtime: string }> };
+        expect(parsed.compute["api"]?.runtime).toBe("node");
+        if (file === "config.jsonc") expect(written).toContain("// keep me");
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "config.toml"))).toBe(false);
-        expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
+        expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api"))).toBe(true);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("names the entry in JSON terms when the compute is already in config.json", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject({
+        "supabase/config.json": '{"project_id":"demo","compute":{"api":{"runtime":"node"}}}\n',
+      });
+      const { layer } = setupCompute({ workdir: repo.dir });
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("node") }),
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
+        expect(error).toMatchObject({ suggestion: expect.stringContaining("Edit compute.api in") });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -766,7 +1014,7 @@ describe("compute new", () => {
   // "supabase/compute/api"`, which resolves against the ancestor root to a
   // directory the scaffold never created, while the scaffold itself lands under
   // the workdir. Both sides have to name the same project.
-  it.live("records the compute in --workdir's own project, not an ancestor's", () =>
+  it.effect("records the compute in --workdir's own project, not an ancestor's", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -783,7 +1031,7 @@ describe("compute new", () => {
 
         // The workdir got both the entry and the scaffold it points at.
         expect(yield* fs.readFileString(path.join(workdir, "supabase", "config.toml"))).toBe(
-          '[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n',
+          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\nsecrets_scope = "all"\n${excludeLine("node")}`,
         );
         expect(
           yield* fs.exists(path.join(workdir, "supabase", "compute", "api", "index.mjs")),
@@ -796,7 +1044,7 @@ describe("compute new", () => {
   // the name is absent from the decoded section, so the already-configured
   // check does not fire. Parsing the plan is what refuses it — before the
   // scaffold is written, like every other refusal here.
-  it.live("writes no scaffold when [compute] is a sealed inline table", () =>
+  it.effect("writes no scaffold when [compute] is a sealed inline table", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -818,7 +1066,7 @@ describe("compute new", () => {
 
   // A plain file must not read as an empty directory: that fails with a bare
   // EEXIST from `makeDirectory` instead of naming what is in the way.
-  it.live("refuses a plain file at the destination", () =>
+  it.effect("refuses a plain file at the destination", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -840,7 +1088,7 @@ describe("compute new", () => {
 
   // A relative `--source` is something typed at a shell prompt, so it means
   // what it would mean to the shell: relative to where you are.
-  it.live("resolves a relative --source against the directory it was typed in", () =>
+  it.effect("resolves a relative --source against the directory it was typed in", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -872,12 +1120,12 @@ describe("compute new", () => {
   // Clack writes its prompt UI to stdout with no stream override, and `-o json`
   // leaves `output.format` as `text` — so a prompt lands in front of the payload
   // exactly as the notices did.
-  it.live("does not prompt under -o json, so stdout stays parseable", () =>
+  it.effect("does not prompt under -o json, so stdout stays parseable", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "json",
+        outputFlag: "json",
         // Answers are available, so a prompt would succeed and corrupt stdout
         // rather than fail the test some other way.
         promptSelectResponses: ["node", "4gb"],
@@ -900,7 +1148,7 @@ describe("compute new", () => {
   // means the prompt layer handed back something off-menu. Recording it verbatim
   // would put a runtime into config.toml that `push` then refuses; the default
   // is the one answer that still scaffolds something deployable.
-  it.live("falls back to the defaults when a prompt answers off-menu", () =>
+  it.effect("falls back to the defaults when a prompt answers off-menu", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -916,16 +1164,19 @@ describe("compute new", () => {
           exposure: Option.none(),
           instances: Option.none(),
           source: Option.none(),
+          secretsScope: Option.none(),
+          secretsScopeCustom: Option.none(),
         });
 
         expect(yield* repo.config).toContain(`runtime = "deno"`);
         expect(yield* repo.config).toContain(`size = "2gb"`);
         expect(yield* repo.config).toContain(`exposure = "public"`);
+        expect(yield* repo.config).toContain(`secrets_scope = "all"`);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses --source pointed at the project config file", () =>
+  it.effect("refuses --source pointed at the project config file", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const repo = yield* project();
@@ -953,7 +1204,7 @@ describe("compute new", () => {
   // supabase/compute/<name>/ tree (plus a new config.toml) at the wrong path.
   // `validateWorkdirIsDirectory` must now fail first, before anything on
   // disk changes.
-  it.live(
+  it.effect(
     "fails without scaffolding anything when --workdir names a directory that does not exist at all",
     () =>
       Effect.gen(function* () {

@@ -11,6 +11,7 @@ describe("buildPostgrestEnv", () => {
     schemas: ["public", "graphql_public"],
     extraSearchPath: ["public", "extensions"],
     maxRows: 1000,
+    dbPool: undefined,
     dbHost: "supabase_db_proj",
     dbPassword: "postgres",
     jwks: '{"keys":[]}',
@@ -34,7 +35,7 @@ describe("buildPostgrestEnv", () => {
     expect(env["PGRST_JWT_SECRET"]).toBe('{"keys":["fake"]}');
   });
 
-  test("matches Go's remaining static env values", () => {
+  test("sets the remaining static env values", () => {
     const env = buildPostgrestEnv(base);
     expect(env).toMatchObject({
       PGRST_DB_MAX_ROWS: "1000",
@@ -52,6 +53,7 @@ describe("buildPostgrestContainerSpec", () => {
     schemas: ["public"],
     extraSearchPath: ["public"],
     maxRows: 1000,
+    dbPool: undefined,
     dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
     jwks: '{"keys":[]}',
   };
@@ -64,7 +66,7 @@ describe("buildPostgrestContainerSpec", () => {
     );
   });
 
-  test("has no healthcheck, no ports, and no exposedPorts — matching Go's PostgREST container.Config", () => {
+  test("has no healthcheck, no ports, and no exposedPorts", () => {
     const spec = buildPostgrestContainerSpec(input);
     expect(spec.healthcheck).toBeUndefined();
     expect(spec.ports).toBeUndefined();

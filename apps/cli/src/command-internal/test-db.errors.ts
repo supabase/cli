@@ -2,6 +2,7 @@ import { Data } from "effect";
 
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
@@ -21,9 +22,10 @@ export class TestDbEnablePgtapError extends Data.TaggedError("TestDbEnablePgtapE
  */
 export class TestDbRunError extends Data.TaggedError("TestDbRunError")<{
   readonly message: string;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
+    return causeDeclaration(this.cause) ?? actionability.dbFinding;
   }
 }
 
@@ -37,16 +39,5 @@ export class TestDbNoTestsError extends Data.TaggedError("TestDbNoTestsError")<{
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
-  }
-}
-
-/** More than one of `--db-url` / `--linked` / `--local` was set. */
-export class TestDbMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "TestDbMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
   }
 }

@@ -2,7 +2,7 @@
 
 Shows the configuration differences between the local `supabase/config.toml` and the effective configuration of a remote project or branch. Read-only: it never modifies the local file or any remote configuration.
 
-Pass `--project-ref` to compare against a specific project, or the name (or UUID) of a branch of the currently linked project — values that are exactly 20 lowercase letters are always treated as project refs. Without it, the linked project is the target. When the target ref matches a `[remotes.*]` block's `project_id`, that block's merged config is the local side of the comparison.
+Pass `--remote=<ref|branch>` to compare against a specific project, or the name (or UUID) of a branch of the currently linked project — values that are exactly 20 lowercase letters are always treated as project refs. Without it, the linked project is the target. `--project-ref` still works in v3 but is deprecated and removed in v4; use `--remote`. When the target ref matches a `[remotes.*]` block's `project_id`, that block's merged config is the local side of the comparison.
 
 Only platform-managed properties are compared. Local-stack-only sections — `[studio]`, `[analytics]`, `[functions]`, `[edge_runtime]`, port numbers, image version pins, `[db.migrations]`, and similar — have no hosted counterpart and are never reported, whether or not your file declares them.
 
@@ -12,4 +12,4 @@ Local values are shown as the configuration your file would produce once pushed,
 
 With `--exit-code`, the command exits `2` when any difference is found, keeping exit `1` for errors — so scripts can distinguish drift from failure.
 
-Machine-readable output is available through `--output-format json|stream-json` — a versioned payload (`schema_version`, `config_schema`, `target`, `scope`, `changes[]`, `masked[]`, `unmanaged[]`, `counts`) with per-change `path`s as segment arrays. The legacy global `-o`/`--output` flag is not supported by this command; use `--output-format json|stream-json` instead.
+Machine-readable output is available through `--output-format json|stream-json` — a versioned payload (`schema_version`, `config_schema`, `target`, `scope`, `changes[]`, `masked[]`, `unmanaged[]`, `counts`) with per-change `path`s as segment arrays. `target` identifies the compared project: `kind` (`linked`), `project_ref`, `project_name` and `environment` (`production`, `branch` or `unverified`) when known, `parent_project_ref` for a branch, `branch` when it was named, and `local_scope` (`base` or `remotes.<name>`). The legacy global `-o`/`--output` flag is not supported by this command; use `--output-format json|stream-json` instead.

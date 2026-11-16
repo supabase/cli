@@ -1,3 +1,5 @@
+import { DateTime, Option } from "effect";
+
 function pad2(value: number): string {
   return value.toString().padStart(2, "0");
 }
@@ -14,11 +16,9 @@ export function formatTimestamp(value: string): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) {
     return value;
   }
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return value;
-  const date = new Date(parsed);
-  return (
-    `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ` +
-    `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`
-  );
+  /* `Date.parse` reads a zone-less value as local time; `DateTime.make(value)` would read it as UTC. */
+  const parsed = DateTime.make(Date.parse(value));
+  if (Option.isNone(parsed)) return value;
+  const { year, month, day, hour, minute, second } = DateTime.toPartsUtc(parsed.value);
+  return `${year}-${pad2(month)}-${pad2(day)} ${pad2(hour)}:${pad2(minute)}:${pad2(second)}`;
 }

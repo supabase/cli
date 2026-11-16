@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { dbRemoteChangesCommand } from "./changes/changes.command.ts";
 import { dbRemoteCommitCommand } from "./commit/commit.command.ts";
 

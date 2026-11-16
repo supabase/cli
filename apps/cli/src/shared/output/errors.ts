@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Cause, Data, Effect, Runtime } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -29,3 +29,37 @@ export class NonInteractiveError extends Data.TaggedError("NonInteractiveError")
     return actionability.provideFlags;
   }
 }
+
+/**
+ * The process reading stdout closed it, for example `supabase … | head`. It ends the command
+ * through its finalizers and exits 0, the way a Unix tool stops on a broken pipe.
+ */
+export class StdoutClosedError extends Data.TaggedError("StdoutClosedError") {
+  override readonly [Runtime.errorExitCode] = 0;
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
+
+/**
+ * The failures a run still has to report once a closed stdout is set aside, or `undefined` when
+ * the closed stdout, and the interruptions it caused, are all that ended the run.
+ */
+export const failureBesideClosedStdout = <E>(cause: Cause.Cause<E>): Cause.Cause<E> | undefined => {
+  const isClosedStdout = (reason: Cause.Reason<E>) =>
+    Cause.isDieReason(reason) && reason.defect instanceof StdoutClosedError;
+  if (!cause.reasons.some(isClosedStdout)) return cause;
+  const remaining = cause.reasons.filter((reason) => !isClosedStdout(reason));
+  return remaining.every(Cause.isInterruptReason) ? undefined : Cause.fromReasons(remaining);
+};
+
+/** Lets a final message to a closed stdout be dropped, so it cannot replace the outcome it reports. */
+export const ignoreStdoutClosed = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A | void, E, R> =>
+  effect.pipe(
+    Effect.catchDefect((defect) =>
+      defect instanceof StdoutClosedError ? Effect.void : Effect.die(defect),
+    ),
+  );

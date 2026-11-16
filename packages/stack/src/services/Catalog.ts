@@ -1,6 +1,7 @@
-import { Crypto, Effect, FileSystem, Path, Ref, Schema, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
+import { Effect, FileSystem, Path, Ref, Schema, Tuple } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
+import { ChildProcessSpawner } from "effect/process";
+import { HttpClient } from "effect/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { ServiceError, type ServiceDefinition } from "../Service.ts";
 import {
@@ -8,6 +9,7 @@ import {
   DatabaseConfig,
   DatabaseCreation,
   DatabaseEndpoints,
+  pinnedDatabaseConfig,
   type DatabaseComponent,
 } from "./Database.ts";
 import * as Analytics from "./Analytics.ts";
@@ -21,18 +23,20 @@ import * as Realtime from "./Realtime.ts";
 import * as Rest from "./Rest.ts";
 import * as Storage from "./Storage.ts";
 import * as Studio from "./Studio.ts";
-import * as Vector from "./Vector.ts";
 import {
   CatalogError,
+  serviceCreation,
   type CatalogOptions,
   type CatalogRecipe as RecipeCatalogRecipe,
   type ProcessRecipeResult,
+  type ServiceEndpoint,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
-import type { ServiceKind } from "../Artifacts.ts";
+import { borrow } from "../namespace/Paths.ts";
+import { missingInput } from "./ServiceConfig.ts";
+import type { SnapshotScope } from "./DatabaseSnapshot.ts";
+import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
 import type { ServiceInstanceContext } from "../Service.ts";
-
-export type { CatalogLog } from "./Recipe.ts";
 
 const endpointSchemas = [
   ["database", DatabaseEndpoints],
@@ -46,7 +50,6 @@ const endpointSchemas = [
   ["pgmeta", Pgmeta.Endpoints],
   ["mail", Mail.Endpoints],
   ["analytics", Analytics.Endpoints],
-  ["vector", Vector.Endpoints],
   ["pooler", Pooler.Endpoints],
 ] as const;
 
@@ -86,10 +89,62 @@ export const ServiceCreation = Schema.Union([
   Pgmeta.Creation,
   Mail.Creation,
   Analytics.Creation,
-  Vector.Creation,
   Pooler.Creation,
 ]);
 export type ServiceCreation = Schema.Schema.Type<typeof ServiceCreation>;
+
+/** Inputs a service cannot launch without; a composition binding or the caller supplies them. */
+const requiredInputs: { readonly [K in ServiceKind]?: ReadonlyArray<string> } = {
+  rest: ["databaseUrl"],
+  auth: ["databaseUrl"],
+  realtime: ["databaseUrl"],
+  storage: ["databaseUrl"],
+  pgmeta: ["databaseUrl"],
+  analytics: ["databaseUrl"],
+  pooler: ["databaseUrl"],
+};
+
+/** Rejects a creation that lacks a required input before any lifecycle change. */
+export const requireInputs = (
+  creation: ServiceCreation,
+): Effect.Effect<ServiceCreation, ServiceError> => {
+  const config = new Map(Object.entries(creation.config));
+  const missing = (requiredInputs[creation.service] ?? []).find(
+    (input) => config.get(input) === undefined,
+  );
+  return missing === undefined
+    ? Effect.succeed(creation)
+    : Effect.fail(missingInput(creation.service, missing));
+};
+const DatabaseCreationInput = serviceCreation(
+  "database",
+  Schema.Struct({
+    ...DatabaseConfig.fields,
+    databasePassword: Schema.optionalKey(Schema.Redacted(Schema.String)),
+    jwtSecret: Schema.optionalKey(Schema.Redacted(Schema.String)),
+  }),
+  DatabaseEndpoints,
+);
+export const ServiceCreationInput = Schema.Union([
+  DatabaseCreationInput,
+  Rest.Creation,
+  Auth.Creation,
+  Realtime.Creation,
+  Storage.Creation,
+  Imgproxy.Creation,
+  Functions.Creation,
+  Studio.Creation,
+  Pgmeta.Creation,
+  Mail.Creation,
+  Analytics.Creation,
+  Pooler.Creation,
+]);
+export type ServiceCreationInput = Schema.Schema.Type<typeof ServiceCreationInput>;
+/** A restart candidate; a restart keeps the instance's saved pin. */
+export const ServiceRestartInput = ServiceCreationInput.mapMembers(
+  Tuple.map(Schema.fieldsAssign({ pin: Schema.optionalKey(Schema.Never) })),
+);
+export type ServiceRestartInput = Schema.Schema.Type<typeof ServiceRestartInput>;
 export const serviceSchemas = {
   database: DatabaseConfig,
   rest: Rest.Config,
@@ -102,7 +157,6 @@ export const serviceSchemas = {
   pgmeta: Pgmeta.Config,
   mail: Mail.Config,
   analytics: Analytics.Config,
-  vector: Vector.Config,
   pooler: Pooler.Config,
 } as const;
 
@@ -116,20 +170,22 @@ const serviceError = (operation: string, cause: unknown) =>
 const widen = <C extends { readonly service: ServiceKind }>(
   isCreation: (value: unknown) => value is C,
   definition: ServiceDefinition<C>,
-): ServiceDefinition<ServiceCreation> => ({
-  prepare: (candidate) =>
-    isCreation(candidate)
-      ? (definition.prepare?.(candidate) ?? Effect.void)
-      : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
-  launch: (context) =>
-    isCreation(context.config)
-      ? definition.launch({ ...context, config: context.config })
-      : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
-  removeData: (context) =>
-    isCreation(context.config)
-      ? definition.removeData({ ...context, config: context.config })
-      : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
-});
+): ServiceDefinition<ServiceCreation> => {
+  return {
+    prepare: (candidate) =>
+      isCreation(candidate)
+        ? (definition.prepare?.(candidate) ?? Effect.void)
+        : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
+    launch: (context) =>
+      isCreation(context.config)
+        ? definition.launch({ ...context, config: context.config })
+        : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
+    removeData: (context) =>
+      isCreation(context.config)
+        ? definition.removeData({ ...context, config: context.config })
+        : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
+  };
+};
 
 const catalogRecipe = <C extends ServiceCreation>(
   creation: C,
@@ -164,21 +220,24 @@ const databaseRecipe = (
   definition: {
     prepare: (candidate) =>
       candidate.service === "database"
-        ? (component.definition.prepare?.(candidate.config) ?? Effect.void)
+        ? (component.definition.prepare?.(pinnedDatabaseConfig(candidate)) ?? Effect.void)
         : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
     launch: (context) =>
       context.config.service === "database"
-        ? component.definition.launch({ ...context, config: context.config.config })
+        ? component.definition.launch({ ...context, config: pinnedDatabaseConfig(context.config) })
         : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
     removeData: (context) =>
       context.config.service === "database"
-        ? component.definition.removeData({ ...context, config: context.config.config })
+        ? component.definition.removeData({
+            ...context,
+            config: pinnedDatabaseConfig(context.config),
+          })
         : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
   },
   resetDatabaseData: (context) =>
     context.config.service === "database"
       ? component
-          .resetData({ ...context, config: context.config.config })
+          .resetData({ ...context, config: pinnedDatabaseConfig(context.config) })
           .pipe(
             Effect.mapError(
               (cause) => new CatalogError({ operation: "reset", message: cause.message, cause }),
@@ -187,9 +246,45 @@ const databaseRecipe = (
       : Effect.fail(
           new CatalogError({ operation: "reset", message: "Service kind cannot change" }),
         ),
+  saveDatabaseSnapshot: (context, key, scope) =>
+    context.config.service === "database"
+      ? component
+          .saveSnapshot({ ...context, config: pinnedDatabaseConfig(context.config) }, key, scope)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new CatalogError({ operation: "snapshot-save", message: cause.message, cause }),
+            ),
+          )
+      : Effect.fail(
+          new CatalogError({ operation: "snapshot-save", message: "Service kind cannot change" }),
+        ),
+  restoreDatabaseSnapshot: (context, key, scope) =>
+    context.config.service === "database"
+      ? component
+          .restoreSnapshot({ ...context, config: pinnedDatabaseConfig(context.config) }, key, scope)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new CatalogError({ operation: "snapshot-restore", message: cause.message, cause }),
+            ),
+          )
+      : Effect.fail(
+          new CatalogError({
+            operation: "snapshot-restore",
+            message: "Service kind cannot change",
+          }),
+        ),
   endpoint: (name) =>
     name === "sql"
       ? component.endpoint.pipe(
+          // node-postgres appends the `.s.PGSQL.<port>` suffix itself, so the database keeps the
+          // directory and port private; the catalog's endpoint carries the full socket filename.
+          Effect.map((value): ServiceEndpoint =>
+            value.kind === "unix"
+              ? { ...value, path: `${value.path}/.s.PGSQL.${value.port}` }
+              : value,
+          ),
           Effect.mapError(
             (cause) =>
               new CatalogError({
@@ -207,12 +302,7 @@ const databaseRecipe = (
             service: "database",
           }),
         ),
-  logs: component.logs.pipe(
-    Stream.mapError(
-      (cause) =>
-        new CatalogError({ operation: "logs", message: cause.message, service: "database", cause }),
-    ),
-  ),
+  logs: component.logs,
 });
 
 export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
@@ -220,12 +310,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
     Effect.gen(function* () {
       const endpointError = validateEndpointNames(input);
       if (endpointError !== undefined) return yield* endpointError;
-      if (isRecord(input) && input.service === "database" && input.version !== undefined)
-        return yield* new CatalogError({
-          operation: "config",
-          message: "Database artifact version belongs in config.version",
-          service: "database",
-        });
       const creation = yield* Schema.decodeUnknownEffect(ServiceCreation)(input).pipe(
         Effect.mapError(
           (cause) =>
@@ -234,16 +318,21 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
       );
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const digest = yield* Digest.Digest;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const client = yield* HttpClient.HttpClient;
       if (creation.service === "database") {
         const component = yield* makeDatabase({
           stackId: options.stackId,
           instanceId: options.instanceId,
+          project: options.project,
           root: options.root,
           cacheRoot: options.cacheRoot,
           runtime: options.runtime,
+          ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
+          ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+          ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -258,81 +347,94 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         return databaseRecipe(creation, component);
       }
       const container =
-        options.runtime === "native"
+        options.engineTarget === undefined
           ? undefined
-          : yield* makeContainerRuntime({ engine: options.runtime });
-      const deps: ProcessDependencies = { fs, path, crypto, client, spawner, container };
+          : yield* makeContainerRuntime({
+              target: options.engineTarget,
+              root: options.root,
+              imageMirrors: slimImageMirrors,
+              ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+            });
+      const borrowCallerPath = (candidate: string) =>
+        borrow(fs, path, candidate, options.root, (operation, cause) => {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          return new ServiceError({ operation, message, cause });
+        });
+      const deps: ProcessDependencies = {
+        fs,
+        path,
+        crypto,
+        digest,
+        client,
+        spawner,
+        container,
+        borrowCallerPath,
+      };
       switch (creation.service) {
         case "rest":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Rest.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Rest.makeSpec()),
             Schema.is(Rest.Creation),
           );
         case "auth":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Auth.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Auth.makeSpec()),
             Schema.is(Auth.Creation),
           );
         case "realtime":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Realtime.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Realtime.makeSpec()),
             Schema.is(Realtime.Creation),
           );
         case "storage":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Storage.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Storage.makeSpec()),
             Schema.is(Storage.Creation),
           );
         case "imgproxy":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Imgproxy.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Imgproxy.makeSpec()),
             Schema.is(Imgproxy.Creation),
           );
         case "functions":
           return catalogRecipe(
             creation,
-            yield* Functions.makeRecipe(creation, options, deps),
+            yield* Functions.makeRecipe(options, deps),
             Schema.is(Functions.Creation),
           );
         case "studio":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Studio.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Studio.makeSpec()),
             Schema.is(Studio.Creation),
           );
         case "pgmeta":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Pgmeta.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Pgmeta.makeSpec()),
             Schema.is(Pgmeta.Creation),
           );
         case "mail":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Mail.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Mail.makeSpec()),
             Schema.is(Mail.Creation),
           );
         case "analytics":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Analytics.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Analytics.makeSpec()),
             Schema.is(Analytics.Creation),
-          );
-        case "vector":
-          return catalogRecipe(
-            creation,
-            yield* makeProcessRecipe(creation, options, deps, Vector.makeSpec()),
-            Schema.is(Vector.Creation),
           );
         case "pooler":
           return catalogRecipe(
             creation,
-            yield* makeProcessRecipe(creation, options, deps, Pooler.makeSpec()),
+            yield* makeProcessRecipe(options, deps, Pooler.makeSpec()),
             Schema.is(Pooler.Creation),
           );
       }
@@ -343,4 +445,14 @@ export type CatalogRecipe = RecipeCatalogRecipe<ServiceCreation> & {
   readonly resetDatabaseData?: (
     context: ServiceInstanceContext<ServiceCreation>,
   ) => Effect.Effect<void, CatalogError>;
+  readonly saveDatabaseSnapshot?: (
+    context: ServiceInstanceContext<ServiceCreation>,
+    key: string,
+    scope: SnapshotScope,
+  ) => Effect.Effect<void, CatalogError>;
+  readonly restoreDatabaseSnapshot?: (
+    context: ServiceInstanceContext<ServiceCreation>,
+    key: string,
+    scope: SnapshotScope,
+  ) => Effect.Effect<boolean, CatalogError>;
 };

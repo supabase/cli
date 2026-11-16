@@ -126,9 +126,12 @@ export const pgDeltaSslProbeLayer = Layer.effect(
             return Effect.sync(() => socket.destroy());
           },
         );
+        yield* Effect.annotateCurrentSpan("db.ssl.supported", outcome === "tls");
         if (outcome === "refused") return false;
         return true;
-      });
+      }).pipe(
+        Effect.withSpan("PgDeltaSslProbe.probe", { attributes: { "server.port": target.port } }),
+      );
     return PgDeltaSslProbe.of({
       requireSsl: (dbUrl) =>
         Effect.gen(function* () {

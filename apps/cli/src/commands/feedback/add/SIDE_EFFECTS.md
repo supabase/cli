@@ -1,5 +1,7 @@
 # `supabase feedback add [message...] [--project-ref <ref>]`
 
+Target: account, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                            | Format                              | When                                                                                                                                                                                                                         |

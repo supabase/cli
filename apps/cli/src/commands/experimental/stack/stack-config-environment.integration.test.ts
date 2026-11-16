@@ -1,12 +1,14 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer } from "effect";
-import type { ServiceCreation } from "@supabase/stack/effect";
+import type { ServiceCreationInput } from "@supabase/stack/effect";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { mockCommandSettings, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 const project = (
   config: string,
@@ -15,11 +17,19 @@ const project = (
   createStackConfigProject(config, {
     prefix: "supabase-stack-config-env-",
     ...options,
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        BunCrypto.layer,
+        runtimeInfoLayer,
+        mockCommandSettings({ workdir: projectRoot }),
+        cliConfigValuesTestLayer,
+      ),
+    ),
   );
 
 const withEnvironment = <A, E, R>(
@@ -28,11 +38,11 @@ const withEnvironment = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   Object.entries(values).reduce((effect, [name, value]) => withEnvVar(name, value, effect), body);
 
-const service = (services: ReadonlyArray<ServiceCreation>, name: string) =>
+const service = (services: ReadonlyArray<ServiceCreationInput>, name: string) =>
   services.find((entry) => entry.service === name);
 
 describe("loadStackConfig environment overrides", () => {
-  it.live("keeps malformed Functions env out of database and config preparation", () =>
+  it.effect("keeps malformed Functions env out of database and config preparation", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "functions-env-malformed"\n');
       const fs = yield* FileSystem.FileSystem;
@@ -41,10 +51,10 @@ describe("loadStackConfig environment overrides", () => {
       const config = yield* load(root);
       const creations = yield* config.creations("functions-env-malformed");
       expect(service(creations, "database")?.service).toBe("database");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.live("uses shell > supabase dotenv > project-root dotenv precedence", () =>
+  it.effect("uses shell > supabase dotenv > project-root dotenv precedence", () =>
     Effect.gen(function* () {
       const root = yield* project(
         `project_id = "stack-config-env-precedence"
@@ -71,7 +81,7 @@ site_url = "from-config"
     }),
   );
 
-  it.live("applies env-only listener ports and leaves omitted ports automatic", () =>
+  it.effect("applies env-only listener ports and leaves omitted ports automatic", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "stack-config-env-only-ports"\n');
       const config = yield* withEnvironment(
@@ -79,7 +89,6 @@ site_url = "from-config"
           SUPABASE_API_PORT: "54321",
           SUPABASE_DB_PORT: "54322",
           SUPABASE_ANALYTICS_PORT: "55555",
-          SUPABASE_ANALYTICS_VECTOR_PORT: "55556",
         },
         load(root),
       );
@@ -87,9 +96,6 @@ site_url = "from-config"
       expect(service(recipes, "database")?.endpoints).toEqual({ sql: { port: 54322 } });
       expect(service(recipes, "rest")?.endpoints).toEqual({ http: { port: 54321 } });
       expect(service(recipes, "analytics")?.endpoints).toEqual({ http: { port: 55555 } });
-
-      expect(service(recipes, "vector")?.endpoints).toEqual({ http: { port: 55556 } });
-
       const defaults = yield* load(root);
       const defaultRecipes = yield* defaults.creations("automatic-ports");
       expect(service(defaultRecipes, "analytics")?.endpoints).toEqual({
@@ -98,7 +104,7 @@ site_url = "from-config"
     }),
   );
 
-  it.live("disables and re-enables Auth through the effective environment layer", () =>
+  it.effect("disables and re-enables Auth through the effective environment layer", () =>
     Effect.gen(function* () {
       const disabledRoot = yield* project('project_id = "stack-config-env-disable"\n', {
         supabaseEnv: "SUPABASE_AUTH_ENABLED=false\n",
@@ -123,7 +129,7 @@ enabled = false
     }),
   );
 
-  it.live("reports malformed environment ports as configuration errors", () =>
+  it.effect("reports malformed environment ports as configuration errors", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "stack-config-env-invalid-port"\n');
       const exit = yield* withEnvVar("SUPABASE_API_PORT", "not-a-port", load(root)).pipe(
@@ -134,17 +140,36 @@ enabled = false
     }),
   );
 
-  it.live("rejects the existing OrioleDB environment override", () =>
+  it.effect("applies the OrioleDB environment override before checking the catalog", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "stack-config-env-orioledb"\n');
+      const exit = yield* withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", "17.0.0.000", load(root)).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit))
+        expect(String(exit.cause)).toContain(
+          "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships",
+        );
+    }),
+  );
+
+  it.effect("rejects OrioleDB S3 settings given only through the environment", () =>
+    Effect.gen(function* () {
+      const [orioledb = ""] = orioledbVersions();
+      const root = yield* project(
+        `project_id = "stack-config-env-orioledb-s3"\n[db]\norioledb_version = "${orioledb}"\n`,
+      );
       const exit = yield* withEnvVar(
-        "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-        "15.1.1.14",
+        "SUPABASE_EXPERIMENTAL_S3_HOST",
+        "s3.example.test",
         load(root),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
-        expect(String(exit.cause)).toContain("experimental.orioledb_version");
+        expect(String(exit.cause)).toContain(
+          "experimental.s3_host is unsupported by the experimental stack",
+        );
     }),
   );
 });

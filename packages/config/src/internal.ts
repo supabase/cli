@@ -4,9 +4,17 @@
  *
  * `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` below are the same runtime
  * functions `./effect` exports, re-typed here to widen their options parameter to the
- * internal-only `goViperCompat` knob.
+ * internal-only `cliCompat` knob.
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export { withoutSafeIntegerBounds } from "./json-schema-document.ts";
+export {
+  DEFAULT_MIGRATION_CHECK_SEVERITY,
+  MIGRATION_CHECK_RULES,
+  mapMigrationCheckRules,
+  type MigrationCheckRule,
+  type MigrationCheckSeverity,
+} from "./db-migration-checks.ts";
 export {
   type AppliedConfigEdit,
   applyConfigEdits,
@@ -15,7 +23,13 @@ export {
   type ConfigEditRefusal,
   type ConfigEditRefusalReason,
   type ConfigEditValue,
+  updateJsonDocument,
 } from "./config-edit.ts";
+export {
+  CliConfigConvertError,
+  convertCliConfigTomlToJsonc,
+  type MovedTomlComment,
+} from "./config-convert.ts";
 export { projectConfigApiBlockKeys } from "./project-config/api-attributes.ts";
 export { dualScopeProjectConfigPaths } from "./project-config/project-config.ts";
 export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";
@@ -25,11 +39,41 @@ export { type ProjectConfigApiAttributes } from "./project-config/api-attributes
 export { type InternalLoadCliConfigOptions } from "./config-document.ts";
 export { resolveCliConfigValue, resolveCliConfigSubtree } from "./project.ts";
 export {
+  decodeMergedCliConfig,
+  type DecodeMergedCliConfigOptions,
   loadCliConfig,
+  mergeParsedCliConfig,
+  type MergedCliConfigDocument,
+  parseCliConfigDocumentFile,
+  type ParsedCliConfigDocument,
+  type ParseMergeCliConfigOptions,
   remoteNameForProjectRef,
   remoteProjectIdEntries,
+  createCliConfigDocumentText,
   writeCliConfigDocumentText,
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,
+  parseCliConfigDocument,
+  cliConfigFormatForPath,
 } from "./io.ts";
+export { JsoncSyntaxError, parseJsonc } from "./jsonc.ts";
+export { PROVIDER_SIGNUP_ALIASES } from "./lib/provider-signup.ts";
 export { CliConfigWriteError } from "./errors.ts";
+export { findUnknownCliConfigKeys } from "./unknown-keys.ts";
+export {
+  scanCliConfigDocument,
+  type CliConfigDocumentScan,
+  type CliConfigLocation,
+} from "./config-locate.ts";
+export { cliConfigSmtpIssues } from "./auth/email.ts";
+export { cliConfigExternalProviderIssues, EXTERNAL_PROVIDER_IDS } from "./auth/providers.ts";
+export { cliConfigSmsProviderIssues, SMS_PROVIDER_REQUIRED_FIELDS } from "./auth/sms.ts";
+export { cliConfigServiceVersionIssues } from "./local.ts";
+export { cliConfigMigrationChecksIssues } from "./db-migration-checks.ts";
+export { type CliConfigTableRuleIssue } from "./lib/table-rule.ts";
+export {
+  cliConfigStandIn,
+  collectCliConfigEnvReferences,
+  decodeCliConfigWithoutTableRules,
+  resolveCliConfigEnvReferences,
+} from "./cli-config-without-table-rules.ts";

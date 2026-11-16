@@ -24,8 +24,7 @@
   "publishConfig": {
     "access": "public",
     "executableFiles": [
-      "bin/supabase",
-      "bin/supabase-go"
+      "bin/supabase"
     ]
   },
   "preferUnplugged": true

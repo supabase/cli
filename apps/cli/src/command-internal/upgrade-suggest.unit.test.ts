@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, PlatformError, Redacted, Layer } from "effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { mockAnalytics, mockOutput } from "../../tests/helpers/mocks.ts";
@@ -13,7 +13,8 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
-import { suggestUpgrade } from "./upgrade-suggest.ts";
+import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
+import { suggestUpgrade, upgradeSuggestion } from "./upgrade-suggest.ts";
 
 const ORG_SLUG = "test-org";
 
@@ -130,27 +131,36 @@ describe("suggestUpgrade", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips when getProject fails", () => {
-    const { layer, analytics, out } = setup({ projectStatus: 500 });
+  it.live("skips when getProject is forbidden", () => {
+    const { layer, analytics, out, api } = setup({ projectStatus: 403 });
     return Effect.gen(function* () {
-      yield* suggestUpgrade({
+      const suggested = yield* suggestUpgrade({
         projectRef: VALID_REF,
         featureKey: "branching_limit",
         statusCode: 402,
       });
+      expect(suggested).toBe(false);
+      expect(api.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
       expect(analytics.captured).toHaveLength(0);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("skips when getEntitlements fails", () => {
-    const { layer, analytics, out } = setup({ entitlementsStatus: 500 });
+  it.live("skips when getEntitlements is forbidden", () => {
+    const { layer, analytics, out, api } = setup({ entitlementsStatus: 403 });
     return Effect.gen(function* () {
-      yield* suggestUpgrade({
+      const suggested = yield* suggestUpgrade({
         projectRef: VALID_REF,
         featureKey: "branching_limit",
         statusCode: 402,
       });
+      expect(suggested).toBe(false);
+      expect(api.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        `GET https://api.supabase.com/v1/organizations/${ORG_SLUG}/entitlements`,
+      ]);
       expect(analytics.captured).toHaveLength(0);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -210,7 +220,7 @@ describe("suggestUpgrade", () => {
   });
 
   it.live("fires cli_upgrade_suggested with {feature_key, org_slug} when gated", () => {
-    const { layer, analytics, out } = setup();
+    const { layer, analytics, out, api } = setup();
     return Effect.gen(function* () {
       yield* suggestUpgrade({
         projectRef: VALID_REF,
@@ -225,6 +235,13 @@ describe("suggestUpgrade", () => {
       ]);
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/test-org/billing");
+      expect(api.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        `GET https://api.supabase.com/v1/organizations/${ORG_SLUG}/entitlements`,
+      ]);
+      assertBlockDrift(upgradeSuggestion, {
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -238,20 +255,6 @@ describe("suggestUpgrade", () => {
       });
       expect(analytics.captured).toHaveLength(1);
       expect(out.stderrText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("skips cli_upgrade_suggested analytics when trackAnalytics=false", () => {
-    const { layer, analytics, out } = setup();
-    return Effect.gen(function* () {
-      yield* suggestUpgrade({
-        projectRef: VALID_REF,
-        featureKey: "branching_limit",
-        statusCode: 402,
-        trackAnalytics: false,
-      });
-      expect(analytics.captured).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
     }).pipe(Effect.provide(layer));
   });
 
@@ -269,31 +272,29 @@ describe("suggestUpgrade", () => {
     return jsonResponse(request, status, body);
   }
 
-  it.live("envelope path suggests with zero API calls and envelope-derived telemetry", () => {
-    const { layer, out, analytics, api } = setup();
-    return Effect.gen(function* () {
-      yield* suggestUpgrade({
-        projectRef: VALID_REF,
-        featureKey: "branching_limit",
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-      });
-      expect(api.requests).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "branching_persistent", org_slug: "env-org" },
-        },
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "envelope path confirms the gate with zero API calls and leaves the hint and event to the command wrapper",
+    () => {
+      const { layer, out, analytics, api } = setup();
+      return Effect.gen(function* () {
+        const suggested = yield* suggestUpgrade({
+          projectRef: VALID_REF,
+          featureKey: "branching_limit",
+          statusCode: 402,
+          response: gateResponse(402, ENVELOPE_BODY),
+        });
+        expect(suggested).toBe(true);
+        expect(out.stderrText).toBe("");
+        expect(analytics.captured).toHaveLength(0);
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("envelope path works without a featureKey (envelope-only sites)", () => {
     const { layer, out, analytics, api } = setup();
     return Effect.gen(function* () {
-      yield* suggestUpgrade({
+      const suggested = yield* suggestUpgrade({
         projectRef: VALID_REF,
         statusCode: 400,
         response: gateResponse(400, {
@@ -305,14 +306,10 @@ describe("suggestUpgrade", () => {
           },
         }),
       });
+      expect(suggested).toBe(true);
       expect(api.requests).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "custom_domain", org_slug: "env-org" },
-        },
-      ]);
+      expect(out.stderrText).toBe("");
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -332,19 +329,38 @@ describe("suggestUpgrade", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a reconciled profile with no token sends the fallback GETs unauthenticated", () => {
+  it.live(
+    "a reconciled profile with no token skips the fallback instead of reusing another token",
+    () => {
+      const { layer, api, analytics } = setup();
+      return Effect.gen(function* () {
+        const suggested = yield* suggestUpgrade({
+          projectRef: VALID_REF,
+          featureKey: "branching_limit",
+          statusCode: 402,
+          accessToken: Option.none(),
+        });
+        expect(suggested).toBe(false);
+        expect(api.requests).toHaveLength(0);
+        expect(analytics.captured).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("a caller-provided apiUrl routes the fallback GETs to that host", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* suggestUpgrade({
         projectRef: VALID_REF,
         featureKey: "branching_limit",
         statusCode: 402,
-        accessToken: Option.none(),
+        apiUrl: "https://api.reconciled.example",
+        accessToken: Option.some(Redacted.make("sbp_reconciled_token")),
       });
-      expect(api.requests).toHaveLength(2);
-      for (const req of api.requests) {
-        expect(req.headers["authorization"]).toBeUndefined();
-      }
+      expect(api.requests.map((req) => new URL(req.url).origin)).toEqual([
+        "https://api.reconciled.example",
+        "https://api.reconciled.example",
+      ]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -398,33 +414,6 @@ describe("suggestUpgrade", () => {
       });
       expect(api.requests).toHaveLength(2);
       expect(out.stderrText).toContain("/org/test-org/billing");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("envelope path respects json output mode (no stderr, telemetry fires)", () => {
-    const { layer, out, analytics } = setup({ format: "json" });
-    return Effect.gen(function* () {
-      yield* suggestUpgrade({
-        projectRef: VALID_REF,
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-      });
-      expect(out.stderrText).toBe("");
-      expect(analytics.captured).toHaveLength(1);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("envelope path respects trackAnalytics=false", () => {
-    const { layer, out, analytics } = setup();
-    return Effect.gen(function* () {
-      yield* suggestUpgrade({
-        projectRef: VALID_REF,
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-        trackAnalytics: false,
-      });
-      expect(analytics.captured).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
     }).pipe(Effect.provide(layer));
   });
 });

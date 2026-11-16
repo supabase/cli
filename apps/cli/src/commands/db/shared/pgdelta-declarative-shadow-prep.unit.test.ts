@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Effect } from "effect";
 
 import {
   declaredSqlExtensions,
@@ -55,7 +55,7 @@ describe("filesForDeclarativeShadowLoad", () => {
 });
 
 describe("prepareDeclarativeShadow", () => {
-  it.live("skips the shadow when declarations omit image-default extensions", () => {
+  it.effect("skips the shadow when declarations omit image-default extensions", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
       queries.push(sql);
@@ -70,7 +70,7 @@ describe("prepareDeclarativeShadow", () => {
     });
   });
 
-  it.live("names the failing prep statement", () => {
+  it.effect("names the failing prep statement", () => {
     const client = fakeShadowClient((sql) => {
       if (sql === "SHOW server_version") {
         return Promise.resolve({ rows: [{ server_version: "15.8" }] });
@@ -81,21 +81,15 @@ describe("prepareDeclarativeShadow", () => {
       return Promise.resolve({ rows: [] });
     });
     return Effect.gen(function* () {
-      const exit = yield* prepareDeclarativeShadow(client, [
+      const error = yield* prepareDeclarativeShadow(client, [
         { name: "public/01.sql", sql: "CREATE EXTENSION pgcrypto;" },
-      ]).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const error = Exit.isFailure(exit)
-        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
-        : undefined;
+      ]).pipe(Effect.flip);
       expect(error).toBeInstanceOf(PgDeltaEngineError);
-      expect(error instanceof PgDeltaEngineError ? error.message : "").toContain(
-        "DROP EXTENSION IF EXISTS pgcrypto",
-      );
+      expect(error.message).toContain("DROP EXTENSION IF EXISTS pgcrypto");
     });
   });
 
-  it.live("runs the version-selected prep statements against the shadow", () => {
+  it.effect("runs the version-selected prep statements against the shadow", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
       queries.push(sql);
@@ -115,7 +109,7 @@ describe("prepareDeclarativeShadow", () => {
     });
   });
 
-  it.live("detaches PG14 storage.objects before dropping declared uuid-ossp", () => {
+  it.effect("detaches PG14 storage.objects before dropping declared uuid-ossp", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
       queries.push(sql);
@@ -135,7 +129,7 @@ describe("prepareDeclarativeShadow", () => {
     });
   });
 
-  it.live("restores pgjwt only when the image had it installed", () => {
+  it.effect("restores pgjwt only when the image had it installed", () => {
     const queries: string[] = [];
     const withPgjwt = fakeShadowClient((sql) => {
       queries.push(sql);

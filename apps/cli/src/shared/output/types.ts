@@ -1,3 +1,5 @@
+import type { Schema } from "effect";
+
 export type OutputFormat = "text" | "json" | "stream-json";
 
 export type StreamEvent =
@@ -15,6 +17,18 @@ export type StreamEvent =
       readonly stream: "stdout" | "stderr" | "internal";
       readonly line: string;
       readonly source: "history" | "live";
+      readonly data?: Schema.JsonObject;
+    }
+  | {
+      readonly type: "log-marker";
+      readonly instance_id: string;
+      readonly timestamp: string;
+      readonly service: string;
+      readonly kind: "launch" | "lost";
+      readonly stream?: "stdout" | "stderr";
+      readonly count?: number;
+      readonly source: "history" | "live";
+      readonly data?: Schema.JsonObject;
     }
   | {
       readonly type: "result";

@@ -1,5 +1,5 @@
+import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import { describe, expect, it } from "vitest";
 
 import { stripAnsi } from "../../tests/helpers/ansi.ts";
 import { DbExecError } from "./db-connection.errors.ts";
@@ -29,100 +29,119 @@ const failingSession = (error: DbExecError): DbSession => ({
 
 describe("reconcileMigrations", () => {
   it("reports in-sync when remote and local match", () => {
-    expect(reconcileMigrations(["20240101000000"], ["20240101000000"])).toEqual({
+    expect(reconcileMigrations(["20240101000000"], ["20240101000000"], "--remote")).toEqual({
       kind: "in-sync",
     });
   });
 
   it("reports missing only when both histories are empty", () => {
-    expect(reconcileMigrations([], [])).toEqual({ kind: "missing" });
-    expect(reconcileMigrations(["20240101000000"], []).kind).toBe("conflict");
+    expect(reconcileMigrations([], [], "--remote")).toEqual({ kind: "missing" });
+    expect(reconcileMigrations(["20240101000000"], [], "--remote").kind).toBe("conflict");
   });
 
   it("reports a conflict with an extra remote migration", () => {
-    const result = reconcileMigrations(["20240101000000"], ["20240102000000"]);
+    const result = reconcileMigrations(["20240101000000"], ["20240102000000"], "--remote");
     expect(result.kind).toBe("conflict");
     if (result.kind === "conflict") {
       expect(stripAnsi(result.suggestion)).toContain(
-        "supabase migration repair --status reverted 20240101000000",
+        "supabase migration repair --status reverted 20240101000000 --remote",
       );
       expect(stripAnsi(result.suggestion)).toContain(
-        "supabase migration repair --status applied 20240102000000",
+        "supabase migration repair --status applied 20240102000000 --remote",
       );
     }
   });
 
   it("reports a conflict with an extra local migration", () => {
-    const result = reconcileMigrations([], ["20240102000000"]);
+    const result = reconcileMigrations([], ["20240102000000"], "--remote");
     expect(result.kind).toBe("conflict");
   });
 
   it("is in sync when an 8-digit and a 14-digit version share a prefix (#6036)", () => {
     expect(
-      reconcileMigrations(["20260420", "20260420010000"], ["20260420010000", "20260420"]),
+      reconcileMigrations(
+        ["20260420", "20260420010000"],
+        ["20260420010000", "20260420"],
+        "--remote",
+      ),
     ).toEqual({ kind: "in-sync" });
   });
 
   it("skips versions that do not parse as integers", () => {
-    expect(reconcileMigrations(["bogus", "20240101000000"], ["20240101000000"])).toEqual({
-      kind: "in-sync",
-    });
-  });
-
-  it("skips empty / whitespace versions (matches strconv.Atoi, not Number())", () => {
-    expect(reconcileMigrations(["", "20240101000000"], [" ", "20240101000000"])).toEqual({
-      kind: "in-sync",
-    });
-  });
-
-  it("treats a version within Go's int64 range as a real conflict (BigInt parity)", () => {
-    expect(reconcileMigrations(["9999999999999999"], []).kind).toBe("conflict");
-  });
-
-  it("skips a version beyond Go's int64 range instead of hanging the scan", () => {
     expect(
-      reconcileMigrations(["20240101000000", "9999999999999999999"], ["20240101000000"]),
+      reconcileMigrations(["bogus", "20240101000000"], ["20240101000000"], "--remote"),
+    ).toEqual({
+      kind: "in-sync",
+    });
+  });
+
+  it("skips empty / whitespace versions (not Number() coercion)", () => {
+    expect(
+      reconcileMigrations(["", "20240101000000"], [" ", "20240101000000"], "--remote"),
+    ).toEqual({
+      kind: "in-sync",
+    });
+  });
+
+  it("treats a version within the int64 range as a real conflict", () => {
+    expect(reconcileMigrations(["9999999999999999"], [], "--remote").kind).toBe("conflict");
+  });
+
+  it("skips a version beyond the int64 range instead of hanging the scan", () => {
+    expect(
+      reconcileMigrations(
+        ["20240101000000", "9999999999999999999"],
+        ["20240101000000"],
+        "--remote",
+      ),
     ).toEqual({ kind: "in-sync" });
   });
 });
 
-describe("listRemoteMigrations (suppress only undefined_table, like Go)", () => {
-  const run = (error: DbExecError) =>
-    Effect.runPromiseExit(listRemoteMigrations(failingSession(error)));
+describe("listRemoteMigrations (suppress only undefined_table)", () => {
+  const run = (error: DbExecError) => listRemoteMigrations(failingSession(error)).pipe(Effect.exit);
 
-  it("treats a missing history table (42P01) as an empty history", async () => {
-    const exit = await run(
-      new DbExecError({
-        message: 'relation "supabase_migrations.schema_migrations" does not exist',
-        code: "42P01",
-      }),
-    );
-    expect(exit).toStrictEqual(Exit.succeed([]));
-  });
+  it.effect("treats a missing history table (42P01) as an empty history", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        new DbExecError({
+          message: 'relation "supabase_migrations.schema_migrations" does not exist',
+          code: "42P01",
+        }),
+      );
+      expect(exit).toStrictEqual(Exit.succeed([]));
+    }),
+  );
 
-  it("propagates a malformed table (undefined column 42703) instead of swallowing it", async () => {
-    const exit = await run(
-      new DbExecError({ message: 'column "version" does not exist', code: "42703" }),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-  });
+  it.effect("propagates a malformed table (undefined column 42703) instead of swallowing it", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        new DbExecError({ message: 'column "version" does not exist', code: "42703" }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
 
-  it("falls back to a relation-not-exist message when no SQLSTATE is surfaced", async () => {
-    const exit = await run(
-      new DbExecError({
-        message: 'relation "supabase_migrations.schema_migrations" does not exist',
-      }),
-    );
-    expect(exit).toStrictEqual(Exit.succeed([]));
-  });
+  it.effect("falls back to a relation-not-exist message when no SQLSTATE is surfaced", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        new DbExecError({
+          message: 'relation "supabase_migrations.schema_migrations" does not exist',
+        }),
+      );
+      expect(exit).toStrictEqual(Exit.succeed([]));
+    }),
+  );
 
-  it("does not swallow a column-not-exist message when no SQLSTATE is surfaced", async () => {
-    const exit = await run(new DbExecError({ message: 'column "version" does not exist' }));
-    expect(Exit.isFailure(exit)).toBe(true);
-  });
+  it.effect("does not swallow a column-not-exist message when no SQLSTATE is surfaced", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(new DbExecError({ message: 'column "version" does not exist' }));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
 });
 
-describe("findPendingMigrations (Go TestPendingMigrations / TestIgnoreVersionMismatch)", () => {
+describe("findPendingMigrations", () => {
   it("returns the local paths after the remote count when in sync", () => {
     const local = ["0", "1", "2"].map(mig);
     const result = findPendingMigrations(local, ["0"]);
@@ -167,26 +186,34 @@ describe("findPendingMigrations (Go TestPendingMigrations / TestIgnoreVersionMis
 });
 
 describe("suggestMigrationRepair", () => {
-  it("lists reverted (remote) then applied (local) repair commands", () => {
-    const out = stripAnsi(suggestMigrationRepair(["111"], ["222"]));
+  it("lists reverted (remote) then applied (local) repair commands for the target", () => {
+    const out = stripAnsi(suggestMigrationRepair(["111"], ["222"], "--remote"));
     expect(out).toContain("try repairing the migration history table:");
-    expect(out).toContain("supabase migration repair --status reverted 111");
-    expect(out).toContain("supabase migration repair --status applied 222");
+    expect(out).toContain("supabase migration repair --status reverted 111 --remote");
+    expect(out).toContain("supabase migration repair --status applied 222 --remote");
+  });
+
+  it("puts the target last in every repair command, so --remote cannot swallow a version", () => {
+    expect(stripAnsi(suggestMigrationRepair(["111"], [], "--local"))).toContain(
+      "supabase migration repair --status reverted 111 --local",
+    );
+    expect(stripAnsi(suggestMigrationRepair([], ["222"], "--remote=<db-url>"))).toContain(
+      "supabase migration repair --status applied 222 --remote=<db-url>",
+    );
   });
 });
 
 describe("suggestRevertHistory", () => {
   it("builds the revert-history suggestion with a trailing newline per line", () => {
-    expect(suggestRevertHistory(["0002", "0003"])).toContain(
-      "supabase migration repair --status reverted 0002 0003",
-    );
-    expect(suggestRevertHistory(["0002"])).toMatch(/\n$/u);
-    expect(suggestRevertHistory(["0002"])).toContain("supabase db pull");
+    const out = stripAnsi(suggestRevertHistory(["0002", "0003"], "--remote"));
+    expect(out).toContain("supabase migration repair --status reverted 0002 0003 --remote");
+    expect(out).toContain("supabase db pull --remote");
+    expect(out).toMatch(/\n$/u);
   });
 });
 
-describe("resolveMigrationFile (byte-ordered match, Go's sort.Strings via afero match.go:91)", () => {
-  it("picks the UTF-8-byte-first match, not JS's default UTF-16 code-unit order", async () => {
+describe("resolveMigrationFile (byte-ordered match)", () => {
+  it.effect("picks the UTF-8-byte-first match, not JS's default UTF-16 code-unit order", () => {
     // A supplementary-plane character (U+1F600, a UTF-16 surrogate pair) alongside a BMP
     // private-use character (U+E000): JS's default `.sort()` ranks the surrogate pair first —
     // its leading high-surrogate code unit (0xD83D) is less than the private-use code unit
@@ -205,16 +232,19 @@ describe("resolveMigrationFile (byte-ordered match, Go's sort.Strings via afero 
       ),
       Path.layer,
     );
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        return yield* resolveMigrationFile(fs, path, "/supabase/migrations", "20240101000000");
-      }).pipe(Effect.provide(layer)),
-    );
-    expect(Option.isSome(result) ? result.value : undefined).toBe(
-      `/supabase/migrations/${privateUse}`,
-    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const result = yield* resolveMigrationFile(
+        fs,
+        path,
+        "/supabase/migrations",
+        "20240101000000",
+      );
+      expect(Option.isSome(result) ? result.value : undefined).toBe(
+        `/supabase/migrations/${privateUse}`,
+      );
+    }).pipe(Effect.provide(layer));
   });
 });
 
@@ -249,49 +279,57 @@ describe("createMigrationTable / createSeedTable (provisioning probe, #6393)", (
     return { session, execs, queries };
   };
 
-  it("puts no DDL on the wire when a ledger is already provisioned", async () => {
-    const { session, execs, queries } = probedSession([{ provisioned: true }]);
-    await Effect.runPromise(createMigrationTable(session));
-    await Effect.runPromise(createSeedTable(session));
-    expect(execs).toEqual([]);
-    expect(queries).toHaveLength(2);
-    expect(queries[0]?.sql).toContain("'supabase_migrations.schema_migrations'");
-    expect(queries[1]?.sql).toContain("'supabase_migrations.seed_files'");
-  });
+  it.effect("puts no DDL on the wire when a ledger is already provisioned", () =>
+    Effect.gen(function* () {
+      const { session, execs, queries } = probedSession([{ provisioned: true }]);
+      yield* createMigrationTable(session);
+      yield* createSeedTable(session);
+      expect(execs).toEqual([]);
+      expect(queries).toHaveLength(2);
+      expect(queries[0]?.sql).toContain("'supabase_migrations.schema_migrations'");
+      expect(queries[1]?.sql).toContain("'supabase_migrations.seed_files'");
+    }),
+  );
 
-  it("keeps the probes on the simple query protocol: no bind parameters", async () => {
-    const { session, queries } = probedSession([{ provisioned: true }]);
-    await Effect.runPromise(createMigrationTable(session));
-    await Effect.runPromise(createSeedTable(session));
-    expect(queries).toHaveLength(2);
-    expect(queries.filter((q) => q.params !== undefined)).toEqual([]);
-    expect(queries.filter((q) => q.sql.includes("$"))).toEqual([]);
-  });
+  it.effect("keeps the probes on the simple query protocol: no bind parameters", () =>
+    Effect.gen(function* () {
+      const { session, queries } = probedSession([{ provisioned: true }]);
+      yield* createMigrationTable(session);
+      yield* createSeedTable(session);
+      expect(queries).toHaveLength(2);
+      expect(queries.filter((q) => q.params !== undefined)).toEqual([]);
+      expect(queries.filter((q) => q.sql.includes("$"))).toEqual([]);
+    }),
+  );
 
   for (const [shape, rows] of [
     ["an absent ledger (no rows)", []],
     ["a partial ledger (provisioned: false)", [{ provisioned: false }]],
     ["an unexpected result shape", [{ wat: 1 }]],
   ] as const) {
-    it(`runs the full provisioning DDL in order against ${shape}`, async () => {
-      const { session, execs } = probedSession([...rows]);
-      await Effect.runPromise(createMigrationTable(session));
-      expect(execs).toEqual(HISTORY_DDL);
-    });
+    it.effect(`runs the full provisioning DDL in order against ${shape}`, () =>
+      Effect.gen(function* () {
+        const { session, execs } = probedSession([...rows]);
+        yield* createMigrationTable(session);
+        expect(execs).toEqual(HISTORY_DDL);
+      }),
+    );
   }
 
-  it("propagates a probe failure without opening a transaction to roll back", async () => {
-    const error = new DbExecError({ message: "effect/sql/SqlError: Connection error" });
-    const execs: Array<string> = [];
-    const session: DbSession = {
-      ...failingSession(error),
-      exec: (sql) => {
-        execs.push(sql);
-        return Effect.void;
-      },
-    };
-    expect(await Effect.runPromise(Effect.flip(createMigrationTable(session)))).toBe(error);
-    expect(await Effect.runPromise(Effect.flip(createSeedTable(session)))).toBe(error);
-    expect(execs).toEqual([]);
-  });
+  it.effect("propagates a probe failure without opening a transaction to roll back", () =>
+    Effect.gen(function* () {
+      const error = new DbExecError({ message: "effect/sql/SqlError: Connection error" });
+      const execs: Array<string> = [];
+      const session: DbSession = {
+        ...failingSession(error),
+        exec: (sql) => {
+          execs.push(sql);
+          return Effect.void;
+        },
+      };
+      expect(yield* Effect.flip(createMigrationTable(session))).toBe(error);
+      expect(yield* Effect.flip(createSeedTable(session))).toBe(error);
+      expect(execs).toEqual([]);
+    }),
+  );
 });

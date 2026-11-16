@@ -7,26 +7,23 @@ import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts
 import {
   StackApi,
   StackTargetResolver,
+  failedOutcomesDetail,
   rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
+  mapTargetError,
+} from "../../../../command-internal/stack-target.ts";
 import { StackCommandRestartError } from "./restart.errors.ts";
 import type { StackRestartFlags } from "./restart.command.ts";
 
-const runtimeError = (cause: StackError) =>
-  new StackCommandRestartError({
-    reason: "unknown",
+const runtimeError = (cause: StackError) => {
+  const detail = failedOutcomesDetail(cause);
+  return new StackCommandRestartError({
+    reason: "stack",
     message: cause.message,
-    ...(cause.outcomes === undefined
-      ? {}
-      : {
-          detail: cause.outcomes
-            .filter((outcome) => !outcome.succeeded)
-            .map((outcome) => `${outcome.id}: ${outcome.error ?? "failed"}`)
-            .join("\n"),
-        }),
+    ...(detail === undefined ? {} : { detail }),
     cause,
   });
+};
 
 export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
   flags: StackRestartFlags,
@@ -38,24 +35,14 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
     const path = yield* Path.Path;
     const api = yield* StackApi;
     const resolver = yield* StackTargetResolver;
-    const mapTargetError = (cause: {
-      readonly reason: "flags" | "invalid-config";
-      readonly message: string;
-      readonly suggestion?: string;
-    }) =>
-      new StackCommandRestartError({
-        reason: cause.reason,
-        message: cause.message,
-        ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-        cause,
-      });
+    const targetError = mapTargetError((props) => new StackCommandRestartError(props));
     yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
-      Effect.mapError(mapTargetError),
+      Effect.mapError(targetError),
     );
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(targetError));
     const target = yield* resolver
       .resolve({
         projectRoot: settings.workdir,
@@ -63,7 +50,7 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
         ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
         ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
       })
-      .pipe(Effect.mapError(mapTargetError));
+      .pipe(Effect.mapError(targetError));
     if (target.id === undefined)
       return yield* new StackCommandRestartError({
         reason: "not-found",
@@ -88,7 +75,7 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
     const observations = yield* stack.composition.restart.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
-          ? task.clear()
+          ? task.clear
           : Cause.hasInterruptsOnly(exit.cause)
             ? task.cancel()
             : task.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),
@@ -102,6 +89,7 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
       health,
       wake_enabled: wakeEnabled,
     }));
+    yield* Effect.annotateCurrentSpan({ "stack.service_count": services.length });
     if (output.format === "text") {
       yield* output.raw(`Stack ${stack.id} restarted using its saved configuration.\n`);
       for (const service of services)

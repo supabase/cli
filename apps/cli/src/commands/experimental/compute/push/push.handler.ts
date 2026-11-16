@@ -1,5 +1,5 @@
-import { Clock, Effect, FileSystem, Option, Path, Predicate, type Schedule } from "effect";
-import type { PlatformError } from "effect/PlatformError";
+import { cliConfigFormatForPath } from "@supabase/config/internal";
+import { Clock, Effect, FileSystem, Option, Path, type Schedule } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { formatWaited, renderComputeDetails } from "../compute.format.ts";
@@ -7,9 +7,10 @@ import {
   emitComputeMachineOutput,
   rejectComputeEnvOutput,
   computeMachineOutputRequested,
-  computeProjectRefSuffix,
+  computeRemoteSuffix,
 } from "../compute.output.ts";
 import { aqua } from "../../../../command-internal/colors.ts";
+import { type ConfigFileRef, configSetting } from "../../../../command-internal/config-advice.ts";
 import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { classifyComputeDir } from "../../../../shared/compute/compute-classify.ts";
@@ -17,6 +18,7 @@ import {
   formatBytes,
   packageComputeDirectory,
 } from "../../../../shared/compute/compute-package.ts";
+import { compileComputeExclude } from "../../../../shared/compute/compute-exclude.ts";
 import { displayPath } from "../../../../shared/compute/compute-paths.ts";
 import type { ComputeEntry } from "../../../../shared/compute/compute-config.ts";
 import {
@@ -32,6 +34,11 @@ import {
   COMPUTE_RUNTIMES,
   COMPUTE_SIZES,
   type ComputeExposure,
+  COMPUTE_SECRETS_SCOPE,
+  parseComputeSecretsScope,
+  DEFAULT_COMPUTE_SECRETS_SCOPE,
+  formatSecretsScope,
+  type ComputeSecretsScope,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { computeUrl } from "../../../../shared/compute/compute-url.ts";
 import {
@@ -39,6 +46,7 @@ import {
   createComputeUpload,
   deployCompute,
   isComputeServing,
+  parseComputeSecretsScopeToAPIFormat,
   uploadBuildContext,
   type ComputeDeploySpec,
   type ComputeRecord,
@@ -51,8 +59,10 @@ import {
   ComputeBuildFailedError,
   ComputeSourceMissingError,
   MissingComputeExposureError,
+  UnknownComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
@@ -73,7 +83,14 @@ import type { ComputePushFlags } from "./push.command.ts";
  * returns once the deploy is accepted.
  */
 
+const entryRef = ({ format }: ConfigFileRef, name: string): string =>
+  format === "toml" ? `[compute.${name}]` : `compute.${name}`;
+
+const settingRef = ({ format }: ConfigFileRef, name: string, key: string): string =>
+  format === "toml" ? `[compute.${name}] ${key}` : `compute.${name}.${key}`;
+
 const resolveRuntime = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
   readonly name: string;
   readonly recorded: string | undefined;
   readonly sourceDir: string;
@@ -82,8 +99,8 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
     const recorded = parseComputeRuntime(options.recorded);
     if (recorded === undefined) {
       return yield* new UnknownComputeRuntimeError({
-        detail: `supabase/config.toml records an unknown runtime "${options.recorded}" for "${options.name}".`,
-        suggestion: `Set [compute.${options.name}] runtime to one of: ${COMPUTE_RUNTIMES.join(", ")}.`,
+        detail: `${options.config.path} records an unknown runtime "${options.recorded}" for "${options.name}".`,
+        suggestion: `Set ${settingRef(options.config, options.name, "runtime")} to one of: ${COMPUTE_RUNTIMES.join(", ")}.`,
       });
     }
     return recorded;
@@ -95,13 +112,14 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
   // payload stdout is carrying.
   yield* output.raw(
     `No runtime configured for ${options.name}: guessed ${classified.runtime} (${classified.reason}). ` +
-      `Set [compute.${options.name}] runtime = "${classified.runtime}" in supabase/config.toml.\n`,
+      `Set ${configSetting(options.config.format, `compute.${options.name}`, "runtime", `"${classified.runtime}"`)} in ${options.config.path}.\n`,
     "stderr",
   );
   return classified.runtime;
 });
 
 const resolveSize = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
   readonly name: string;
   readonly recorded: string | undefined;
 }) {
@@ -111,8 +129,8 @@ const resolveSize = Effect.fnUntraced(function* (options: {
   const recorded = parseComputeSize(options.recorded);
   if (recorded === undefined) {
     return yield* new UnknownComputeSizeError({
-      detail: `supabase/config.toml records an unknown size "${options.recorded}" for "${options.name}".`,
-      suggestion: `Set [compute.${options.name}] size to one of: ${COMPUTE_SIZES.join(", ")}.`,
+      detail: `${options.config.path} records an unknown size "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set ${settingRef(options.config, options.name, "size")} to one of: ${COMPUTE_SIZES.join(", ")}.`,
     });
   }
   return recorded;
@@ -139,6 +157,7 @@ function resolveInstances(options: {
  * otherwise revert it.
  */
 const resolveExposure = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
   readonly name: string;
   readonly recorded: string | undefined;
   readonly configured: boolean;
@@ -157,12 +176,12 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
       // unguarded by format, like the runtime nudge: a CI run is exactly where
       // a one-deploy exposure quietly reverting matters most.
       const message = options.configured
-        ? `--exposure ${chosen} applies to this deploy only: supabase/config.toml ${
+        ? `--exposure ${chosen} applies to this deploy only: ${options.config.path} ${
             options.recorded === undefined
               ? `records no exposure for ${options.name}`
               : `records exposure = "${options.recorded}"`
-          }, so the next bare push will not use ${chosen}. Set [compute.${options.name}] exposure = "${chosen}" in supabase/config.toml.\n`
-        : `--exposure ${chosen} is required for an unconfigured source directory. Record it under [compute.${options.name}] exposure for future pushes.\n`;
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "exposure", `"${chosen}"`)} in ${options.config.path}.\n`
+        : `--exposure ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "exposure")} for future pushes.\n`;
       yield* output.raw(message, "stderr");
     }
     return chosen;
@@ -178,11 +197,64 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
       // there and says nothing.
       detail:
         options.recorded.trim() === ""
-          ? `supabase/config.toml records a blank exposure for "${options.name}".`
-          : `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
-      suggestion: `Set [compute.${options.name}] exposure to one of: ${COMPUTE_EXPOSURES.join(", ")}.`,
+          ? `${options.config.path} records a blank exposure for "${options.name}".`
+          : `${options.config.path} records an unknown exposure "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set ${settingRef(options.config, options.name, "exposure")} to one of: ${COMPUTE_EXPOSURES.join(", ")}.`,
     });
   }
+  return recorded;
+});
+
+const resolveSecretsScope = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
+  readonly name: string;
+  readonly recorded: string | readonly string[] | undefined;
+  readonly configured: boolean;
+  readonly override: Option.Option<ComputeSecretsScope>;
+}) {
+  if (Option.isSome(options.override)) {
+    const chosen = options.override.value;
+    const withoutTheFlag =
+      options.recorded === undefined
+        ? DEFAULT_COMPUTE_SECRETS_SCOPE
+        : parseComputeSecretsScope(options.recorded as string | string[]);
+
+    const isCustom = Array.isArray(chosen);
+    const isChosenEquals =
+      isCustom && Array.isArray(withoutTheFlag)
+        ? withoutTheFlag.length === chosen.length && chosen.every((v) => withoutTheFlag.includes(v))
+        : withoutTheFlag === chosen;
+
+    if (!options.configured || !isChosenEquals) {
+      const flagName = `--secrets-scope${isCustom ? ":custom" : ""}`;
+      const output = yield* Output;
+
+      const applyFormat = (v: string | string[] | readonly string[]) =>
+        Array.isArray(v) ? `[${formatSecretsScope(v.map((i) => `"${i}"`))}]` : `"${v}"`;
+
+      const message = options.configured
+        ? `${flagName} ${chosen} applies to this deploy only: ${options.config.path} ${
+            options.recorded === undefined
+              ? `records no secrets_scope for ${options.name}`
+              : `records secrets_scope = ${applyFormat(options.recorded)}`
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "secrets_scope", applyFormat(chosen))} in ${options.config.path}.\n`
+        : `${flagName} ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "secrets_scope")} for future pushes.\n`;
+      yield* output.raw(message, "stderr");
+    }
+    return chosen;
+  }
+
+  if (options.recorded === undefined) {
+    return DEFAULT_COMPUTE_SECRETS_SCOPE;
+  }
+  const recorded = parseComputeSecretsScope(options.recorded as string | string[]);
+  if (recorded === undefined) {
+    return yield* new UnknownComputeSecretsScopeError({
+      detail: `${options.config.path} records an unknown secrets scope "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set ${settingRef(options.config, options.name, "secrets_scope")} to one of: ${COMPUTE_SECRETS_SCOPE.join(", ")}.`,
+    });
+  }
+
   return recorded;
 });
 
@@ -196,14 +268,14 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 function missingSourceSuggestion(input: {
   readonly name: string;
   readonly sourceDisplay: string;
-  readonly configPath: string;
+  readonly config: ConfigFileRef;
   readonly entry: ComputeEntry | undefined;
 }): string {
   if (input.entry === undefined) {
     return `Scaffold it with \`supabase compute new ${input.name}\`.`;
   }
   if (input.entry.source !== undefined) {
-    return `Create ${input.sourceDisplay}, or correct \`source\` under [compute.${input.name}] in ${input.configPath}.`;
+    return `Create ${input.sourceDisplay}, or correct \`source\` under ${entryRef(input.config, input.name)} in ${input.config.path}.`;
   }
   return `Create ${input.sourceDisplay} and add your compute's code, then run this command again.`;
 }
@@ -242,18 +314,19 @@ function describeWaited(waited: { readonly total: number; readonly build: number
   return waited.build < 1000 ? total : `${total} (${formatWaited(waited.build)} building)`;
 }
 
-const deployOneCompute = Effect.fnUntraced(function* (input: {
+const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   readonly project: ComputeProject;
   readonly name: string;
   readonly projectRef: string;
   /**
-   * ` --project-ref <ref>` when the flag supplied the ref, `""` when the link
+   * ` --remote=<ref>` when a flag selected the project, `""` when the link
    * did — the follow-up hint below is copy-pasted verbatim, so it has to carry
    * whatever the user typed to reach this project.
    */
   readonly refSuffix: string;
   readonly instances: Option.Option<number>;
   readonly exposure: Option.Option<ComputeExposure>;
+  readonly secretsScope: Option.Option<ComputeSecretsScope>;
   /** `--no-wait`: return once the deploy is accepted instead of blocking on the build. */
   readonly noWait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
@@ -271,6 +344,10 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   const compute = yield* describeCompute(project, name);
 
   const sourceDisplay = displayPath(path, project.projectRoot, compute.sourceDir);
+  const config: ConfigFileRef = {
+    format: cliConfigFormatForPath(project.configPath),
+    path: displayPath(path, project.projectRoot, project.configPath),
+  };
 
   // Checked before the runtime is resolved: without this, an unrecorded runtime
   // would be classified and announced for a path that doesn't exist.
@@ -280,7 +357,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
       suggestion: missingSourceSuggestion({
         name,
         sourceDisplay,
-        configPath: displayPath(path, project.projectRoot, project.configPath),
+        config,
         entry: compute.entry,
       }),
     });
@@ -288,13 +365,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     // reason (permission, I/O) propagates as itself rather than misdiagnosing it.
     const info = yield* fs
       .stat(compute.sourceDir)
-      .pipe(
-        Effect.catchTag("PlatformError", (error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.fail<ComputeSourceMissingError | PlatformError>(sourceMissing)
-            : Effect.fail(error),
-        ),
-      );
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.fail(sourceMissing)));
     // Something is there, it's just not a directory — reporting "no compute
     // source" would be false, and the path is occupied besides.
     if (info.type !== "Directory") {
@@ -320,6 +391,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   }
 
   const runtime = yield* resolveRuntime({
+    config,
     name,
     recorded: compute.entry?.runtime,
     sourceDir: compute.sourceDir,
@@ -329,7 +401,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   // default. Never left unset, because a compute that is actually running always
   // has some concrete size — and never silently coerced, because a size the CLI
   // does not recognize is a config mistake worth naming.
-  const size = yield* resolveSize({ name, recorded: compute.entry?.size });
+  const size = yield* resolveSize({ config, name, recorded: compute.entry?.size });
 
   const instances = resolveInstances({
     recorded: compute.entry?.instances,
@@ -339,32 +411,72 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   // Resolved before anything is packaged or uploaded, so an unrecognized
   // exposure is refused while the refusal is still free.
   const exposure = yield* resolveExposure({
+    config,
     name,
     recorded: compute.entry?.exposure,
     configured: compute.entry !== undefined,
     override: input.exposure,
   });
 
+  const secretsScope = yield* resolveSecretsScope({
+    config,
+    name,
+    recorded: compute.entry?.secrets_scope,
+    configured: compute.entry !== undefined,
+    override: input.secretsScope,
+  });
+
+  // Same reason, and the same place: a pattern the CLI cannot read is a config mistake, and
+  // finding it out mid-walk would mean reporting it after the packaging step announced itself.
+  const exclude = yield* compileComputeExclude({ name, patterns: compute.entry?.exclude });
+
+  yield* Effect.annotateCurrentSpan({
+    "compute.runtime": runtime,
+    "compute.size": size,
+    "compute.exposure": exposure,
+    "compute.instances": instances,
+    "compute.secrets_scope": secretsScope,
+  });
+
   let contextUploadId: string;
   {
     const packaging = yield* output.task("Packaging compute...");
-    const packaged = yield* packageComputeDirectory(compute.sourceDir).pipe(
+    const packaged = yield* packageComputeDirectory(compute.sourceDir, exclude).pipe(
       Effect.tapError(() => packaging.fail()),
     );
-    yield* packaging.clear();
+    yield* packaging.clear;
+    yield* Effect.annotateCurrentSpan({
+      "compute.file_count": packaged.fileCount,
+      "compute.excluded_count": packaged.excludedCount,
+      "compute.bundle_bytes": packaged.archive.length,
+    });
+    // The excluded count rides along on the same line, and only when patterns are configured:
+    // an over-broad pattern is otherwise visible only as a file count nobody had a number to
+    // compare against, and by then the archive is already uploaded.
+    const excludedNote = exclude.active
+      ? `, excluded ${packaged.excludedCount} ${packaged.excludedCount === 1 ? "path" : "paths"}`
+      : "";
     yield* output.raw(
       `Packaged ${sourceDisplay} (${packaged.fileCount} files, ${formatBytes(
         packaged.archive.length,
-      )}).\n`,
+      )}${excludedNote}).\n`,
       "stderr",
     );
 
     // The guard above only counts directory entries, so a tree of nothing but
-    // empty subdirectories still reaches here and packages to zero files.
+    // empty subdirectories still reaches here and packages to zero files — as
+    // does a directory whose every file the exclude patterns matched, which is
+    // the same outcome for a different reason and needs its own recovery.
     if (packaged.fileCount === 0) {
+      // Keyed on what the patterns removed, not on whether any are configured.
+      const excludedSomething = packaged.excludedCount > 0;
       return yield* new ComputeSourceMissingError({
-        detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
-        suggestion: addYourCode(sourceDisplay),
+        detail: excludedSomething
+          ? `Every file in ${sourceDisplay} is matched by ${settingRef(config, name, "exclude")}, so there is nothing to deploy.`
+          : `${sourceDisplay} holds no files to deploy, only empty directories.`,
+        suggestion: excludedSomething
+          ? `Narrow ${settingRef(config, name, "exclude")} in ${config.path} so the files the build needs are packaged.`
+          : addYourCode(sourceDisplay),
       });
     }
 
@@ -373,7 +485,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
       Effect.tapError(() => uploading.fail()),
     );
     yield* uploadBuildContext(slot, packaged.archive).pipe(Effect.tapError(() => uploading.fail()));
-    yield* uploading.clear();
+    yield* uploading.clear;
     yield* output.raw("Uploaded build context.\n", "stderr");
     contextUploadId = slot.uploadId;
   }
@@ -384,6 +496,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     ...(runtime === "dockerfile" ? {} : { runtime }),
     size: apiSizeFor(size),
     exposure,
+    secrets_scope: parseComputeSecretsScopeToAPIFormat(secretsScope),
     instances,
   };
 
@@ -437,10 +550,15 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     ? undefined
     : { total: finishedAt - startedAt, build: (builtAt ?? finishedAt) - startedAt };
 
+  yield* Effect.annotateCurrentSpan({
+    "compute.waited": !input.noWait && accepted.buildState === "building",
+    "compute.build_state": settled.buildState,
+  });
+
   // Checked regardless of whether the build was waited on: the verdict can
   // arrive on the deploy response as readily as on a poll.
   if (settled.buildState === "failed") {
-    yield* deploying.clear();
+    yield* deploying.clear;
     return yield* new ComputeBuildFailedError({
       detail: `The build for "${name}" failed${
         settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
@@ -449,7 +567,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     });
   }
 
-  yield* deploying.clear();
+  yield* deploying.clear;
 
   const url =
     settled.spec.exposure === "public"
@@ -461,6 +579,11 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   // reading it beside `build_state: "building"` would mistake it for the new
   // one. Only reachable under `--no-wait` — the default polls until it settles.
   const imageVersion = settled.buildState === "building" ? undefined : settled.imageVersion;
+
+  const settledSecretsScope =
+    typeof settled.spec.secrets_scope === "string"
+      ? (settled.spec.secrets_scope as string)
+      : settled.spec.secrets_scope?.map(({ secret_name }) => secret_name);
 
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
@@ -487,6 +610,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
         // landed. The API publishes no per-stage timing, so this is the only attribution a
         // caller gets for a deploy that felt slow.
         ["Waited", waited === undefined ? "" : describeWaited(waited)],
+        ["Secrets Scope", formatSecretsScope(settledSecretsScope ?? "")],
         ["URL", url ?? ""],
       ]),
     );
@@ -507,6 +631,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     runtime,
     size: settled.spec.size,
     exposure: settled.spec.exposure,
+    secrets_scope: settledSecretsScope,
     instances: settled.spec.instances,
     // Omitted rather than present-and-undefined: `-o toml` hands this to
     // smol-toml, which can't represent undefined and would throw after the
@@ -571,14 +696,13 @@ export const computePush = Effect.fn("compute.push")(function* (
 ) {
   const output = yield* Output;
   const path = yield* Path.Path;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   // Resolved here, outside the block below, since caching it is one of that
   // block's own finalizers — everything else that can fail belongs inside so
   // those failures still flush telemetry.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
+  const projectRef = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     const project = yield* loadComputeProject;
@@ -600,7 +724,7 @@ export const computePush = Effect.fn("compute.push")(function* (
     }
 
     const names = [...new Set(requested)];
-    const refSuffix = computeProjectRefSuffix(flags.projectRef);
+    const refSuffix = computeRemoteSuffix(flags, projectRef);
 
     if (Option.isNone(flags.exposure)) {
       for (const name of names) {
@@ -620,6 +744,10 @@ export const computePush = Effect.fn("compute.push")(function* (
     // that out at the end means failing with the remote project already changed.
     yield* rejectComputeEnvOutput();
 
+    yield* requireHostedMutationConsent({
+      action: `Deploy compute ${names.join(", ")}`,
+    });
+
     const machineOutput = yield* computeMachineOutputRequested();
     const deployed: Array<Record<string, unknown>> = [];
     // Accepted, but not finished: their builds outlive a failure further down
@@ -635,6 +763,7 @@ export const computePush = Effect.fn("compute.push")(function* (
           "stderr",
         );
       }
+
       const compute = yield* deployOneCompute({
         project,
         name,
@@ -642,6 +771,7 @@ export const computePush = Effect.fn("compute.push")(function* (
         refSuffix,
         instances: flags.instances,
         exposure: flags.exposure,
+        secretsScope: flags.secretsScope.pipe(Option.orElse(() => flags.secretsScopeCustom)),
         noWait: flags.noWait,
         machineOutput,
         ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),

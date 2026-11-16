@@ -5,8 +5,8 @@
  *
  * Delegates to `functions serve`'s bring-up (`shared/functions/serve.ts`)
  * rather than the shared `createContainer` spec, since Edge Runtime needs
- * `--workdir`/`--ulimit` flags and a secret-delivery mechanism (env-file plus
- * a bind-mounted multiline-env script) that spec can't express.
+ * `--workdir`/`--ulimit` flags and a secret-delivery mechanism (`--env-file`)
+ * that spec can't express.
  * `start.handler.ts` must call {@link startStackEdgeRuntimeContainer} directly, the
  * same way it already special-cases Postgres.
  *
@@ -64,6 +64,7 @@ export interface EdgeRuntimeBringUpInput {
    * `shared/functions/deploy.ts`'s `rawFunctionConfigRecord(document)`.
    */
   readonly rawConfigFunctions: ServeEdgeRuntimeContainerConfig["rawConfigFunctions"];
+  readonly configPath?: ServeEdgeRuntimeContainerConfig["configPath"];
   /** Every already-resolved secret/key this container needs; not independently re-resolved here. */
   readonly authArtifacts: ServeAuthArtifacts;
   /** The global `--debug` flag. */
@@ -85,14 +86,17 @@ export interface EdgeRuntimeBringUpInput {
  *
  * Sets no Docker restart policy — unlike every other `start` service, Edge
  * Runtime's lifecycle is reconciled at the CLI level instead. Leave the
- * returned `cleanup` unused on success: its bind-mounted host files must
- * outlive the call for as long as the container can be reattached to, and
- * `startEdgeRuntimeContainer` already runs `cleanup` on any failed or
- * interrupted bring-up.
+ * returned `cleanup` unused on success: `stop` or a failed-start rollback
+ * reclaims the staged env file, and `startEdgeRuntimeContainer` already runs
+ * `cleanup` on any failed or interrupted bring-up.
  */
 export const startStackEdgeRuntimeContainer = Effect.fn("start.edgeRuntime")(function* (
   input: EdgeRuntimeBringUpInput,
 ) {
+  yield* Effect.annotateCurrentSpan({
+    "image.name": input.image,
+    "function.count": Object.keys(input.configFunctions).length,
+  });
   return yield* startEdgeRuntimeContainer({
     config: {
       projectId: input.projectId,
@@ -103,6 +107,7 @@ export const startStackEdgeRuntimeContainer = Effect.fn("start.edgeRuntime")(fun
       configDeclaredFunctions: input.configDeclaredFunctions,
       configFunctions: input.configFunctions,
       rawConfigFunctions: input.rawConfigFunctions,
+      configPath: input.configPath,
     },
     authArtifacts: input.authArtifacts,
     dbUrl: startInternalDbUrl(

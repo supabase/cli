@@ -514,16 +514,14 @@ describe("configPullPayload", () => {
     });
     expect(payload["dry_run"]).toBe(true);
     expect(payload["wrote"]).toBe(false);
-    expect((payload["changes"] as Array<Record<string, unknown>>)[0]).toMatchObject({
-      written: false,
-      skipped_reason: "dry_run",
-    });
+    expect(payload).toHaveProperty(
+      ["changes", 0],
+      expect.objectContaining({ written: false, skipped_reason: "dry_run" }),
+    );
     // A dry-run change was only ever PLANNED to write, never actually
     // written — `document_path` is reserved for entries the payload also
     // marks `written: true`.
-    expect((payload["changes"] as Array<Record<string, unknown>>)[0]).not.toHaveProperty(
-      "document_path",
-    );
+    expect(payload).not.toHaveProperty(["changes", 0, "document_path"]);
   });
 
   test("a declined outcome reports every planned write as skipped_reason declined", () => {
@@ -562,10 +560,10 @@ describe("configPullPayload", () => {
       declined: true,
     });
     expect(payload["wrote"]).toBe(false);
-    expect((payload["changes"] as Array<Record<string, unknown>>)[0]).toMatchObject({
-      written: false,
-      skipped_reason: "declined",
-    });
+    expect(payload).toHaveProperty(
+      ["changes", 0],
+      expect.objectContaining({ written: false, skipped_reason: "declined" }),
+    );
   });
 
   test("a block-only plan reports wrote:true and counts.written:0 once actually created, but wrote:false for dry-run/declined", () => {
@@ -603,7 +601,7 @@ describe("configPullPayload", () => {
       label: "staging",
       created: true,
     });
-    expect((created["counts"] as Record<string, unknown>)["written"]).toBe(0);
+    expect(created).toHaveProperty(["counts", "written"], 0);
 
     const dryRun = configPullPayload(
       emptyChangeSet(),

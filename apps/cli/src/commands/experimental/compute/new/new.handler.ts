@@ -1,9 +1,11 @@
+import { cliConfigFormatForPath } from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { aqua, bold } from "../../../../command-internal/colors.ts";
 import { validateWorkdirIsDirectory } from "../../../../command-internal/workdir-validation.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
+import { CliConfigValues } from "../../../../config/cli-config-values.service.ts";
 import { renderComputeDetails } from "../compute.format.ts";
 import { emitComputeMachineOutput, computeMachineOutputRequested } from "../compute.output.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
@@ -32,22 +34,27 @@ import {
   COMPUTE_EXPOSURE_DESCRIPTIONS,
   COMPUTE_EXPOSURES,
   COMPUTE_RUNTIME_DESCRIPTIONS,
+  COMPUTE_RUNTIME_EXCLUSIONS,
   COMPUTE_RUNTIMES,
   COMPUTE_SIZES,
   type ComputeExposure,
   type ComputeRuntime,
   type ComputeSize,
+  DEFAULT_COMPUTE_SECRETS_SCOPE,
+  COMPUTE_SECRETS_SCOPE_DESCRIPTIONS,
+  parseComputeSecretsScope,
+  type ComputeSecretsScopeEnum,
+  COMPUTE_SECRETS_SCOPE_ENUM,
+  type ComputeSecretsScope,
+  parseSecretsScopeCustom,
+  formatSecretsScope,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import {
   MissingComputeNameError,
   ComputeDirectoryExistsError,
 } from "../../../../shared/compute/compute.errors.ts";
-import {
-  loadComputeProjectForEntryWrite,
-  validateComputeName,
-  type ComputeProject,
-} from "../compute.shared.ts";
+import { loadComputeProject, validateComputeName, type ComputeProject } from "../compute.shared.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
 
@@ -201,6 +208,53 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 });
 
 /**
+ */
+const resolveSecretsScope = Effect.fnUntraced(function* (options: {
+  readonly explicit: Option.Option<ComputeSecretsScope>;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
+}) {
+  if (Option.isSome(options.explicit)) {
+    return options.explicit.value;
+  }
+
+  if (options.canPrompt) {
+    const output = yield* Output;
+    const selected = yield* output.promptSelect(
+      "Which secrets should be available for this compute?",
+      defaultFirst(
+        [...COMPUTE_SECRETS_SCOPE_ENUM],
+        DEFAULT_COMPUTE_SECRETS_SCOPE as ComputeSecretsScopeEnum,
+      ).map((scope) => ({
+        value: scope,
+        label: scope,
+        hint: COMPUTE_SECRETS_SCOPE_DESCRIPTIONS[scope],
+      })),
+    );
+
+    let selectedSecretsScope: string | string[] = selected;
+
+    if ((selected as ComputeSecretsScopeEnum) === "custom") {
+      const customSecretsNames = yield* output.promptText("Comma-separated list of secret names:", {
+        validate: (value) => {
+          const customSecretsScope = parseSecretsScopeCustom(value);
+
+          return customSecretsScope.length > 0
+            ? undefined
+            : `Enter at least one secret name, separated by ","`;
+        },
+      });
+
+      selectedSecretsScope = parseSecretsScopeCustom(customSecretsNames);
+    }
+
+    return parseComputeSecretsScope(selectedSecretsScope) ?? DEFAULT_COMPUTE_SECRETS_SCOPE;
+  }
+
+  return DEFAULT_COMPUTE_SECRETS_SCOPE;
+});
+
+/**
  * The instance count to record, and whether to record it at all.
  *
  * Not prompted for, unlike the other dials — nobody knows the right instance
@@ -238,6 +292,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
 
   // The telemetry state file is written on every invocation, success or failure.
   yield* Effect.gen(function* () {
@@ -245,7 +300,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       Effect.mapError((error) => new ComputeNewWorkdirError({ message: error.message })),
     );
 
-    const project = yield* loadComputeProjectForEntryWrite();
+    const project = yield* loadComputeProject;
 
     // Decided once, before the first prompt rather than beside the last, since
     // the name is now asked for too — every prompt below shares the answer.
@@ -256,14 +311,18 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     yield* validateComputeName(name);
 
     // Refused before anything is asked or written. `new` creates a compute;
-    // changing one that already exists is a `config.toml` edit, and the file is
+    // changing one that already exists is a config-file edit, and the file is
     // the user's. Checking here rather than only in `planComputeEntry` means the
     // runtime and size prompts never run for a name that was going to be
     // refused anyway; the name prompt rejects it up front for the same reason.
     if (project.section.compute[name] !== undefined) {
+      const entryRef =
+        cliConfigFormatForPath(project.configPath) === "toml"
+          ? `[compute.${name}]`
+          : `compute.${name}`;
       return yield* new ComputeAlreadyConfiguredError({
         detail: `"${name}" is already configured in ${project.configPath}.`,
-        suggestion: `Edit [compute.${name}] in ${project.configPath} yourself, or pick a different compute name.`,
+        suggestion: `Edit ${entryRef} in ${project.configPath} yourself, or pick a different compute name.`,
       });
     }
 
@@ -272,7 +331,15 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
+
+    const secretsScope = yield* resolveSecretsScope({
+      explicit: flags.secretsScope.pipe(Option.orElse(() => flags.secretsScopeCustom)),
+      canPrompt,
+    });
+
     const instances = recordedInstances(flags.instances);
+    // Recorded in `config.toml` rather than applied at push time; see ./SIDE_EFFECTS.md.
+    const exclude = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
 
     // Validated before anything is written: this is the directory the starter files
     // land in, so a value naming the project root, `supabase/`, or anywhere outside
@@ -329,20 +396,42 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         runtime,
         size,
         exposure,
+        secrets_scope: secretsScope,
         ...(instances === undefined ? {} : { instances }),
         ...(source === undefined ? {} : { source }),
+        ...(exclude.length === 0 ? {} : { exclude }),
       },
     });
 
     // Everything below this line changes the user's disk, and nothing below it
     // can fail for a reason the plan above could have caught.
+    const starters = Object.entries(COMPUTE_STACKS[runtime]);
+    yield* Effect.annotateCurrentSpan({
+      "compute.runtime": runtime,
+      "compute.size": size,
+      "compute.exposure": exposure,
+      "compute.secrets_scope": secretsScope,
+      "compute.starter_file_count": starters.length,
+    });
+    const destinationExisted = yield* fs.exists(destination);
+    const removeScaffold = Effect.gen(function* () {
+      for (const [filename] of starters) {
+        yield* fs.remove(path.join(destination, filename)).pipe(Effect.ignore);
+      }
+      if (!destinationExisted && (yield* destinationIsFree(destination))) {
+        yield* fs.remove(destination, { recursive: true }).pipe(Effect.ignore);
+      }
+    });
+
     yield* fs.makeDirectory(destination, { recursive: true });
 
-    for (const [filename, contents] of Object.entries(COMPUTE_STACKS[runtime])) {
-      yield* fs.writeFileString(path.join(destination, filename), contents);
-    }
+    yield* Effect.gen(function* () {
+      for (const [filename, contents] of starters) {
+        yield* fs.writeFileString(path.join(destination, filename), contents);
+      }
 
-    yield* commitComputeEntry(configWrite);
+      yield* configValues.writeThrough(commitComputeEntry(configWrite));
+    }).pipe(Effect.onError(() => removeScaffold));
 
     // Relative to the project root when the workdir was defaulted, since it also
     // reads as relative to the terminal the command ran from. An explicit
@@ -358,11 +447,13 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       size,
       vcpu: vcpuForSize(size),
       exposure,
+      secrets_scope: secretsScope,
       // The count a deploy will use, whether or not it was written down — a
       // payload that omitted it for the default would read as "unknown" rather
       // than "one".
       instances: instances ?? DEFAULT_COMPUTE_INSTANCES,
       source: sourceDisplay,
+      exclude,
       config_path: project.configPath,
     };
 
@@ -388,9 +479,11 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
         ["Access", exposure],
+        ["Secrets Scope", formatSecretsScope(secretsScope)],
         // `declared`, the way `compute status` labels the same number: nothing
         // is running yet, so a bare count would read as a live tally.
         ["Instances", `${instances ?? DEFAULT_COMPUTE_INSTANCES} declared`],
+        ["Excluded", exclude.join(", ")],
       ]),
     );
     // On the success trailer rather than inline, the way `bootstrap` emits its

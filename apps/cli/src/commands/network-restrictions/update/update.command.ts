@@ -1,10 +1,16 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
-import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
 import {
@@ -12,10 +18,11 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { networkRestrictionsUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * CSV-splits each occurrence (`--db-allow-cidr=1.2.3.0/24,5.6.7.0/24` → two CIDRs) and
- * appends across repeats, failing at parse time with pflag's diagnostic on malformed CSV.
+ * appends across repeats, failing at parse time with a diagnostic on malformed CSV.
  * If `-o` is also invalid, this error wins since `-o` is validated later, in the handler.
  */
 export const networkRestrictionsUpdateDbAllowCidrFlag = stringSliceFlag(
@@ -24,16 +31,13 @@ export const networkRestrictionsUpdateDbAllowCidrFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   dbAllowCidr: networkRestrictionsUpdateDbAllowCidrFlag,
-  bypassCidrChecks: Flag.boolean("bypass-cidr-checks").pipe(
+  bypassCidrChecks: Flag.Boolean("bypass-cidr-checks").pipe(
     Flag.withDescription("Bypass some of the CIDR validation checks."),
     Flag.withDefault(false),
   ),
-  append: Flag.boolean("append").pipe(
+  append: Flag.Boolean("append").pipe(
     Flag.withDescription("Append to existing restrictions instead of replacing them."),
     Flag.withDefault(false),
   ),
@@ -44,6 +48,28 @@ export type NetworkRestrictionsUpdateFlags = CliCommand.Command.Config.Infer<typ
 export const networkRestrictionsUpdateCommand = Command.make("update", config).pipe(
   Command.withDescription("Update network restrictions."),
   Command.withShortDescription("Update network restrictions"),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v1-update-network-restrictions",
+            kind: "required",
+            when: [{ flag: "append", is: false }],
+          },
+          {
+            operationId: "v1-patch-network-restrictions",
+            kind: "required",
+            when: [{ flag: "append", is: true }],
+          },
+        ],
+        noApiEffectFlags: ["db-allow-cidr", "bypass-cidr-checks"],
+      },
+      projectRefPicker,
+      linkedProjectCache,
+      branchResolution,
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Validate the -o value before the --experimental gate, so an invalid value is
@@ -60,4 +86,5 @@ export const networkRestrictionsUpdateCommand = Command.make("update", config).p
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

@@ -9,13 +9,13 @@
   },
   "body": [
     {
-      "id": "__PROJECT_REF__",
-      "slug": "__PROJECT_REF__",
+      "id": "replayfixtureprojref",
+      "slug": "replayfixtureprojref",
       "name": "colum.ferry@supabase.io's Org"
     },
     {
-      "id": "__PROJECT_REF__",
-      "slug": "__PROJECT_REF__",
+      "id": "replayfixtureprojref",
+      "slug": "replayfixtureprojref",
       "name": "CLIPort-TEST"
     }
   ]

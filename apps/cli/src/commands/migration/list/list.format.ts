@@ -29,9 +29,11 @@ export function makeMigrationListRows(
   let i = 0;
   let j = 0;
   while (i < remote.length || j < sortedLocal.length) {
+    const remoteVersion = remote[i];
+    const localVersion = sortedLocal[j];
     let remoteTs = MIGRATION_VERSION_MAX;
-    if (i < remote.length) {
-      const parsed = parseMigrationVersion(remote[i]!);
+    if (remoteVersion !== undefined) {
+      const parsed = parseMigrationVersion(remoteVersion);
       if (parsed === undefined) {
         i++;
         continue;
@@ -39,23 +41,19 @@ export function makeMigrationListRows(
       remoteTs = parsed;
     }
     let localTs = MIGRATION_VERSION_MAX;
-    if (j < sortedLocal.length) {
-      const parsed = parseMigrationVersion(sortedLocal[j]!);
+    if (localVersion !== undefined) {
+      const parsed = parseMigrationVersion(localVersion);
       if (parsed === undefined) {
         j++;
         continue;
       }
       localTs = parsed;
     }
-    if (localTs < remoteTs) {
-      rows.push({
-        local: sortedLocal[j]!,
-        remote: "",
-        time: formatTimestampVersion(sortedLocal[j]!),
-      });
+    if (localVersion !== undefined && localTs < remoteTs) {
+      rows.push({ local: localVersion, remote: "", time: formatTimestampVersion(localVersion) });
       j++;
-    } else if (remoteTs < localTs) {
-      rows.push({ local: "", remote: remote[i]!, time: formatTimestampVersion(remote[i]!) });
+    } else if (remoteVersion !== undefined && remoteTs < localTs) {
+      rows.push({ local: "", remote: remoteVersion, time: formatTimestampVersion(remoteVersion) });
       i++;
     } else {
       rows.push({

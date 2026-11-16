@@ -5,6 +5,11 @@
  */
 
 import type { CliConfig } from "@supabase/config";
+import {
+  DEFAULT_ERL_MAX_PORTS,
+  DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
+  DEFAULT_REALTIME_DB_ENCRYPTION_KEY,
+} from "@supabase/stack/defaults";
 
 import { START_INTERNAL_DB_NAME, START_INTERNAL_DB_PORT } from "./internal-db-connection.ts";
 
@@ -18,10 +23,10 @@ export const REALTIME_DB_USER = "supabase_admin";
 export const REALTIME_TENANT_ID = "realtime-dev";
 
 /** Fixed default, never configurable. */
-export const REALTIME_ENCRYPTION_KEY = "supabaserealtime";
+export const REALTIME_ENCRYPTION_KEY = DEFAULT_REALTIME_DB_ENCRYPTION_KEY;
 
 /** Fixed default, never configurable. */
-const REALTIME_SECRET_KEY_BASE = "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG";
+const REALTIME_SECRET_KEY_BASE = DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE;
 
 export interface RealtimeEnvInput {
   readonly ipVersion: CliConfig["realtime"]["ip_version"];
@@ -52,6 +57,7 @@ export function buildRealtimeEnv(input: RealtimeEnvInput): Record<string, string
     APP_NAME: "realtime",
     SECRET_KEY_BASE: REALTIME_SECRET_KEY_BASE,
     ERL_AFLAGS: input.ipVersion === "IPv6" ? "-proto_dist inet6_tcp" : "-proto_dist inet_tcp",
+    ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
     // Two literal single-quote characters, not an empty string.
     DNS_NODES: "''",
     RLIMIT_NOFILE: "",

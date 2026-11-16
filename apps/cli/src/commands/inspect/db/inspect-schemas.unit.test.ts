@@ -31,7 +31,7 @@ describe("likeEscapeSchema", () => {
 });
 
 describe("INTERNAL_SCHEMAS", () => {
-  it("matches the Go `utils.InternalSchemas` list (29 entries, in order)", () => {
+  it("matches the internal schemas list (29 entries, in order)", () => {
     expect(INTERNAL_SCHEMAS).toEqual([
       "information_schema",
       "pg_*",

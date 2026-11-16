@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   ContainerRestartError,
@@ -17,7 +17,7 @@ function mockSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       const result = handler(args);
 
@@ -122,7 +122,7 @@ describe("restartServicesAndReloadKong", () => {
 
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
           if (args[0] === "restart") {
             restarted.push(args[1] ?? "");
             inFlight++;

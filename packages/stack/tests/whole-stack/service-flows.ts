@@ -1,7 +1,7 @@
 import { expect } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted, Schema } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { SignJWT } from "jose";
 import { requestWithHeaders, service, type WholeStack } from "./fixture.ts";
 
@@ -226,6 +226,9 @@ export const exerciseMetadataAndPooler = Effect.fn("WholeStack.exerciseMetadataA
       const metadataBody = yield* metadata.text;
       if (metadata.status !== 200 || !metadataBody.includes("whole_stack_items"))
         return yield* Effect.die(`Pgmeta did not return the fixture table: ${metadata.status}`);
+      // A cold Studio image can take longer to prepare than the traffic wake budget allows;
+      // preparing it first keeps the request below exercising only the lazy wake.
+      yield* service(fixture, "studio").prepare;
       const studioRequest = HttpClientRequest.setHeader(
         "authorization",
         `Bearer ${token}`,

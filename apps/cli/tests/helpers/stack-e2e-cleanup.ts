@@ -1,11 +1,27 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
-import path from "node:path";
+import { BunChildProcessSpawner, BunFileSystem, BunPath } from "@effect/platform-bun";
+import {
+  Cause,
+  Clock,
+  Console,
+  Data,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { runSupabase } from "./cli.ts";
 
 type TempHome = {
   readonly dir: string;
-  readonly dispose: () => void;
+  readonly dispose: () => void | Promise<void>;
 };
 
 type StackProject = {
@@ -21,9 +37,14 @@ interface StackRuntimeSnapshot {
   readonly trackedPids: ReadonlyArray<number>;
 }
 
+type MaybePromise<A> = A | PromiseLike<A>;
+
 interface CleanupEnvironment {
   readonly stopStack: (projectDir: string, homeDir: string) => Promise<{ exitCode: number }>;
-  readonly captureSnapshot: (projectDir: string, homeDir?: string) => StackRuntimeSnapshot;
+  readonly captureSnapshot: (
+    projectDir: string,
+    homeDir?: string,
+  ) => MaybePromise<StackRuntimeSnapshot>;
   readonly waitForCleanup: (
     projectDir: string,
     homeDir: string | undefined,
@@ -35,8 +56,8 @@ interface CleanupEnvironment {
     snapshot: StackRuntimeSnapshot,
   ) => Promise<void>;
   readonly removeProjectWithDocker: (projectDir: string) => Promise<boolean>;
-  readonly repairProjectPermissions: (projectDir: string) => void;
-  readonly describeProjectPermissions: (projectDir: string) => string;
+  readonly repairProjectPermissions: (projectDir: string) => MaybePromise<void>;
+  readonly describeProjectPermissions: (projectDir: string) => MaybePromise<string>;
 }
 
 interface StackE2eCleanupManager {
@@ -50,14 +71,74 @@ interface StackE2eCleanupManager {
   reset(): void;
 }
 
-function normalizeDir(dir: string): string {
+type HostServices = FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner;
+
+const hostLayer: Layer.Layer<HostServices> = BunChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+);
+
+/* Promise edge of the real environment: a host failure rejects with the original error. */
+const runHost = <A>(effect: Effect.Effect<A, PlatformError, HostServices>): Promise<A> =>
+  Effect.runPromise(
+    effect.pipe(
+      Effect.catch((error) => Effect.die(error.cause ?? error)),
+      Effect.provide(hostLayer),
+    ),
+  );
+
+/** A foreign cleanup callback or environment member rejected or threw. */
+class CleanupForeignFailure extends Data.TaggedError("CleanupForeignFailure")<{
+  readonly cause: unknown;
+}> {}
+
+/** An owned path could not be removed; `detail` is the reported reason. */
+class OwnedPathCleanupFailure extends Data.TaggedError("OwnedPathCleanupFailure")<{
+  readonly detail: string;
+}> {}
+
+const callForeign = <A>(run: () => MaybePromise<A>) =>
+  Effect.tryPromise({
+    try: () => Promise.resolve(run()),
+    catch: (cause) => new CleanupForeignFailure({ cause }),
+  });
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+const foreignMessage = (error: PlatformError) => errorMessage(error.cause ?? error);
+
+const normalizeDir = Effect.fnUntraced(function* (dir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const resolved = path.resolve(dir);
-  try {
-    return realpathSync.native(resolved);
-  } catch {
-    return resolved;
+  return yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
+});
+
+const pathExists = Effect.fnUntraced(function* (pathname: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.exists(pathname).pipe(Effect.orElseSucceed(() => false));
+});
+
+/*
+ * Directory entries never follow symlinks. `FileSystem` has no `lstat`, so `readLink` decides: only
+ * its "not a symlink" answer (`EINVAL`) lets `stat` judge the entry; a link, or an entry `readLink`
+ * is denied on (a mode-000 link on macOS), is never walked.
+ */
+const isDirectoryEntry = Effect.fnUntraced(function* (pathname: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const notASymlink = yield* fs.readLink(pathname).pipe(
+    Effect.as(false),
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.succeed(Predicate.hasProperty(error.cause, "code") && error.cause.code === "EINVAL"),
+    ),
+  );
+  if (!notASymlink) {
+    return false;
   }
-}
+  return yield* fs.stat(pathname).pipe(
+    Effect.map((info) => info.type === "Directory"),
+    Effect.orElseSucceed(() => false),
+  );
+});
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -68,48 +149,121 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function parsePsTable(): Array<{
+function killQuietly(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+}
+
+function parsePsOutput(output: string): Array<{
   readonly pid: number;
   readonly ppid: number;
   readonly command: string;
 }> {
-  try {
-    const output = execFileSync("ps", ["-Ao", "pid=,ppid=,command="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-
-    return output
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) => {
-        const match = line.match(/^(\d+)\s+(\d+)\s+(.*)$/);
-        if (match == null) {
-          return undefined;
-        }
-        return {
-          pid: Number.parseInt(match[1]!, 10),
-          ppid: Number.parseInt(match[2]!, 10),
-          command: match[3] ?? "",
-        };
-      })
-      .filter(
-        (
-          entry,
-        ): entry is { readonly pid: number; readonly ppid: number; readonly command: string } =>
-          entry != null,
-      );
-  } catch {
-    return [];
-  }
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const match = line.match(/^(\d+)\s+(\d+)\s+(.*)$/);
+      if (match == null) {
+        return undefined;
+      }
+      return {
+        pid: Number.parseInt(match[1]!, 10),
+        ppid: Number.parseInt(match[2]!, 10),
+        command: match[3] ?? "",
+      };
+    })
+    .filter(
+      (entry): entry is { readonly pid: number; readonly ppid: number; readonly command: string } =>
+        entry != null,
+    );
 }
 
+/** The output limit of a synchronous spawn: its default 1 MiB `maxBuffer`. */
+const SYNC_SPAWN_MAX_BUFFER = 1024 * 1024;
+
+/** The most a synchronous spawn reads from a pipe at once. */
+const SYNC_SPAWN_READ_SIZE = 64 * 1024;
+
+/** The output outgrew the synchronous-spawn buffer limit. */
+class OutputBufferExceeded extends Data.TaggedError("OutputBufferExceeded")<{
+  readonly bytes: Uint8Array;
+}> {}
+
+const concatBytes = (chunks: ReadonlyArray<Uint8Array>, size: number) => {
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
+
+/**
+ * Buffers a stream the way a synchronous spawn does: once the total passes the limit it stops
+ * with what was read so far, the chunk that crossed the limit included.
+ */
+const collectBounded = <E>(stream: Stream.Stream<Uint8Array, E>) =>
+  Effect.suspend(() => {
+    const chunks: Array<Uint8Array> = [];
+    let size = 0;
+    return Stream.runForEach(stream, (chunk) =>
+      Effect.suspend(() => {
+        chunks.push(chunk);
+        size += chunk.byteLength;
+        return size > SYNC_SPAWN_MAX_BUFFER
+          ? Effect.fail(new OutputBufferExceeded({ bytes: concatBytes(chunks, size) }))
+          : Effect.void;
+      }),
+    ).pipe(Effect.map(() => concatBytes(chunks, size)));
+  });
+
+/* Recovers every failure a spawn can raise, its throws included; interruption passes through. */
+const recoverUnlessInterrupted = <A, E, R, B>(
+  effect: Effect.Effect<A, E, R>,
+  recover: (failure: unknown) => B,
+): Effect.Effect<A | B, never, R> =>
+  effect.pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.failCause(Cause.fromReasons(cause.reasons.filter(Cause.isInterruptReason)))
+        : Effect.succeed(recover(Cause.squash(cause))),
+    ),
+  );
+
+const parsePsTable = recoverUnlessInterrupted(
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const output = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make("ps", ["-Ao", "pid=,ppid=,command="], {
+            /* A plain child, not a process group: no process-group signals. */
+            detached: false,
+            stdin: "ignore",
+            stderr: "ignore",
+          }),
+        );
+        const [bytes, exitCode] = yield* Effect.all(
+          [collectBounded(handle.stdout), handle.exitCode],
+          { concurrency: "unbounded" },
+        );
+        return exitCode === 0 ? Option.some(utf8.decode(bytes)) : Option.none<string>();
+      }),
+    );
+    return Option.match(output, { onNone: () => [], onSome: parsePsOutput });
+  }),
+  () => [],
+);
+
 function descendantPids(
-  rootPids: ReadonlyArray<number>,
+  rootPids: ReadonlyArray<unknown>,
   table: ReadonlyArray<{ readonly pid: number; readonly ppid: number }>,
-): Array<number> {
-  const visited = new Set<number>();
+): Array<unknown> {
+  const visited = new Set<unknown>();
   const pending = [...rootPids];
 
   while (pending.length > 0) {
@@ -128,25 +282,45 @@ function descendantPids(
   return [...visited];
 }
 
-function readDocumentPid(documentFile: string): number | undefined {
-  try {
-    const parsed = JSON.parse(readFileSync(documentFile, "utf8")) as {
-      readonly runtime?: { readonly pid?: number };
-    };
-    return parsed.runtime?.pid;
-  } catch {
-    return undefined;
-  }
-}
+const decodeStackWorkspace = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      workspace: Schema.optional(Schema.Struct({ path: Schema.optional(Schema.String) })),
+    }),
+  ),
+);
 
-function cleanupErrorDetail(
-  pathname: string,
-  error: unknown,
-  resource = "temp stack project",
-): string {
-  return `Failed to remove ${resource} ${pathname}: ${
-    error instanceof Error ? error.message : String(error)
-  }`;
+const decodeJsonDocument = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+
+/* Reads UTF-8 text and keeps a leading byte order mark, like `readFileSync(path, "utf8")`. */
+const utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
+const readUtf8 = (fs: FileSystem.FileSystem, pathname: string) =>
+  fs.readFile(pathname).pipe(Effect.map((bytes) => utf8.decode(bytes)));
+
+const readWorkspacePath = Effect.fnUntraced(function* (documentFile: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* readUtf8(fs, documentFile).pipe(
+    Effect.flatMap(decodeStackWorkspace),
+    Effect.map((document) => document.workspace?.path),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
+const readDocumentPid = Effect.fnUntraced(function* (documentFile: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* readUtf8(fs, documentFile).pipe(
+    Effect.flatMap(decodeJsonDocument),
+    /* `runtime.pid` as written, whatever its JSON type, like a plain property read. */
+    Effect.map((document) => {
+      const runtime = Predicate.hasProperty(document, "runtime") ? document.runtime : undefined;
+      return Predicate.hasProperty(runtime, "pid") ? runtime.pid : undefined;
+    }),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
+function cleanupErrorDetail(pathname: string, detail: string, resource = "temp stack project") {
+  return `Failed to remove ${resource} ${pathname}: ${detail}`;
 }
 
 // Walks the `cause` chain so a typed wrapper classifies by the errno it carries.
@@ -166,169 +340,228 @@ function formatMode(mode: number): string {
   return `0${(mode & 0o777).toString(8)}`;
 }
 
-function describePath(pathname: string): string {
-  try {
-    const stats = statSync(pathname);
-    return `${pathname} uid=${stats.uid} gid=${stats.gid} mode=${formatMode(stats.mode)}`;
-  } catch (error) {
-    return `${pathname} ${error instanceof Error ? error.message : String(error)}`;
-  }
-}
+const describePath = Effect.fnUntraced(function* (pathname: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.stat(pathname).pipe(
+    Effect.map(
+      (stats) =>
+        `${pathname} uid=${Option.getOrUndefined(stats.uid)} gid=${Option.getOrUndefined(stats.gid)} mode=${formatMode(stats.mode)}`,
+    ),
+    Effect.catch((error) => Effect.succeed(`${pathname} ${foreignMessage(error)}`)),
+  );
+});
 
-function describeProjectPermissions(projectDir: string): string {
+const describeProjectPermissions = Effect.fnUntraced(function* (projectDir: string) {
+  const path = yield* Path.Path;
   const details = [
     "Permission diagnostics:",
-    describePath(projectDir),
-    describePath(path.join(projectDir, ".supabase")),
+    yield* describePath(projectDir),
+    yield* describePath(path.join(projectDir, ".supabase")),
   ];
   return details.join("\n");
-}
+});
 
-function repairProjectPermissions(projectDir: string): void {
-  try {
-    execFileSync("chmod", ["-R", "u+rwX", projectDir], {
-      stdio: "ignore",
-      timeout: 5_000,
-    });
-  } catch {}
-}
+const repairProjectPermissions = Effect.fnUntraced(function* (projectDir: string) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  yield* spawner
+    .exitCode(
+      ChildProcess.make("chmod", ["-R", "u+rwX", projectDir], {
+        detached: false,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    )
+    .pipe(Effect.timeoutOption(5_000), (run) => recoverUnlessInterrupted(run, () => undefined));
+});
 
-async function removeProjectWithDocker(projectDir: string): Promise<boolean> {
-  const parentDir = path.dirname(projectDir);
-  const projectName = path.basename(projectDir);
+const removeProjectWithDocker = Effect.fnUntraced(function* (projectDir: string) {
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const args = [
+    "run",
+    "--rm",
+    "--user",
+    "0:0",
+    "-v",
+    `${path.dirname(projectDir)}:/parent`,
+    "-e",
+    `TARGET_NAME=${path.basename(projectDir)}`,
+    "--entrypoint",
+    "sh",
+    "public.ecr.aws/docker/library/busybox:1.36",
+    "-c",
+    'cd /parent && rm -rf -- "$TARGET_NAME"',
+  ];
 
-  let dockerErr: string | undefined;
-  try {
-    execFileSync(
-      "docker",
-      [
-        "run",
-        "--rm",
-        "--user",
-        "0:0",
-        "-v",
-        `${parentDir}:/parent`,
-        "-e",
-        `TARGET_NAME=${projectName}`,
-        "--entrypoint",
-        "sh",
-        "public.ecr.aws/docker/library/busybox:1.36",
-        "-c",
-        'cd /parent && rm -rf -- "$TARGET_NAME"',
-      ],
-      { stdio: ["ignore", "ignore", "pipe"], timeout: 30_000 },
-    );
-  } catch (error) {
-    const rawStderr =
-      error != null && typeof error === "object" && "stderr" in error
-        ? (error as { stderr: unknown }).stderr
-        : "";
-    const stderr = (
-      typeof rawStderr === "string"
-        ? rawStderr
-        : rawStderr instanceof Uint8Array
-          ? new TextDecoder().decode(rawStderr)
-          : ""
-    ).trim();
-    dockerErr = stderr || (error instanceof Error ? error.message : String(error));
-  }
+  /* The stderr read so far, kept across a timeout or an outgrown buffer for the report. */
+  const stderrChunks: Array<Uint8Array> = [];
+  let stderrSize = 0;
+  const failure = yield* recoverUnlessInterrupted(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make("docker", args, {
+            /* A plain child, not a process group: its descendants are left alone. */
+            detached: false,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "pipe",
+          }),
+        );
+        const [, exitCode] = yield* Effect.all(
+          [
+            Stream.runForEach(handle.stderr, (chunk) =>
+              Effect.suspend(() => {
+                stderrChunks.push(chunk);
+                stderrSize += chunk.byteLength;
+                return stderrSize > SYNC_SPAWN_MAX_BUFFER
+                  ? Effect.fail(new OutputBufferExceeded({ bytes: new Uint8Array() }))
+                  : Effect.void;
+              }),
+            ),
+            /* A signal death fails like a nonzero exit. */
+            handle.exitCode.pipe(Effect.orElseSucceed(() => -1)),
+          ],
+          { concurrency: "unbounded" },
+        );
+        return exitCode;
+      }),
+    ).pipe(
+      Effect.timeoutOption(30_000),
+      Effect.map(
+        Option.match({
+          onNone: () => "spawnSync docker ETIMEDOUT",
+          onSome: (exitCode) =>
+            exitCode === 0 ? undefined : `Command failed: docker ${args.join(" ")}`,
+        }),
+      ),
+      Effect.catchTag("OutputBufferExceeded", () =>
+        Effect.succeed(
+          "spawnSync docker ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
+        ),
+      ),
+    ),
+    (thrown) =>
+      errorMessage(
+        Predicate.isTagged(thrown, "PlatformError") && Predicate.hasProperty(thrown, "cause")
+          ? thrown.cause
+          : thrown,
+      ),
+  );
+  /* A synchronous spawn reads in 64 KiB pieces, so an outgrown buffer keeps through the piece that
+     crossed the limit. */
+  const keptSize = Math.min(stderrSize, SYNC_SPAWN_MAX_BUFFER + SYNC_SPAWN_READ_SIZE);
+  const stderr = new TextDecoder().decode(
+    concatBytes(stderrChunks, stderrSize).subarray(0, keptSize),
+  );
+  const dockerErr = failure === undefined ? undefined : stderr.trim() || failure;
 
-  const removed = !existsSync(projectDir);
+  const removed = !(yield* pathExists(projectDir));
   if (!removed && dockerErr) {
-    console.warn(`[stack-e2e-cleanup] docker fallback for ${projectDir} failed: ${dockerErr}`);
+    yield* Console.warn(
+      `[stack-e2e-cleanup] docker fallback for ${projectDir} failed: ${dockerErr}`,
+    );
   }
   return removed;
-}
+});
 
-async function cleanupOwnedPath(
+type PermissionFallback = Pick<
+  CleanupEnvironment,
+  "removeProjectWithDocker" | "repairProjectPermissions" | "describeProjectPermissions"
+>;
+
+const reportedAs = <A>(run: () => MaybePromise<A>) =>
+  callForeign(run).pipe(
+    Effect.mapError(
+      (failure) => new OwnedPathCleanupFailure({ detail: errorMessage(failure.cause) }),
+    ),
+  );
+
+const recoverPermissionBlockedPath = Effect.fnUntraced(function* (
   pathname: string,
   cleanup: () => void | Promise<void>,
-  environment: Pick<
-    CleanupEnvironment,
-    "removeProjectWithDocker" | "repairProjectPermissions" | "describeProjectPermissions"
-  >,
-): Promise<void> {
-  try {
-    await cleanup();
-  } catch (error) {
-    if (!isPermissionError(error)) {
-      throw error;
-    }
-
-    const removedByDocker = await environment.removeProjectWithDocker(pathname);
-    if (removedByDocker) {
-      return;
-    }
-
-    environment.repairProjectPermissions(pathname);
-    try {
-      await cleanup();
-    } catch (retryError) {
-      throw new Error(
-        `${retryError instanceof Error ? retryError.message : String(retryError)}\n${environment.describeProjectPermissions(
-          pathname,
-        )}`,
-      );
-    }
+  environment: PermissionFallback,
+) {
+  const removedByDocker = yield* reportedAs(() => environment.removeProjectWithDocker(pathname));
+  if (removedByDocker) {
+    return;
   }
-}
 
-async function cleanupProject(
-  project: StackProject,
-  environment: Pick<
-    CleanupEnvironment,
-    "removeProjectWithDocker" | "repairProjectPermissions" | "describeProjectPermissions"
-  >,
-): Promise<void> {
-  await cleanupOwnedPath(project.dir, project.cleanup, environment);
-}
+  yield* reportedAs(() => environment.repairProjectPermissions(pathname));
+  yield* callForeign(cleanup).pipe(
+    Effect.catch((retryFailure) =>
+      reportedAs(() => environment.describeProjectPermissions(pathname)).pipe(
+        Effect.flatMap((diagnostics) =>
+          Effect.fail(
+            new OwnedPathCleanupFailure({
+              detail: `${errorMessage(retryFailure.cause)}\n${diagnostics}`,
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+});
 
-function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnapshot {
-  const normalized = normalizeDir(projectDir);
+const cleanupOwnedPath = (
+  pathname: string,
+  cleanup: () => void | Promise<void>,
+  environment: PermissionFallback,
+) =>
+  callForeign(cleanup).pipe(
+    Effect.catch((failure) =>
+      isPermissionError(failure.cause)
+        ? recoverPermissionBlockedPath(pathname, cleanup, environment)
+        : Effect.fail(new OwnedPathCleanupFailure({ detail: errorMessage(failure.cause) })),
+    ),
+  );
+
+const captureSnapshot = Effect.fnUntraced(function* (projectDir: string, homeDir?: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const normalized = yield* normalizeDir(projectDir);
   const managedStacksRoot =
-    homeDir === undefined ? undefined : path.join(normalizeDir(homeDir), "stacks");
-  if (managedStacksRoot === undefined || !existsSync(managedStacksRoot)) {
+    homeDir === undefined ? undefined : path.join(yield* normalizeDir(homeDir), "stacks");
+  if (managedStacksRoot === undefined || !(yield* pathExists(managedStacksRoot))) {
     return {
       managedStacksRootExists: false,
       documentFiles: [],
       stackDirs: [],
       trackedPids: [],
-    };
+    } satisfies StackRuntimeSnapshot;
   }
 
   const stackDirs: Array<string> = [];
   const documentFiles: Array<string> = [];
 
-  for (const entry of readdirSync(managedStacksRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory()) {
+  for (const entry of yield* fs.readDirectory(managedStacksRoot)) {
+    const stackDir = path.join(managedStacksRoot, entry);
+    if (!(yield* isDirectoryEntry(stackDir))) {
       continue;
     }
-    const stackDir = path.join(managedStacksRoot, entry.name);
     const documentFile = path.join(stackDir, "stack.json");
-    if (!existsSync(documentFile)) {
+    if (!(yield* pathExists(documentFile))) {
       continue;
     }
-    try {
-      const document = JSON.parse(readFileSync(documentFile, "utf8")) as {
-        readonly workspace?: { readonly path?: string };
-      };
-      if (
-        document.workspace?.path === undefined ||
-        normalizeDir(document.workspace.path) !== normalized
-      ) {
-        continue;
-      }
-    } catch {
+    const workspacePath = yield* readWorkspacePath(documentFile);
+    if (workspacePath === undefined || (yield* normalizeDir(workspacePath)) !== normalized) {
       continue;
     }
     stackDirs.push(stackDir);
     documentFiles.push(documentFile);
   }
 
-  const rootPids = documentFiles
-    .map(readDocumentPid)
-    .filter((pid): pid is number => pid != null && pid > 0);
-  const table = parsePsTable();
+  /* A pid is kept as written when it compares above zero; only a numeric one matches a `ps` row,
+     and process signals coerce the others to numbers. */
+  const rootPids: Array<unknown> = [];
+  for (const documentFile of documentFiles) {
+    const pid = yield* readDocumentPid(documentFile);
+    if (pid != null && Number(pid) > 0) {
+      rootPids.push(pid);
+    }
+  }
+  const table = yield* parsePsTable;
   const descendants = descendantPids(rootPids, table);
   const commandPids = table.filter((row) => row.command.includes(normalized)).map((row) => row.pid);
 
@@ -336,165 +569,236 @@ function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnap
     managedStacksRootExists: stackDirs.length > 0,
     documentFiles,
     stackDirs,
-    trackedPids: [...new Set([...descendants, ...commandPids])].sort((left, right) => left - right),
-  };
-}
+    trackedPids: [...new Set([...descendants, ...commandPids])]
+      .sort((left, right) => Number(left) - Number(right))
+      .map(Number),
+  } satisfies StackRuntimeSnapshot;
+});
 
-async function waitForCleanup(
+type CleanupRound = "clean" | "pending" | "expired";
+
+const waitForCleanup = Effect.fnUntraced(function* (
   projectDir: string,
   homeDir: string | undefined,
   snapshot: StackRuntimeSnapshot,
-): Promise<boolean> {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    const nextSnapshot = captureSnapshot(projectDir, homeDir);
-    const filesGone = nextSnapshot.documentFiles.length === 0;
-    const pidsGone = snapshot.trackedPids.every((pid) => !isProcessAlive(pid));
-    if (filesGone && pidsGone) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
+) {
+  const deadline = (yield* Clock.currentTimeMillis) + 15_000;
+  /* Each round checks the deadline before it looks; a round that still sees the stack waits 200 ms. */
+  const round = Effect.flatMap(Clock.currentTimeMillis, (now) =>
+    now < deadline
+      ? Effect.map(captureSnapshot(projectDir, homeDir), (nextSnapshot): CleanupRound => {
+          const filesGone = nextSnapshot.documentFiles.length === 0;
+          const pidsGone = snapshot.trackedPids.every((pid) => !isProcessAlive(pid));
+          return filesGone && pidsGone ? "clean" : "pending";
+        })
+      : Effect.succeed<CleanupRound>("expired"),
+  );
+  const state = yield* round.pipe(
+    Effect.repeat({ schedule: Schedule.spaced(200), while: (current) => current === "pending" }),
+  );
+  return state === "clean";
+});
 
-  return false;
-}
-
-async function forceCleanup(
-  projectDir: string,
-  homeDir: string | undefined,
-  snapshot: StackRuntimeSnapshot,
-): Promise<void> {
+const forceCleanup = Effect.fnUntraced(function* (snapshot: StackRuntimeSnapshot) {
+  const fs = yield* FileSystem.FileSystem;
   for (const pid of snapshot.trackedPids) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
+    killQuietly(pid);
   }
 
   for (const stackDir of snapshot.stackDirs) {
-    try {
-      rmSync(stackDir, { recursive: true, force: true });
-    } catch {}
+    yield* fs.remove(stackDir, { recursive: true, force: true }).pipe(Effect.ignore);
   }
-}
+});
 
 function createRealEnvironment(): CleanupEnvironment {
   return {
-    stopStack: async (projectDir, homeDir) => {
-      const result = await runSupabase(["stack", "destroy", "--yes"], {
+    stopStack: (projectDir, homeDir) =>
+      runSupabase(["stack", "destroy", "--yes"], {
         cwd: projectDir,
         home: homeDir,
         env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
         exitTimeoutMs: 15_000,
-      });
-      return { exitCode: result.exitCode };
-    },
-    captureSnapshot,
-    waitForCleanup,
-    forceCleanup,
-    removeProjectWithDocker,
-    repairProjectPermissions,
-    describeProjectPermissions,
+      }).then((result) => ({ exitCode: result.exitCode })),
+    captureSnapshot: (projectDir, homeDir) => runHost(captureSnapshot(projectDir, homeDir)),
+    waitForCleanup: (projectDir, homeDir, snapshot) =>
+      runHost(waitForCleanup(projectDir, homeDir, snapshot)),
+    forceCleanup: (_projectDir, _homeDir, snapshot) => runHost(forceCleanup(snapshot)),
+    removeProjectWithDocker: (projectDir) => runHost(removeProjectWithDocker(projectDir)),
+    repairProjectPermissions: (projectDir) => runHost(repairProjectPermissions(projectDir)),
+    describeProjectPermissions: (projectDir) => runHost(describeProjectPermissions(projectDir)),
   };
 }
+
+type Registration =
+  | {
+      readonly kind: "home";
+      readonly dir: Fiber.Fiber<string>;
+      readonly dispose: () => void | Promise<void>;
+    }
+  | {
+      readonly kind: "project";
+      readonly dir: Fiber.Fiber<string>;
+      readonly cleanup: () => Promise<void>;
+    }
+  | {
+      readonly kind: "association";
+      readonly projectDir: Fiber.Fiber<string>;
+      readonly homeDir: Fiber.Fiber<string>;
+    };
+
+/* Registration stays synchronous, so canonicalization starts now, while the owned path exists. */
+const startNormalizeDir = (dir: string): Fiber.Fiber<string> =>
+  Effect.runFork(normalizeDir(dir).pipe(Effect.provide(hostLayer)));
+
+/* Replays registrations in order into maps keyed by canonical dir. */
+const resolveRegistrations = Effect.fnUntraced(function* (
+  registrations: ReadonlyArray<Registration>,
+) {
+  const homes = new Map<string, TempHome>();
+  const projects = new Map<string, StackProject>();
+  for (const registration of registrations) {
+    switch (registration.kind) {
+      case "home": {
+        const dir = yield* Fiber.join(registration.dir);
+        homes.set(dir, { dir, dispose: registration.dispose });
+        break;
+      }
+      case "project": {
+        const dir = yield* Fiber.join(registration.dir);
+        projects.set(dir, { dir, cleanup: registration.cleanup });
+        break;
+      }
+      case "association": {
+        const project = projects.get(yield* Fiber.join(registration.projectDir));
+        if (project !== undefined) {
+          project.homeDir = yield* Fiber.join(registration.homeDir);
+        }
+        break;
+      }
+    }
+  }
+  return { pendingProjects: [...projects.values()], pendingHomes: homes };
+});
+
+const drainRegistrations = Effect.fnUntraced(function* (
+  environment: CleanupEnvironment,
+  registrations: ReadonlyArray<Registration>,
+) {
+  const { pendingProjects, pendingHomes } = yield* resolveRegistrations(registrations);
+
+  const failures: Array<string> = [];
+  const associatedHomes = new Map<string, TempHome>();
+
+  for (const project of pendingProjects) {
+    const homeDir = project.homeDir;
+    const home = homeDir === undefined ? undefined : pendingHomes.get(homeDir);
+    if (home !== undefined && homeDir !== undefined) {
+      associatedHomes.set(homeDir, home);
+    }
+    const snapshot = yield* callForeign(() =>
+      environment.captureSnapshot(project.dir, project.homeDir),
+    );
+    const hasRuntimeArtifacts =
+      snapshot.documentFiles.length > 0 || snapshot.trackedPids.some((pid) => isProcessAlive(pid));
+    const hasStackPersistence = snapshot.managedStacksRootExists || snapshot.stackDirs.length > 0;
+    let stopExitCode: number | undefined;
+
+    const stackHomeDir = project.homeDir;
+    if (hasStackPersistence && stackHomeDir !== undefined) {
+      stopExitCode = yield* callForeign(() =>
+        environment.stopStack(project.dir, stackHomeDir),
+      ).pipe(
+        Effect.map((stopResult) => stopResult.exitCode),
+        Effect.orElseSucceed(() => 1),
+      );
+    }
+
+    if (hasRuntimeArtifacts) {
+      const cleaned = yield* callForeign(() =>
+        environment.waitForCleanup(project.dir, project.homeDir, snapshot),
+      );
+      if (!cleaned) {
+        yield* callForeign(() => environment.forceCleanup(project.dir, project.homeDir, snapshot));
+        failures.push(
+          stopExitCode != null && stopExitCode !== 0
+            ? `Centralized e2e cleanup detected leaked stack resources for ${project.dir} after stop exited ${stopExitCode}.`
+            : `Centralized e2e cleanup detected leaked stack resources for ${project.dir}.`,
+        );
+      }
+    }
+
+    yield* cleanupOwnedPath(project.dir, project.cleanup, environment).pipe(
+      Effect.catch((failure) =>
+        Effect.sync(() => {
+          failures.push(cleanupErrorDetail(project.dir, failure.detail));
+        }),
+      ),
+    );
+  }
+
+  for (const home of associatedHomes.values()) {
+    yield* cleanupOwnedPath(home.dir, home.dispose, environment).pipe(
+      Effect.catch((failure) =>
+        Effect.sync(() => {
+          failures.push(cleanupErrorDetail(home.dir, failure.detail, "temp home"));
+        }),
+      ),
+    );
+  }
+
+  // Cleanup failures are best-effort and don't fail the test: assertions already
+  // ran, CI runners are ephemeral, and cases like `functions dev`'s root-owned
+  // docker files can make cleanup itself impossible.
+  if (failures.length > 0) {
+    yield* Console.warn(
+      `[stack-e2e-cleanup] ${failures.length} resource(s) could not be cleaned up:\n${failures.join("\n")}`,
+    );
+  }
+});
 
 export function createStackE2eCleanupManager(
   environment: CleanupEnvironment = createRealEnvironment(),
 ): StackE2eCleanupManager {
-  const homes = new Map<string, TempHome>();
-  const projects = new Map<string, StackProject>();
+  let registrations: Array<Registration> = [];
 
   return {
     registerHome(home) {
-      const dir = normalizeDir(home.dir);
-      homes.set(dir, {
-        dir,
+      registrations.push({
+        kind: "home",
+        dir: startNormalizeDir(home.dir),
         dispose: () => home.dispose(),
       });
     },
     registerStackProject(project) {
-      const dir = normalizeDir(project.dir);
-      projects.set(dir, {
-        dir,
+      registrations.push({
+        kind: "project",
+        dir: startNormalizeDir(project.dir),
         cleanup: () => project.cleanup(),
       });
     },
     associateHome(projectDir, homeDir) {
-      const project = projects.get(normalizeDir(projectDir));
-      if (project !== undefined) {
-        project.homeDir = normalizeDir(homeDir);
+      /* With no stack project registered yet there is nothing to associate, so nothing is kept. */
+      if (!registrations.some((registration) => registration.kind === "project")) {
+        return;
       }
+      registrations.push({
+        kind: "association",
+        projectDir: startNormalizeDir(projectDir),
+        homeDir: startNormalizeDir(homeDir),
+      });
     },
-    async drain() {
-      const pendingProjects = [...projects.values()];
-      const pendingHomes = new Map(homes);
-      projects.clear();
-      homes.clear();
-
-      const failures: Array<string> = [];
-      const associatedHomes = new Map<string, TempHome>();
-
-      for (const project of pendingProjects) {
-        const homeDir = project.homeDir;
-        const home = homeDir === undefined ? undefined : pendingHomes.get(homeDir);
-        if (home !== undefined && homeDir !== undefined) {
-          associatedHomes.set(homeDir, home);
-        }
-        const snapshot = environment.captureSnapshot(project.dir, project.homeDir);
-        const hasRuntimeArtifacts =
-          snapshot.documentFiles.length > 0 ||
-          snapshot.trackedPids.some((pid) => isProcessAlive(pid));
-        const hasStackPersistence =
-          snapshot.managedStacksRootExists || snapshot.stackDirs.length > 0;
-        let stopExitCode: number | undefined;
-
-        if (hasStackPersistence && project.homeDir !== undefined) {
-          try {
-            const stopResult = await environment.stopStack(project.dir, project.homeDir);
-            stopExitCode = stopResult.exitCode;
-          } catch {
-            stopExitCode = 1;
-          }
-        }
-
-        if (hasRuntimeArtifacts) {
-          const cleaned = await environment.waitForCleanup(project.dir, project.homeDir, snapshot);
-          if (!cleaned) {
-            await environment.forceCleanup(project.dir, project.homeDir, snapshot);
-            failures.push(
-              stopExitCode != null && stopExitCode !== 0
-                ? `Centralized e2e cleanup detected leaked stack resources for ${project.dir} after stop exited ${stopExitCode}.`
-                : `Centralized e2e cleanup detected leaked stack resources for ${project.dir}.`,
-            );
-          }
-        }
-
-        try {
-          await cleanupProject(project, environment);
-        } catch (error) {
-          failures.push(cleanupErrorDetail(project.dir, error));
-        }
-      }
-
-      for (const home of associatedHomes.values()) {
-        try {
-          await cleanupOwnedPath(home.dir, home.dispose, environment);
-        } catch (error) {
-          failures.push(cleanupErrorDetail(home.dir, error, "temp home"));
-        }
-      }
-
-      // Cleanup failures are best-effort and don't fail the test: assertions already
-      // ran, CI runners are ephemeral, and cases like `functions dev`'s root-owned
-      // docker files can make cleanup itself impossible.
-      if (failures.length > 0) {
-        console.warn(
-          `[stack-e2e-cleanup] ${failures.length} resource(s) could not be cleaned up:\n${failures.join("\n")}`,
-        );
-      }
+    drain() {
+      const pending = registrations;
+      registrations = [];
+      /* A foreign rejection rejects the drain with the original value. */
+      return Effect.runPromise(
+        drainRegistrations(environment, pending).pipe(
+          Effect.catch((failure) => Effect.die(failure.cause)),
+        ),
+      );
     },
     reset() {
-      homes.clear();
-      projects.clear();
+      registrations = [];
     },
   };
 }
@@ -503,12 +807,9 @@ const manager = createStackE2eCleanupManager();
 
 export function registerTempHome(home: {
   readonly dir: string;
-  readonly [Symbol.dispose]: () => void;
+  readonly dispose: () => Promise<void>;
 }): void {
-  manager.registerHome({
-    dir: home.dir,
-    dispose: () => home[Symbol.dispose](),
-  });
+  manager.registerHome(home);
 }
 
 export function registerTempStackProject(project: {
@@ -525,6 +826,6 @@ export function noteStackCliProjectHome(projectDir: string | undefined, homeDir:
   manager.associateHome(projectDir, homeDir);
 }
 
-export async function cleanupRegisteredStackProjects(): Promise<void> {
-  await manager.drain();
+export function cleanupRegisteredStackProjects(): Promise<void> {
+  return manager.drain();
 }

@@ -1,16 +1,58 @@
 import type { CliConfig } from "@supabase/config";
 import type { ServiceCreation } from "@supabase/stack/effect";
-import { Effect } from "effect";
+import { Effect, Struct } from "effect";
+import type { ResolvedAuthExternalProvider } from "./local-config-values.ts";
 import { passwordRequirementsToChar } from "./password-requirements.ts";
 
 type AuthConfig = Extract<ServiceCreation, { readonly service: "auth" }>["config"];
+type AuthSettings = NonNullable<AuthConfig["settings"]>;
+
+/** Maps every key of `Source`, at any depth, that `Target` does not declare to `never`. */
+type DeclaredKeys<Source, Target> =
+  Source extends ReadonlyArray<infer Item>
+    ? ReadonlyArray<
+        DeclaredKeys<Item, Target extends ReadonlyArray<infer TargetItem> ? TargetItem : never>
+      >
+    : Source extends object
+      ? {
+          readonly [K in keyof Source]: K extends keyof Target
+            ? DeclaredKeys<Source[K], NonNullable<Target[K]>>
+            : never;
+        }
+      : Source;
+
+/** Passes a config section through unchanged; a field the stack does not declare fails type-checking. */
+const passThrough =
+  <Target>() =>
+  <Source extends Target>(section: Source & DeclaredKeys<Source, NonNullable<Target>>): Target =>
+    section;
+
+interface ResolvedAuthOptions {
+  readonly smtpEnabled: boolean;
+  readonly authExternalUrl?: string;
+  readonly apiExternalUrl?: string;
+  readonly passkeyEnabled?: boolean;
+  readonly webauthn?: {
+    readonly rpId: string;
+    readonly rpDisplayName: string;
+    readonly rpOrigins: ReadonlyArray<string>;
+  };
+  readonly externalProviders: Readonly<Record<string, ResolvedAuthExternalProvider>>;
+}
 
 /** Maps resolved CLI authentication policy to the Auth service. */
 export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
-  (auth: CliConfig["auth"], localSmtp: CliConfig["local_smtp"]): Effect.Effect<AuthConfig> =>
+  (
+    auth: CliConfig["auth"],
+    localSmtp: CliConfig["local_smtp"],
+    options: ResolvedAuthOptions,
+  ): Effect.Effect<AuthConfig> =>
     Effect.succeed({
-      databaseUrl: "postgresql://placeholder",
       siteUrl: auth.site_url,
+      ...(options.apiExternalUrl === undefined ? {} : { apiExternalUrl: options.apiExternalUrl }),
+      ...(options.authExternalUrl === undefined
+        ? {}
+        : { authExternalUrl: options.authExternalUrl }),
       jwtExpiry: auth.jwt_expiry,
       disableSignup: !auth.enable_signup,
       ...(localSmtp.admin_email === undefined ? {} : { smtpAdminEmail: localSmtp.admin_email }),
@@ -24,12 +66,15 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
         minimumPasswordLength: auth.minimum_password_length,
         passwordRequirements: passwordRequirementsToChar(auth.password_requirements),
         ...(auth.jwt_issuer === undefined ? {} : { jwtIssuer: auth.jwt_issuer }),
-        rateLimit: auth.rate_limit,
+        ...(options.passkeyEnabled === undefined ? {} : { passkeyEnabled: options.passkeyEnabled }),
+        ...(options.webauthn === undefined ? {} : { webauthn: options.webauthn }),
+        rateLimit: passThrough<AuthSettings["rateLimit"]>()(auth.rate_limit),
         email: {
           enable_signup: auth.email.enable_signup,
           double_confirm_changes: auth.email.double_confirm_changes,
           enable_confirmations: auth.email.enable_confirmations,
           secure_password_change: auth.email.secure_password_change,
+          require_current_password: auth.email.require_current_password,
           max_frequency: auth.email.max_frequency,
           otp_length: auth.email.otp_length,
           otp_expiry: auth.email.otp_expiry,
@@ -46,21 +91,39 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
             ]),
           ),
         },
-        sms: auth.sms,
-        ...(auth.captcha === undefined ? {} : { captcha: auth.captcha }),
-        hooks: auth.hook,
-        mfa: auth.mfa,
-        ...(auth.sessions === undefined ? {} : { sessions: auth.sessions }),
+        sms: passThrough<AuthSettings["sms"]>()(Struct.omit(auth.sms, ["enabled"])),
+        ...(auth.captcha === undefined
+          ? {}
+          : { captcha: passThrough<AuthSettings["captcha"]>()(auth.captcha) }),
+        hooks: passThrough<AuthSettings["hooks"]>()(auth.hook),
+        mfa: passThrough<AuthSettings["mfa"]>()(auth.mfa),
+        ...(auth.sessions === undefined
+          ? {}
+          : { sessions: passThrough<AuthSettings["sessions"]>()(auth.sessions) }),
         external: Object.fromEntries(
-          Object.entries(auth.external).flatMap(([name, provider]) =>
-            provider === undefined ? [] : [[name, provider]],
-          ),
+          Object.entries(options.externalProviders).map(([name, provider]) => [
+            name,
+            {
+              enabled: provider.enabled,
+              client_id: provider.clientId,
+              ...(provider.secret === undefined ? {} : { secret: provider.secret }),
+              url: provider.url,
+              redirect_uri: provider.redirectUri ?? "",
+              skip_nonce_check: provider.skipNonceCheck,
+              email_optional: provider.emailOptional,
+            },
+          ]),
         ),
-        web3: auth.web3,
-        oauthServer: auth.oauth_server,
+        web3: passThrough<AuthSettings["web3"]>()(auth.web3),
+        oauthServer: passThrough<AuthSettings["oauthServer"]>()(auth.oauth_server),
       },
-      ...(auth.email.smtp?.enabled !== true
-        ? {}
+      ...(options.smtpEnabled !== true || auth.email.smtp === undefined
+        ? localSmtp.enabled
+          ? {
+              smtpAdminEmail: localSmtp.admin_email ?? "admin@email.com",
+              smtpSenderName: localSmtp.sender_name ?? "Admin",
+            }
+          : {}
         : {
             smtp: {
               host: auth.email.smtp.host ?? "",
@@ -73,5 +136,5 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
                 : { senderName: auth.email.smtp.sender_name }),
             },
           }),
-    }),
+    } satisfies AuthConfig),
 );

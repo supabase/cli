@@ -111,21 +111,59 @@ export interface DumpOptions {
   readonly excludeTable: ReadonlyArray<string>;
   /** `true` emits `--column-inserts` instead of `COPY` statements. */
   readonly columnInsert: boolean;
+  /** `true` forwards the conn's TLS settings to `pg_dump`. */
+  readonly remote?: boolean;
 }
 
-export function toDumpEnv(conn: PgConnInput): Record<string, string> {
-  return {
+const TLS_DEMANDING_SSLMODES = new Set(["require", "verify-ca", "verify-full"]);
+
+/**
+ * Carries an inline root CA (the pinned Supabase CA) to the pg_dump runner, which writes it to a
+ * file and points `PGSSLROOTCERT` at it, since libpq reads root certs only from files.
+ */
+export const INLINE_ROOT_CERT_ENV = "PGSSLROOTCERT_PEM";
+
+export function toDumpEnv(conn: PgConnInput, remote = false): Record<string, string> {
+  const env: Record<string, string> = {
     PGHOST: conn.host,
     PGPORT: String(conn.port),
     PGUSER: conn.user,
     PGPASSWORD: conn.password,
     PGDATABASE: conn.database,
   };
+  if (!remote) return env;
+  const inlineRootCert =
+    conn.sslrootcert === undefined && (conn.sslrootcertInline?.length ?? 0) > 0
+      ? conn.sslrootcertInline
+      : undefined;
+  /* libpq's `system` root cert implies and only allows `verify-full`; any other root CA promotes
+     `require` to `verify-ca`, as the driver does. */
+  const sslmode =
+    conn.sslrootcert === "system" && conn.sslmode !== "disable"
+      ? "verify-full"
+      : (conn.sslrootcert ?? inlineRootCert) !== undefined && conn.sslmode === "require"
+        ? "verify-ca"
+        : conn.sslmode;
+  if (sslmode !== undefined) env["PGSSLMODE"] = sslmode;
+  if (conn.connectTimeoutSeconds !== undefined)
+    env["PGCONNECT_TIMEOUT"] = String(conn.connectTimeoutSeconds);
+  if (sslmode === "disable") return env;
+  /* Under `prefer`, libpq falls back to plaintext when the root cert does not match. */
+  if (TLS_DEMANDING_SSLMODES.has(sslmode ?? "")) {
+    if (conn.sslrootcert !== undefined) env["PGSSLROOTCERT"] = conn.sslrootcert;
+    else if (inlineRootCert !== undefined) env[INLINE_ROOT_CERT_ENV] = inlineRootCert;
+  }
+  /* libpq takes no key passphrase from the env, so an encrypted key would stop `pg_dump`. */
+  if (conn.sslcert !== undefined && conn.sslkey !== undefined && conn.sslpassword === undefined) {
+    env["PGSSLCERT"] = conn.sslcert;
+    env["PGSSLKEY"] = conn.sslkey;
+  }
+  return env;
 }
 
 /** Env assembly for a schema-only dump. */
 export function buildSchemaDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<string, string> {
-  const env = toDumpEnv(conn);
+  const env = toDumpEnv(conn, opt.remote);
   if (opt.schema.length > 0) {
     // Must append flag because empty string results in error.
     env["EXTRA_FLAGS"] = `--schema=${opt.schema.join("|")}`;
@@ -140,7 +178,7 @@ export function buildSchemaDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<
 
 /** Env assembly for a data-only dump. */
 export function buildDataDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<string, string> {
-  const env = toDumpEnv(conn);
+  const env = toDumpEnv(conn, opt.remote);
   if (opt.schema.length > 0) {
     env["INCLUDED_SCHEMAS"] = opt.schema.join("|");
   } else {
@@ -170,7 +208,7 @@ export function quoteUpperCase(table: string): string {
 
 /** Env assembly for a role dump. */
 export function buildRoleDumpEnv(conn: PgConnInput, opt: DumpOptions): Record<string, string> {
-  const env = toDumpEnv(conn);
+  const env = toDumpEnv(conn, opt.remote);
   env["RESERVED_ROLES"] = RESERVED_ROLES.join("|");
   env["ALLOWED_CONFIGS"] = ALLOWED_CONFIGS.join("|");
   if (!opt.keepComments) {

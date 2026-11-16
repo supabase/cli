@@ -1,5 +1,7 @@
 # `supabase feedback delete <token> [--project-ref <ref>]`
 
+Target: account, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                            | Format                              | When                                                                                                                                                                                   |
@@ -46,7 +48,7 @@ appear in shareable debug output.
 | `SUPABASE_WORKDIR`      | project directory override                                                                                   | no (falls back to `--workdir` → cwd)                                |
 | `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                                                              | no (unused by this command)                                         |
 | `SUPABASE_PROJECT_ID`   | supplies the project-ref context when `--project-ref` is unset; must be a well-formed ref (exit 1 otherwise) | no (falls back to `<workdir>/supabase/.temp/project-ref` → omitted) |
-| `SUPABASE_YES`          | auto-confirms the deletion prompt, same as `--yes`                                                           | no                                                                  |
+| `SUPABASE_YES`          | auto-confirms the deletion prompt, same as `--yes`; a project `.env` value is ignored                        | no                                                                  |
 
 Global telemetry consent env applies as with every command.
 
@@ -58,7 +60,8 @@ Global telemetry consent env applies as with every command.
 | `1`  | token argument is not a UUID                                                                               |
 | `1`  | `--project-ref` or `SUPABASE_PROJECT_ID` is set but not a well-formed project ref (no request sent)        |
 | `1`  | no feedback matched (wrong token, already deleted, or project-ref/user-id context mismatch)                |
-| `1`  | confirmation declined, or prompt unavailable (non-interactive, `-o json`, or machine mode without `--yes`) |
+| `1`  | confirmation declined                                                                                      |
+| `1`  | confirmation needed but this run can't prompt (non-interactive, `-o json`, or machine mode) and no `--yes` |
 | `1`  | backend failure (PostgREST error, network failure, or 10 s timeout)                                        |
 | `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)                        |
 
@@ -86,9 +89,9 @@ Feedback deleted.
 The confirmation prompt runs before the row's existence is known (the CLI
 never reads the row), so a wrong token is answered with the not-found error
 after the prompt. The delete runs behind a "Deleting feedback..." spinner.
-`--yes` / `SUPABASE_YES` skips the confirmation prompt. `-o json` requires
-`--yes` like the machine output formats do: it never prompts, even on a TTY,
-so stdout stays payload-only, and it emits `{ "deleted": true }`.
+Under `--yes` it prints `Confirmed by --yes: Permanently delete this feedback` on stderr
+instead of asking. `-o json` requires `--yes` like the machine output formats do: it never
+prompts, even on a TTY, so stdout stays payload-only, and it emits `{ "deleted": true }`.
 
 ### `--output-format json`
 

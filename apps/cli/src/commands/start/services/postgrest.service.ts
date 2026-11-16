@@ -23,6 +23,8 @@ export interface PostgrestEnvInput {
   readonly extraSearchPath: CliConfig["api"]["extra_search_path"];
   /** `config.api.max_rows`. */
   readonly maxRows: CliConfig["api"]["max_rows"];
+  /** `config.api.db_pool`. */
+  readonly dbPool: CliConfig["api"]["db_pool"];
   /** The `db` container's own Docker name (`serviceContainerName("db", projectId)`). */
   readonly dbHost: string;
   /** See {@link startInternalDbPassword}. */
@@ -41,6 +43,7 @@ export function buildPostgrestEnv(input: PostgrestEnvInput): Record<string, stri
     PGRST_DB_SCHEMAS: input.schemas.join(","),
     PGRST_DB_EXTRA_SEARCH_PATH: input.extraSearchPath.join(","),
     PGRST_DB_MAX_ROWS: String(input.maxRows),
+    ...(input.dbPool === undefined ? {} : { PGRST_DB_POOL: String(input.dbPool) }),
     PGRST_DB_ANON_ROLE: "anon",
     PGRST_JWT_SECRET: input.jwks,
     PGRST_ADMIN_SERVER_PORT: "3001",
@@ -57,6 +60,7 @@ export interface PostgrestContainerSpecInput {
   readonly schemas: CliConfig["api"]["schemas"];
   readonly extraSearchPath: CliConfig["api"]["extra_search_path"];
   readonly maxRows: CliConfig["api"]["max_rows"];
+  readonly dbPool: CliConfig["api"]["db_pool"];
   /** `LocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password. */
   readonly dbUrl: string;
   readonly jwks: string;
@@ -73,6 +77,7 @@ export function buildPostgrestContainerSpec(
     schemas: input.schemas,
     extraSearchPath: input.extraSearchPath,
     maxRows: input.maxRows,
+    dbPool: input.dbPool,
     dbHost: serviceContainerName("db", input.projectId),
     dbPassword: startInternalDbPassword(input.dbUrl),
     jwks: input.jwks,

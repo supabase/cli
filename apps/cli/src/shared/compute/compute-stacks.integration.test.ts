@@ -40,7 +40,7 @@ function expectValidationFailure<A, E>(exit: Exit.Exit<A, E>, message: string): 
   expect(failure.value.message).toContain(message);
 }
 
-it.live("reports offered runtimes without starter directories", () =>
+it.effect("reports offered runtimes without starter directories", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const root = yield* stackFixture({
@@ -54,7 +54,7 @@ it.live("reports offered runtimes without starter directories", () =>
   ).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.live("reports directories without offered runtimes", () =>
+it.effect("reports directories without offered runtimes", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const root = yield* stackFixture({
@@ -70,7 +70,7 @@ it.live("reports directories without offered runtimes", () =>
   ).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.live("reports an offered runtime with no starter files", () =>
+it.effect("reports an offered runtime with no starter files", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const root = yield* stackFixture({

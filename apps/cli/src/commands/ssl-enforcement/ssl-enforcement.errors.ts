@@ -70,7 +70,7 @@ export class SslEnforcementNoEnableDisableFlagError extends Data.TaggedError(
   }
 }
 
-// Verbatim cobra string for `MarkFlagsMutuallyExclusive`. Effect CLI has no
+// Verbatim mutually-exclusive-flags message. Effect CLI has no
 // built-in equivalent, so we enforce it at handler entry.
 export class SslEnforcementMutuallyExclusiveFlagsError extends Data.TaggedError(
   "SslEnforcementMutuallyExclusiveFlagsError",

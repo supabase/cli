@@ -1,7 +1,7 @@
 import { Context, type Effect, type Scope } from "effect";
 
 import type { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
-import type { DbTomlValues } from "../../../command-internal/db-config.toml-read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 import type { PgDeltaContext } from "../../../command-internal/pgdelta.ts";
 
 /** The live migrated database needed by pg-delta next database diffs. */
@@ -20,7 +20,7 @@ export interface PgDeltaNextPlanShadows extends PgDeltaNextMigrationsShadow {
 
 export interface PgDeltaNextShadowInput {
   readonly context: PgDeltaContext;
-  readonly toml: DbTomlValues;
+  readonly toml: DbConfigValues;
   readonly projectRef?: string;
   /**
    * `db schema declarative sync --no-cache` (and generate's same flag): force a fresh

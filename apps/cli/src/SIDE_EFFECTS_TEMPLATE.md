@@ -58,10 +58,11 @@
 <!-- List every env var the command reads, directly or via a service.
      Required?: "yes" / "no (falls back to …)" -->
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| Variable                   | Purpose                                                                                    | Required?                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`    | auth token (bypasses credential file/keyring lookup)                                       | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`         | built-in profile name or YAML file path                                                    | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| `SUPABASE_API_MAX_RETRIES` | Management API client retries after the first attempt (`0` = send once), not command loops | no (falls back to 5)                                    |
 
 ## Exit Codes
 
@@ -77,12 +78,6 @@
 ## Telemetry Events Fired
 
 <!-- List every PostHog event the command emits, including the universal cli_command_executed.
-     If the command is still a Phase 0 proxy, write "proxy — see Go binary" and leave
-     the table empty; the Go subprocess fires telemetry. For a still-wrapped command, grep
-     its Go source under apps/cli-go/internal/<command>/*.go for `service.Capture`,
-     `service.Alias`, `service.Identify`, `service.GroupIdentify`, `TrackUpgradeSuggested`
-     (apps/cli-go now contains only the residual wrapped-command subset; for an
-     already-ported command, check out commit 7b469f5b3 to grep its former Go source instead).
      Constants live in apps/cli/src/shared/telemetry/event-catalog.ts. -->
 
 | Event                  | When                                       | Notable properties / groups         |
@@ -124,7 +119,7 @@
 ## Notes
 
 <!-- Anything else an implementer or reviewer needs to know:
-     - Behaviour differences between --local / --linked / --project-ref modes
+     - Behaviour differences between local and --remote targets
      - Idempotency characteristics
-     - Known divergences from Go CLI output that are intentional
+     - Intentional output quirks
      - Side effects of retries or partial failures -->

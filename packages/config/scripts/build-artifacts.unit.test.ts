@@ -1,15 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { CliConfigSchema, toCliConfigJsonSchema } from "../src/base.ts";
-import {
-  ProjectConfigSchema,
-  toProjectConfigJsonSchema,
-} from "../src/project-config/project-schema.ts";
+import { toCliConfigJsonSchema } from "../src/base.ts";
+import { toProjectConfigJsonSchema } from "../src/project-config/project-schema.ts";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "../src/schema-metadata.ts";
-import { collapseNonFiniteNumberUnions, withSchemaMetadata } from "./json-schema-postprocess.ts";
+import { withSchemaMetadata } from "./json-schema-postprocess.ts";
 
-// Regression coverage for the post-processing `scripts/build.ts` applies to
-// both `dist/schema.json` and `dist/project-schema.json`, generated in-memory
-// here via the same pure functions the build script itself calls.
+// Regression coverage for `dist/schema.json` and `dist/project-schema.json`, built in
+// memory via the same pure functions `scripts/build.ts` calls: every number schema is
+// finite, so no non-finite `anyOf` split reaches them.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -46,31 +43,19 @@ function findAnyOfWithNonFiniteEnum(node: unknown, into: Array<unknown>): void {
   }
 }
 
-const cliDocument = withSchemaMetadata(
-  collapseNonFiniteNumberUnions(toCliConfigJsonSchema(), CliConfigSchema.ast) as Record<
-    string,
-    unknown
-  >,
-  {
-    id: CLI_CONFIG_SCHEMA_URL,
-    title: "Supabase CLI config (CliConfig)",
-    description: "test",
-  },
-);
+const cliDocument = withSchemaMetadata(toCliConfigJsonSchema(), {
+  id: CLI_CONFIG_SCHEMA_URL,
+  title: "Supabase CLI config (CliConfig)",
+  description: "test",
+});
 
-const projectDocument = withSchemaMetadata(
-  collapseNonFiniteNumberUnions(toProjectConfigJsonSchema(), ProjectConfigSchema.ast) as Record<
-    string,
-    unknown
-  >,
-  {
-    id: PROJECT_CONFIG_SCHEMA_URL,
-    title: "Supabase hosted project config (ProjectConfig)",
-    description: "test",
-  },
-);
+const projectDocument = withSchemaMetadata(toProjectConfigJsonSchema(), {
+  id: PROJECT_CONFIG_SCHEMA_URL,
+  title: "Supabase hosted project config (ProjectConfig)",
+  description: "test",
+});
 
-describe("generated JSON Schema artifacts, post-processed", () => {
+describe("published JSON Schema artifacts", () => {
   test.each([
     ["schema.json", cliDocument],
     ["project-schema.json", projectDocument],
@@ -90,7 +75,11 @@ describe("generated JSON Schema artifacts, post-processed", () => {
       throw new Error("expected properties.api.properties.max_rows to be an object");
     }
     const maxRows = apiProperties["max_rows"];
-    expect(maxRows["type"]).toBe("number");
+    const anyOf = maxRows["anyOf"];
+    if (!Array.isArray(anyOf) || !isRecord(anyOf[0])) {
+      throw new Error("expected max_rows to be an anyOf of the number and an env() string");
+    }
+    expect(anyOf[0]["type"]).toBe("number");
     expect(typeof maxRows["description"]).toBe("string");
     expect(maxRows["default"]).toBe(1000);
   });
@@ -104,7 +93,7 @@ describe("generated JSON Schema artifacts, post-processed", () => {
       "Supabase hosted project config (ProjectConfig)",
     ],
   ])("%s carries $schema, $id, and title", (_name, document, id, title) => {
-    expect(document["$schema"]).toBe("https://json-schema.org/draft/2020-12/schema");
+    expect(document["$schema"]).toBe("http://json-schema.org/draft-07/schema#");
     expect(document["$id"]).toBe(id);
     expect(document["title"]).toBe(title);
   });

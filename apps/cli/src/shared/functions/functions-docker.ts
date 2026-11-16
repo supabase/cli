@@ -12,28 +12,19 @@ import {
 
 import type { Path } from "effect";
 import { Data, Effect, Option, Predicate, Runtime, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-
-const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
-const MAX_PROJECT_ID_LENGTH = 40;
+import { sanitizeProjectId } from "../config/project-id.ts";
 
 export function toSlash(pathname: string) {
   return pathname.replaceAll("\\", "/");
 }
 
-export function normalizeProjectId(source: string) {
-  const sanitized = source.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
-  return sanitized.length > MAX_PROJECT_ID_LENGTH
-    ? sanitized.slice(0, MAX_PROJECT_ID_LENGTH)
-    : sanitized;
-}
-
 export function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${normalizeProjectId(projectId)}`;
+  return `supabase_${name}_${sanitizeProjectId(projectId)}`;
 }
 
 /**
@@ -53,21 +44,21 @@ export function edgeRuntimeCacheVolume(projectId: string) {
 
 /**
  * Resolves the Docker network mode. `explicit` is tri-state: `undefined`
- * (never set) falls through to `envOverride`; `""` (explicitly cleared) and
- * any non-empty value both skip `envOverride` and resolve immediately.
+ * (never set) falls through to `envNetworkId`; `""` (explicitly cleared) and
+ * any non-empty value both skip `envNetworkId` and resolve immediately.
  * Callers must pass a flag reader that preserves this distinction — see
- * `lastExplicitLongFlagValue` (`shared/cli/cobra-flag-groups.ts`).
+ * `lastExplicitLongFlagValue` (`shared/cli/flag-groups.ts`).
  */
 export function resolveDockerNetworkMode(input: {
   readonly explicit: string | undefined;
-  readonly envOverride: string | undefined;
+  readonly envNetworkId: string | undefined;
   readonly projectId: string;
 }): string {
   if (input.explicit !== undefined) {
     return input.explicit.length > 0 ? input.explicit : localDockerId("network", input.projectId);
   }
-  if (input.envOverride !== undefined && input.envOverride.length > 0) {
-    return input.envOverride;
+  if (input.envNetworkId !== undefined && input.envNetworkId.length > 0) {
+    return input.envNetworkId;
   }
   return localDockerId("network", input.projectId);
 }
@@ -250,7 +241,7 @@ export function isUserDefinedDockerNetwork(networkMode: string) {
   );
 }
 
-export const ensureDockerNetwork = Effect.fnUntraced(function* (
+export const ensureDockerNetwork = Effect.fn("FunctionsDocker.ensureNetwork")(function* (
   networkMode: string,
   projectId: string,
 ) {
@@ -262,6 +253,7 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
     stdout: "ignore",
     stderr: "ignore",
   }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
+  yield* Effect.annotateCurrentSpan({ "docker.network.exists": inspect.exitCode === 0 });
   if (inspect.exitCode === 0) {
     return;
   }
@@ -288,7 +280,7 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
   }
 });
 
-export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
+export const ensureDockerNamedVolume = Effect.fn("FunctionsDocker.ensureVolume")(function* (
   volumeName: string,
   projectId: string,
   projectEnvValues?: Readonly<Record<string, string>>,
@@ -319,12 +311,14 @@ export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
   }
 });
 
-export const isDockerRunning = Effect.fnUntraced(function* () {
+export const isDockerRunning = Effect.fn("FunctionsDocker.isRunning")(function* () {
   const result = yield* runChildProcess("docker", ["info"], {
     stdout: "ignore",
     stderr: "ignore",
   }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
-  return result.exitCode === 0;
+  const running = result.exitCode === 0;
+  yield* Effect.annotateCurrentSpan({ "docker.running": running });
+  return running;
 });
 
 /**
@@ -357,12 +351,14 @@ export function resolveEdgeRuntimeVersion(
  * answered. Shared by every `functions` Docker path (`deploy`, `download`,
  * `serve`).
  */
-export const resolveFunctionsDockerImage = Effect.fnUntraced(function* (
+export const resolveFunctionsDockerImage = Effect.fn("FunctionsDocker.resolveImage")(function* (
   image: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  const resolved = yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  yield* Effect.annotateCurrentSpan({ "docker.image.resolved": resolved });
+  return resolved;
 });
 
 /** Retains native failure diagnostics while exposing a typed Effect failure. */

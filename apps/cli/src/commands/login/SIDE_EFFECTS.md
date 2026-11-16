@@ -1,5 +1,7 @@
 # `supabase login`
 
+Target: account, no consent — see [Command target](../../../docs/command-target.md)
+
 Writes the access token, then stitches/clears the telemetry identity and
 captures `cli_login_completed`.
 
@@ -16,7 +18,7 @@ captures `cli_login_completed`.
 | ----------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------- |
 | OS keyring (`Supabase CLI` / profile)           | token string              | always on success when the keyring is available                                                    |
 | `~/.supabase/access-token`                      | plain text (mode `0600`)  | on success when the keyring is unavailable (WSL / `SUPABASE_NO_KEYRING`)                           |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON                      | always (PersistentPostRun flush); `distinct_id` set on stitch, removed on clear                    |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON                      | always (post-run flush); `distinct_id` set on stitch, removed on clear                             |
 | `~/.supabase/profile`                           | plain text (profile name) | on success only, when a profile is explicitly set (`--profile` ≠ default, else `SUPABASE_PROFILE`) |
 
 ## API Routes
@@ -33,6 +35,7 @@ captures `cli_login_completed`.
 | ---------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN`                        | non-interactive token source                           | no (falls back to `--token` → piped stdin → browser flow) |
 | `SUPABASE_NO_KEYRING`                          | disables the OS keyring, forcing the file fallback     | no                                                        |
+| `SUPABASE_API_MAX_RETRIES`                     | Management API profile lookup retries (`0` = none)     | no (falls back to 5)                                      |
 | `CLAUDECODE` / `CLAUDE_CODE`                   | enables the Claude Code plugin hint (TTY stdout only)  | no                                                        |
 | `DO_NOT_TRACK` / `SUPABASE_TELEMETRY_DISABLED` | suppress analytics delivery (state file still written) | no                                                        |
 

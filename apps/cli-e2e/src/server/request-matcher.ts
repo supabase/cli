@@ -86,7 +86,7 @@ export function resetCounters(counters: SequenceCounters): void {
 
 /** Sorts array bodies canonically so comparison is order-insensitive where
  *  element order isn't semantically meaningful (e.g. bulk-create secrets) — a
- *  proxied command building a request body from a Go map can produce a
+ *  proxied command building a request body from a map can produce a
  *  different key order per platform. Nested object fields are still compared
  *  exactly; only the top-level array order is normalized. */
 export function sortBody(body: unknown): unknown {

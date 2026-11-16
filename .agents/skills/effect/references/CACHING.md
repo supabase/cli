@@ -13,6 +13,8 @@ Prefer `effect/Cache` over a `Map` + timestamp + prune-loop cache when its keyed
 - Return a zero TTL (`0` or `"0 millis"`) from `timeToLive` to avoid caching transient failures or degraded fallbacks without failing the caller. A short negative-cache TTL can be appropriate for stable failures such as not-found results.
 - `Cache.invalidate(cache, key)` / `Cache.refresh(cache, key)` handle explicit staleness; `Cache.has` checks without triggering a lookup.
 - Cache construction is effectful. Build the cache once in the owning layer/scope and share the handle; a cache built per call caches nothing.
+- Lookup services are captured at construction by default. Use `requireServicesAt: "lookup"` only when callers should supply them on each lookup; this changes the cache's environment type.
+- `timeToLive` is optional and defaults to infinity. Specify it when freshness matters; capacity alone only bounds retained entries.
 - For a single value (no key), use `Effect.cached(effect)` or `Effect.cachedWithTTL(effect, ttl)` instead of a one-key Cache.
 - For cached resources that need cleanup (connections, clients), use `ScopedCache`.
 

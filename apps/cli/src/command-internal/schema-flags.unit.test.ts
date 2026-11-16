@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseSchemaFlags, SchemaFlagParseError, schemaToCsvField } from "./schema-flags.ts";
 
-describe("parseSchemaFlags (pflag StringSlice CSV parity)", () => {
+describe("parseSchemaFlags", () => {
   it("splits unquoted comma-separated values", () => {
     expect(parseSchemaFlags(["public,private"])).toEqual(["public", "private"]);
   });
@@ -34,7 +34,7 @@ describe("parseSchemaFlags (pflag StringSlice CSV parity)", () => {
     expect(parseSchemaFlags([])).toEqual([]);
   });
 
-  it("preserves whitespace (Go does not trim)", () => {
+  it("preserves whitespace (no trimming)", () => {
     expect(parseSchemaFlags([" public , private "])).toEqual([" public ", " private "]);
   });
 
@@ -63,7 +63,7 @@ describe("schemaToCsvField (inverse — re-encode one value as a CSV field)", ()
     expect(schemaToCsvField("public")).toBe("public");
   });
 
-  it("leaves the empty string unquoted (Go csv.Writer)", () => {
+  it("leaves the empty string unquoted", () => {
     expect(schemaToCsvField("")).toBe("");
   });
 

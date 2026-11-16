@@ -1,10 +1,7 @@
 import { Context, Data, Effect, FileSystem, Layer, Path } from "effect";
-import {
-  type DatabaseInstance,
-  type ServiceCreation,
-  type ServiceInstance,
-  type Stack,
-} from "@supabase/stack/effect";
+import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
+import { initialization, type InitializationCommand } from "@supabase/stack/commands";
+import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
 import { Output } from "../shared/output/output.service.ts";
 import {
   actionability,
@@ -14,11 +11,12 @@ import {
 import { parseConnectionString } from "./db-config.parse.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection } from "./db-connection.service.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import {
   applyDatabaseOverlay,
   type ApplyDatabaseOverlayInput,
   type DbSetupError,
+  ensureStackWebhookSchema,
   type SetupDatabaseOptions,
 } from "./db-bootstrap/db-setup.ts";
 import type { MigrationVaultError, VaultSecret } from "./vault.ts";
@@ -26,16 +24,20 @@ import type { MigrationVaultError, VaultSecret } from "./vault.ts";
 const DATABASE_SERVICES = ["auth", "storage", "realtime"] as const;
 type DatabaseService = (typeof DATABASE_SERVICES)[number];
 
+const isDatabaseService = (service: string): service is DatabaseService =>
+  DATABASE_SERVICES.some((candidate) => candidate === service);
+
+/** Selects the services whose database schemas the catalog provisions. */
+export const catalogDatabaseServices = (
+  services: ReadonlyArray<{ readonly service: string }>,
+): ReadonlyArray<DatabaseService> =>
+  services.flatMap(({ service }) => (isDatabaseService(service) ? [service] : []));
+
 interface ServiceCredentials {
   readonly databaseUrl: string;
   readonly authDatabaseUrl: string;
   readonly storageDatabaseUrl: string;
 }
-
-type TemporaryServiceInstance =
-  | ServiceInstance<"auth">
-  | ServiceInstance<"storage">
-  | ServiceInstance<"realtime">;
 
 export class StackCatalogSetupError extends Data.TaggedError("StackCatalogSetupError")<{
   readonly message: string;
@@ -60,9 +62,10 @@ export interface StackCatalogSetupInput {
     readonly stack: Stack;
     readonly database: DatabaseInstance;
     readonly databaseServices: ReadonlyArray<DatabaseService>;
-    readonly jwtSecret: string;
+    readonly selection: ArtifactSelection;
   };
-  readonly overlay: StackCatalogOverlay;
+  /** Project SQL for a first setup; omitted when only the catalog changes. */
+  readonly overlay?: StackCatalogOverlay;
 }
 
 const catalogError = (cause: unknown): StackCatalogSetupError =>
@@ -79,16 +82,6 @@ type StackCatalogSetupFailure =
   | MigrationVaultError
   | DbConnectError;
 
-const temporaryServiceError = (
-  operation: "start" | "destroy",
-  instance: TemporaryServiceInstance,
-  cause: unknown,
-): StackCatalogSetupError =>
-  new StackCatalogSetupError({
-    message: `temporary ${instance.service} service ${instance.id} failed to ${operation}: ${cause instanceof Error ? cause.message : String(cause)}`,
-    cause,
-  });
-
 const credential = (
   credentials: Readonly<Record<string, string>>,
   name: string,
@@ -99,58 +92,35 @@ const credential = (
     : Effect.succeed(value);
 };
 
-const serviceDefinition = (
+const serviceCommand = (
   service: DatabaseService,
+  databaseId: string,
   credentials: ServiceCredentials,
-  jwtSecret: string,
   storagePath: string,
-): Extract<ServiceCreation, { readonly service: DatabaseService }> => {
+  selection: ArtifactSelection,
+): InitializationCommand => {
   switch (service) {
     case "auth":
-      return {
-        service,
-        config: {
-          databaseUrl: credentials.authDatabaseUrl,
-          jwtSecret,
-        },
-        endpoints: {},
-      };
+      return initialization.auth({
+        pin: selection.auth,
+        databaseId,
+        databaseUrl: credentials.authDatabaseUrl,
+      });
     case "storage":
-      return {
-        service,
-        config: {
-          databaseUrl: credentials.storageDatabaseUrl,
-          filePath: storagePath,
-          jwtSecret,
-        },
-        endpoints: {},
-      };
+      return initialization.storage({
+        pin: selection.storage,
+        databaseId,
+        databaseUrl: credentials.storageDatabaseUrl,
+        filePath: storagePath,
+      });
     case "realtime":
-      return {
-        service,
-        config: {
-          databaseUrl: credentials.databaseUrl,
-          jwtSecret,
-        },
-        endpoints: {},
-      };
+      return initialization.realtime({
+        pin: selection.realtime,
+        databaseId,
+        databaseUrl: credentials.databaseUrl,
+      });
   }
 };
-
-const startTemporaryService = (
-  instance: TemporaryServiceInstance,
-): Effect.Effect<void, StackCatalogSetupError> =>
-  instance.start.pipe(
-    Effect.andThen(instance.ready),
-    Effect.mapError((cause) => temporaryServiceError("start", instance, cause)),
-  );
-
-const destroyTemporaryService = (
-  instance: TemporaryServiceInstance,
-): Effect.Effect<void, StackCatalogSetupError> =>
-  instance.destroy.pipe(
-    Effect.mapError((cause) => temporaryServiceError("destroy", instance, cause)),
-  );
 
 const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
   input: StackCatalogSetupInput,
@@ -158,6 +128,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
   const dbConn = yield* DbConnection;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  yield* Effect.annotateCurrentSpan("service.count", input.target.databaseServices.length);
   const runtimeCredentials = yield* input.target.database
     .credentials({ from: "runtime" })
     .pipe(Effect.mapError(catalogError));
@@ -182,19 +153,27 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
       yield* Effect.forEach(
         input.target.databaseServices,
         (service) =>
-          Effect.acquireUseRelease(
-            input.target.stack.services
-              .create(
-                serviceDefinition(service, serviceCredentials, input.target.jwtSecret, storagePath),
-              )
-              .pipe(Effect.mapError(catalogError)),
-            startTemporaryService,
-            destroyTemporaryService,
-          ),
-        { discard: true },
+          input.target.stack.commands
+            .run(
+              serviceCommand(
+                service,
+                input.target.database.id,
+                serviceCredentials,
+                storagePath,
+                input.target.selection,
+              ),
+            )
+            .pipe(
+              Effect.asVoid,
+              Effect.mapError(catalogError),
+              Effect.withSpan("StackCatalogSetup.initializeCatalogService", {
+                attributes: { service, operation: "initialize" },
+              }),
+            ),
+        { concurrency: "unbounded", discard: true },
       );
 
-      const connection = parseConnectionString(hostDatabaseUrl);
+      const connection = yield* parseConnectionString(hostDatabaseUrl);
       if (connection === undefined)
         return yield* new StackCatalogSetupError({
           message: "failed to parse database URL for catalog overlay",
@@ -203,13 +182,23 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         isLocal: true,
         dnsResolver: "native",
       });
-      yield* applyDatabaseOverlay(session, fs, path, input.overlay.workdir, {
-        webhooksEnabled: input.overlay.webhooksEnabled,
-        apiAutoExposeNewTables: input.overlay.apiAutoExposeNewTables,
-        vault: input.overlay.vault,
-        webhooks: input.overlay.webhooks,
-        announceRoles: input.overlay.announceRoles,
-      });
+      const sqlPath = yield* fs
+        .makeTempDirectoryScoped({ prefix: "supabase-stack-catalog-sql-" })
+        .pipe(Effect.mapError(catalogError));
+      yield* ensureStackWebhookSchema(session, fs, path, sqlPath);
+      const { overlay } = input;
+      if (overlay === undefined) return;
+      const projectSession = yield* dbConn.connect(
+        { ...connection, user: "postgres" },
+        { isLocal: true, dnsResolver: "native" },
+      );
+      yield* applyDatabaseOverlay(projectSession, fs, path, overlay.workdir, {
+        webhooksEnabled: overlay.webhooksEnabled,
+        apiAutoExposeNewTables: overlay.apiAutoExposeNewTables,
+        vault: overlay.vault,
+        webhooks: overlay.webhooks,
+        announceRoles: overlay.announceRoles,
+      }).pipe(Effect.withSpan("StackCatalogSetup.applyOverlay"));
     }),
   );
 });

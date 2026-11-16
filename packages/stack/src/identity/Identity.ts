@@ -1,8 +1,11 @@
-import { Crypto, Effect, FileSystem, Schema } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import { Digest } from "effect/crypto";
 import type { PlatformError } from "effect/PlatformError";
 import { InvalidProjectRootError, InvalidStackIdentityError } from "./Errors.ts";
 import { StackIdSchema } from "./StackId.ts";
 import { resolveGitBranchContext } from "./GitBranchContext.ts";
+
+const DEFAULT_STACK_NAME = "default";
 
 export interface StackIdentity {
   readonly projectRoot: string;
@@ -39,28 +42,18 @@ const encodeTuple = (identity: StackIdentity): Uint8Array => {
 export const deriveStackId = Effect.fn("Identity.deriveStackId")(function* (
   identity: StackIdentity,
 ) {
-  return yield* Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const digest = yield* crypto.digest("SHA-256", encodeTuple(identity));
-    let hexadecimal = "";
-    for (const byte of digest) {
-      hexadecimal += byte.toString(16).padStart(2, "0");
-    }
-    return yield* Schema.decodeEffect(StackIdSchema)(hexadecimal).pipe(
-      Effect.mapError(
-        (error) =>
-          new InvalidStackIdentityError({
-            message: `SHA-256 digest did not produce a valid StackId: ${String(error)}`,
-          }),
-      ),
-    );
-  }).pipe(
-    Effect.catchTag("PlatformError", (error: PlatformError) =>
-      Effect.fail(
+  const crypto = yield* Digest.Digest;
+  const digest = yield* crypto.digest(Digest.sha256, encodeTuple(identity));
+  let hexadecimal = "";
+  for (const byte of digest) {
+    hexadecimal += byte.toString(16).padStart(2, "0");
+  }
+  return yield* Schema.decodeEffect(StackIdSchema)(hexadecimal).pipe(
+    Effect.mapError(
+      (error) =>
         new InvalidStackIdentityError({
-          message: `Unable to derive StackId: ${error.message}`,
+          message: `SHA-256 digest did not produce a valid StackId: ${String(error)}`,
         }),
-      ),
     ),
   );
 });
@@ -88,7 +81,7 @@ export const resolveStackIdentity = Effect.fn("Identity.resolveStackIdentity")(f
       });
     }
 
-    const stackName = options.name ?? "default";
+    const stackName = options.name ?? DEFAULT_STACK_NAME;
     if (stackName.trim().length === 0) {
       return yield* identityFailure("The stack name must not be blank", { name: options.name });
     }
@@ -110,3 +103,13 @@ export const resolveStackIdentity = Effect.fn("Identity.resolveStackIdentity")(f
     ),
   );
 });
+
+/**
+ * Names a stack for container names and grouping labels: the project root's folder name plus any
+ * non-default stack name, or the stack name alone when the root has no folder name.
+ */
+export const projectSegmentFor = (identity: StackIdentity, path: Path.Path): string => {
+  const base = path.basename(identity.projectRoot);
+  if (base.trim().length === 0) return identity.stackName;
+  return identity.stackName === DEFAULT_STACK_NAME ? base : `${base}-${identity.stackName}`;
+};

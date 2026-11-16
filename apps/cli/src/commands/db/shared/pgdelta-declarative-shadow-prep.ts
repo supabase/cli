@@ -127,25 +127,27 @@ const queryShadow = (client: DeclarativeShadowClient, sql: string) =>
     catch: (cause) => queryError(sql, cause),
   });
 
-export const prepareDeclarativeShadow = (
+export const prepareDeclarativeShadow = Effect.fn("PgDeltaDeclarativeShadow.prepare")(function* (
   client: DeclarativeShadowClient,
-  files: ReadonlyArray<{ readonly name: string; readonly sql: string }>,
-) =>
-  Effect.gen(function* () {
-    const declared = declaredImageExtensions(files);
-    if (declared.size === 0) return { restorePgjwt: false } satisfies DeclarativeShadowPrepResult;
-    let restorePgjwt = false;
-    if (declared.has("pgcrypto") && !declared.has("pgjwt")) {
-      const installed = yield* queryShadow(client, INSTALLED_PGJWT_SQL);
-      restorePgjwt = rowHasPgjwt(installed.rows);
-    }
-    const versionRows = yield* queryShadow(client, "SHOW server_version");
-    const statements = declarativeBaselinePrepStatements(
-      parsePostgresMajorVersion(readServerVersion(versionRows.rows)),
-      declared,
-    );
-    for (const sql of statements) {
-      yield* queryShadow(client, sql);
-    }
-    return { restorePgjwt } satisfies DeclarativeShadowPrepResult;
-  });
+  files: ReadonlyArray<{
+    readonly name: string;
+    readonly sql: string;
+  }>,
+) {
+  const declared = declaredImageExtensions(files);
+  if (declared.size === 0) return { restorePgjwt: false } satisfies DeclarativeShadowPrepResult;
+  let restorePgjwt = false;
+  if (declared.has("pgcrypto") && !declared.has("pgjwt")) {
+    const installed = yield* queryShadow(client, INSTALLED_PGJWT_SQL);
+    restorePgjwt = rowHasPgjwt(installed.rows);
+  }
+  const versionRows = yield* queryShadow(client, "SHOW server_version");
+  const statements = declarativeBaselinePrepStatements(
+    parsePostgresMajorVersion(readServerVersion(versionRows.rows)),
+    declared,
+  );
+  for (const sql of statements) {
+    yield* queryShadow(client, sql);
+  }
+  return { restorePgjwt } satisfies DeclarativeShadowPrepResult;
+});

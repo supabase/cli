@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach, vi } from "vitest";
 import { Effect, Layer, Stdio } from "effect";
+import { TestClock } from "effect/testing";
 
 import { mockTty } from "../../tests/helpers/mocks.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -58,7 +59,6 @@ vi.mock("@clack/prompts", () => ({
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.useRealTimers();
   mockClack.isCancel.mockReturnValue(false);
   mockClack.spinnerFactory.mockReturnValue(mockClack.spinnerHandle);
 });
@@ -70,13 +70,12 @@ describe("quietProgressTextOutputLayer", () => {
 
   it.effect("never starts a spinner, even after the spinner delay elapses", () =>
     Effect.gen(function* () {
-      vi.useFakeTimers();
       const out = yield* Output;
       const task = yield* out.task("Fetching branches...");
       yield* task.message("Still fetching...");
       // TASK_SPINNER_DELAY_MS is 200ms; the text layer would show a spinner by now.
-      vi.advanceTimersByTime(500);
-      yield* task.clear();
+      yield* TestClock.adjust(500);
+      yield* task.clear;
 
       expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
       expect(mockClack.spinnerHandle.start).not.toHaveBeenCalled();
@@ -95,7 +94,7 @@ describe("quietProgressTextOutputLayer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("stays on the text layer so errors keep Go parity (red text on stderr)", () =>
+  it.effect("stays on the text layer so errors keep red text on stderr", () =>
     Effect.gen(function* () {
       const out = yield* Output;
       // `format === "text"` routes `withJsonErrorHandling` to the top-level text `output.fail`
@@ -108,7 +107,7 @@ describe("quietProgressTextOutputLayer", () => {
     Effect.gen(function* () {
       const out = yield* Output;
       yield* out.info("hello");
-      expect(mockClack.log.info).toHaveBeenCalledWith("hello");
+      expect(mockClack.log.info).toHaveBeenCalledWith("hello", expect.anything());
     }).pipe(Effect.provide(layer)),
   );
 });

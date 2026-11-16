@@ -1,18 +1,20 @@
-import { Effect, Option } from "effect";
+import { Clock, Effect, Option } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { readTelemetryConfig, writeTelemetryConfig } from "./consent.ts";
 import type { TelemetryConfig } from "./types.ts";
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
 export const resolveIdentity = Effect.fnUntraced(function* (configDir: string) {
+  const crypto = yield* SecureRandom.SecureRandom;
   const config = yield* readTelemetryConfig(configDir);
-  const now = Date.now();
+  const now = yield* Clock.currentTimeMillis;
 
   if (Option.isNone(config)) {
     const newConfig: TelemetryConfig = {
       consent: "granted",
-      device_id: crypto.randomUUID(),
-      session_id: crypto.randomUUID(),
+      device_id: yield* crypto.uuidV4(),
+      session_id: yield* crypto.uuidV4(),
       session_last_active: now,
     };
     yield* writeTelemetryConfig(newConfig, configDir);
@@ -26,7 +28,7 @@ export const resolveIdentity = Effect.fnUntraced(function* (configDir: string) {
 
   const currentConfig = config.value;
   const isSessionExpired = now - currentConfig.session_last_active > SESSION_TIMEOUT_MS;
-  const sessionId = isSessionExpired ? crypto.randomUUID() : currentConfig.session_id;
+  const sessionId = isSessionExpired ? yield* crypto.uuidV4() : currentConfig.session_id;
 
   yield* writeTelemetryConfig(
     { ...currentConfig, session_id: sessionId, session_last_active: now },
@@ -86,6 +88,7 @@ export function makeTelemetryIdentity(persisted: string | undefined): TelemetryI
  * aliases a fresh device.
  */
 export const resetIdentity = Effect.fnUntraced(function* (configDir: string) {
+  const crypto = yield* SecureRandom.SecureRandom;
   const identity = yield* resolveIdentity(configDir);
   const config = yield* readTelemetryConfig(configDir);
   const nextConfig: TelemetryConfig = {
@@ -93,9 +96,9 @@ export const resetIdentity = Effect.fnUntraced(function* (configDir: string) {
       onNone: () => "granted",
       onSome: (value) => value.consent,
     }),
-    device_id: crypto.randomUUID(),
+    device_id: yield* crypto.uuidV4(),
     session_id: identity.sessionId,
-    session_last_active: Date.now(),
+    session_last_active: yield* Clock.currentTimeMillis,
   };
   yield* writeTelemetryConfig(nextConfig, configDir);
 });

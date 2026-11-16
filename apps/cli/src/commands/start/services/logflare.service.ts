@@ -9,6 +9,7 @@
  * mount for the GCP service-account JSON.
  */
 
+import { DEFAULT_ERL_MAX_PORTS } from "@supabase/stack/defaults";
 import type { Path } from "effect";
 
 import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
@@ -30,6 +31,12 @@ const LOGFLARE_DB_USERNAME = "supabase_admin";
 const LOGFLARE_API_KEY = "api-key";
 
 /**
+ * Keeps Docker's 1s start-interval probes running while Logflare migrates and Vector waits on it,
+ * so their health turns `healthy` right after they answer; matches the doubled analytics wait.
+ */
+export const ANALYTICS_HEALTH_START_PERIOD_SECONDS = 60;
+
+/**
  * Writes and execs a custom `run.sh`: the image's own entrypoint conflicts with the container
  * healthcheck due to a 15-second startup sleep. Runs `migrate && start` so a failed migration
  * exits the container and the restart policy retries until the db is ready, instead of running
@@ -49,6 +56,8 @@ const LOGFLARE_ENTRYPOINT_SCRIPT =
   "EOF\n";
 
 export interface LogflareContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /**
    * The already-resolved `config.analytics.image`. Not part of the decoded
    * `@supabase/config` schema; resolution is the caller's responsibility.
@@ -108,10 +117,11 @@ export function buildLogflareContainerSpec(
     // env, not through a shell, so they are never stripped.
     LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
     RELEASE_COOKIE: "cookie",
+    ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
   };
 
   const binds: Array<string> = [];
-  const slim = usesSlimImageRuntime(input.image);
+  const slim = usesSlimImageRuntime(input.image, input.slim);
 
   if (input.backend === "bigquery") {
     const hostJwtPath = path.join(input.workdir, input.gcpJwtPath);
@@ -136,7 +146,7 @@ export function buildLogflareContainerSpec(
     ports: [{ hostPort: String(input.port), containerPort: "4000" }],
     healthcheck: slim
       ? slimWgetHealthcheck("http://127.0.0.1:4000/health", {
-          startPeriodSeconds: 10,
+          startPeriodSeconds: ANALYTICS_HEALTH_START_PERIOD_SECONDS,
         })
       : {
           test: [
@@ -151,7 +161,7 @@ export function buildLogflareContainerSpec(
           intervalSeconds: 10,
           timeoutSeconds: 2,
           retries: 3,
-          startPeriodSeconds: 10,
+          startPeriodSeconds: ANALYTICS_HEALTH_START_PERIOD_SECONDS,
         },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,

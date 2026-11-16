@@ -1,0 +1,53 @@
+name: Branch policy
+
+# Required checks must report inside the merge queue as well, so both jobs
+# also trigger on merge_group and are skipped there. pull_request_target runs
+# the base branch's copy of this file, so a fork PR cannot edit the jobs; they
+# only read event metadata and must never check out PR code.
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+    branches:
+      - develop
+      - next
+      - "v*.x"
+  merge_group:
+    types:
+      - checks_requested
+    branches:
+      - develop
+      - next
+
+permissions: {}
+
+jobs:
+  require-fast-forward:
+    name: Require fast-forward
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.head_ref == 'next' && github.base_ref == 'develop') ||
+        (github.head_ref == 'sync/main-into-develop' && github.base_ref == 'develop') ||
+        (github.head_ref == 'sync/develop-into-next' && github.base_ref == 'next'))
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::This pull request lands by approval (fast-forward). Approve it instead of merging; the squash-only merge button would destroy the merge history."
+          exit 1
+
+  maintenance-source:
+    name: Check maintenance source
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      startsWith(github.base_ref, 'v') && endsWith(github.base_ref, '.x') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        (startsWith(github.head_ref, 'hotfix/') || startsWith(github.head_ref, 'backport/')))
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::Pull requests into maintenance branches are only allowed from hotfix/* or backport/* branches."
+          exit 1

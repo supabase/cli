@@ -181,6 +181,22 @@ verify_checksum() {
   fi
 }
 
+# Older releases still ship and need the `supabase-go` companion; single-binary releases
+# would otherwise leave a stale one behind.
+sync_go_companion() {
+  local ext="$1"
+  local source="$2"
+  local transfer="$3"
+  local dest="${INSTALL_DIR}/${APP}-go${ext}"
+
+  if [[ -f "$source" ]]; then
+    "$transfer" "$source" "$dest"
+    chmod 755 "$dest"
+  else
+    rm -f "$dest"
+  fi
+}
+
 install_from_binary() {
   local ext="$1"
 
@@ -192,12 +208,13 @@ install_from_binary() {
   mkdir -p "$INSTALL_DIR"
   cp "$BINARY_PATH" "${INSTALL_DIR}/${APP}${ext}"
   chmod 755 "${INSTALL_DIR}/${APP}${ext}"
+  sync_go_companion "$ext" "$(dirname "$BINARY_PATH")/${APP}-go${ext}" cp
 }
 
 download_and_install() {
   local target="$1"
   local ext="$2"
-  local version filename base_url tmp_dir archive checksums source_dir companion_ext
+  local version filename base_url tmp_dir archive checksums source_dir
 
   need curl
   need tar
@@ -250,11 +267,7 @@ download_and_install() {
   mv "${source_dir}/${APP}${ext}" "${INSTALL_DIR}/${APP}${ext}"
   chmod 755 "${INSTALL_DIR}/${APP}${ext}"
 
-  companion_ext="$ext"
-  if [[ -f "${source_dir}/${APP}-go${companion_ext}" ]]; then
-    mv "${source_dir}/${APP}-go${companion_ext}" "${INSTALL_DIR}/${APP}-go${companion_ext}"
-    chmod 755 "${INSTALL_DIR}/${APP}-go${companion_ext}"
-  fi
+  sync_go_companion "$ext" "${source_dir}/${APP}-go${ext}" mv
 }
 
 path_command_for_shell() {

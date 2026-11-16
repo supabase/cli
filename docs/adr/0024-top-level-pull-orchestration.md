@@ -42,7 +42,7 @@ implementations rather than assuming a thin composition layer would do:
 
 `resolveConfigTarget` (`command-internal/project-target.ts`) is called exactly once, in
 `pull.handler.ts`, producing `{ ref, branch }`. That `ref` is passed directly into every sub-step's
-existing `--project-ref`-shaped input (each step already accepts one) rather than reusing the
+existing `--remote=<ref>`-shaped input (each step already accepts one) rather than reusing the
 sub-step's own resolver end to end. This is safe because the resolved `ref` is always already the
 API-addressable ref, including for a branch target: `resolveBranchProjectRef` returns
 `detail.ref`/`branch.project_ref` and re-asserts it against the branch-project-ref pattern before
@@ -255,7 +255,7 @@ review, extend section 4 and 5 above:
   always runs. `--force` now bypasses all three checks. See `pull.format.ts`'s
   `pullDirtyWarningMessage` and `pull.handler.ts`'s three independently-tracked dirty locations.
 - **Failed steps now carry a "retry just this step" hint** naming the exact standalone command
-  (`supabase <command> --project-ref <resolved-ref>`) — added because a failure inside an orchestrator
+  (`supabase <command> --remote=<resolved-ref>`) — added because a failure inside an orchestrator
   is easy to mis-diagnose as "re-run the whole orchestrator" when re-running just the one failed
   sub-command is both correct and far cheaper. Appended to `failure.suggestion` after any
   step-specific remedy (e.g. the `db` step's migration-conflict hint), surfaced in both the JSON

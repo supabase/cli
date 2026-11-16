@@ -21,7 +21,7 @@ describe("parseBearerJwtExp", () => {
     expect(withOffset).toEqual({ wholeSeconds: atZ.wholeSeconds - 5 * 60 * 60, nanos: 0 });
   });
 
-  it("rejects a malformed value with pflag's exact wrapped message", () => {
+  it("rejects a malformed value with the exact wrapped message", () => {
     expect(() => parseBearerJwtExp("notatime")).toThrow(
       'invalid argument "notatime" for "--exp" flag: invalid time format `notatime` must be one of: `2006-01-02T15:04:05Z07:00`',
     );
@@ -49,7 +49,7 @@ describe("parseBearerJwtExp", () => {
     });
   });
 
-  it("rejects an out-of-range hour/minute/second the same way Go's time.Parse does", () => {
+  it("rejects an out-of-range hour/minute/second ", () => {
     expect(() => parseBearerJwtExp("2030-01-01T25:00:00Z")).toThrow(
       '"--exp" flag: invalid time format',
     );
@@ -61,7 +61,7 @@ describe("parseBearerJwtExp", () => {
     );
   });
 
-  it("trims surrounding whitespace before parsing, matching pflag's strings.TrimSpace", () => {
+  it("trims surrounding whitespace before parsing", () => {
     expect(parseBearerJwtExp(" 2030-01-01T00:00:00Z ")).toEqual(
       parseBearerJwtExp("2030-01-01T00:00:00Z"),
     );
@@ -79,7 +79,7 @@ describe("parseBearerJwtExp", () => {
     );
   });
 
-  it("tolerates a 24-hour/60-minute offset the same way Go's time.Parse does (`>` not `>=`)", () => {
+  it("tolerates a 24-hour/60-minute offset (`>` not `>=`)", () => {
     expect(parseBearerJwtExp("2030-01-01T00:00:00+24:00")).toEqual({
       wholeSeconds: parseBearerJwtExp("2030-01-01T00:00:00Z").wholeSeconds - 24 * 60 * 60,
       nanos: 0,
@@ -90,7 +90,7 @@ describe("parseBearerJwtExp", () => {
     });
   });
 
-  it("rejects an offset that overflows even Go's 24-hour/60-minute tolerance", () => {
+  it("rejects an offset that overflows even the 24-hour/60-minute tolerance", () => {
     expect(() => parseBearerJwtExp("2030-01-01T00:00:00+25:00")).toThrow(
       '"--exp" flag: invalid time format',
     );
@@ -122,14 +122,14 @@ describe("parseBearerJwtExp", () => {
     });
   });
 
-  it("truncates (not rounds) fractional digits beyond nanosecond precision, matching Go's time.Parse", () => {
+  it("truncates (not rounds) fractional digits beyond nanosecond precision", () => {
     expect(parseBearerJwtExp("2030-01-01T00:00:00.9999999995Z")).toEqual({
       wholeSeconds: 1_893_456_000,
       nanos: 999_999_999,
     });
   });
 
-  it("accepts a comma as the fractional-seconds separator, matching Go's time.Parse (CLI-1961 Codex review finding)", () => {
+  it("accepts a comma as the fractional-seconds separator", () => {
     expect(parseBearerJwtExp("2030-01-01T00:00:00,5Z")).toEqual(
       parseBearerJwtExp("2030-01-01T00:00:00.5Z"),
     );
@@ -165,12 +165,12 @@ describe("parseBearerJwtExp", () => {
 });
 
 describe("parseBearerJwtValidFor", () => {
-  it("parses a Go duration string to whole seconds", () => {
+  it("parses a duration string to whole seconds", () => {
     expect(parseBearerJwtValidFor("30m")).toBe(1800);
     expect(parseBearerJwtValidFor("1h")).toBe(3600);
   });
 
-  it("accepts a negative duration, matching Go's unchecked arithmetic", () => {
+  it("accepts a negative duration", () => {
     expect(parseBearerJwtValidFor("-5m")).toBe(-300);
   });
 
@@ -178,19 +178,19 @@ describe("parseBearerJwtValidFor", () => {
     expect(parseBearerJwtValidFor("1.5s")).toBe(1.5);
   });
 
-  it("rejects a malformed value with pflag's exact wrapped message", () => {
+  it("rejects a malformed value with the exact wrapped message", () => {
     expect(() => parseBearerJwtValidFor("xyz")).toThrow(
       'invalid argument "xyz" for "--valid-for" flag: time: invalid duration "xyz"',
     );
   });
 
-  it("does NOT trim surrounding whitespace, unlike --exp (pflag's duration Value.Set has no TrimSpace)", () => {
+  it("does NOT trim surrounding whitespace, unlike --exp", () => {
     expect(() => parseBearerJwtValidFor(" 30m ")).toThrow(
       'invalid argument " 30m " for "--valid-for" flag: time: invalid duration " 30m "',
     );
   });
 
-  it("accepts the Greek-mu microsecond spelling, matching Go's time.ParseDuration (CLI-1961 Codex review finding)", () => {
+  it("accepts the Greek-mu microsecond spelling", () => {
     // Accepts both U+00B5 (µ, micro sign) and U+03BC (μ, Greek mu).
     expect(parseBearerJwtValidFor("1μs")).toBe(0.000_001);
   });

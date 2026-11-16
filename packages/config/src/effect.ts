@@ -10,7 +10,7 @@ import * as project from "./project.ts";
 export { configJsonPath, configTomlPath, saveCliConfig } from "./io.ts";
 export { validateCliConfig } from "./validate.ts";
 
-/** Loads a CLI config document; the internal `goViperCompat` option is exposed only via `@supabase/config/internal`. */
+/** Loads a CLI config document; the internal `cliCompat` option is exposed only via `@supabase/config/internal`. */
 export const loadCliConfig: (
   cwd: string,
   options?: LoadCliConfigOptions,
@@ -27,7 +27,7 @@ export { loadDotEnvFile, loadCliProjectEnvironment } from "./project.ts";
 
 /**
  * Effect-typed counterpart to the sync `resolveCliConfigValue` exported from `.`; the internal
- * `goViperCompat` option is exposed only via `@supabase/config/internal`.
+ * `cliCompat` option is exposed only via `@supabase/config/internal`.
  */
 export const resolveCliConfigValue: <T>(
   value: T,

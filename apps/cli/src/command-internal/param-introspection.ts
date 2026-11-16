@@ -1,8 +1,8 @@
 import { Option } from "effect";
-import { Param } from "effect/unstable/cli";
+import { Param } from "effect/cli";
 
 /**
- * Reimplements `effect/unstable/cli`'s internal `Param.extractSingleParams`/
+ * Reimplements `effect/cli`'s internal `Param.extractSingleParams`/
  * `getParamMetadata` unwrap using only public fields, since the originals are `@internal` and
  * would need a forbidden `as` cast. Fails closed (`undefined`) on an unrecognized variant.
  */

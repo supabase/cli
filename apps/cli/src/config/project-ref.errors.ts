@@ -25,7 +25,7 @@ export class InvalidProjectRefError extends Data.TaggedError("InvalidProjectRefE
 
 /**
  * Raised by `resolveForLink` on a non-TTY when neither `--project-ref` nor
- * `SUPABASE_PROJECT_ID` is set. The message matches cobra's required-flag wording.
+ * `SUPABASE_PROJECT_ID` is set. The message uses the required-flag wording.
  */
 export class ProjectRefRequiredError extends Data.TaggedError("ProjectRefRequiredError")<{
   readonly message: string;

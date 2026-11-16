@@ -1,9 +1,15 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import {
+  type StackTargetIssue,
+  stackTargetInvalidConfigActionability,
+} from "../../../../command-internal/stack-target.ts";
 
 export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStackDestroyError")<{
   readonly reason:
@@ -12,26 +18,39 @@ export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStac
     | "cancelled"
     | "invalid-config"
     | "runtime"
-    | "lifecycle"
-    | "unknown";
+    | "stack"
+    | "uploads";
+  readonly targetIssue?: StackTargetIssue;
   readonly message: string;
+  readonly detail?: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    switch (this.reason) {
-      case "flags":
-      case "confirmation":
-        return actionability.provideFlags;
-      case "cancelled":
-        return actionability.cancelled;
-      case "invalid-config":
-      case "lifecycle":
-        return actionability.invalidConfig;
-      case "runtime":
-        return actionability.dockerNotRunning;
-      case "unknown":
-        return actionability.unknown;
-    }
+    return stackDestroyActionability(this);
   }
 }
+
+/** Classifies a destroy failure; `stack prune` reuses it for the same failures. */
+export const stackDestroyActionability = (error: {
+  readonly reason: StackCommandDestroyError["reason"];
+  readonly targetIssue?: StackTargetIssue;
+  readonly cause?: unknown;
+}): CliErrorActionabilityDeclaration => {
+  switch (error.reason) {
+    case "flags":
+      return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
+    case "confirmation":
+      return { ...actionability.provideFlags, fingerprint_suffix: "confirmation" };
+    case "cancelled":
+      return { ...actionability.cancelled, fingerprint_suffix: "cancelled" };
+    case "invalid-config":
+      return stackTargetInvalidConfigActionability(error.targetIssue);
+    case "runtime":
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    case "uploads":
+      return { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
+    case "stack":
+      return causeDeclaration(error.cause) ?? unclassifiedStackFailureActionability(error.cause);
+  }
+};

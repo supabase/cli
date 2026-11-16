@@ -1,22 +1,19 @@
-import { Effect, Option, Schema } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { operationDefinitions } from "@supabase/api/effect";
+import { Effect, Option, Schema, SchemaIssue } from "effect";
 
-import { CommandSettings } from "../../config/command-settings.service.ts";
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { encodeEnv, encodeSortedJson, encodeYaml } from "../../command-internal/output.encoders.ts";
+import { formatGeneralFloat } from "../../command-internal/format-float.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeGoStructJsonBody,
-  encodeYaml,
-} from "../../command-internal/go-output.encoders.ts";
-import { goFormatFloat } from "../../command-internal/go-float.ts";
-import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
-import { requestWithAuth } from "../../command-internal/raw-http.ts";
-import { resolveAccessToken } from "../../command-internal/resolve-token.ts";
+  mapHttpError,
+  sanitizeErrorBody,
+  type NetworkErrorFactory,
+  type StatusErrorFactory,
+} from "../../command-internal/http-errors.ts";
 import {
   PostgresConfigGetNetworkError,
   PostgresConfigGetUnexpectedStatusError,
@@ -33,7 +30,7 @@ function formatPrettyValue(value: unknown): string {
   if (typeof value === "string") return value;
   // Every number renders using float64 formatting, matching established output, so e.g.
   // 1000000 prints as 1e+06, not 1000000.
-  if (typeof value === "number") return goFormatFloat(value);
+  if (typeof value === "number") return formatGeneralFloat(value);
   if (typeof value === "boolean") return String(value);
   if (value === null) return "<nil>";
   return JSON.stringify(value);
@@ -73,8 +70,8 @@ const INT64_MAX = 2n ** 63n - 1n;
 
 // The literal sets that count as boolean values. `1`/`0` also match, but the integer branch
 // above claims them first.
-const GO_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False"]);
+const TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False"]);
 
 /**
  * Coerces a `--config key=value` value: integer, then boolean, then string.
@@ -92,8 +89,8 @@ export function parseConfigValue(value: string): string | number | boolean {
     }
     return value;
   }
-  if (GO_TRUE_LITERALS.has(value)) return true;
-  if (GO_FALSE_LITERALS.has(value)) return false;
+  if (TRUE_LITERALS.has(value)) return true;
+  if (FALSE_LITERALS.has(value)) return false;
   return value;
 }
 
@@ -105,92 +102,147 @@ export function normalizeTimeoutConfig(config: PostgresConfigMap): void {
   }
 }
 
-function mapTransportMessage<E>(
-  cause: unknown,
-  message: (description: string) => string,
-  wrap: (args: { readonly message: string }) => E,
-): E {
-  if (HttpClientError.isHttpClientError(cause)) {
-    const description = cause.reason.description ?? cause.reason._tag;
-    return wrap({ message: message(description) });
-  }
-  return wrap({ message: message(String(cause)) });
-}
-
 const decodeJsonObject = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-function parseJsonObject<E>(
-  rawBody: string,
-  errorMessage: (description: string) => string,
-  wrap: (args: { readonly message: string }) => E,
-): Effect.Effect<PostgresConfigMap, E> {
-  return decodeJsonObject(rawBody).pipe(
-    Effect.mapError((error) => wrap({ message: errorMessage(error.message) })),
-  );
-}
+const getStatusMessage = (status: number, body: string) =>
+  `unexpected config overrides status ${status}: ${body}`;
 
+const mapGetError = mapHttpError({
+  networkError: PostgresConfigGetNetworkError,
+  statusError: PostgresConfigGetUnexpectedStatusError,
+  networkMessage: (description) => `failed to retrieve Postgres config overrides: ${description}`,
+  statusMessage: getStatusMessage,
+});
+
+/** `fetchCurrentPostgresConfig`: the project's stored Postgres config overrides. */
+export const postgresConfigRead = block("postgres-config-read", [
+  { operationId: "v1-get-postgres-config", kind: "required" },
+]);
+
+/** `putPostgresConfig`: replaces the project's Postgres config overrides. */
+export const postgresConfigWrite = block("postgres-config-write", [
+  { operationId: "v1-update-postgres-config", kind: "required" },
+]);
+
+/**
+ * Reads the stored overrides as the platform returned them. Read-modify-write callers must see
+ * every stored key, so the response is not decoded against the typed output schema.
+ */
 export const fetchCurrentPostgresConfig = Effect.fn("postgres-config.fetch-current")(function* (
   ref: string,
 ) {
-  const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* CommandSettings;
-  const tokenOpt = yield* resolveAccessToken;
+  const api = yield* CommandPlatformApi;
 
-  const request = requestWithAuth(
-    HttpClientRequest.get(`${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`),
-    tokenOpt,
-    cliSettings.userAgent,
-  );
+  const response = yield* api
+    .executeRaw(operationDefinitions.v1GetPostgresConfig, { ref })
+    .pipe(Effect.catch(mapGetError));
 
-  const response = yield* httpClient.execute(request).pipe(
-    Effect.mapError((cause) =>
-      mapTransportMessage(
-        cause,
-        (description) => `failed to retrieve Postgres config overrides: ${description}`,
-        (args) => new PostgresConfigGetNetworkError(args),
-      ),
-    ),
-  );
-
+  const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
   if (response.status !== 200) {
-    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     const body = sanitizeErrorBody(rawBody);
     return yield* new PostgresConfigGetUnexpectedStatusError({
       status: response.status,
       body,
-      message: `unexpected config overrides status ${response.status}: ${body}`,
+      message: getStatusMessage(response.status, body),
     });
   }
 
-  const rawBody = yield* response.text;
-  return yield* parseJsonObject(
-    rawBody,
-    (description) => `failed to unmarshal response body: ${description}`,
-    (args) => new PostgresConfigGetUnmarshalError(args),
+  const stored = yield* decodeJsonObject(rawBody).pipe(
+    Effect.mapError(
+      (error) =>
+        new PostgresConfigGetUnmarshalError({
+          message: `failed to parse response body: ${error.message}`,
+        }),
+    ),
   );
+  return { ...stored } satisfies PostgresConfigMap;
 });
+
+const updateOperation = operationDefinitions.v1UpdatePostgresConfig;
+const decodeUpdateInput = Schema.decodeUnknownEffect(updateOperation.inputSchema);
+
+interface ConfigProblems {
+  readonly unknownKeys: Array<string>;
+  readonly invalidValues: Array<string>;
+}
+
+function collectConfigProblems(
+  issue: SchemaIssue.Issue,
+  path: ReadonlyArray<PropertyKey>,
+  config: PostgresConfigMap,
+  problems: ConfigProblems,
+): void {
+  switch (issue._tag) {
+    case "Composite":
+      for (const nested of issue.issues) collectConfigProblems(nested, path, config, problems);
+      return;
+    case "Pointer":
+      collectConfigProblems(issue.issue, [...path, ...issue.path], config, problems);
+      return;
+    case "UnexpectedKey":
+      problems.unknownKeys.push(path.map(String).join("."));
+      return;
+    default: {
+      const key = path.map(String).join(".");
+      const given = config[key];
+      const hint =
+        issue._tag === "InvalidType" && typeof given === "number"
+          ? ` (pass the value with its unit, such as ${given}kB or ${given}ms)`
+          : "";
+      problems.invalidValues.push(`${key}: ${SchemaIssue.makeFormatterDefault()(issue)}${hint}`);
+    }
+  }
+}
+
+function describeConfigProblems(issue: SchemaIssue.Issue, config: PostgresConfigMap) {
+  const problems: ConfigProblems = { unknownKeys: [], invalidValues: [] };
+  collectConfigProblems(issue, [], config, problems);
+  const messages: Array<string> = [];
+  const { unknownKeys } = problems;
+  if (unknownKeys.length > 0) {
+    const plural = unknownKeys.length > 1;
+    messages.push(
+      `unknown Postgres config ${plural ? "parameters" : "parameter"}: ${unknownKeys.join(", ")} ` +
+        `(if this is a newly supported parameter, upgrade the CLI)`,
+    );
+  }
+  for (const invalid of problems.invalidValues) {
+    messages.push(`invalid Postgres config value for ${invalid}`);
+  }
+  return messages.join("; ");
+}
 
 /**
  * Per-operation error wiring for {@link putPostgresConfig}. Both `update` and `delete` issue
- * the same PUT but tag failures with their own error types and message verbs (mirroring
- * `mapHttpError`), keeping each call site's error channel precise.
+ * the same PUT but tag failures with their own error types and message verbs.
  */
 export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
   readonly serializeError: (args: { readonly message: string }) => SerErr;
-  readonly networkError: (args: { readonly message: string }) => NetErr;
-  readonly statusError: (args: {
-    readonly status: number;
-    readonly body: string;
-    readonly message: string;
-  }) => StatErr;
-  readonly unmarshalError: (args: { readonly message: string }) => UnmErr;
+  readonly networkError: NetworkErrorFactory<NetErr>;
+  readonly statusError: StatusErrorFactory<StatErr>;
+  readonly parseError: (args: { readonly message: string }) => UnmErr;
   readonly networkMessage: (description: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
-  readonly unmarshalMessage: (description: string) => string;
+  readonly parseMessage: (description: string) => string;
 }
 
+/**
+ * The overrides to PUT, split by provenance. `changes` is what the user asked for;
+ * `preserved` is the stored overrides to resend untouched, since the PUT replaces the full map.
+ */
+export interface PostgresConfigWrite {
+  readonly changes: PostgresConfigMap;
+  readonly preserved: PostgresConfigMap;
+}
+
+/**
+ * PUTs the full overrides map. `changes` is validated against the platform's strict request
+ * schema, so a bad key or value fails naming the key instead of as an opaque 400; `preserved` is
+ * forwarded unvalidated so a stored override this CLI's schema does not know is never dropped.
+ * The PUT is never retried: with `restart_database` a resent write restarts the database twice.
+ */
 export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
   SerErr,
   NetErr,
@@ -198,44 +250,32 @@ export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
   UnmErr,
 >(
   ref: string,
-  config: PostgresConfigMap,
+  { changes, preserved }: PostgresConfigWrite,
   errors: PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr>,
 ) {
-  const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* CommandSettings;
-  const tokenOpt = yield* resolveAccessToken;
+  const api = yield* CommandPlatformApi;
 
-  // Uses raw HTTP instead of the generated input schema, since --config accepts arbitrary
-  // keys the typed client's OpenAPI-modeled fields don't cover.
-  const encodedBody = yield* Effect.try({
-    try: () => encodeGoStructJsonBody(config),
-    catch: (cause) =>
-      errors.serializeError({
-        message: `failed to serialize config overrides: ${String(cause)}`,
-      }),
-  });
-
-  const request = requestWithAuth(
-    HttpClientRequest.put(`${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
-      HttpClientRequest.bodyText(encodedBody, "application/json"),
+  const input = yield* decodeUpdateInput(
+    { ...changes, ref },
+    { onExcessProperty: "error", errors: "all" },
+  ).pipe(
+    Effect.mapError((error) =>
+      errors.serializeError({ message: describeConfigProblems(error.issue, changes) }),
     ),
-    tokenOpt,
-    cliSettings.userAgent,
+  );
+  const extraBody = Object.fromEntries(
+    Object.entries(preserved).filter(([key]) => !Object.hasOwn(changes, key)),
   );
 
-  const response = yield* httpClient
-    .execute(request)
-    .pipe(
-      Effect.mapError((cause) =>
-        mapTransportMessage(cause, errors.networkMessage, errors.networkError),
-      ),
-    );
+  const response = yield* api
+    .executeRaw(updateOperation, input, { retry: { maxRetries: 0 }, extraBody })
+    .pipe(Effect.catch(mapHttpError(errors)));
 
-  if (response.status !== 200) {
-    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+  const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+  if (response.status < 200 || response.status >= 300) {
     const body = sanitizeErrorBody(rawBody);
     return yield* Effect.fail(
-      errors.statusError({
+      new errors.statusError({
         status: response.status,
         body,
         message: errors.statusMessage(response.status, body),
@@ -243,8 +283,10 @@ export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
     );
   }
 
-  const rawBody = yield* response.text;
-  return yield* parseJsonObject(rawBody, errors.unmarshalMessage, errors.unmarshalError);
+  const stored = yield* decodeJsonObject(rawBody).pipe(
+    Effect.mapError((error) => errors.parseError({ message: errors.parseMessage(error.message) })),
+  );
+  return { ...stored } satisfies PostgresConfigMap;
 });
 
 export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output")(function* (
@@ -252,23 +294,23 @@ export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output
 ) {
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
-  const goOutput = Option.getOrUndefined(outputFlag);
+  const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
   // --output takes priority over --output-format; pretty (or unset) falls through to the
   // table / structured-success path below.
-  if (goOutput === "json") {
-    yield* output.raw(encodeGoJson(config));
+  if (outputFlagFormat === "json") {
+    yield* output.raw(encodeSortedJson(config));
     return;
   }
-  if (goOutput === "yaml") {
+  if (outputFlagFormat === "yaml") {
     yield* output.raw(encodeYaml(config));
     return;
   }
-  if (goOutput === "toml") {
+  if (outputFlagFormat === "toml") {
     yield* output.raw(encodePostgresConfigToml(config));
     return;
   }
-  if (goOutput === "env") {
+  if (outputFlagFormat === "env") {
     yield* output.raw(encodeEnv(config) + "\n");
     return;
   }

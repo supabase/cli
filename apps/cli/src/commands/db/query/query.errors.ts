@@ -19,6 +19,18 @@ export class DbQueryNoSqlError extends Data.TaggedError("DbQueryNoSqlError")<{
   }
 }
 
+/** `--file` was given together with positional SQL, so one of them would be silently ignored. */
+export class DbQuerySqlSourceConflictError extends Data.TaggedError(
+  "DbQuerySqlSourceConflictError",
+)<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
 /** Stdin was piped but empty; message text (`"no SQL provided via stdin"`) is an established output contract. */
 export class DbQueryNoStdinSqlError extends Data.TaggedError("DbQueryNoStdinSqlError")<{
   readonly message: string;
@@ -50,6 +62,18 @@ export class DbQueryLoginRequiredError extends Data.TaggedError("DbQueryLoginReq
   }
 }
 
+/** `--read-only` was combined with SQL that is not a plain read statement. */
+export class DbQueryReadOnlyStatementError extends Data.TaggedError(
+  "DbQueryReadOnlyStatementError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
 /** Query execution failed; message text (`"failed to execute query: " + err`) is an established output contract. */
 export class DbQueryExecError extends Data.TaggedError("DbQueryExecError")<{
   readonly message: string;
@@ -70,23 +94,8 @@ export class DbQueryExecError extends Data.TaggedError("DbQueryExecError")<{
 }
 
 /**
- * More than one of `--db-url` / `--linked` / `--local` was set; message text
- * is an established output contract, so the invocation fails before any SQL
- * runs.
- */
-export class DbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "DbQueryMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * The linked Management API returned a non-201 status; message text
- * (`"unexpected status %d: %s"`) is an established output contract.
+ * (`"unexpected status <status>: <body>"`) is an established output contract.
  */
 export class DbQueryUnexpectedStatusError extends Data.TaggedError("DbQueryUnexpectedStatusError")<{
   readonly status: number;

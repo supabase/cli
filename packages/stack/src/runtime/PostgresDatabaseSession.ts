@@ -1,5 +1,5 @@
 import { Effect, Predicate, Redacted, Schema, Scope } from "effect";
-import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
+import { isSqlError, type SqlError } from "effect/sql/SqlError";
 import {
   DatabaseBootstrapError,
   INTERNAL_DATABASE,
@@ -36,7 +36,7 @@ const mapSqlError =
               (operation === "connection" && Predicate.isTagged(error.reason, "UnknownError"))),
         });
 
-const GeneratedStatementSchema = Schema.Struct({ statement: Schema.String });
+const GeneratedStatementsSchema = Schema.Struct({ statements: Schema.Array(Schema.String) });
 
 /**
  * Adapts Effect SQL to the runtime-neutral bootstrap boundary. Dynamic
@@ -78,10 +78,11 @@ export const makeDatabaseSessionFromSqlClient = (
         .unsafe(format, parameters)
         .pipe(Effect.mapError(mapSqlError("statement preparation")));
       const first = rows[0];
-      const decoded = yield* Schema.decodeUnknownEffect(GeneratedStatementSchema)(first).pipe(
+      const decoded = yield* Schema.decodeUnknownEffect(GeneratedStatementsSchema)(first).pipe(
         Effect.mapError(() => sqlFailure("statement preparation")),
       );
-      yield* executeWith(decoded.statement);
+      // One statement per execution: the native client's extended protocol rejects batches.
+      for (const statement of decoded.statements) yield* executeWith(statement);
     });
   });
 
@@ -90,7 +91,7 @@ export const makeDatabaseSessionFromSqlClient = (
     setRolePasswords: (roles, password) => {
       const placeholders = roles.map((_, index) => `$${index + 2}::text`).join(", ");
       return generated(
-        `SELECT string_agg(format('ALTER ROLE %I PASSWORD %L', role, $1::text), E';\\n') AS statement FROM unnest(ARRAY[${placeholders}]::text[]) AS role`,
+        `SELECT array_agg(format('ALTER ROLE %I PASSWORD %L', role, $1::text)) AS statements FROM unnest(ARRAY[${placeholders}]::text[]) AS role`,
         [Redacted.value(password), ...roles],
       );
     },
@@ -103,7 +104,7 @@ export const makeDatabaseSessionFromSqlClient = (
         setting.name === JWT_SECRET_SETTING ? Redacted.value(setting.value) : setting.value,
       ]);
       return generated(
-        `SELECT string_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value), E';\\n') AS statement FROM (VALUES ${values}) AS settings(name, value)`,
+        `SELECT array_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value)) AS statements FROM (VALUES ${values}) AS settings(name, value)`,
         parameters,
       );
     },
@@ -138,11 +139,20 @@ export const ensureInternalDatabase = Effect.fn("PostgresDatabaseSession.ensureI
     openInternal: Effect.Effect<PostgresDatabaseSession, DatabaseBootstrapError, Scope.Scope>,
   ) {
     return yield* Effect.gen(function* () {
-      const databases = yield* postgres.query("SELECT 1 FROM pg_database WHERE datname = $1", [
-        INTERNAL_DATABASE,
-      ]);
-      if (databases.length === 0)
-        yield* postgres.execute(`CREATE DATABASE ${INTERNAL_DATABASE} WITH OWNER postgres`);
+      const exists = postgres
+        .query("SELECT 1 FROM pg_database WHERE datname = $1", [INTERNAL_DATABASE])
+        .pipe(Effect.map((databases) => databases.length > 0));
+      // A concurrent creator, such as an abandoned earlier attempt, can win between check and create.
+      if (!(yield* exists))
+        yield* postgres
+          .execute(`CREATE DATABASE ${INTERNAL_DATABASE} WITH OWNER postgres`)
+          .pipe(
+            Effect.catch((error) =>
+              exists.pipe(
+                Effect.flatMap((created) => (created ? Effect.void : Effect.fail(error))),
+              ),
+            ),
+          );
 
       const internal = yield* openInternal;
       for (const schema of INTERNAL_SCHEMAS) {

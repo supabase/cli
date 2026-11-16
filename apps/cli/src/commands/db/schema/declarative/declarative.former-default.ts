@@ -2,24 +2,34 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { yellow } from "../../../../command-internal/colors.ts";
-import type { PgDeltaTomlConfig } from "../../../../command-internal/db-config.toml-read.ts";
-import { resolveDeclarativeDir } from "../../../../command-internal/db-config.toml-read.ts";
+import { type ConfigFileRef, configSetting } from "../../../../command-internal/config-advice.ts";
+import type { PgDeltaConfig } from "../../../../command-internal/db-config.read.ts";
+import { resolveDeclarativeDir } from "../../../../command-internal/db-config.read.ts";
 import { walkSqlFiles } from "../../../../command-internal/glob.ts";
 
 /** The default declarative directory before it moved to `supabase/schemas`. */
 const FORMER_DEFAULT_SEGMENTS = ["supabase", "database"] as const;
 
-const formerDeclarativeDefaultWarning = (formerDirRel: string, defaultDirRel: string): string =>
+const keepFormerTreeAdvice = ({ format, path }: ConfigFileRef): string =>
+  format === "json"
+    ? `Set ${configSetting(format, "experimental.pgdelta", "declarative_schema_path", '"./database"')} in ${path}`
+    : `Set declarative_schema_path = "./database" under [experimental.pgdelta] in ${path}`;
+
+const formerDeclarativeDefaultWarning = (
+  formerDirRel: string,
+  defaultDirRel: string,
+  configFile: ConfigFileRef,
+): string =>
   `${yellow(
     `WARNING: found declarative schema files in ${formerDirRel}, but the default declarative directory is now ${defaultDirRel}.`,
   )}\n${yellow(
-    `Set declarative_schema_path = "./database" under [experimental.pgdelta] in supabase/config.toml to keep using the existing tree, or move it to ${defaultDirRel}.`,
+    `${keepFormerTreeAdvice(configFile)} to keep using the existing tree, or move it to ${defaultDirRel}.`,
   )}\n`;
 
 /**
  * Warns when a project still has a declarative tree at the former default `supabase/database`
  * while relying on the implicit default, which now resolves to `supabase/schemas` — otherwise an
- * upgraded project silently stops reading its existing tree. See docs/go-cli-divergences.md.
+ * upgraded project silently stops reading its existing tree.
  *
  * Fires only when `declarative_schema_path` is unset, the new default directory has no entries,
  * and the former default contains `.sql` files or an export manifest; probe failures read as
@@ -29,19 +39,20 @@ export const warnFormerDeclarativeDefault = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
-  pgDelta: PgDeltaTomlConfig,
+  pgDelta: PgDeltaConfig,
+  configFile: ConfigFileRef,
 ) {
   if (Option.isSome(pgDelta.declarativeSchemaPath)) return;
   const defaultDirRel = resolveDeclarativeDir(path, pgDelta);
   const defaultEntries = yield* fs
     .readDirectory(path.resolve(workdir, defaultDirRel))
-    .pipe(Effect.orElseSucceed(() => [] as string[]));
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   if (defaultEntries.length > 0) return;
 
   const formerDirRel = path.join(...FORMER_DEFAULT_SEGMENTS);
   const formerDir = path.resolve(workdir, formerDirRel);
   const formerSqlFiles = yield* walkSqlFiles(fs, formerDir, "").pipe(
-    Effect.orElseSucceed(() => [] as string[]),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
   const formerHasManifest = yield* fs
     .exists(path.join(formerDir, ".pgdelta-export.json"))
@@ -49,5 +60,8 @@ export const warnFormerDeclarativeDefault = Effect.fnUntraced(function* (
   if (formerSqlFiles.length === 0 && !formerHasManifest) return;
 
   const output = yield* Output;
-  yield* output.raw(formerDeclarativeDefaultWarning(formerDirRel, defaultDirRel), "stderr");
+  yield* output.raw(
+    formerDeclarativeDefaultWarning(formerDirRel, defaultDirRel, configFile),
+    "stderr",
+  );
 });

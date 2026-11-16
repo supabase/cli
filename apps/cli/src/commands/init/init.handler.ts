@@ -2,31 +2,20 @@ import { Effect, Option, Path } from "effect";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import {
-  experimentalFeatureEnv,
-  resolveExperimentalFeature,
-} from "../../command-internal/experimental-feature.ts";
-import { ExperimentalFlag, WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
-import { InitConfigExistsError, InitExperimentalRequiredError } from "./init.errors.ts";
+import { resolveExperimentalFeature } from "../../shared/config/experimental-feature.ts";
+import { WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
+import { InitConfigExistsError } from "./init.errors.ts";
 import type { InitFlags } from "./init.command.ts";
 
 export const init = Effect.fn("init")(function* (flags: InitFlags) {
   const output = yield* Output;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
-  const experimental = yield* ExperimentalFlag;
   const workdir = yield* WorkdirFlag;
-
-  if (flags.useOrioledb && !experimental) {
-    return yield* new InitExperimentalRequiredError({
-      message: `required flag(s) "experimental" not set`,
-    });
-  }
 
   const experimentalStack = yield* resolveExperimentalFeature({
     feature: "stack",
     configValue: Effect.succeed(false),
-    env: yield* experimentalFeatureEnv("stack"),
   });
 
   const result = yield* initProject({
@@ -41,15 +30,22 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
     withIntellijSettings: flags.withIntellijSettings,
     experimentalStack,
   });
+  yield* Effect.annotateCurrentSpan({
+    "init.created": result.created,
+    "init.force": flags.force,
+    "init.use_orioledb": flags.useOrioledb,
+    "init.experimental_stack": experimentalStack,
+  });
 
   if (!result.created) {
-    // The path in this message is always the relative `supabase/config.toml`, regardless of
-    // cwd or `--workdir`. Windows uses a backslash and "The file exists."; POSIX uses a
-    // forward slash and "file exists".
+    // The path in this message is always the relative `supabase/<existing config file>`,
+    // regardless of cwd or `--workdir`. Windows uses a backslash and "The file exists.";
+    // POSIX uses a forward slash and "file exists".
+    const configFile = path.basename(result.configPath);
     const message =
       runtimeInfo.platform === "win32"
-        ? "failed to create config file: open supabase\\config.toml: The file exists."
-        : "failed to create config file: open supabase/config.toml: file exists";
+        ? `failed to create config file: open supabase\\${configFile}: The file exists.`
+        : `failed to create config file: open supabase/${configFile}: file exists`;
     return yield* new InitConfigExistsError({
       message,
       suggestion: "Run supabase init --force to overwrite existing config file.",

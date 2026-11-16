@@ -17,6 +17,16 @@ export class GenTypesNetworkError extends Data.TaggedError("GenTypesNetworkError
   }
 }
 
+export class GenTypesBranchCredentialsUnavailableError extends Data.TaggedError(
+  "GenTypesBranchCredentialsUnavailableError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
+
 export class GenTypesUnexpectedStatusError extends Data.TaggedError(
   "GenTypesUnexpectedStatusError",
 )<{
@@ -51,7 +61,7 @@ export class GenTypesWorkdirError extends Data.TaggedError("GenTypesWorkdirError
 }
 
 /**
- * `loadCliConfig` failed to parse the config, or found two `[remotes.*]` blocks with the same
+ * The config failed to parse, or has two `[remotes.*]` blocks with the same
  * `project_id`. Reports a clean parse failure instead of the raw `CliConfigParseError`/
  * `DuplicateRemoteProjectIdError` tag leaking through as the message.
  */
@@ -89,5 +99,37 @@ export class GenTypesNetworkIdUnsupportedError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+export class GenTypesFlagUsageError extends Data.TaggedError("GenTypesFlagUsageError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
+  "GenTypesLocalDbNotRunningError",
+)<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
+
+export class GenTypesLocalDbInspectError extends Data.TaggedError("GenTypesLocalDbInspectError")<{
+  readonly message: string;
+  readonly daemonDown: boolean;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.daemonDown) {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
+    return actionability.unknown;
   }
 }

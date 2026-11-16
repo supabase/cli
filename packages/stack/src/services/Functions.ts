@@ -1,8 +1,10 @@
-import { Crypto, Effect, FileSystem, Path, Ref, Schema } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import { Digest } from "effect/crypto";
 import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
 } from "../functions/FunctionsBootstrap.ts";
+import { defaultFunctionsBootstrap } from "../functions/generated/serve-main-bundle.ts";
 import { StackIdSchema } from "../identity/StackId.ts";
 import { ServiceError } from "../Service.ts";
 import { serviceJwt } from "./ServiceConfig.ts";
@@ -32,14 +34,22 @@ export const Config = Schema.Struct({
   functionsRoot: Schema.String,
   filesRoot: Schema.optionalKey(Schema.String),
   functions: Schema.optionalKey(Schema.Record(Schema.String, FunctionSettings)),
-  bootstrap: Schema.String,
+  bootstrap: Schema.optionalKey(Schema.String),
   databaseUrl: Schema.optionalKey(Schema.String),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   apiUrl: Schema.optionalKey(Schema.String),
+  /** The host's HTTPS API origin while the API serves TLS, which the banner prefers. */
+  hostApiUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
+  jwks: Schema.optionalKey(Schema.String),
+  anonKey: Schema.optionalKey(Schema.String),
+  serviceRoleKey: Schema.optionalKey(Schema.String),
+  publishableKey: Schema.optionalKey(Schema.String),
+  secretKey: Schema.optionalKey(Schema.String),
   policy: Schema.optionalKey(Schema.String),
   verifyJwt: Schema.optionalKey(Schema.Boolean),
   inspector: Schema.optionalKey(Schema.Boolean),
+  debug: Schema.optionalKey(Schema.Boolean),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -57,8 +67,10 @@ const FunctionsRuntimeConfigJson = Schema.fromJsonString(
   Schema.Record(Schema.String, FunctionSettings),
 );
 
-const makeSpec = (
-  functionsRoot: Ref.Ref<string | undefined>,
+/** Fixed container mount point for `bootstrap.root`; `args` picks the generation underneath it. */
+const containerBootstrapRoot = "/__supabase_bootstrap";
+
+export const makeSpec = (
   bootstrap: FunctionsBootstrapOwner,
   path: Path.Path,
   fs: FileSystem.FileSystem,
@@ -85,17 +97,28 @@ const makeSpec = (
                   }),
               ),
             );
-      const runtimePath = (value: string) =>
-        !path.isAbsolute(value) || filesRoot === undefined || canonicalFilesRoot === undefined
-          ? value
-          : path.join(
-              container ? "/__supabase_project" : canonicalFilesRoot,
-              path.relative(filesRoot, value),
-            );
+      const runtimePath = (value: string) => {
+        if (!path.isAbsolute(value) || filesRoot === undefined || canonicalFilesRoot === undefined)
+          return value;
+        const relative = path.relative(filesRoot, value);
+        // Container paths are POSIX regardless of the host path flavor.
+        return container
+          ? ["/__supabase_project", ...relative.split(path.sep).filter((part) => part !== "")].join(
+              "/",
+            )
+          : path.join(canonicalFilesRoot, relative);
+      };
       const root =
         container && filesRoot === undefined
           ? "/__supabase_functions"
           : runtimePath(creation.config.functionsRoot);
+      /* A process env cannot carry these names or values; the JSON runtime config carries them
+         once in $default, which the bootstrap merges under each function's own env. */
+      const portable = ([name, value]: readonly [string, string]) =>
+        /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name) && !/[\0\r\n]/u.test(value);
+      const entries = Object.entries(creation.config.env ?? {});
+      const configEnv = Object.fromEntries(entries.filter((entry) => !portable(entry)));
+      const hasConfigEnv = Object.keys(configEnv).length > 0;
       const functions = Object.fromEntries(
         Object.entries(creation.config.functions ?? {}).map(([name, settings]) => [
           name,
@@ -115,26 +138,50 @@ const makeSpec = (
         ]),
       );
       const jwt = creation.config.jwtSecret;
+      const anonKey =
+        creation.config.anonKey ?? (jwt === undefined ? undefined : yield* serviceJwt("anon", jwt));
+      const serviceRoleKey =
+        creation.config.serviceRoleKey ??
+        (jwt === undefined ? undefined : yield* serviceJwt("service_role", jwt));
+      const apiUrl =
+        creation.config.apiUrl === undefined ? null : URL.parse(creation.config.apiUrl);
+      /* URL.port is empty for the scheme's default port. */
+      const hostPort =
+        apiUrl === null ? undefined : apiUrl.port || (apiUrl.protocol === "https:" ? "443" : "80");
       return {
-        ...creation.config.env,
+        // The image has no passwd entry: Docker then defaults HOME to /, Podman leaves it unset,
+        // and the runtime needs it to place its Deno cache.
+        ...(container ? { HOME: "/" } : {}),
+        ...Object.fromEntries(entries.filter(portable)),
         ...(http === undefined ? {} : { EDGE_RUNTIME_PORT: String(http.port) }),
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: root,
         ...(filesRoot === undefined
           ? {}
           : { SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT: runtimePath(filesRoot) }),
-        ...(jwt === undefined
+        ...(jwt === undefined ? {} : { SUPABASE_INTERNAL_JWT_SECRET: jwt }),
+        ...(creation.config.jwks === undefined ? {} : { SUPABASE_JWKS: creation.config.jwks }),
+        ...(anonKey === undefined ? {} : { SUPABASE_ANON_KEY: anonKey }),
+        ...(serviceRoleKey === undefined ? {} : { SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey }),
+        ...(creation.config.publishableKey === undefined
           ? {}
-          : {
-              SUPABASE_INTERNAL_JWT_SECRET: jwt,
-              SUPABASE_ANON_KEY: yield* serviceJwt("anon", jwt),
-              SUPABASE_SERVICE_ROLE_KEY: yield* serviceJwt("service_role", jwt),
-            }),
-        ...(creation.config.verifyJwt === undefined && creation.config.functions === undefined
+          : { SUPABASE_INTERNAL_PUBLISHABLE_KEY: creation.config.publishableKey }),
+        ...(creation.config.secretKey === undefined
+          ? {}
+          : { SUPABASE_INTERNAL_SECRET_KEY: creation.config.secretKey }),
+        ...(creation.config.verifyJwt === undefined &&
+        creation.config.functions === undefined &&
+        !hasConfigEnv
           ? {}
           : {
               SUPABASE_INTERNAL_FUNCTIONS_CONFIG: yield* Schema.encodeEffect(
                 FunctionsRuntimeConfigJson,
-              )({ $default: { verifyJWT: creation.config.verifyJwt ?? true }, ...functions }).pipe(
+              )({
+                $default: {
+                  verifyJWT: creation.config.verifyJwt ?? true,
+                  ...(hasConfigEnv ? { env: configEnv } : {}),
+                },
+                ...functions,
+              }).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ServiceError({
@@ -146,6 +193,11 @@ const makeSpec = (
               ),
             }),
         ...(creation.config.apiUrl === undefined ? {} : { SUPABASE_URL: creation.config.apiUrl }),
+        ...(hostPort === undefined ? {} : { SUPABASE_INTERNAL_HOST_PORT: hostPort }),
+        ...(creation.config.hostApiUrl === undefined
+          ? {}
+          : { SUPABASE_INTERNAL_HOST_URL: creation.config.hostApiUrl }),
+        ...(creation.config.debug === true ? { SUPABASE_INTERNAL_DEBUG: "true" } : {}),
         ...(creation.config.databaseUrl === undefined
           ? {}
           : { SUPABASE_DB_URL: creation.config.databaseUrl }),
@@ -156,41 +208,51 @@ const makeSpec = (
     }),
   args: (creation, endpoints, context) =>
     Effect.gen(function* () {
-      const override = yield* Ref.get(functionsRoot);
+      const published = yield* bootstrap
+        .write({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServiceError({
+                operation: "launch",
+                message: "Unable to publish Functions bootstrap",
+                cause,
+              }),
+          ),
+        );
       const root = context.container
-        ? override === undefined
-          ? "/__supabase_functions"
-          : "/__supabase_bootstrap"
-        : (override ?? creation.config.functionsRoot);
+        ? `${containerBootstrapRoot}/${path.basename(path.dirname(published))}`
+        : path.dirname(published);
       const http = endpoints.get("http");
       const inspector = endpoints.get("inspector");
       return [
         "start",
         `--main-service=${root}`,
-        ...(http === undefined ? [] : [`--port=${http.port}`]),
+        ...(http === undefined
+          ? []
+          : [`--port=${http.port}`, `--ip=${context.container ? "0.0.0.0" : "127.0.0.1"}`]),
         ...(creation.config.policy === undefined ? [] : [`--policy=${creation.config.policy}`]),
         ...(creation.config.inspector === true && inspector !== undefined
           ? [`--inspect=${context.container ? "0.0.0.0" : "127.0.0.1"}:${inspector.port}`]
           : []),
+        ...(creation.config.debug === true ? ["--verbose"] : []),
       ];
     }),
   mounts: (creation) =>
-    Effect.gen(function* () {
-      const override = yield* Ref.get(functionsRoot);
-      const files = creation.config.filesRoot;
-      const source = files ?? creation.config.functionsRoot;
-      const target = files === undefined ? "/__supabase_functions" : "/__supabase_project";
-      return [
-        { source, target, readOnly: true },
-        ...(override === undefined
-          ? []
-          : [{ source: override, target: "/__supabase_bootstrap", readOnly: true }]),
-      ];
-    }),
-  startup: [],
+    Effect.succeed([
+      {
+        source: creation.config.filesRoot ?? creation.config.functionsRoot,
+        target:
+          creation.config.filesRoot === undefined ? "/__supabase_functions" : "/__supabase_project",
+        readOnly: true,
+      },
+      { source: bootstrap.root, target: containerBootstrapRoot, readOnly: true },
+    ]),
+  startupCommands: [],
+  // Prefetches the bootstrap so a later start need not pay for it; `args` publishes idempotently.
   prepare: (creation) =>
-    bootstrap.write({ content: creation.config.bootstrap }).pipe(
-      Effect.flatMap((target) => Ref.set(functionsRoot, path.dirname(target))),
+    bootstrap.write({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap }).pipe(
+      Effect.asVoid,
       Effect.mapError(
         (cause) =>
           new ServiceError({
@@ -200,27 +262,22 @@ const makeSpec = (
           }),
       ),
     ),
-  removeData: () =>
-    bootstrap.cleanupAll.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServiceError({
-            operation: "destroy",
-            message: "Unable to remove Functions bootstrap",
-            cause,
-          }),
-      ),
-    ),
+  // No removeData: the bootstrap directory lives under instanceRoot, which ProcessRecipe's
+  // destroyOwnedRoot already removes as a single recursive delete starting from a root it has
+  // just confirmed is real; a selective removeData reaching into a nested path on its own could
+  // instead follow a symlink an attacker (or a race) planted there, deleting outside it.
+  callerPaths: (creation) =>
+    creation.config.filesRoot === undefined
+      ? [creation.config.functionsRoot]
+      : [creation.config.functionsRoot, creation.config.filesRoot],
 });
 
 export const makeRecipe = Effect.fn("Functions.makeRecipe")(
   (
-    creation: Creation,
     options: CatalogOptions,
     deps: ProcessDependencies,
   ): Effect.Effect<ProcessRecipeResult<Creation>, CatalogError> =>
     Effect.gen(function* () {
-      const functionsRoot = yield* Ref.make<string | undefined>(undefined);
       const stackId = yield* Schema.decodeEffect(StackIdSchema)(options.stackId).pipe(
         Effect.mapError(
           (cause) =>
@@ -239,7 +296,7 @@ export const makeRecipe = Effect.fn("Functions.makeRecipe")(
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, deps.fs),
         Effect.provideService(Path.Path, deps.path),
-        Effect.provideService(Crypto.Crypto, deps.crypto),
+        Effect.provideService(Digest.Digest, deps.digest),
         Effect.mapError(
           (cause) =>
             new CatalogError({
@@ -250,11 +307,6 @@ export const makeRecipe = Effect.fn("Functions.makeRecipe")(
             }),
         ),
       );
-      return yield* makeProcessRecipe(
-        creation,
-        options,
-        deps,
-        makeSpec(functionsRoot, bootstrap, deps.path, deps.fs),
-      );
+      return yield* makeProcessRecipe(options, deps, makeSpec(bootstrap, deps.path, deps.fs));
     }),
 );

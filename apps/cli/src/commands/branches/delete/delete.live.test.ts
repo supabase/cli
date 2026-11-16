@@ -25,9 +25,8 @@ test("deletes a preview branch", ({ cliEffect, project }) =>
           "branches",
           "delete",
           name,
-          "--project-ref",
-          project.ref,
           "--yes",
+          `--remote=${project.ref}`,
         ]);
         deletionAcknowledged = removed.exitCode === 0;
         expect(removed.exitCode, removed.stderr).toBe(0);

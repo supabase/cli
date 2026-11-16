@@ -9,7 +9,7 @@ import { projectRefLayer } from "../../../config/project-ref.layer.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { IdentityStitch, identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
@@ -26,7 +26,7 @@ import { GenTypesGenerator } from "./types.generator.service.ts";
 /**
  * Avoids `managementApiRuntimeLayer`, which eagerly builds the platform API client and
  * requires an access token before the handler can choose the local/db-url branch — `gen types
- * --local`/`--db-url` don't use the Management API.
+ * --local`/`--remote=<url>` don't use the Management API.
  */
 export const genTypesRuntimeLayer = (() => {
   const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
@@ -71,7 +71,11 @@ export const genTypesRuntimeLayer = (() => {
     commandRuntimeLayer(["gen", "types"]),
   );
 
-  const _serviceCoverageCheck: Layer.Layer<GenTypesServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<
+    GenTypesServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

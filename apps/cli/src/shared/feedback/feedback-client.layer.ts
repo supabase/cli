@@ -128,25 +128,22 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
       );
 
     return FeedbackClient.of({
-      submit: (submission) =>
-        run("submit", (signal) =>
+      submit: Effect.fn("FeedbackClient.submit")(function* (submission) {
+        const { data } = yield* run("submit", (signal) =>
           client.rpc("submit_interfaces_feedback", toRpcArgs(submission)).abortSignal(signal),
-        ).pipe(
-          Effect.flatMap(({ data }) =>
-            typeof data === "string" && data.length > 0
-              ? Effect.succeed({ deleteToken: data })
-              : Effect.fail(
-                  new FeedbackBackendError({
-                    message: "feedback backend returned no delete token",
-                    operation: "submit",
-                    reason: "response",
-                  }),
-                ),
-          ),
-        ),
+        );
+        if (typeof data === "string" && data.length > 0) {
+          return { deleteToken: data };
+        }
+        return yield* new FeedbackBackendError({
+          message: "feedback backend returned no delete token",
+          operation: "submit",
+          reason: "response",
+        });
+      }),
 
-      delete: (token, context) =>
-        run("delete", (signal) => {
+      delete: Effect.fn("FeedbackClient.delete")(function* (token, context) {
+        const { count } = yield* run("delete", (signal) => {
           // The `delete_token=eq.` filter satisfies PostgREST's filterless-delete
           // rejection; the `x-feedback-token` header is the actual security
           // boundary (RLS matches zero rows without it). `count: "exact"` asks
@@ -165,7 +162,9 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
             request = request.setHeader("x-feedback-user-id", context.userId);
           }
           return request;
-        }).pipe(Effect.map(({ count }) => ({ deleted: count === 1 }))),
+        });
+        return { deleted: count === 1 };
+      }),
     });
   });
 }

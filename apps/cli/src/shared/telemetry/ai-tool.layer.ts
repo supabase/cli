@@ -8,18 +8,16 @@ function normalizeAgentName(name: string): string {
 
 export const aiToolLayer = Layer.effect(
   AiTool,
-  Effect.promise(() => determineAgent()).pipe(
+  Effect.tryPromise(() => determineAgent()).pipe(
     Effect.map((result) =>
       AiTool.of({
         name: result.isAgent ? Option.some(normalizeAgentName(result.agent.name)) : Option.none(),
       }),
     ),
-    Effect.catch(() =>
-      Effect.succeed(
-        AiTool.of({
-          name: Option.none(),
-        }),
-      ),
+    Effect.orElseSucceed(() =>
+      AiTool.of({
+        name: Option.none(),
+      }),
     ),
   ),
 );

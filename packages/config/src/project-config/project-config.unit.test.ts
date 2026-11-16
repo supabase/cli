@@ -5,7 +5,7 @@ import { ProjectConfigParseError } from "../errors.ts";
 import { isSecretPath, secretPathPatterns } from "../lib/secret-paths.ts";
 import { getDefaultCliConfig, omitDefaultValues, subtractCliConfig } from "../sparse.ts";
 import type { EffectiveConfig } from "../sparse.ts";
-import { Schema } from "effect";
+import { DateTime, Schema } from "effect";
 import {
   attachApiResponse,
   comparableProjectConfigPaths,
@@ -189,6 +189,64 @@ describe("fromConfigDocument", () => {
     expect(fromConfigDocument({})).toEqual({});
   });
 
+  test.each([
+    {
+      scenario: "a sparse email enabled = false",
+      operand: { auth: { email: { enabled: false } } },
+      section: "email",
+      expected: false,
+    },
+    {
+      scenario: "a sparse sms enabled = true",
+      operand: { auth: { sms: { enabled: true } } },
+      section: "sms",
+      expected: true,
+    },
+    {
+      scenario: "a decoded email whose only provider key is enabled = false",
+      operand: decodeCliConfig({ auth: { email: { enabled: false } } }),
+      section: "email",
+      expected: false,
+    },
+    {
+      scenario: "a decoded sms whose only provider key is enabled = true",
+      operand: decodeCliConfig({
+        auth: {
+          sms: {
+            enabled: true,
+            twilio: {
+              enabled: true,
+              account_sid: "AC123",
+              message_service_sid: "MG123",
+              auth_token: "token",
+            },
+          },
+        },
+      }),
+      section: "sms",
+      expected: true,
+    },
+    {
+      scenario: "an email enabled = false next to enable_signup = true",
+      operand: { auth: { email: { enabled: false, enable_signup: true } } },
+      section: "email",
+      expected: false,
+    },
+    {
+      scenario: "an sms enabled = true next to enable_signup = false",
+      operand: { auth: { sms: { enabled: true, enable_signup: false } } },
+      section: "sms",
+      expected: true,
+    },
+  ] as const)(
+    "projects $scenario to enable_signup = $expected and drops enabled",
+    ({ operand, section, expected }) => {
+      const projected = fromConfigDocument(operand);
+      expect(projected.auth?.[section]?.enable_signup).toBe(expected);
+      expect(projected.auth?.[section]).not.toHaveProperty("enabled");
+    },
+  );
+
   test("result carries no _apiResponse own property", () => {
     const projected = fromConfigDocument(getDefaultCliConfig());
     expect(Object.getOwnPropertyNames(projected)).not.toContain("_apiResponse");
@@ -281,7 +339,7 @@ describe("fromConfigDocument", () => {
     expect(projected.auth?.email?.smtp?.port).toBe(25);
   });
 
-  test("an out-of-range smtp.port (past uint16) is omitted, matching the API arm's own bound", () => {
+  test("an out-of-range smtp.port (past 65535) is omitted, matching the API arm's own bound", () => {
     const projected = fromConfigDocument({
       auth: { email: { smtp: { enabled: true, host: "smtp.example.com", port: 70_000 } } },
     });
@@ -490,7 +548,6 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     const document = decodeCliConfig({
       experimental: {
         stack: true,
-        orioledb_version: "1.0",
         s3_host: "bucket.s3.example.com",
         s3_region: "us-east-1",
         pgdelta: { enabled: true },
@@ -501,7 +558,6 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     const projected = fromConfigDocument(document);
     expect(Object.hasOwn(projected.experimental ?? {}, "stack")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "compute")).toBe(false);
-    expect(Object.hasOwn(projected.experimental ?? {}, "orioledb_version")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "s3_host")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "s3_region")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "pgdelta")).toBe(false);
@@ -579,22 +635,25 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
         shadow_port: 2,
         health_timeout: "5m",
         major_version: 15,
+        orioledb_version: "1.0",
         pooler: { enabled: true, port: 7777, pool_mode: "session" },
         migrations: { enabled: false },
         seed: { enabled: false },
         settings: { max_connections: 5 },
       },
+      auth: { email: { enabled: true }, sms: { enabled: true } },
       realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
       experimental: {
         compute: true,
         stack: true,
-        orioledb_version: "1.0",
+        orioledb_version: "",
         s3_host: "host",
         s3_region: "region",
         pgdelta: { enabled: true },
         inspect: { rules: [{ name: "r1" }] },
         webhooks: { enabled: true },
       },
+      local: { services: { auth: { version: "bundled" } } },
     });
 
     const projected = fromConfigDocument(document);
@@ -723,14 +782,18 @@ describe("fromApiProjectConfig — api section", () => {
     expect(result.api).toEqual({ schemas: ["public", "graphql_public"], enabled: true });
   });
 
-  // An explicit `db_schema: ""` is the remote's disable sentinel, so only `enabled: false` is
-  // reported; an absent `db_schema` does not gate the siblings.
-  test("an empty db_schema disables the Data API and omits the sibling fields", () => {
-    const result = fromApiProjectConfig({
-      api: { db_schema: "", db_extra_search_path: "public", max_rows: 100 },
-    });
-    expect(result.api).toEqual({ enabled: false });
-  });
+  // An explicit `db_schema: ""` and the platform's `pg_pgrst_no_exposed_schemas` marker are the
+  // remote's disable sentinels, so only `enabled: false` is reported; an absent `db_schema` does
+  // not gate the siblings.
+  test.each(["", "pg_pgrst_no_exposed_schemas"])(
+    "db_schema %j disables the Data API and omits the sibling fields",
+    (dbSchema) => {
+      const result = fromApiProjectConfig({
+        api: { db_schema: dbSchema, db_extra_search_path: "public", max_rows: 100 },
+      });
+      expect(result.api).toEqual({ enabled: false });
+    },
+  );
 
   test("max_rows is clamped to zero when negative", () => {
     const result = fromApiProjectConfig({ api: { max_rows: -5 } });
@@ -765,6 +828,13 @@ describe("fromApiProjectConfig — api section", () => {
     // default), not merely "not caller_misuse".
     expect((thrown as ProjectConfigParseError).reason ?? "api_response").toBe("api_response");
     expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
+    expect(thrown).toHaveProperty(
+      "message",
+      expect.stringContaining(
+        "at data.attributes.api.max_rows: expected a finite number, got number",
+      ),
+    );
+    expect(thrown).not.toHaveProperty("detail");
   });
 });
 
@@ -1015,10 +1085,9 @@ describe("fromApiProjectConfig — auth section", () => {
     expect(result.auth?.email?.enable_confirmations).toBe(false);
   });
 
-  test("sms_autoconfirm maps to auth.sms.enable_confirmations WITHOUT inverting", () => {
-    // Unlike mailer_autoconfirm/email.enable_confirmations, this key isn't inverted.
+  test("sms_autoconfirm inverts to auth.sms.enable_confirmations", () => {
     const result = fromApiProjectConfig({ auth: { sms_autoconfirm: true } });
-    expect(result.auth?.sms?.enable_confirmations).toBe(true);
+    expect(result.auth?.sms?.enable_confirmations).toBe(false);
   });
 
   test("rate_limit_otp renames to auth.rate_limit.sign_in_sign_ups", () => {
@@ -1026,12 +1095,12 @@ describe("fromApiProjectConfig — auth section", () => {
     expect(result.auth?.rate_limit).toEqual({ sign_in_sign_ups: 30 });
   });
 
-  test("sessions_timebox (hours) converts to a Go duration string", () => {
+  test("sessions_timebox (hours) converts to a duration string", () => {
     const result = fromApiProjectConfig({ auth: { sessions_timebox: 2 } });
     expect(result.auth?.sessions?.timebox).toBe("2h0m0s");
   });
 
-  test("smtp_max_frequency (seconds) converts to a Go duration string", () => {
+  test("smtp_max_frequency (seconds) converts to a duration string", () => {
     const result = fromApiProjectConfig({ auth: { smtp_max_frequency: 60 } });
     expect(result.auth?.email?.max_frequency).toBe("1m0s");
   });
@@ -1098,6 +1167,41 @@ describe("fromApiProjectConfig — auth section", () => {
       textlocal: { enabled: false },
       vonage: { enabled: false },
     });
+  });
+
+  test("a named provider with a null identity attribute is unconfigured, never enabled", () => {
+    const result = fromApiProjectConfig({
+      auth: { sms_provider: "twilio", external_phone_enabled: false, sms_twilio_account_sid: null },
+    });
+    expect(result.auth?.sms).toEqual({
+      enable_signup: false,
+      twilio: { enabled: false },
+      twilio_verify: { enabled: false },
+      messagebird: { enabled: false },
+      textlocal: { enabled: false },
+      vonage: { enabled: false },
+    });
+  });
+
+  test.each([
+    ["twilio", "sms_twilio_account_sid"],
+    ["twilio_verify", "sms_twilio_verify_account_sid"],
+    ["messagebird", "sms_messagebird_originator"],
+    ["textlocal", "sms_textlocal_sender"],
+    ["vonage", "sms_vonage_from"],
+  ] as const)("%s is enabled only with its identity attribute set", (provider, key) => {
+    const auth = { sms_provider: provider, external_phone_enabled: true };
+    const identified = fromApiProjectConfig({ auth: { ...auth, [key]: "id" } });
+    expect(identified.auth?.sms?.[provider]?.enabled).toBe(true);
+    for (const blank of ["", null]) {
+      const result = fromApiProjectConfig({ auth: { ...auth, [key]: blank } });
+      expect(result.auth?.sms?.[provider]?.enabled).toBe(false);
+    }
+  });
+
+  test("an identity attribute without sms_provider names no provider", () => {
+    const result = fromApiProjectConfig({ auth: { sms_twilio_account_sid: "AC1" } });
+    expect(result.auth?.sms).toEqual({ twilio: { account_sid: "AC1" } });
   });
 
   test("external_github_enabled maps to auth.external.github.enabled", () => {
@@ -1595,7 +1699,7 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
   });
 
   test("a digit-less document duration stays verbatim instead of rewriting to 0s", () => {
-    // Go's ParseDuration rejects "s"; the canonicalizer therefore leaves it
+    // A strict duration parse rejects "s"; the canonicalizer therefore leaves it
     // untouched rather than silently reading it as zero.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "s" } } });
     expect(projected.auth?.sessions?.timebox).toBe("s");
@@ -2001,14 +2105,14 @@ describe("review round: absent anchors, exponent-free seconds, non-plain values 
     // Document side: the push-formatter truncation drops the remainder.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1h1ns" } } });
     expect(projected.auth?.sessions?.timebox).toBe("1h0m0s");
-    // API arm: the Go-faithful formatter renders a hosted sub-second tail
+    // API arm: the API formatter renders a hosted sub-second tail
     // fixed-decimal, never exponent notation (1h + 1ns in hours).
     const api = fromApiProjectConfig({ auth: { sessions_timebox: 1 + 1e-9 / 3600 } });
     expect(api.auth?.sessions?.timebox).toBe("1h0m0.000000001s");
   });
 
   test("non-plain structured-cloneable values are rejected before attach", () => {
-    for (const nonPlain of [new Map(), new Set(), new Date()]) {
+    for (const nonPlain of [new Map(), new Set(), DateTime.toDateUtc(DateTime.nowUnsafe())]) {
       let thrown: unknown;
       try {
         attachApiResponse({}, { x: nonPlain as unknown as ReadonlyJsonValue } as unknown as Record<
@@ -2075,7 +2179,7 @@ describe("review round: clone taxonomy, precision bound, type discriminator, sec
   });
 });
 
-describe("review round: safe integers, Go truncation, bigint, fractional-hour bound (CLI-2230)", () => {
+describe("review round: safe integers, truncation, bigint, fractional-hour bound (CLI-2230)", () => {
   test("an unsafe integer throws instead of laundering JSON parse rounding", () => {
     let thrown: unknown;
     try {
@@ -2089,7 +2193,7 @@ describe("review round: safe integers, Go truncation, bigint, fractional-hour bo
 
   test("fractional nanoseconds round like the push parser (the pipeline authority)", () => {
     // The push parser rounds fractional nanoseconds; canonicalization predicts its reading rather
-    // than Go's own truncation, which would target a value push never produces.
+    // than truncating, which would target a value push never produces.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1.0000000005s" } } });
     expect(projected.auth?.sessions?.timebox).toBe("1.000000001s");
   });
@@ -2255,7 +2359,7 @@ describe("review round: fraction exactness, hour round-trip, bigint discriminato
       auth: { sessions: { timebox: "0.999999999999999999s" } },
     });
     // The push parser's float accumulation reads this as exactly 1s, and that reading is what the
-    // canonical spelling predicts, not Go's own truncation to 999999999ns.
+    // canonical spelling predicts, not a truncation to 999999999ns.
     expect(projected.auth?.sessions?.timebox).toBe("1s");
   });
 
@@ -2279,16 +2383,16 @@ describe("review round: fraction exactness, hour round-trip, bigint discriminato
   });
 });
 
-describe("review round: Go fraction order, mu units, realms, disabled-gate validation (CLI-2230)", () => {
-  test("short decimal fractions scale exactly like Go", () => {
+describe("review round: fraction order, mu units, realms, disabled-gate validation (CLI-2230)", () => {
+  test("short decimal fractions scale exactly", () => {
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "0.2593ms" } } });
-    // Go computes int64(f * (unit/scale)) = 2593 * 100 = 259300ns exactly; the reverse operand
+    // int64(f * (unit/scale)) = 2593 * 100 = 259300ns exactly; the reverse operand
     // order truncates a nanosecond short (259.299µs).
     expect(projected.auth?.sessions?.timebox).toBe("259.3µs");
   });
 
   test("the Greek small mu spelling stays verbatim (the push parser rejects it)", () => {
-    // Go accepts U+03BC, but the push parser only takes us/µs; canonicalizing "1μs" into a
+    // The grammar accepts U+03BC, but the push parser only takes us/µs; canonicalizing "1μs" into a
     // pushable spelling would fabricate a reading the pipeline never performs.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1μs" } } });
     expect(projected.auth?.sessions?.timebox).toBe("1μs");
@@ -2321,10 +2425,10 @@ describe("review round: Go fraction order, mu units, realms, disabled-gate valid
   });
 });
 
-describe("review round: Go-range sessions, SMTP/provider/storage disabled sentinels (CLI-2230)", () => {
-  test("year-scale whole-hour durations parse and map inside Go's range", () => {
+describe("review round: int64-range sessions, SMTP/provider/storage disabled sentinels (CLI-2230)", () => {
+  test("year-scale whole-hour durations parse and map inside the int64 range", () => {
     // "8760h" is a valid push-side value; single whole-unit components stay exact at any
-    // magnitude inside Go's range.
+    // magnitude inside the int64 range.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "8760h" } } });
     expect(projected.auth?.sessions?.timebox).toBe("8760h0m0s");
     const mapped = fromApiProjectConfig({ auth: { sessions_timebox: 8760 } });
@@ -2529,7 +2633,7 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("the sessions floor includes int64's own minimum, asymmetrically", () => {
-    // -2^63 ns is a valid Go duration (the int64 minimum); its hours spelling rounds back to
+    // -2^63 ns is a valid duration (the int64 minimum); its hours spelling rounds back to
     // exactly -2^63 through magnitude-then-sign. The positive mirror of the endpoint stays
     // rejected, since +2^63 is one past max int64.
     const endpoint = fromApiProjectConfig({
@@ -2629,7 +2733,7 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("the document parser rejects the positive int64 endpoint the API arm rejects", () => {
-    // +2^63 ns is one past Go's maximum, so a non-canonical spelling summing to exactly 2^63
+    // +2^63 ns is one past the maximum, so a non-canonical spelling summing to exactly 2^63
     // stays verbatim rather than canonicalizing into a duration the API arm would reject.
     const positive = fromConfigDocument({
       auth: { sessions: { timebox: "2562047h47m16s854775808ns" } },
@@ -2700,9 +2804,9 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     ["-0", -0],
     ["negative", -5],
     ["-Infinity", Number.NEGATIVE_INFINITY],
-    // TOML's `nan` literal is a real reachable document value (`smol-toml` parses
-    // `max_rows = nan` to `Number.NaN`); `NaN <= 0` is `false`, so a naive non-positive check
-    // would miss it, but `!(value > 0)` catches it since `NaN > 0` is also `false`.
+    // Config decode rejects TOML `nan`/`inf` (`Schema.Finite`), so `NaN` only reaches this arm
+    // through a caller-built `EffectiveConfig`; `NaN <= 0` is `false`, so a naive non-positive
+    // check would miss it, but `!(value > 0)` catches it since `NaN > 0` is also `false`.
     ["NaN", Number.NaN],
   ])("api.max_rows: %s is omitted on the document arm", (_description, value) => {
     const doc = fromConfigDocument({ api: { enabled: true, max_rows: value } });
@@ -3199,7 +3303,7 @@ describe("review round: unified snapshot, exact scaling, signed frequencies, end
     expect(result.auth?.email?.max_frequency).toBe("-5s");
   });
 
-  test("the session-hour ceiling itself maps below Go's maximum duration", () => {
+  test("the session-hour ceiling itself maps below the maximum duration", () => {
     const ceilingHours = (2 ** 63 - 2 ** 10) / 3_600_000_000_000;
     const result = fromApiProjectConfig({ auth: { sessions_timebox: ceilingHours } });
     expect(typeof result.auth?.sessions?.timebox).toBe("string");
@@ -3326,6 +3430,7 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
       config,
       document,
       ignoredPaths: [],
+      deprecatedPaths: [],
     };
     // No `as` cast anywhere above or below — this is the compile-time half
     // of "LoadedCliConfig is structurally assignable without a cast".
@@ -3367,7 +3472,13 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
     // Mirrors `saveCliConfig`'s return shape: no `document` key at all, not even `undefined` —
     // there is no raw file to re-read on a save.
     const config = decodeCliConfig({});
-    const saved = { path: "supabase/config.toml", format: "toml", config, ignoredPaths: [] };
+    const saved = {
+      path: "supabase/config.toml",
+      format: "toml",
+      config,
+      ignoredPaths: [],
+      deprecatedPaths: [],
+    };
     const projected = fromConfigDocument(saved);
     // Unmasked: the schema-defaulted captcha section survives, same as the
     // "without a document" behavior pinned earlier in this file.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -47,7 +47,6 @@ function setup() {
     CliOutput.layer(textCliOutputFormatter()),
     mockTelemetryRuntime({
       configDir: `${tempRoot.current}/.supabase`,
-      tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
   );
   return { layer, api };
@@ -61,7 +60,7 @@ function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
   expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
 }
 
-describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () => {
+describe("postgres-config experimental gate ", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["postgres-config", "get"] },
     { name: "update", args: ["postgres-config", "update"] },
@@ -69,7 +68,7 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
   ];
 
   for (const { name, args } of leaves) {
-    it.live(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
+    it.effect(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
@@ -82,7 +81,7 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(`${name} does not fail with the gate error once --experimental is set`, () => {
+    it.effect(`${name} does not fail with the gate error once --experimental is set`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -101,7 +100,7 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
   }
 
   // A malformed CSV value fails at parse time, before the experimental gate ever runs,
-  // with pflag's own diagnostic text.
+  // with its own diagnostic text.
   const malformedCsvCases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;
@@ -123,8 +122,8 @@ describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () =
   ];
 
   for (const { name, args, message } of malformedCsvCases) {
-    it.live(
-      `${name}: malformed --config CSV fails at parse time with pflag's exact diagnostic, before the gate`,
+    it.effect(
+      `${name}: malformed --config CSV fails at parse time with the exact diagnostic, before the gate`,
       () => {
         const { layer, api } = setup();
         return Effect.gen(function* () {

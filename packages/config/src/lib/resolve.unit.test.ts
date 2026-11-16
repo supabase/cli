@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { Redacted } from "effect";
 import { resolveCliConfigValue, resolveCliConfigSubtree } from "../index.ts";
+import { resolveCliConfigValueAtPath } from "./resolve.ts";
 
 // Behavioral coverage of the two public sync resolvers, imported from the
 // public `.` entrypoint (not `./resolve.ts` directly) — this is the exact
@@ -46,5 +47,23 @@ describe("resolveCliConfigSubtree", () => {
     if (Redacted.isRedacted(resolved.openai_api_key)) {
       expect(Redacted.value(resolved.openai_api_key)).toBe("sk-test");
     }
+  });
+});
+
+describe("own-key handling", () => {
+  test("a __proto__ table name survives resolution as an own key", () => {
+    const document = JSON.parse('{"__proto__":{"subject":"env(FOO)"}}');
+
+    const resolved = resolveCliConfigSubtree(document, { values: { FOO: "bar" } }, "auth");
+
+    expect(Object.getOwnPropertyDescriptor(resolved, "__proto__")?.value).toEqual({
+      subject: "bar",
+    });
+  });
+
+  test("a reference to an inherited property name stays unresolved", () => {
+    expect(resolveCliConfigValueAtPath("env(toString)", { values: {} }, [], true)).toBe(
+      "env(toString)",
+    );
   });
 });

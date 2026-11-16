@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
 
 import {
   mockAnalytics,
@@ -27,14 +28,14 @@ const writeTelemetryConfig = (dir: string, contents: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.writeFileString(path.join(dir, TELEMETRY_FILE), contents);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const telemetryConfigExists = (dir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* fs.exists(path.join(dir, TELEMETRY_FILE));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const readTelemetryConfig = (dir: string) =>
   Effect.gen(function* () {
@@ -44,7 +45,7 @@ const readTelemetryConfig = (dir: string) =>
     return yield* Schema.decodeEffect(
       Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
     )(text);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 function setup(dir: string) {
   const out = mockOutput();
@@ -53,6 +54,7 @@ function setup(dir: string) {
     out.layer,
     analytics.layer,
     BunServices.layer,
+    BunCrypto.layer,
     processControlLayer,
     processEnvLayer({ SUPABASE_HOME: dir }),
   );
@@ -74,18 +76,21 @@ function setupWithRealAnalytics(dir: string) {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
     Layer.provide(envLayer),
+    Layer.provide([BunServices.layer, BunCrypto.layer]),
   );
   const analytics = analyticsLayer.pipe(
     Layer.provide(configLayer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(ttyLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide([BunServices.layer, BunCrypto.layer]),
+    Layer.provide(FetchHttpClient.layer),
     Layer.provide(envLayer),
   );
   const layer = Layer.mergeAll(
     out.layer,
     analytics,
     BunServices.layer,
+    BunCrypto.layer,
     processControlLayer,
     envLayer,
   );
@@ -101,7 +106,7 @@ function runTelemetry(args: Array<string>) {
 }
 
 describe("telemetry integration", () => {
-  it.live("status creates legacy telemetry.json and prints Go-style enabled output", () => {
+  it.live("status creates legacy telemetry.json and prints the enabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
 
@@ -115,7 +120,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("enable preserves prior identity fields and prints Go-style enabled output", () => {
+  it.live("enable preserves prior identity fields and prints the enabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
     const seed = JSON.stringify({
@@ -139,7 +144,7 @@ describe("telemetry integration", () => {
     });
   });
 
-  it.live("disable preserves prior identity fields and prints Go-style disabled output", () => {
+  it.live("disable preserves prior identity fields and prints the disabled output", () => {
     const dir = tempRoot.current;
     const { out, layer } = setup(dir);
     const seed = JSON.stringify({

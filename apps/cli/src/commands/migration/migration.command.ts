@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { migrationListCommand } from "./list/list.command.ts";
 import { migrationNewCommand } from "./new/new.command.ts";
 import { migrationRepairCommand } from "./repair/repair.command.ts";

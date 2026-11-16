@@ -1,0 +1,60 @@
+{
+  "testResults": [
+    {
+      "name": "/repo/packages/api/src/hook.unit.test.ts",
+      "status": "failed",
+      "message": "",
+      "assertionResults": [
+        {
+          "ancestorTitles": ["hook"],
+          "title": "runs after the hook",
+          "status": "skipped",
+          "failureMessages": []
+        }
+      ]
+    },
+    {
+      "name": "/repo/packages/api/src/import-error.unit.test.ts",
+      "status": "failed",
+      "message": "import failure",
+      "assertionResults": []
+    },
+    {
+      "name": "/repo/packages/api/src/probe.unit.test.ts",
+      "status": "failed",
+      "message": "",
+      "assertionResults": [
+        {
+          "ancestorTitles": ["sometimes"],
+          "title": "fails on the second iteration",
+          "status": "failed",
+          "failureMessages": ["Error: second iteration"]
+        },
+        {
+          "ancestorTitles": ["two errors"],
+          "title": "test and afterEach both fail on the second iteration",
+          "status": "failed",
+          "failureMessages": ["Error: test body", "Error: afterEach too"]
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "title": "twin",
+          "status": "passed",
+          "failureMessages": []
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "title": "twin",
+          "status": "failed",
+          "failureMessages": ["Error: second twin"]
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "title": "skipped",
+          "status": "skipped",
+          "failureMessages": []
+        }
+      ]
+    }
+  ]
+}

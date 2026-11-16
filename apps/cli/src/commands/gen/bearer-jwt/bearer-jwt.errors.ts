@@ -59,7 +59,7 @@ export class GenBearerJwtDecodeError extends Data.TaggedError("GenBearerJwtDecod
 
 /**
  * Branch A: the pasted stdin JWK is not valid JSON. Established message
- * `"failed to parse JWK: %w"`.
+ * `"failed to parse JWK: <cause>"`.
  */
 export class GenBearerJwtKeyParseError extends Data.TaggedError("GenBearerJwtKeyParseError")<{
   readonly message: string;
@@ -71,7 +71,7 @@ export class GenBearerJwtKeyParseError extends Data.TaggedError("GenBearerJwtKey
 
 /**
  * Branch B: the entered kid matched no configured signing key. Established
- * message `"signing key not found: %s"`.
+ * message `"signing key not found: <kid>"`.
  */
 export class GenBearerJwtKeyNotFoundError extends Data.TaggedError("GenBearerJwtKeyNotFoundError")<{
   readonly message: string;
@@ -97,7 +97,7 @@ export class GenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
 }
 
 /**
- * `--payload` merge failure. Established message `"failed to parse payload: %w"`.
+ * `--payload` merge failure. Established message `"failed to parse payload: <cause>"`.
  */
 export class GenBearerJwtPayloadError extends Data.TaggedError("GenBearerJwtPayloadError")<{
   readonly message: string;

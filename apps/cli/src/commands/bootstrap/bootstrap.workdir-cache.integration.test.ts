@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Schedule } from "effect";
@@ -33,13 +34,19 @@ import {
 } from "../../command-internal/global-flags.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { SuccessTrailer, successTrailerLayer } from "../../shared/cli/success-trailer.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
+import { flagInput } from "../../../tests/helpers/config-values-layer.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
+import type { V1GetProjectOutput } from "@supabase/api/effect";
 import type { BootstrapFlags } from "./bootstrap.command.ts";
 
 const FAST_BACKOFF = Schedule.exponential("1 milli");
@@ -52,6 +59,23 @@ const PROJECT = {
   name: "alpha",
   region: "us-east-1",
   status: "COMING_UP",
+};
+// Schema-valid `V1GetProjectOutput`: the linked-project cache decodes it with the typed client.
+const PROJECT_DETAIL: typeof V1GetProjectOutput.Type = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-1",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-01-01T00:00:00Z",
+  status: "COMING_UP",
+  database: {
+    host: "db.example.com",
+    version: "15",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
 };
 const ORGS = [{ id: "org-1", slug: "acme", name: "Acme Inc" }];
 const API_KEYS = [{ name: "anon", api_key: "anon-key" }];
@@ -130,7 +154,7 @@ describe("bootstrap linked-project cache location", () => {
           }
           // GET /v1/projects/{ref} — read by the linked-project cache.
           if (recorded.method === "GET" && url.includes(`/v1/projects/${VALID_REF}`)) {
-            return Effect.succeed(jsonResponse(request, 200, PROJECT));
+            return Effect.succeed(jsonResponse(request, 200, PROJECT_DETAIL));
           }
           return Effect.succeed(jsonResponse(request, 404, {}));
         };
@@ -164,6 +188,7 @@ describe("bootstrap linked-project cache location", () => {
           Layer.succeed(ProfileFlag, "supabase"),
           Layer.succeed(WorkdirFlag, Option.none()),
           Layer.succeed(YesFlag, false),
+          Layer.succeed(TargetPolicy, { group: "account", consent: "yes" }),
           Layer.succeed(OutputFlag, Option.none()),
           Layer.succeed(DebugFlag, false),
           Layer.succeed(DnsResolverFlag, "native"),
@@ -200,6 +225,7 @@ describe("bootstrap linked-project cache location", () => {
 
         const layer = Layer.mergeAll(
           BunServices.layer,
+          legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
           out.layer,
           api.layer,
           api.factoryLayer,
@@ -215,11 +241,23 @@ describe("bootstrap linked-project cache location", () => {
           dbConnectionLayer,
           mockLoginApi({ gotrueId: "gotrue-user" }).layer,
           mockLoginCrypto().layer,
-          mockBrowser(),
+          mockBrowser,
           mockStdin(true),
           flagsLayer,
           debugLogger,
           successTrailerLayer,
+          cliConfigValuesLayer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                BunServices.layer,
+                out.layer,
+                Layer.succeed(
+                  CliConfigFlagInputs,
+                  makeCliConfigFlagInputs([flagInput("linkedDb.password", "password", "s3cret")]),
+                ),
+              ),
+            ),
+          ),
         );
 
         const flags: BootstrapFlags = {
@@ -283,17 +321,33 @@ describe("bootstrap linked-project cache location", () => {
         expect(pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(pushConnectCalls[0]?.user).toBe(`postgres.${VALID_REF}`);
         expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-        // The confirm prompt is interactive UI (clack), not `output.raw` text, so it's recorded
-        // in `promptConfirmCalls`, not `stderrText`.
-        expect(
-          out.promptConfirmCalls.some((c) =>
-            c.message.includes("Do you want to create custom roles in the database cluster?"),
-          ),
-        ).toBe(true);
+        const questions = out.promptConfirmCalls.map((c) => c.message);
+        expect(questions).toEqual([
+          expect.stringContaining("Create a new Supabase project from the"),
+          expect.stringContaining("overwrite existing files"),
+        ]);
         expect(out.stderrText).toContain("Seeding globals from roles.sql...");
         // With no `supabase/seed.sql` file, the seed glob matches nothing, so this line only
         // prints when `includeSeed` is true.
         expect(out.stderrText).toContain("Seed files are up to date.");
+
+        // The tenant service probes share the recording client; only the Management API
+        // requests are mapped.
+        expect(
+          api.requests
+            .map(({ method, url }) => ({ method, url: new URL(url) }))
+            .filter(({ url }) => url.origin === "https://api.supabase.com")
+            .map(({ method, url }) => `${method} ${url.pathname}${url.search}`),
+        ).toEqual([
+          "GET /v1/organizations",
+          "POST /v1/projects",
+          `GET /v1/projects/${VALID_REF}/api-keys`,
+          `GET /v1/projects/${VALID_REF}/config/storage`,
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `GET /v1/projects/${VALID_REF}/health`,
+          `GET /v1/projects/${VALID_REF}`,
+        ]);
+        assertPermissionDrift({ command: "bootstrap", requests: api.requests, exact: true });
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

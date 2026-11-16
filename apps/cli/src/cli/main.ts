@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Stdio } from "effect";
+import { Effect, Exit, Layer, Stdio } from "effect";
+import { FetchHttpClient } from "effect/http";
 import { runCli } from "../shared/cli/run.ts";
 import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
-import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
-import { resolveStackBackend } from "../command-internal/stack-backend.ts";
+import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
-import { rootCommandForFeatures } from "./root.ts";
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
+import { cliEntrypointForFeatures, rootCommandForFeatures } from "./root.ts";
 
 const args = await Effect.runPromise(
   Effect.gen(function* () {
@@ -18,30 +20,57 @@ const args = await Effect.runPromise(
 
 const selectionExit = await Effect.runPromiseExit(
   Effect.gen(function* () {
-    const stackBackend = yield* resolveStackBackend({ args, cwd: process.cwd(), env: process.env });
+    const { projectState, stackBackend } = yield* resolveProjectStateSelection({
+      args,
+      cwd: process.cwd(),
+    });
     const computeEnabled = yield* resolveComputeEnabled({
       args,
       cwd: process.cwd(),
-      env: process.env,
     });
-    return { stackBackend, computeEnabled };
-  }).pipe(Effect.provide(BunServices.layer)),
+    return { projectState, stackBackend, computeEnabled };
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer))),
 );
-const selectedRoot = rootCommandForFeatures(
-  Exit.isSuccess(selectionExit)
-    ? selectionExit.value
-    : { stackBackend: "legacy", computeEnabled: false },
+const selectedFeatures = Exit.isSuccess(selectionExit)
+  ? selectionExit.value
+  : ({ stackBackend: "legacy", computeEnabled: false } as const);
+const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(
+  selectedFeatures,
+  args,
 );
+const stackRootCommand =
+  selectedFeatures.stackBackend === "stack"
+    ? undefined
+    : rootCommandForFeatures({ ...selectedFeatures, stackBackend: "stack" });
 const selectionCause = Exit.isFailure(selectionExit) ? selectionExit.cause : undefined;
+const selectedProjectState = Exit.isSuccess(selectionExit)
+  ? selectionExit.value.projectState
+  : undefined;
 
 if (
-  !(await tryComplete(
-    defaultCompleteDeps(Exit.isSuccess(selectionExit) ? selectedRoot : undefined, selectionCause),
+  !(await Effect.runPromise(
+    tryComplete(
+      defaultCompleteDeps(
+        Exit.isSuccess(selectionExit) ? selectedRoot : undefined,
+        selectionCause,
+        selectedProjectState !== undefined && Exit.isSuccess(selectedProjectState)
+          ? selectedProjectState.value
+          : "legacy",
+      ),
+    ),
   ))
 ) {
-  await runCli(selectedRoot, {
-    analyticsLayer: analyticsLayer,
-    afterSuccess: upgradeNoticeHook,
-    ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
-  });
+  await Effect.runPromise(
+    runCli(selectedRoot, {
+      analyticsLayer: analyticsLayerFor(
+        selectedProjectState !== undefined && Exit.isSuccess(selectedProjectState)
+          ? selectedProjectState.value
+          : "legacy",
+      ).pipe(Layer.provide(FetchHttpClient.layer)),
+      agentDefaultOutputFormat,
+      ...(stackRootCommand ? { stackRootCommand } : {}),
+      afterSuccess: upgradeNoticeHook,
+      ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
+    }),
+  );
 }

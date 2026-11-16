@@ -1,33 +1,38 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockRuntimeInfo, mockStdin } from "../../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
   ExperimentalFlag,
   NetworkIdFlag,
+  OutputFlag,
   YesFlag,
 } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import type { DbConnectionInput } from "../../../command-internal/db-config.types.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { migrationSquash } from "./squash.handler.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
+import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -35,6 +40,7 @@ const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
 const flags: MigrationSquashFlags = {
   version: Option.none(),
   dbUrl: Option.none(),
+  remote: Option.none(),
   linked: false,
   local: true,
   password: Option.none(),
@@ -51,7 +57,6 @@ const failureMessage = (exit: Exit.Exit<unknown, unknown>): string => {
 
 const testLayer = (root: string) =>
   Layer.mergeAll(
-    BunServices.layer,
     FetchHttpClient.layer,
     liveStackApi,
     mockCommandSettings({ workdir: root, supabaseHome: root }),
@@ -61,7 +66,7 @@ const testLayer = (root: string) =>
     mockRuntimeInfo(),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () =>
+      resolveConnection: (input: DbConnectionInput) =>
         Effect.succeed({
           conn: {
             host: "127.0.0.1",
@@ -71,6 +76,7 @@ const testLayer = (root: string) =>
             database: "postgres",
           },
           isLocal: true,
+          target: input.target,
         }),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
@@ -79,15 +85,18 @@ const testLayer = (root: string) =>
     Layer.succeed(ExperimentalFlag, false),
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(YesFlag, true),
+    Layer.succeed(OutputFlag, Option.none()),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
     Layer.succeed(DebugLogger, { debug: () => Effect.void, http: () => Effect.void }),
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.succeed("abcdefghijklmnopqrst"),
       resolveForLink: () => Effect.succeed("abcdefghijklmnopqrst"),
+      resolveRef: () =>
+        Effect.succeed({ ref: "abcdefghijklmnopqrst", source: "file", matchesLinkedRef: true }),
       resolveOptional: () => Effect.succeed(Option.some("abcdefghijklmnopqrst")),
-      loadProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
       promptProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
     }),
-    mockStdin(false),
+    mockTty(),
     Layer.succeed(BundledPostgresClient, { run: () => Effect.die("unused") }),
     Layer.succeed(DockerRun, {
       run: () => Effect.die("unused"),
@@ -97,7 +106,8 @@ const testLayer = (root: string) =>
     dbConnectionLayer,
     stackCatalogSetupLayer,
     stackBackendLayer("stack"),
-  );
+    cliConfigValuesTestLayer,
+  ).pipe(Layer.provideMerge(Layer.merge(BunServices.layer, BunCrypto.layer)));
 
 describe("managed migration squash", { timeout: 180_000 }, () => {
   for (const runtime of runtimes) {
@@ -138,13 +148,7 @@ describe("managed migration squash", { timeout: 180_000 }, () => {
                 cacheRoot: path.join(root, "cache"),
                 runtime,
               });
-              yield* Effect.addFinalizer(() =>
-                current.destroy.pipe(
-                  Effect.catch((cause) =>
-                    Effect.die(`failed to destroy test stack ${current.id}: ${cause.message}`),
-                  ),
-                ),
-              );
+              yield* Effect.addFinalizer(() => destroyTestStack(current));
               const before = yield* current.composition.describe;
               expect(before.members).toHaveLength(0);
 

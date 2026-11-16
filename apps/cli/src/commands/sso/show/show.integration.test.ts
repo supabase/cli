@@ -1,16 +1,23 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   VALID_REF,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { ssoShow } from "./show.handler.ts";
 
@@ -28,11 +35,13 @@ const PROVIDER = {
   updated_at: "2023-03-28T13:50:14.464Z",
 };
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const tempRoot = useTempWorkdir("supabase-sso-show-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   network?: "fail";
@@ -49,7 +58,10 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.body ?? PROVIDER },
   });
 
-  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    apiMaxRetries: Option.some(0),
+  });
   const layer = buildTestRuntime({
     out,
     api,
@@ -57,18 +69,19 @@ function setup(opts: SetupOpts = {}) {
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
   return { layer, out, api, analytics, telemetry, cache };
 }
 
 describe("sso show integration", () => {
-  it.live("rejects bad UUID with Go-format message", () => {
+  it.effect("rejects bad UUID with the formatted message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: "not-a-uuid",
           metadata: false,
@@ -83,10 +96,11 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders single-provider markdown for valid UUID + 200", () => {
+  it.effect("renders single-provider markdown for valid UUID + 200", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -97,11 +111,12 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with NotFound on 404", () => {
+  it.effect("fails with NotFound on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -117,11 +132,12 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with Unexpected on 500", () => {
+  it.effect("fails with Unexpected on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -136,11 +152,12 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with network error on transport failure", () => {
+  it.effect("fails with network error on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -153,11 +170,12 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env returns env-not-supported error with Go-format message", () => {
-    const { layer } = setup({ goOutput: "env" });
+  it.effect("--output=env returns env-not-supported error with the formatted message", () => {
+    const { layer } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -172,10 +190,11 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json encodes response with Go's HTML escaping", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("--output=json encodes response with HTML escaping", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -187,10 +206,11 @@ describe("sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml encodes the provider with yaml.v3's byte shape", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("--output=yaml encodes the provider with the established byte shape", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -212,10 +232,11 @@ updatedat: "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml encodes the provider with BurntSushi's byte shape", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("--output=toml encodes the provider with the established byte shape", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -235,10 +256,11 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("TS --output-format=json emits success", () => {
+  it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -248,10 +270,11 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=pretty matches text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+  it.effect("--output=pretty matches text mode", () => {
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -260,22 +283,33 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--metadata short-circuits and prints raw XML", () => {
-    const { layer, out } = setup();
+  it.effect("--metadata short-circuits and prints raw XML", () => {
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: true,
       });
       expect(out.stdoutText).toBe('<?xml version="2.0"?>\n');
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+      ]);
+      assertPermissionDrift({
+        command: "sso show",
+        activeFlags: { metadata: true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--metadata prints empty string + newline when metadata_xml absent", () => {
+  it.effect("--metadata prints empty string + newline when metadata_xml absent", () => {
     const { layer, out } = setup({ body: { id: VALID_PROVIDER_ID } });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: true,
@@ -284,11 +318,12 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does NOT fire cli_upgrade_suggested on 404 (Go's `show` omits it)", () => {
+  it.effect("does NOT fire cli_upgrade_suggested on 404", () => {
     const { layer, analytics } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -298,10 +333,11 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry + linked-project cache on success", () => {
+  it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -311,10 +347,11 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("hits GET /v1/projects/{ref}/config/auth/sso/providers/{id}", () => {
+  it.effect("hits GET /v1/projects/{ref}/config/auth/sso/providers/{id}", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -324,6 +361,61 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
       expect(req?.url).toContain(
         `/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
       );
+      assertPermissionDrift({ command: "sso show", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("lists the picker's projects, shows the provider and fills the real cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 200, PROVIDER));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+      apiMaxRetries: Option.some(0),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoShow({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        providerId: VALID_PROVIDER_ID,
+        metadata: false,
+      });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso show", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describeHostedTargetSelection("sso show", {
+  operands: [VALID_PROVIDER_ID],
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, PROVIDER)),
+  run: (flags) => ssoShow({ ...flags, providerId: VALID_PROVIDER_ID, metadata: false }),
 });

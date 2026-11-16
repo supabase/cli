@@ -1,14 +1,19 @@
-import { Cause, Effect, Option, Schema } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
-import { closeSync, writeSync } from "node:fs";
-import { runStackHost, StackHostError, type StackHostOptions } from "../StackHost.ts";
+import { Cause, Duration, Effect, Exit, identity, Option, Schema } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor, and the startup payload file predates any service layer.
+import { closeSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { failureKind } from "../FailureKind.ts";
+import { HostStartupPayload } from "../HostProcess.ts";
+import { findConflict } from "../Rpc.ts";
+import {
+  RegistrationCheckInterval,
+  runStackHost,
+  StackHostError,
+  type StackHostOptions,
+} from "../StackHost.ts";
 
-const causeCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null) return undefined;
-  if ("code" in cause && typeof cause.code === "string") return cause.code;
-  if ("cause" in cause) return causeCode(cause.cause);
-  return undefined;
-};
+interface HostProcessOverrides extends Pick<StackHostOptions, "release"> {
+  readonly registrationCheckInterval?: Duration.Input;
+}
 
 const writeLine = (value: unknown) =>
   Effect.gen(function* () {
@@ -38,30 +43,61 @@ const writeLine = (value: unknown) =>
 const options = (
   args: ReadonlyArray<string>,
   report: (value: unknown) => Effect.Effect<void, StackHostError>,
-): Effect.Effect<StackHostOptions, StackHostError> => {
-  if (args.length !== 3)
-    return Effect.fail(
-      new StackHostError({
+): Effect.Effect<StackHostOptions, StackHostError> =>
+  Effect.gen(function* () {
+    const [stateRoot, cacheRoot, stackId, payloadFile, ...rest] = args;
+    if (
+      stateRoot === undefined ||
+      cacheRoot === undefined ||
+      stackId === undefined ||
+      rest.length > 0
+    )
+      return yield* new StackHostError({
         operation: "startup",
-        message: "Expected stateRoot, cacheRoot and stackId",
-      }),
-    );
-  const stateRoot = args[0];
-  const cacheRoot = args[1];
-  const stackId = args[2];
-  if (stateRoot === undefined || cacheRoot === undefined || stackId === undefined)
-    return Effect.fail(
-      new StackHostError({ operation: "startup", message: "Missing host argument" }),
-    );
-  return Effect.succeed({
-    stateRoot,
-    cacheRoot,
-    stackId,
-    onReady: (endpoint) => report({ type: "ready", endpoint }),
+        message: "Expected stateRoot, cacheRoot, stackId and an optional startup payload file",
+      });
+    // The file is deleted as soon as it is read so its secrets never outlive startup on disk.
+    const payload: HostStartupPayload | undefined =
+      payloadFile === undefined || payloadFile === ""
+        ? undefined
+        : yield* Effect.gen(function* () {
+            const text = yield* Effect.try({
+              try: () => readFileSync(payloadFile, "utf8"),
+              catch: (cause) =>
+                new StackHostError({ operation: "startup", message: String(cause) }),
+            });
+            return yield* Schema.decodeEffect(Schema.fromJsonString(HostStartupPayload))(text).pipe(
+              Effect.mapError(
+                (cause) => new StackHostError({ operation: "startup", message: cause.message }),
+              ),
+            );
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                try {
+                  unlinkSync(payloadFile);
+                } catch {
+                  // The launcher may already have removed it.
+                }
+              }),
+            ),
+          );
+    return {
+      stateRoot,
+      cacheRoot,
+      stackId,
+      ...(payload?.register === undefined ? {} : { register: payload.register }),
+      ...(payload?.requestedCreations === undefined
+        ? {}
+        : { requestedCreations: payload.requestedCreations }),
+      onReady: ({ endpoint, secret }) => report({ type: "ready", endpoint, secret }),
+    };
   });
-};
 
-const program = (args: ReadonlyArray<string>) =>
+const program = (
+  args: ReadonlyArray<string>,
+  { registrationCheckInterval, ...overrides }: HostProcessOverrides,
+) =>
   Effect.gen(function* () {
     let reported = false;
     const report = (value: unknown) =>
@@ -71,25 +107,51 @@ const program = (args: ReadonlyArray<string>) =>
         return writeLine(value);
       });
     const host = yield* options(args, report);
-    yield* runStackHost(host).pipe(
+    yield* runStackHost({ ...host, ...overrides }).pipe(
       Effect.catchCause((cause) => {
         const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
-        const reason = causeCode(failure?.cause) === "EADDRINUSE" ? "bind-conflict" : undefined;
+        const conflict = findConflict(failure);
+        const kind = failureKind(cause);
         return report({
           type: "error",
-          message: String(cause),
-          ...(reason === undefined ? {} : { reason }),
+          message: failure?.message ?? Cause.pretty(cause),
+          ...(failure?.reason === undefined ? {} : { reason: failure.reason }),
+          ...(conflict === undefined ? {} : { conflict }),
+          ...(kind === undefined ? {} : { kind }),
         }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),
     );
-  });
+  }).pipe(
+    registrationCheckInterval === undefined
+      ? identity
+      : Effect.provideService(RegistrationCheckInterval, registrationCheckInterval),
+  );
 
-/** Runs the owner process with its state root, artifact cache and stack identity. */
-export const runHostProcess = (args: ReadonlyArray<string>): Promise<void> =>
-  Effect.runPromise(program(args));
+const flushed = (stream: NodeJS.WriteStream) =>
+  Effect.callback<void>((resume) => {
+    stream.write("", () => resume(Effect.void));
+  }).pipe(Effect.timeoutOption("1 second"));
 
-if (import.meta.main) {
-  void runHostProcess(process.argv.slice(2)).catch(() => {
-    process.exitCode = 1;
-  });
-}
+/**
+ * Runs the owner process with its state root, artifact cache and stack identity, then exits the
+ * process once shutdown cleanup completes and the owner log is flushed, so no leftover handle
+ * delays the exit clients wait for.
+ */
+export const runHostProcess = (
+  args: ReadonlyArray<string>,
+  overrides: HostProcessOverrides = {},
+): Promise<never> =>
+  Effect.runPromise(
+    program(args, overrides).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Exit.isFailure(exit)
+          ? Effect.sync(() => process.stderr.write(`${Cause.pretty(exit.cause)}\n`))
+          : Effect.void,
+      ),
+      Effect.tap(() => Effect.all([flushed(process.stdout), flushed(process.stderr)])),
+      Effect.flatMap((exit) => Effect.sync(() => process.exit(Exit.isSuccess(exit) ? 0 : 1))),
+    ),
+  );
+
+if (import.meta.main) void runHostProcess(process.argv.slice(2));

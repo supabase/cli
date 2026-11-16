@@ -63,14 +63,9 @@ const BOOM = new Error("boom");
 // Always-failing effect retried 8 times (9 attempts) to exercise the notify routing.
 const runNotify = (opts: { debug: boolean; error?: unknown }) => {
   const out = mockOutput({ format: "text" });
-  const notify = bootstrapRetryNotify();
-  const program = Effect.fail(opts.error ?? BOOM).pipe(
-    notify,
-    Effect.retry({ times: 8 }),
-    Effect.exit,
-  );
   return Effect.gen(function* () {
-    yield* program;
+    const notify = yield* bootstrapRetryNotify;
+    yield* Effect.fail(opts.error ?? BOOM).pipe(notify, Effect.retry({ times: 8 }), Effect.exit);
     return out;
   }).pipe(Effect.provide(Layer.mergeAll(out.layer, Layer.succeed(DebugFlag, opts.debug))));
 };

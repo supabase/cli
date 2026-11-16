@@ -29,7 +29,7 @@ describe("supabase functions deploy — argument validation", () => {
         withTempHome((home) =>
           Effect.gen(function* () {
             const { exitCode, stderr } = yield* runSupabaseEffect(
-              ["functions", "deploy", SLUG, "--project-ref", FAKE_REF, ...flags],
+              ["functions", "deploy", SLUG, ...flags, `--remote=${FAKE_REF}`],
               {
                 home: home.dir,
                 env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
@@ -51,7 +51,7 @@ describe("supabase functions deploy — argument validation", () => {
       withTempHome((home) =>
         Effect.gen(function* () {
           const { exitCode, stderr } = yield* runSupabaseEffect(
-            ["functions", "deploy", SLUG, "--project-ref", FAKE_REF, "--use-docker", "--jobs", "2"],
+            ["functions", "deploy", SLUG, "--use-docker", "--jobs", "2", `--remote=${FAKE_REF}`],
             {
               home: home.dir,
               env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
@@ -65,7 +65,7 @@ describe("supabase functions deploy — argument validation", () => {
   );
 
   it.live(
-    "rejects --jobs without --use-api even with --use-docker=false (Go parity gap)",
+    "rejects --jobs without --use-api even with --use-docker=false",
     () =>
       withTempHome((home) =>
         Effect.gen(function* () {
@@ -74,11 +74,10 @@ describe("supabase functions deploy — argument validation", () => {
               "functions",
               "deploy",
               SLUG,
-              "--project-ref",
-              FAKE_REF,
               "--use-docker=false",
               "--jobs",
               "2",
+              `--remote=${FAKE_REF}`,
             ],
             {
               home: home.dir,
@@ -93,7 +92,7 @@ describe("supabase functions deploy — argument validation", () => {
   );
 
   it.live(
-    "fails without a linked project or --project-ref",
+    "fails without a linked project or --remote=<ref>",
     () =>
       withTempHome((home) =>
         Effect.gen(function* () {

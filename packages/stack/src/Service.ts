@@ -1,7 +1,6 @@
 import {
   Cause,
   Data,
-  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -12,59 +11,43 @@ import {
   SubscriptionRef,
 } from "effect";
 import type { Stream } from "effect";
+import type { StackFailureKind } from "./FailureKind.ts";
+import { LifecycleEvent } from "./Lifecycle.ts";
 
-type ServiceLifecycle = "stopped" | "starting" | "running" | "stopping";
-type ServiceHealth = "starting" | "healthy" | "unhealthy";
+/** The execution step a service is performing right now, for status reporting. */
 type ServiceOperation = "start" | "stop" | "restart" | "storage" | "destroy" | "sleep";
-export type ServiceAdmission = ServiceOperation | "arm";
 
+/**
+ * Execution facts about one service: its configuration and the outcome of its last launch, check,
+ * exit or cleanup. Lifecycle phase and health come from the lifecycle reducer, not from here.
+ */
 export interface ServiceObservation<Config> {
   readonly id: string;
   readonly config: Config;
-  readonly lifecycle: ServiceLifecycle;
-  readonly health: ServiceHealth | undefined;
   readonly error: ServiceError | undefined;
-  readonly cleanupError: ServiceError | undefined;
   readonly exit: Exit.Exit<void, ServiceError> | undefined;
   readonly currentOperation: ServiceOperation | undefined;
-  readonly launchId: number | undefined;
-  readonly intentRevision: number;
-  readonly wakeEnabled: boolean;
-  readonly registered: boolean;
 }
 
 export class ServiceError extends Data.TaggedError("ServiceError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
-}> {}
-
-export class ServiceDestroyed extends Data.TaggedError("ServiceDestroyed")<{
-  readonly id: string;
-}> {}
-
-export class ServiceNotRunning extends Data.TaggedError("ServiceNotRunning")<{
-  readonly id: string;
-}> {}
-
-class ServiceNotStopped extends Data.TaggedError("ServiceNotStopped")<{
-  readonly id: string;
-  readonly lifecycle: ServiceLifecycle;
-  readonly message: string;
-}> {}
-
-export class ServiceStaleLaunch extends Data.TaggedError("ServiceStaleLaunch")<{
-  readonly id: string;
-  readonly launchId: number;
+  /** Set where the failure site knows a cause its message alone describes. */
+  readonly kind?: StackFailureKind;
 }> {}
 
 /** The exact runtime resources owned by one service launch. */
 export interface RuntimeSession {
-  /** The one readiness program for this session. */
+  /** The initial readiness program for this session. */
   readonly health: Effect.Effect<void, ServiceError>;
+  /** Bounded re-check for a running session whose last check failed; without it the failure is final. */
+  readonly probe?: Effect.Effect<void, ServiceError>;
   /** Resolves with the runtime's terminal result and remains attached to this session. */
   readonly exit: Effect.Effect<Exit.Exit<void, ServiceError>>;
   readonly stop: Effect.Effect<void, ServiceError>;
+  /** Skips a clean checkpoint. Used when the data directory is about to be deleted. */
+  readonly discard?: Effect.Effect<void, ServiceError>;
   readonly remove: Effect.Effect<void, ServiceError>;
 }
 
@@ -75,11 +58,11 @@ export class ServiceLaunchError extends Data.TaggedError("ServiceLaunchError")<{
 }> {}
 
 export interface ServiceDefinition<Config> {
-  /** Preparation is performed before lifecycle admission. */
+  /** Idempotent preparation (artifacts, images) run at the start of every launch. */
   readonly prepare?: (config: Config) => Effect.Effect<void, ServiceError>;
   /** Failures after resource acquisition carry the session for ordinary cleanup. */
   readonly launch: (
-    context: ServiceInstanceContext<Config>,
+    context: ServiceLaunchContext<Config>,
   ) => Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError>;
   readonly removeData: (
     context: ServiceInstanceContext<Config>,
@@ -93,59 +76,61 @@ export interface ServiceInstanceContext<Config> {
   readonly scope: Scope.Closeable;
 }
 
+/** One launch of an instance; every output chunk the launch publishes carries its `launchId`. */
+export interface ServiceLaunchContext<Config> extends ServiceInstanceContext<Config> {
+  readonly launchId: number;
+}
+
+/**
+ * The execution boundary for one service: it runs the launches, checks and stops the lifecycle
+ * reducer commands for a generation, holds that generation's resources until their cleanup is
+ * confirmed, and reports every outcome back as a generation-tagged event.
+ */
 export interface ServiceInstance<Config> {
   readonly id: string;
   readonly observation: Stream.Stream<ServiceObservation<Config>>;
   readonly get: Effect.Effect<ServiceObservation<Config>>;
-  readonly start: Effect.Effect<void, ServiceError | ServiceDestroyed>;
-  readonly startAt: (
-    revision: number,
-    config?: Config,
-    wake?: boolean,
-    guard?: Effect.Effect<void, ServiceError>,
-  ) => Effect.Effect<void, ServiceError | ServiceDestroyed>;
-  readonly arm: Effect.Effect<void, ServiceError | ServiceDestroyed>;
-  readonly armAt: (
-    revision: number,
-    guard?: Effect.Effect<void, ServiceError>,
-  ) => Effect.Effect<void, ServiceError | ServiceDestroyed>;
-  readonly sleep: Effect.Effect<void, ServiceError | ServiceDestroyed>;
-  readonly stop: Effect.Effect<void, ServiceError | ServiceDestroyed>;
-  readonly restart: (
-    config?: Config,
-    revision?: number,
-    guard?: Effect.Effect<void, ServiceError>,
-  ) => Effect.Effect<void, ServiceError | ServiceDestroyed>;
-  readonly ready: Effect.Effect<
-    void,
-    ServiceError | ServiceDestroyed | ServiceNotRunning | ServiceStaleLaunch
-  >;
-  /** Runs instance-owned storage work only while the instance is stopped. */
+  readonly prepare: (config: Config) => Effect.Effect<void, ServiceError>;
+  /** Runs generation `generation`'s launch and readiness check; outcomes are reported, never returned. */
+  readonly launch: (generation: number, config: Config) => Effect.Effect<void>;
+  /**
+   * Stops `generation`'s session, never a newer one, and reports `Exited` once cleanup is
+   * confirmed or `StopFailed` while its resources are still held.
+   */
+  readonly stop: (
+    generation: number,
+    options: { readonly operation: ServiceOperation; readonly discard: boolean },
+  ) => Effect.Effect<void>;
+  /** Re-runs a failed readiness check of `generation`'s live session and reports the result. */
+  readonly reprobe: (generation: number) => Effect.Effect<void>;
+  /** Runs instance-owned storage work; the lifecycle reservation keeps the service stopped. */
   readonly storage: <A>(
     operation: Effect.Effect<A, ServiceError>,
-  ) => Effect.Effect<A, ServiceError | ServiceDestroyed | ServiceNotStopped>;
-  readonly destroy: Effect.Effect<void, ServiceError | ServiceDestroyed>;
+  ) => Effect.Effect<A, ServiceError>;
+  /**
+   * Removes the instance's data; the service must already be stopped.
+   * `confirm`, when given, runs inside the same execution lock once resources are confirmed
+   * removed — destroy's registration publication.
+   */
+  readonly removeData: (
+    confirm?: Effect.Effect<void, ServiceError>,
+  ) => Effect.Effect<void, ServiceError>;
 }
 
 interface SessionRecord {
-  readonly launchId: number;
+  readonly generation: number;
   readonly runtime: RuntimeSession;
+  /** The execution handle's scope, closed only after the runtime's stop and removal succeed. */
   readonly scope: Scope.Closeable;
   readonly healthScope: Scope.Closeable;
-  readonly health: Deferred.Deferred<Exit.Exit<void, ServiceError>>;
   readonly stopped: Ref.Ref<boolean>;
   readonly removed: Ref.Ref<boolean>;
 }
 
-const contextFor = <Config>(
-  id: string,
-  config: Config,
-  scope: Scope.Closeable,
-): ServiceInstanceContext<Config> => ({
-  id,
-  config,
-  scope,
-});
+interface Attempt {
+  readonly generation: number;
+  readonly fiber: Fiber.Fiber<void>;
+}
 
 const exitError = (
   operation: string,
@@ -163,487 +148,383 @@ const exitError = (
           }),
       );
 
-/** Creates one independently serialized service instance. */
+/** Creates one service's execution boundary; launches and cleanups run in the current scope. */
 export const makeService = <Config>(
   definition: ServiceDefinition<Config>,
   options: {
     readonly id: string;
     readonly config: Config;
-    readonly coordinate?: (
-      operation: ServiceAdmission,
-      transition: Effect.Effect<void, ServiceError>,
-    ) => Effect.Effect<void, ServiceError>;
+    /** Delivers an execution outcome to the lifecycle authority. */
+    readonly report: (event: LifecycleEvent) => Effect.Effect<void>;
+    /** Launch ids continue after this one. */
+    readonly lastLaunchId?: number;
   },
 ): Effect.Effect<ServiceInstance<Config>, never, Scope.Scope> =>
   Effect.gen(function* () {
     const owner = yield* Scope.Scope;
-    const gate = yield* Semaphore.make(1);
-    const revision = yield* Ref.make(0);
-    const launchCounter = yield* Ref.make(0);
+    const { id, report } = options;
+    // Serializes every step that touches runtime resources: a launch's acquisition, a stop, an
+    // exit's cleanup, storage work and data removal.
+    const execution = yield* Semaphore.make(1);
+    const launchCounter = yield* Ref.make(options.lastLaunchId ?? 0);
     const current = yield* Ref.make<SessionRecord | undefined>(undefined);
+    const attempt = yield* Ref.make<Attempt | undefined>(undefined);
+    // The highest generation already stopped: a launch for it, admitted late, must never run.
+    const stoppedThrough = yield* Ref.make(0);
     const config = yield* Ref.make(options.config);
     const observations = yield* SubscriptionRef.make<ServiceObservation<Config>>({
-      id: options.id,
+      id,
       config: options.config,
-      lifecycle: "stopped",
-      health: undefined,
       error: undefined,
-      cleanupError: undefined,
       exit: undefined,
       currentOperation: undefined,
-      launchId: undefined,
-      intentRevision: 0,
-      wakeEnabled: false,
-      registered: true,
     });
 
     const update = (change: Partial<ServiceObservation<Config>>) =>
       SubscriptionRef.update(observations, (value) => ({ ...value, ...change }));
+    const recordCleanupError = (error: ServiceError) =>
+      SubscriptionRef.update(observations, (value) => ({
+        ...value,
+        error: value.error ?? error,
+      }));
 
-    const setOperation = (operation: ServiceOperation | undefined) =>
-      update({ currentOperation: operation });
-    const coordinate =
-      options.coordinate ??
-      ((_operation: ServiceAdmission, transition: Effect.Effect<void, ServiceError>) => transition);
+    /** Halts and removes one session, retrying only the steps a previous attempt didn't finish. */
+    const stopRecord = Effect.fn("Service.stopRecord")(function* (
+      record: SessionRecord,
+      discard: boolean,
+    ) {
+      yield* Effect.annotateCurrentSpan({ member_id: id, generation: record.generation });
+      yield* Scope.close(record.healthScope, Exit.void);
+      if (!(yield* Ref.get(record.stopped))) {
+        const halt =
+          discard && record.runtime.discard !== undefined
+            ? record.runtime.discard
+            : record.runtime.stop;
+        yield* halt.pipe(Effect.tapError(recordCleanupError));
+        yield* Ref.set(record.stopped, true);
+      }
+      if (!(yield* Ref.get(record.removed))) {
+        yield* record.runtime.remove.pipe(Effect.tapError(recordCleanupError));
+        yield* Ref.set(record.removed, true);
+      }
+      yield* Scope.close(record.scope, Exit.void);
+      yield* Ref.update(current, (value) => (value === record ? undefined : value));
+    });
 
-    // Mask only the permit handoff; admitted work belongs to the host scope.
-    const run = Effect.fn("Service.run")(function* <
-      A,
-      E extends ServiceError | ServiceDestroyed | ServiceNotStopped,
-    >(operation: Effect.Effect<A, E>) {
-      return yield* Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          yield* restore(gate.take(1));
-          const fiber = yield* Effect.forkIn(
-            operation.pipe(Effect.ensuring(gate.release(1))),
-            owner,
-            { uninterruptible: false },
-          );
-          return yield* restore(Fiber.join(fiber));
-        }),
+    /** Runs one readiness program in the session's health scope; interruption yields `undefined`. */
+    const check = (record: SessionRecord, program: Effect.Effect<void, ServiceError>) =>
+      Effect.forkIn(program, record.healthScope, { startImmediately: true }).pipe(
+        Effect.flatMap(Fiber.await),
+        Effect.map((exit) =>
+          Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause) ? undefined : exit,
+        ),
+      );
+
+    const settleCheck = Effect.fn("Service.settleCheck")(function* (
+      record: SessionRecord,
+      exit: Exit.Exit<void, ServiceError>,
+      recovered: boolean,
+    ) {
+      const error = exitError("health", exit);
+      yield* Effect.annotateCurrentSpan({ healthy: error === undefined });
+      if ((yield* Ref.get(current)) !== record) return;
+      yield* update({ error });
+      const generation = record.generation;
+      yield* report(
+        error !== undefined
+          ? LifecycleEvent.ReadinessLost({ id, generation, cause: error })
+          : recovered
+            ? LifecycleEvent.ReadinessRecovered({ id, generation })
+            : LifecycleEvent.LaunchSucceeded({ id, generation }),
       );
     });
 
-    const stopNow = Effect.fn("Service.stopNow")(function* (
-      expected?: SessionRecord,
-      retainWake = false,
+    /**
+     * Reports a session whose runtime exited on its own as lost before anything else, so traffic
+     * stops routing to it while its cleanup runs; then cleans it and reports the exit.
+     */
+    const observeExit = Effect.fn("Service.observeExit")(function* (
+      record: SessionRecord,
+      exit: Exit.Exit<void, ServiceError>,
     ) {
-      yield* Effect.gen(function* () {
-        const record = yield* Ref.get(current);
-        if (expected !== undefined && record !== expected) return;
-        if (record === undefined) {
-          yield* update({ lifecycle: "stopped", health: undefined });
-          return;
-        }
-
-        yield* update({ lifecycle: "stopping", health: undefined, wakeEnabled: retainWake });
-        yield* Deferred.succeed(
-          record.health,
-          Exit.fail(new ServiceError({ operation: "health", message: "Session stopped" })),
-        );
-        yield* Scope.close(record.healthScope, Exit.void);
-        if (!(yield* Ref.get(record.stopped))) {
-          yield* record.runtime.stop.pipe(
-            Effect.tapError((error) =>
-              SubscriptionRef.update(observations, (value) => ({
-                ...value,
-                error: value.error ?? error,
-                cleanupError: error,
-              })),
-            ),
+      yield* Effect.annotateCurrentSpan({ member_id: id, generation: record.generation });
+      const error =
+        exitError("exit", exit) ??
+        new ServiceError({ operation: "exit", message: "Runtime exited unexpectedly" });
+      if ((yield* Ref.get(current)) !== record) return;
+      yield* report(
+        LifecycleEvent.SessionLost({ id, generation: record.generation, cause: error }),
+      );
+      const cleaned = yield* execution.withPermit(
+        Effect.gen(function* () {
+          if ((yield* Ref.get(current)) !== record) return undefined;
+          yield* update({ error, exit, currentOperation: "stop" });
+          return yield* stopRecord(record, false).pipe(
+            Effect.exit,
+            Effect.ensuring(update({ currentOperation: undefined })),
           );
-          yield* Ref.set(record.stopped, true);
-        }
-        if (!(yield* Ref.get(record.removed))) {
-          yield* record.runtime.remove.pipe(
-            Effect.tapError((error) =>
-              SubscriptionRef.update(observations, (value) => ({
-                ...value,
-                error: value.error ?? error,
-                cleanupError: error,
-              })),
-            ),
-          );
-          yield* Ref.set(record.removed, true);
-        }
-        yield* Scope.close(record.scope, Exit.void);
-
-        yield* Ref.set(current, undefined);
-        yield* update({
-          lifecycle: "stopped",
-          health: undefined,
-          launchId: undefined,
-          cleanupError: undefined,
-        });
-      });
+        }),
+      );
+      if (cleaned === undefined) return;
+      const generation = record.generation;
+      yield* report(
+        Exit.isSuccess(cleaned)
+          ? LifecycleEvent.Exited({ id, generation, requested: false })
+          : LifecycleEvent.StopFailed({
+              id,
+              generation,
+              cause: Cause.squash(cleaned.cause),
+              failure: error,
+            }),
+      );
     });
 
-    const launchNow = Effect.fn("Service.launchNow")(function* (
-      guard: Effect.Effect<void, ServiceError>,
+    /** Acquires one generation's runtime; on failure, its retained resources are cleaned first. */
+    const acquire = Effect.fn("Service.acquire")(function* (
+      generation: number,
+      launchConfig: Config,
+      handle: Scope.Closeable,
     ) {
-      yield* Effect.gen(function* () {
-        let observation = yield* SubscriptionRef.get(observations);
-        if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
-        if (observation.lifecycle === "running" || observation.lifecycle === "starting") return;
-        if (observation.lifecycle === "stopping") {
-          yield* stopNow(undefined, observation.wakeEnabled);
-          observation = yield* SubscriptionRef.get(observations);
-          if (observation.lifecycle !== "stopped") return;
-        }
-
-        const launchId = yield* Ref.updateAndGet(launchCounter, (value) => value + 1);
-        yield* coordinate(
-          "start",
-          guard.pipe(
-            Effect.andThen(
-              update({
-                lifecycle: "starting",
-                health: "starting",
-                error: undefined,
-                cleanupError: undefined,
-                exit: undefined,
-                wakeEnabled: observation.wakeEnabled,
-                launchId,
-              }),
+      if (generation <= (yield* Ref.get(stoppedThrough))) return { _tag: "Fenced" } as const;
+      // The lifecycle launches only once the previous session's cleanup is confirmed.
+      if ((yield* Ref.get(current)) !== undefined)
+        return {
+          _tag: "Failed",
+          error: new ServiceError({
+            operation: "launch",
+            message: `Service ${id} still holds a previous session`,
+          }),
+        } as const;
+      yield* Ref.set(config, launchConfig);
+      yield* update({ config: launchConfig, exit: undefined, currentOperation: "start" });
+      const launchId = yield* Ref.updateAndGet(launchCounter, (value) => value + 1);
+      const launched = yield* Effect.exit(
+        definition.launch({ id, config: launchConfig, scope: handle, launchId }).pipe(
+          Effect.map((runtime) => ({ runtime, failure: undefined })),
+          Effect.catchTag("ServiceLaunchError", ({ runtime, failure }) =>
+            Effect.succeed({ runtime, failure }),
+          ),
+        ),
+      );
+      if (Exit.isFailure(launched)) {
+        yield* Scope.close(handle, launched);
+        return {
+          _tag: "Failed",
+          error:
+            exitError("launch", launched) ??
+            new ServiceError({ operation: "launch", message: "Launch failed" }),
+        } as const;
+      }
+      const { runtime, failure } = launched.value;
+      const record: SessionRecord = {
+        generation,
+        runtime,
+        scope: handle,
+        healthScope: yield* Scope.fork(handle, "parallel"),
+        stopped: yield* Ref.make(false),
+        removed: yield* Ref.make(false),
+      };
+      yield* Ref.set(current, record);
+      if (failure !== undefined) {
+        const cleaned = yield* stopRecord(record, false).pipe(Effect.result);
+        return cleaned._tag === "Failure"
+          ? ({ _tag: "Retained", error: failure, cleanup: cleaned.failure } as const)
+          : ({ _tag: "Failed", error: failure } as const);
+      }
+      yield* Effect.forkIn(
+        runtime.exit.pipe(
+          // Recorded at once, so a requested stop's exit is visible when the stop completes.
+          Effect.tap((exit) =>
+            Ref.get(current).pipe(
+              Effect.flatMap((live) => (live === record ? update({ exit }) : Effect.void)),
             ),
           ),
-        );
-        const runtimeScope = yield* Scope.fork(owner, "parallel");
-        const launchExit = yield* Effect.exit(
-          definition.launch(contextFor(options.id, yield* Ref.get(config), runtimeScope)).pipe(
-            Effect.map((runtime) => ({ runtime, failure: undefined })),
-            Effect.catchTag("ServiceLaunchError", ({ runtime, failure }) =>
-              Effect.succeed({ runtime, failure }),
-            ),
-          ),
-        );
-        if (Exit.isFailure(launchExit)) {
-          yield* Scope.close(runtimeScope, launchExit);
-          yield* update({
-            lifecycle: "stopped",
-            health: undefined,
-            wakeEnabled: observation.wakeEnabled,
-            error: exitError("launch", launchExit),
-            launchId: undefined,
-          });
-          return yield* Effect.failCause(launchExit.cause);
-        }
-        const { runtime, failure: launchFailure } = launchExit.value;
-        const health = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
-        const record: SessionRecord = {
-          launchId,
-          runtime,
-          scope: runtimeScope,
-          healthScope: yield* Scope.fork(runtimeScope, "parallel"),
-          health,
-          stopped: yield* Ref.make(false),
-          removed: yield* Ref.make(false),
-        };
-        yield* Ref.set(current, record);
-        yield* update({
-          lifecycle: launchFailure === undefined ? "running" : "stopping",
-          health: launchFailure === undefined ? "starting" : undefined,
-          error: launchFailure,
-          launchId,
-          config: yield* Ref.get(config),
-        });
-
-        const observeHealth = runtime.health.pipe(
-          Effect.onExit((exit) =>
-            Effect.gen(function* () {
-              yield* SubscriptionRef.update(
-                observations,
-                (observation): ServiceObservation<Config> => {
-                  if (observation.launchId !== launchId || observation.lifecycle !== "running")
-                    return observation;
-                  const error = exitError("health", exit);
-                  return {
-                    ...observation,
-                    health: Exit.isSuccess(exit) ? "healthy" : "unhealthy",
-                    error,
-                  };
-                },
-              );
-              yield* Deferred.succeed(record.health, exit);
-            }),
-          ),
-        );
-        const observeExit = record.runtime.exit.pipe(
+          // Cleanup closes this session's scope, so it runs on the owner's fiber instead.
           Effect.flatMap((exit) =>
-            Effect.gen(function* () {
-              if ((yield* Ref.get(current)) !== record) return;
-              const observation = yield* SubscriptionRef.get(observations);
-              const error =
-                observation.lifecycle === "stopping"
-                  ? observation.error
-                  : (exitError("exit", exit) ??
-                    new ServiceError({
-                      operation: "exit",
-                      message: "Runtime exited unexpectedly",
-                    }));
-              yield* update({
-                lifecycle: "stopping",
-                health: undefined,
-                error,
-                exit,
-                wakeEnabled: observation.lifecycle === "stopping" && observation.wakeEnabled,
-              });
-              yield* run(
-                Effect.gen(function* () {
-                  if ((yield* Ref.get(current)) !== record) return;
-                  yield* setOperation("stop");
-                  const live = yield* SubscriptionRef.get(observations);
-                  yield* stopNow(record, live.wakeEnabled).pipe(
-                    Effect.ensuring(setOperation(undefined)),
-                  );
-                }),
-              );
-            }),
+            Effect.forkIn(observeExit(record, exit), owner, { startImmediately: true }),
           ),
+        ),
+        handle,
+        { startImmediately: true },
+      );
+      return { _tag: "Live", record } as const;
+    });
+
+    const run = Effect.fn("Service.launch")(function* (
+      generation: number,
+      launchConfig: Config,
+      handle: Scope.Closeable,
+    ) {
+      yield* Effect.annotateCurrentSpan({ member_id: id, generation });
+      yield* update({ error: undefined });
+      const prepared = yield* (definition.prepare?.(launchConfig) ?? Effect.void).pipe(Effect.exit);
+      if (Exit.isFailure(prepared)) {
+        // A stopped generation's late failure must not mark the observation of its successor.
+        if (generation <= (yield* Ref.get(stoppedThrough))) return;
+        const error = exitError("prepare", prepared);
+        yield* update({ error });
+        yield* report(LifecycleEvent.LaunchFailed({ id, generation, cause: error }));
+        return;
+      }
+      yield* report(LifecycleEvent.StageChanged({ id, generation, stage: "launching" }));
+      const acquired = yield* execution.withPermit(
+        acquire(generation, launchConfig, handle).pipe(
+          Effect.ensuring(update({ currentOperation: undefined })),
+        ),
+      );
+      if (acquired._tag === "Fenced") return;
+      if (acquired._tag === "Retained") {
+        yield* update({ error: acquired.error });
+        yield* report(
+          LifecycleEvent.StopFailed({
+            id,
+            generation,
+            cause: acquired.cleanup,
+            failure: acquired.error,
+          }),
         );
-        if (launchFailure === undefined)
-          yield* Effect.forkIn(observeHealth, record.healthScope, { uninterruptible: false });
-        yield* Effect.forkIn(observeExit, runtimeScope, { uninterruptible: false });
-        if (launchFailure !== undefined) {
-          yield* Deferred.succeed(record.health, Exit.fail(launchFailure));
-          yield* stopNow(undefined, observation.wakeEnabled);
-          return yield* launchFailure;
-        }
-      });
-    });
-
-    /** A wake has no caller to receive a preparation failure, so an idle observation records it. */
-    const recordPreparationFailure = Effect.fn("Service.recordPreparationFailure")(function* (
-      expectedRevision: number,
-      error: ServiceError,
-    ) {
-      if ((yield* Ref.get(revision)) !== expectedRevision) return;
-      yield* SubscriptionRef.update(observations, (value) =>
-        value.registered && value.lifecycle === "stopped" ? { ...value, error } : value,
-      );
-    });
-
-    const startAt = Effect.fn("Service.startAt")(function* (
-      expectedRevision: number,
-      candidate?: Config,
-      wake = false,
-      guard: Effect.Effect<void, ServiceError> = Effect.void,
-    ) {
-      let existing = yield* SubscriptionRef.get(observations);
-      if (!existing.registered) return yield* new ServiceDestroyed({ id: options.id });
-      if (existing.lifecycle === "running") return;
-      if (existing.lifecycle === "starting") {
-        yield* run(Effect.void);
-        existing = yield* SubscriptionRef.get(observations);
-        if (!existing.registered) return yield* new ServiceDestroyed({ id: options.id });
-        if (existing.lifecycle === "running") return;
+        return;
       }
-      const nextConfig = candidate ?? (yield* Ref.get(config));
-      if (definition.prepare !== undefined)
-        yield* definition
-          .prepare(nextConfig)
-          .pipe(Effect.tapError((error) => recordPreparationFailure(expectedRevision, error)));
-      yield* run(
-        Effect.gen(function* () {
-          const observation = yield* SubscriptionRef.get(observations);
-          if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
-          if (observation.lifecycle === "running" || observation.lifecycle === "starting") return;
-          if ((yield* Ref.get(revision)) !== expectedRevision || (wake && !observation.wakeEnabled))
-            return yield* new ServiceError({
-              operation: "admission",
-              message: "Service intent changed before admission",
-            });
-          yield* setOperation("start");
-          yield* launchNow(
-            guard.pipe(
-              Effect.andThen(Ref.set(config, nextConfig)),
-              Effect.andThen(update({ config: nextConfig })),
-            ),
-          ).pipe(Effect.ensuring(setOperation(undefined)));
-        }),
+      if (acquired._tag === "Failed") {
+        yield* update({ error: acquired.error });
+        yield* report(LifecycleEvent.LaunchFailed({ id, generation, cause: acquired.error }));
+        return;
+      }
+      yield* report(LifecycleEvent.SessionAvailable({ id, generation }));
+      const healthy = yield* check(acquired.record, acquired.record.runtime.health);
+      if (healthy !== undefined) yield* settleCheck(acquired.record, healthy, false);
+    });
+
+    const launch = Effect.fn("Service.launchAttempt")(function* (
+      generation: number,
+      launchConfig: Config,
+    ) {
+      // Created before preparation so a stopped or abandoned attempt still has a scope to close;
+      // once a session holds it, only `stopRecord` closes it.
+      const handle = yield* Scope.fork(owner, "parallel");
+      const releaseUnlessHeld = Ref.get(current).pipe(
+        Effect.flatMap((record) =>
+          record?.scope === handle ? Effect.void : Scope.close(handle, Exit.void),
+        ),
+      );
+      const fiber = yield* Effect.forkIn(
+        run(generation, launchConfig, handle).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.void
+              : report(LifecycleEvent.LaunchFailed({ id, generation, cause: Cause.squash(cause) })),
+          ),
+          Effect.ensuring(releaseUnlessHeld),
+          Effect.ensuring(
+            Ref.update(attempt, (value) => (value?.generation === generation ? undefined : value)),
+          ),
+        ),
+        owner,
+        { startImmediately: true, uninterruptible: false },
+      );
+      yield* Ref.set(attempt, { generation, fiber });
+      yield* Fiber.await(fiber);
+    });
+
+    const stop = Effect.fn("Service.stop")(function* (
+      generation: number,
+      stopOptions: { readonly operation: ServiceOperation; readonly discard: boolean },
+    ) {
+      yield* Effect.annotateCurrentSpan({ member_id: id, generation });
+      // Fencing under the execution lock waits out an acquisition already in progress, so its
+      // session is visible below, and makes any later acquisition for this generation a no-op.
+      // Only then is the attempt interrupted, while it prepares or checks readiness.
+      yield* execution.withPermit(
+        Ref.update(stoppedThrough, (value) => Math.max(value, generation)),
+      );
+      const pending = yield* Ref.get(attempt);
+      if (pending !== undefined && pending.generation <= generation)
+        yield* Fiber.interrupt(pending.fiber);
+      const stopped = yield* execution
+        .withPermit(
+          Effect.gen(function* () {
+            const record = yield* Ref.get(current);
+            // A newer session belongs to a later generation's own stop.
+            if (record === undefined || record.generation > generation) return;
+            yield* update({ currentOperation: stopOptions.operation });
+            yield* stopRecord(record, stopOptions.discard).pipe(
+              Effect.ensuring(update({ currentOperation: undefined })),
+            );
+          }),
+        )
+        .pipe(Effect.exit);
+      yield* report(
+        Exit.isSuccess(stopped)
+          ? LifecycleEvent.Exited({ id, generation, requested: true })
+          : LifecycleEvent.StopFailed({ id, generation, cause: Cause.squash(stopped.cause) }),
       );
     });
-    const start = Ref.get(revision).pipe(Effect.flatMap((revision) => startAt(revision)));
 
-    const invalidate = Effect.fn("Service.invalidate")(function* () {
-      const next = yield* Ref.updateAndGet(revision, (value) => value + 1);
+    const reprobe = Effect.fn("Service.reprobe")(function* (generation: number) {
+      yield* Effect.annotateCurrentSpan({ member_id: id, generation });
       const record = yield* Ref.get(current);
-      yield* update({
-        intentRevision: next,
-        wakeEnabled: false,
-        lifecycle: record === undefined ? "stopped" : "stopping",
-        health: undefined,
-      });
+      if (record?.generation !== generation) return;
+      const probe = record.runtime.probe;
+      if (probe === undefined) {
+        const error =
+          (yield* SubscriptionRef.get(observations)).error ??
+          new ServiceError({ operation: "health", message: `Service ${id} is not ready` });
+        yield* report(LifecycleEvent.ReadinessLost({ id, generation, cause: error }));
+        return;
+      }
+      const result = yield* check(record, probe);
+      if (result !== undefined) yield* settleCheck(record, result, true);
     });
 
-    const armAt = Effect.fn("Service.armAt")(function* (
-      expectedRevision: number,
-      guard: Effect.Effect<void, ServiceError> = Effect.void,
+    const storage = <A>(operation: Effect.Effect<A, ServiceError>) =>
+      execution
+        .withPermit(
+          update({ currentOperation: "storage" }).pipe(
+            Effect.andThen(operation),
+            Effect.ensuring(update({ currentOperation: undefined })),
+          ),
+        )
+        .pipe(Effect.withSpan("Service.storage", { attributes: { member_id: id } }));
+
+    const removeData = Effect.fn("Service.removeData")(function* (
+      confirm: Effect.Effect<void, ServiceError> = Effect.void,
     ) {
-      yield* run(
+      yield* Effect.annotateCurrentSpan({ member_id: id });
+      yield* execution.withPermit(
         Effect.gen(function* () {
-          if (!(yield* SubscriptionRef.get(observations)).registered)
-            return yield* new ServiceDestroyed({ id: options.id });
-          if ((yield* Ref.get(revision)) !== expectedRevision)
-            return yield* new ServiceError({
-              operation: "admission",
-              message: "Service intent changed before admission",
-            });
-          yield* coordinate("arm", guard.pipe(Effect.andThen(update({ wakeEnabled: true }))));
-        }),
-      );
-    });
-    const arm = Ref.get(revision).pipe(Effect.flatMap((revision) => armAt(revision)));
-
-    const sleep = Effect.fn("Service.sleep")(function* () {
-      yield* run(
-        Effect.gen(function* () {
-          const observation = yield* SubscriptionRef.get(observations);
-          if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
-          if (observation.lifecycle !== "running" || !observation.wakeEnabled) return;
-          yield* coordinate(
-            "sleep",
-            update({ lifecycle: "stopping", health: undefined, currentOperation: "sleep" }),
-          );
-          yield* stopNow(undefined, true).pipe(Effect.ensuring(setOperation(undefined)));
-        }),
-      );
-    });
-
-    const stop = Effect.fn("Service.stop")(function* () {
-      yield* run(
-        Effect.gen(function* () {
-          const observation = yield* SubscriptionRef.get(observations);
-          if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
-          yield* coordinate("stop", invalidate());
-          yield* setOperation("stop");
-          yield* stopNow().pipe(Effect.ensuring(setOperation(undefined)));
-        }),
-      );
-    });
-
-    const restart = Effect.fn("Service.restart")(function* (
-      candidate?: Config,
-      requestedRevision?: number,
-      guard: Effect.Effect<void, ServiceError> = Effect.void,
-    ) {
-      const expectedRevision = requestedRevision ?? (yield* Ref.get(revision));
-      const nextConfig = candidate ?? (yield* Ref.get(config));
-      if (definition.prepare !== undefined) yield* definition.prepare(nextConfig);
-      yield* run(
-        Effect.gen(function* () {
-          const observation = yield* SubscriptionRef.get(observations);
-          if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
-          if ((yield* Ref.get(revision)) !== expectedRevision)
-            return yield* new ServiceError({
-              operation: "admission",
-              message: "Service intent changed before admission",
-            });
-          yield* coordinate("restart", invalidate());
-          yield* setOperation("restart");
+          yield* update({ currentOperation: "destroy" });
           yield* Effect.gen(function* () {
-            yield* stopNow();
-            yield* Ref.set(config, nextConfig);
-            yield* update({ config: nextConfig });
-            yield* launchNow(guard);
-          }).pipe(Effect.ensuring(setOperation(undefined)));
-        }),
-      );
-    });
-
-    const ready = Effect.fn("Service.ready")(function* () {
-      const initial = yield* SubscriptionRef.get(observations);
-      if (!initial.registered) return yield* new ServiceDestroyed({ id: options.id });
-      const expectedRevision = yield* Ref.get(revision);
-      const expectedLaunchId = initial.lifecycle === "starting" ? initial.launchId : undefined;
-      let record = yield* Ref.get(current);
-      if (record === undefined && initial.lifecycle === "starting") {
-        yield* run(Effect.void);
-        record = yield* Ref.get(current);
-      }
-      if (record === undefined) {
-        if ((yield* Ref.get(revision)) !== expectedRevision)
-          return yield* new ServiceStaleLaunch({
-            id: options.id,
-            launchId: yield* Ref.get(launchCounter),
-          });
-        return yield* new ServiceNotRunning({ id: options.id });
-      }
-      const launchId = record.launchId;
-      if ((yield* Ref.get(revision)) !== expectedRevision)
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
-      if (expectedLaunchId !== undefined && record.launchId !== expectedLaunchId)
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
-      if ((yield* SubscriptionRef.get(observations)).lifecycle === "stopping") {
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
-      }
-      const healthResult = yield* Deferred.await(record.health);
-      if (
-        (yield* Ref.get(current)) !== record ||
-        (yield* SubscriptionRef.get(observations)).lifecycle !== "running"
-      ) {
-        return yield* new ServiceStaleLaunch({ id: options.id, launchId });
-      }
-      yield* healthResult;
-    });
-
-    const storage = Effect.fn("Service.storage")(function* <A>(
-      operation: Effect.Effect<A, ServiceError>,
-    ) {
-      return yield* run(
-        Effect.gen(function* () {
-          const observation = yield* SubscriptionRef.get(observations);
-          if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
-          if (observation.lifecycle !== "stopped" || observation.wakeEnabled) {
-            return yield* new ServiceNotStopped({
-              id: options.id,
-              lifecycle: observation.lifecycle,
-              message: `Service ${options.id} must be stopped with wake disabled before modifying data`,
-            });
-          }
-          yield* coordinate("storage", setOperation("storage"));
-          return yield* operation.pipe(Effect.ensuring(setOperation(undefined)));
-        }),
-      );
-    });
-
-    const destroy = Effect.fn("Service.destroy")(function* () {
-      yield* run(
-        Effect.gen(function* () {
-          const observation = yield* SubscriptionRef.get(observations);
-          if (!observation.registered) return;
-          yield* coordinate("destroy", invalidate());
-          yield* setOperation("destroy");
-          yield* Effect.gen(function* () {
-            yield* stopNow();
-            {
-              const dataScope = yield* Scope.fork(owner, "parallel");
-              yield* definition
-                .removeData(contextFor(options.id, yield* Ref.get(config), dataScope))
-                .pipe(
-                  Effect.tapError((error) => update({ error })),
-                  Effect.ensuring(Scope.close(dataScope, Exit.void)),
-                );
+            const leftover = yield* Ref.get(current);
+            if (leftover !== undefined) {
+              yield* stopRecord(leftover, true);
+              // A previous failed stop can leave the reducer in `Stopping` forever; report this
+              // retry's termination too, or `NetworkNamespace.release`'s endpoint check never learns.
+              yield* report(
+                LifecycleEvent.Exited({ id, generation: leftover.generation, requested: true }),
+              );
             }
-            yield* update({ registered: false, lifecycle: "stopped" });
-          }).pipe(Effect.ensuring(setOperation(undefined)));
+            const dataScope = yield* Scope.fork(owner, "parallel");
+            yield* definition
+              .removeData({ id, config: yield* Ref.get(config), scope: dataScope })
+              .pipe(
+                Effect.tapError((error) => update({ error })),
+                Effect.ensuring(Scope.close(dataScope, Exit.void)),
+              );
+            yield* confirm;
+          }).pipe(Effect.ensuring(update({ currentOperation: undefined })));
         }),
       );
     });
 
     return {
-      id: options.id,
+      id,
       observation: SubscriptionRef.changes(observations),
       get: SubscriptionRef.get(observations),
-      start,
-      startAt,
-      arm,
-      armAt,
-      sleep: sleep(),
-      stop: stop(),
-      restart,
-      ready: ready(),
+      prepare: (candidate) => definition.prepare?.(candidate) ?? Effect.void,
+      launch,
+      stop,
+      reprobe,
       storage,
-      destroy: destroy(),
+      removeData,
     };
   });

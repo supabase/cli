@@ -226,7 +226,7 @@ describe("buildStartContainerCreateArgs", () => {
     );
   });
 
-  test("emits cmd tokens after the image even when entrypoint is absent (Pooler: start.go:1234-1237)", () => {
+  test("emits cmd tokens after the image even when entrypoint is absent", () => {
     const spec: StartContainerSpec = {
       image: "supabase/supavisor:2.0.0",
       containerName: "supabase_pooler_proj",
@@ -247,7 +247,7 @@ describe("buildStartContainerCreateArgs", () => {
     ]);
   });
 
-  test("omits health flags entirely when healthcheck is absent (Kong/PostgREST: start.go:975)", () => {
+  test("omits health flags entirely when healthcheck is absent", () => {
     const spec: StartContainerSpec = {
       image: "kong:3",
       containerName: "supabase_kong_proj",

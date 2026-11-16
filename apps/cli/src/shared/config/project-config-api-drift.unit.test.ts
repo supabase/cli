@@ -172,6 +172,8 @@ describe("project-config API type drift guard", () => {
             max_rows: 500,
             db_pool_acquisition_timeout: 10,
             db_pool: null,
+            db_pool_max_lifetime: null,
+            db_pool_max_idletime: null,
           },
           database: {
             major_version: 17,

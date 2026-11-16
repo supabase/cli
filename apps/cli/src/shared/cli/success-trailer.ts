@@ -22,11 +22,7 @@ export const successTrailerLayer = Layer.effect(
 
     return SuccessTrailer.of({
       append: (text) => Ref.update(pending, (trailers) => [...trailers, text]),
-      takeAll: Effect.gen(function* () {
-        const trailers = yield* Ref.get(pending);
-        yield* Ref.set(pending, empty);
-        return trailers;
-      }),
+      takeAll: Ref.getAndSet(pending, empty),
       setWorkingDirectory: (cwd) => Ref.set(workingDirectory, cwd),
       workingDirectory: Ref.get(workingDirectory),
     });

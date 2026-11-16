@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseStringSliceFlag, StringSliceFlagParseError } from "./string-slice-flag.ts";
 
-describe("parseStringSliceFlag (pflag StringSlice CSV parity)", () => {
+describe("parseStringSliceFlag", () => {
   it("splits unquoted comma-separated values", () => {
     expect(parseStringSliceFlag(["public,private"])).toEqual(["public", "private"]);
   });
@@ -34,13 +34,13 @@ describe("parseStringSliceFlag (pflag StringSlice CSV parity)", () => {
     expect(parseStringSliceFlag([])).toEqual([]);
   });
 
-  it("preserves whitespace (Go does not trim)", () => {
+  it("preserves whitespace (no trimming)", () => {
     expect(parseStringSliceFlag([" public , private "])).toEqual([" public ", " private "]);
   });
 
   // Columns are 1-based byte offsets.
 
-  it("throws on an unterminated quoted field (column = byte length + 1, Go hits EOF)", () => {
+  it("throws on an unterminated quoted field (column = byte length + 1, reached EOF)", () => {
     expect(() => parseStringSliceFlag(['"tenant'])).toThrow(StringSliceFlagParseError);
     expect(() => parseStringSliceFlag(['"tenant'])).toThrow(
       'parse error on line 1, column 8: extraneous or missing " in quoted-field',
@@ -74,7 +74,7 @@ describe("parseStringSliceFlag (pflag StringSlice CSV parity)", () => {
     );
   });
 
-  it("counts columns in bytes, not code points (Go csv tracks byte offsets)", () => {
+  it("counts columns in bytes, not code points", () => {
     // é is 2 UTF-8 bytes, so the bare quote is at byte 3.
     expect(() => parseStringSliceFlag(['é"x'])).toThrow(
       'parse error on line 1, column 3: bare " in non-quoted-field',
@@ -85,7 +85,7 @@ describe("parseStringSliceFlag (pflag StringSlice CSV parity)", () => {
     );
   });
 
-  it("carries the offending occurrence and Go's exact message on the error for pflag framing", () => {
+  it("carries the offending occurrence and the exact message on the error for flag framing", () => {
     try {
       parseStringSliceFlag(["public", '"broken']);
       expect.unreachable("expected parseStringSliceFlag to throw");
@@ -106,7 +106,7 @@ describe("parseStringSliceFlag (pflag StringSlice CSV parity)", () => {
   // Only the first CSV record survives; blank lines before it are skipped,
   // `\r\n` normalizes to `\n`, and parse errors report per-line byte columns.
 
-  it("keeps only the first record when an unquoted newline ends it (pflag reads ONE record)", () => {
+  it("keeps only the first record when an unquoted newline ends it (only ONE record is read)", () => {
     expect(parseStringSliceFlag(["1.2.3.4\n5.6.7.8"])).toEqual(["1.2.3.4"]);
     // The dropped remainder is itself malformed CSV, but only the first record is parsed.
     expect(parseStringSliceFlag(['1.2.3.4\na"b'])).toEqual(["1.2.3.4"]);
@@ -116,7 +116,7 @@ describe("parseStringSliceFlag (pflag StringSlice CSV parity)", () => {
     expect(parseStringSliceFlag(["a\r\nb"])).toEqual(["a"]);
   });
 
-  it("skips blank lines before the record and errors with pflag's EOF for blank-only values", () => {
+  it("skips blank lines before the record and errors with EOF for blank-only values", () => {
     expect(parseStringSliceFlag(["\n\na"])).toEqual(["a"]);
     expect(parseStringSliceFlag(["\r\na"])).toEqual(["a"]);
     // A value of only blank lines throws the bare `EOF` message.

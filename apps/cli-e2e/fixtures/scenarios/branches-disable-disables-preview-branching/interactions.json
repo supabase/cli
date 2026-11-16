@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "DELETE",
-      "path": "/v1/projects/__PROJECT_REF__/branches",
+      "path": "/v1/projects/replayfixtureprojref/branches",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",

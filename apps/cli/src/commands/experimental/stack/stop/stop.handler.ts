@@ -9,7 +9,8 @@ import {
   StackTargetResolver,
   rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
+  mapTargetError,
+} from "../../../../command-internal/stack-target.ts";
 import type { StackStopFlags } from "./stop.command.ts";
 import { StackCommandStopError } from "./stop.errors.ts";
 
@@ -20,6 +21,8 @@ const stopError = (cause: { readonly message: string }) =>
     cause,
   });
 
+const targetError = mapTargetError((props) => new StackCommandStopError(props));
+
 export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: StackStopFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
@@ -29,15 +32,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     const api = yield* StackApi;
     const resolver = yield* StackTargetResolver;
     yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackCommandStopError({
-            reason: cause.reason,
-            message: cause.message,
-            ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-            cause,
-          }),
-      ),
+      Effect.mapError(targetError),
     );
     if (Option.isSome(flags.all) && (Option.isSome(flags.stack) || Option.isSome(flags.stackId)))
       return yield* new StackCommandStopError({
@@ -47,17 +42,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackCommandStopError({
-            reason: cause.reason,
-            message: cause.message,
-            ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-            cause,
-          }),
-      ),
-    );
+    }).pipe(Effect.mapError(targetError));
     const all = Option.getOrElse(flags.all, () => false);
     const target = all
       ? undefined
@@ -68,18 +53,32 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
             ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
             runtime: "auto",
           })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new StackCommandStopError({
-                  reason: cause.reason,
-                  message: cause.message,
-                  ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-                  cause,
-                }),
-            ),
-          );
-    if (!all && target?.id === undefined) {
+          .pipe(Effect.mapError(targetError));
+    const locations = {
+      stateRoot: path.join(settings.supabaseHome, "stacks"),
+      cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
+    };
+    const selected =
+      target === undefined
+        ? yield* api
+            .discover({
+              ...locations,
+              onInvalidState: (id, error) =>
+                output.raw(`Warning: skipping invalid stack ${id}: ${error.message}\n`, "stderr"),
+            })
+            .pipe(
+              Effect.map((discovered) =>
+                discovered.map(({ definition, host }) => ({
+                  id: definition.id,
+                  hostRunning: host !== undefined,
+                })),
+              ),
+              Effect.mapError(stopError),
+            )
+        : target.id === undefined
+          ? undefined
+          : [{ id: target.id, hostRunning: target.hostRunning }];
+    if (selected === undefined) {
       if (Option.isSome(flags.stack))
         return yield* new StackCommandStopError({
           reason: "flags",
@@ -88,58 +87,50 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
       yield* output.success("No managed stack found for this context.", { found: false });
       return;
     }
-    const locations = {
-      stateRoot: path.join(settings.supabaseHome, "stacks"),
-      cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
-    };
-    const discovered = yield* api.discover(locations).pipe(Effect.mapError(stopError));
-    const selected = all
-      ? discovered
-      : discovered.filter(({ definition }) => definition.id === target?.id);
-    if (!all && selected.length === 0)
-      return yield* new StackCommandStopError({
-        reason: "flags",
-        message: "The selected stack no longer exists.",
-      });
     const results = yield* Effect.forEach(
       selected,
       ({
-        definition,
-        host,
+        id,
+        hostRunning,
       }): Effect.Effect<{
         readonly id: string;
-        readonly result: Result.Result<"stopped" | "unavailable", StackError>;
+        readonly result: Result.Result<"stopped" | "not-running", StackError>;
       }> =>
-        host === undefined
-          ? Effect.succeed({ id: definition.id, result: Result.succeed("unavailable" as const) })
-          : api.open({ ...locations, id: definition.id }).pipe(
-              Effect.flatMap((stack) => stack.stop),
-              Effect.as("stopped" as const),
-              Effect.result,
-              Effect.map((result) => ({ id: definition.id, result })),
-            ),
+        api.open({ ...locations, id }).pipe(
+          Effect.flatMap((stack) => stack.stop),
+          Effect.scoped,
+          Effect.as(hostRunning ? ("stopped" as const) : ("not-running" as const)),
+          Effect.result,
+          Effect.map((result) => ({ id, result })),
+        ),
     );
     const failures = results.flatMap(({ id, result }) =>
       Result.isFailure(result) ? [{ id, error: result.failure }] : [],
     );
-    if (failures.length > 0)
+    const [firstFailure] = failures;
+    if (firstFailure !== undefined)
       return yield* new StackCommandStopError({
-        reason: "unknown",
+        reason: "stack",
         message: `Failed to stop ${failures.length} managed stack(s).`,
         detail: failures.map(({ id, error }) => `${id}: ${error.message}`).join("\n"),
-        cause: failures,
+        // Telemetry classifies a batch by its first failure; `detail` lists every stack.
+        cause: firstFailure.error,
       });
     const stopped = results.flatMap(({ id, result }) =>
       Result.isSuccess(result) && result.success === "stopped" ? [id] : [],
     );
-    const unavailable = results.flatMap(({ id, result }) =>
-      Result.isSuccess(result) && result.success === "unavailable" ? [id] : [],
+    const notRunning = results.flatMap(({ id, result }) =>
+      Result.isSuccess(result) && result.success === "not-running" ? [id] : [],
     );
+    yield* Effect.annotateCurrentSpan({
+      "stack.count": results.length,
+      "stack.stopped_count": stopped.length,
+    });
     if (output.format === "text") {
       for (const id of stopped) yield* output.raw(`Stack ${id} stopped.\n`);
-      for (const id of unavailable)
-        yield* output.raw(`Stack ${id}: No owner is reachable; workload state is unavailable.\n`);
+      for (const id of notRunning)
+        yield* output.raw(`Stack ${id} was not running; leftover resources were reclaimed.\n`);
       if (results.length === 0) yield* output.raw("No managed stacks found.\n");
-    } else yield* output.success("", { stopped, unavailable });
+    } else yield* output.success("", { stopped, not_running: notRunning });
   }).pipe(Effect.ensuring(telemetry.flush));
 });

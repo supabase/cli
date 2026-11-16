@@ -74,6 +74,7 @@
   "dependencies": {
     "@standard-schema/spec": "^1.1.0",
     "dedent": "^1.7.2",
+    "jsonc-parser": "^3.3.1",
     "smol-toml": "^1.8.0"
   },
   "devDependencies": {
@@ -84,6 +85,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-v8": "catalog:",
+    "ajv": "^8.20.0",
     "effect": "catalog:",
     "semantic-release": "catalog:",
     "typescript": "catalog:",

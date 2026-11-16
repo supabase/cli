@@ -21,7 +21,7 @@ describe("parseConfigValue", () => {
     expect(parseConfigValue("9223372036854775808")).toBe("9223372036854775808");
   });
 
-  it("matches Go's strconv.ParseBool accepted literals, case-sensitively", () => {
+  it("accepts the boolean literals, case-sensitively", () => {
     for (const literal of ["t", "T", "TRUE", "true", "True"]) {
       expect(parseConfigValue(literal)).toBe(true);
     }
@@ -36,7 +36,7 @@ describe("parseConfigValue", () => {
     expect(parseConfigValue("on")).toBe("on");
   });
 
-  it("prefers the int branch over ParseBool for bare 1/0", () => {
+  it("prefers the int branch over bool parsing for bare 1/0", () => {
     expect(parseConfigValue("1")).toBe(1);
     expect(parseConfigValue("0")).toBe(0);
   });

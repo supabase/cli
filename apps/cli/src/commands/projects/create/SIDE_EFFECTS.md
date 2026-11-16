@@ -1,5 +1,7 @@
 # `supabase projects create`
 
+Target: account, consent default Yes — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                       | Format                    | When                                                       |
@@ -38,6 +40,8 @@
 | `1`  | required flags missing in non-interactive mode                          |
 | `1`  | empty project name (interactive prompt left blank)                      |
 | `1`  | `--release-channel` or `--postgres-engine` set without `--experimental` |
+| `1`  | confirmation declined                                                   |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes`           |
 
 ## Telemetry Events Fired
 
@@ -47,18 +51,18 @@
 
 ## Flags
 
-| Flag                  | Type   | Required (non-interactive) | Description                                                                                                     |
-| --------------------- | ------ | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `[project name]`      | arg    | yes (non-interactive)      | Name of the project (positional argument)                                                                       |
-| `--org-id`            | string | yes (non-interactive)      | Organization ID (slug) to create the project in                                                                 |
-| `--db-password`       | string | yes (non-interactive)      | Database password for the project                                                                               |
-| `--region`            | enum   | yes (non-interactive)      | AWS region for the project                                                                                      |
-| `--size`              | enum   | no                         | Desired instance size                                                                                           |
-| `--high-availability` | bool   | no                         | Enable high availability for the project (**TS-only, no Go CLI equivalent**)                                    |
-| `--release-channel`   | enum   | no                         | Select a release channel for the project (**TS-only, no Go CLI equivalent; hidden + `--experimental`-gated**)   |
-| `--postgres-engine`   | enum   | no                         | Select the Postgres engine for the project (**TS-only, no Go CLI equivalent; hidden + `--experimental`-gated**) |
-| `--interactive`       | bool   | no (default: true)         | Enable interactive mode (hidden flag)                                                                           |
-| `--plan`              | string | no                         | Plan selection (hidden flag)                                                                                    |
+| Flag                  | Type   | Required (non-interactive) | Description                                                                      |
+| --------------------- | ------ | -------------------------- | -------------------------------------------------------------------------------- |
+| `[project name]`      | arg    | yes (non-interactive)      | Name of the project (positional argument)                                        |
+| `--org-id`            | string | yes (non-interactive)      | Organization ID (slug) to create the project in                                  |
+| `--db-password`       | string | yes (non-interactive)      | Database password for the project                                                |
+| `--region`            | enum   | yes (non-interactive)      | AWS region for the project                                                       |
+| `--size`              | enum   | no                         | Desired instance size                                                            |
+| `--high-availability` | bool   | no                         | Enable high availability for the project                                         |
+| `--release-channel`   | enum   | no                         | Select a release channel for the project (**hidden + `--experimental`-gated**)   |
+| `--postgres-engine`   | enum   | no                         | Select the Postgres engine for the project (**hidden + `--experimental`-gated**) |
+| `--interactive`       | bool   | no (default: true)         | Enable interactive mode (hidden flag)                                            |
+| `--plan`              | string | no                         | Plan selection (hidden flag)                                                     |
 
 ## Output
 
@@ -90,17 +94,16 @@ One `result` event on success.
 
 ## Notes
 
+- Before the `POST /v1/projects`, the command asks `create project "<name>" in organization <org>?`
+  (default **Yes**). Without consent the run makes no `POST`.
 - In interactive mode (default when stdin is a TTY), the user is prompted for any missing
   required fields (`--org-id`, `--db-password`, `--region`, project name).
 - In non-interactive mode (when stdin is not a TTY or `--interactive=false`), all three
   flags and the positional project name argument are required.
 - The `--size` flag, when provided, sets the `desired_instance_size` field in the request body.
 - The `--high-availability` flag, when provided, sets the `high_availability` field in the request body.
-  This is a TS-only flag with no Go CLI equivalent — the old Go CLI never exposed a `high-availability`
-  flag or set it on the request body, even though the underlying API field exists — similar to how
-  `--reveal` is a TS-only addition on `projects api-keys`.
 - The `--release-channel` and `--postgres-engine` flags, when provided, set `release_channel` and
-  `postgres_engine` respectively in the request body. Both are TS-only, no Go CLI equivalent, and target
+  `postgres_engine` respectively in the request body. Both target
   fields that the upstream Management API OpenAPI spec deliberately hides (typed as
   `{"deprecated": true, "type": "null"}`) even though `POST /v1/projects` accepts them — restored via
   `packages/api/scripts/openapi-overrides.json` (CLI-2180). Both flags are hidden and require

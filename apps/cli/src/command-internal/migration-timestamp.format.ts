@@ -1,3 +1,5 @@
+import { DateTime } from "effect";
+
 /**
  * Parses a `YYYYMMDDHHMMSS` migration version and reformats it as `YYYY-MM-DD HH:MM:SS`.
  * Returns the input unchanged when it isn't a valid timestamp (non-numeric, wrong length,
@@ -24,12 +26,10 @@ export function formatTimestampVersion(version: string): string {
   if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
     return version;
   }
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day
-  ) {
+  const parts = DateTime.toPartsUtc(
+    DateTime.makeUnsafe(Date.UTC(year, month - 1, day, hour, minute, second)),
+  );
+  if (parts.year !== year || parts.month !== month || parts.day !== day) {
     return version;
   }
   return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;

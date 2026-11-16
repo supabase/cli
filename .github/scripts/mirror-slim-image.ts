@@ -54,6 +54,7 @@ export type MirrorIo = {
   readonly run: RunCommand;
   readonly runToFile?: RunCommandToFile;
   readonly log?: (message: string) => void;
+  readonly sleep?: (ms: number) => Promise<void>;
   readonly readText?: (path: string) => Promise<string>;
   readonly sha256File?: (path: string) => Promise<string>;
   readonly httpStatus?: (url: string, method: "HEAD" | "GET") => Promise<number>;
@@ -95,23 +96,43 @@ const writeGithubOutput = (
   else process.stdout.write(body);
 };
 
+const VERIFY_RETRY_DELAY_MS = 10_000;
+
+const NOT_FOUND = /\bnot found\b|\bhttp 404\b/i;
+
+/**
+ * Checks that `reference` resolves to `digest`, re-reading a mismatch or 404 up to
+ * `attempts` times. ECR Public can keep serving a tag's previous digest (or a 404 for a
+ * new tag) for a short while after a push, so the destination check needs more than one read.
+ */
 export const verifyDigest = async (options: {
   readonly reference: string;
   readonly digest: string;
   readonly run: RunCommand;
+  readonly attempts?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
   readonly log?: (message: string) => void;
 }): Promise<void> => {
   const log = options.log ?? console.log;
-  const head = await options.run(["regctl", "manifest", "head", options.reference]);
-  const live = head.stdout.trim();
-  if (!head.ok || live !== options.digest) {
+  const attempts = options.attempts ?? 1;
+  if (!Number.isInteger(attempts) || attempts < 1)
+    throw new InvalidPayloadError(`attempts must be a positive integer, got ${attempts}`);
+  const sleep = options.sleep ?? Bun.sleep;
+  for (let attempt = 1; ; attempt++) {
+    const head = await options.run(["regctl", "manifest", "head", options.reference]);
+    const live = head.stdout.trim();
+    if (head.ok && live === options.digest) {
+      log(`${options.reference} resolves to ${options.digest}`);
+      return;
+    }
     const resolved = head.ok ? live : live || "missing";
     const detail = !head.ok && head.stderr.trim() !== "" ? `: ${head.stderr.trim()}` : "";
-    throw new InvalidPayloadError(
-      `${options.reference} resolves to ${resolved}, expected ${options.digest}${detail}`,
-    );
+    const mismatch = `${options.reference} resolves to ${resolved}, expected ${options.digest}${detail}`;
+    const stale = head.ok || NOT_FOUND.test(head.stderr);
+    if (!stale || attempt >= attempts) throw new InvalidPayloadError(mismatch);
+    log(`${mismatch}; re-reading (attempt ${attempt + 1}/${attempts})`);
+    await sleep(VERIFY_RETRY_DELAY_MS);
   }
-  log(`${options.reference} resolves to ${options.digest}`);
 };
 
 export const ensureEcrPublicRepo = async (options: {
@@ -479,6 +500,8 @@ export const main = async (argv: ReadonlyArray<string>, io: MirrorIo): Promise<n
       reference: requireEnv(io.env, "REFERENCE"),
       digest: requireEnv(io.env, "DIGEST"),
       run: io.run,
+      attempts: Number(envValue(io.env, "ATTEMPTS").trim() || "1"),
+      sleep: io.sleep,
       log,
     });
     return 0;

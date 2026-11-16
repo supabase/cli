@@ -1,9 +1,11 @@
-import { Command } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStatus } from "./status.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {};
 export type TelemetryStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -11,8 +13,10 @@ export type TelemetryStatusFlags = CliCommand.Command.Config.Infer<typeof config
 export const telemetryStatusCommand = Command.make("status", config).pipe(
   Command.withDescription("Show CLI telemetry status."),
   Command.withShortDescription("Show telemetry status"),
+  withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
     telemetryStatus(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["telemetry", "status"])),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

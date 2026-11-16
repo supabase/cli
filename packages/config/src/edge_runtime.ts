@@ -20,12 +20,12 @@ export const edge_runtime = Schema.Struct({
     description: "Configure the supported request policy.",
     tags,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPolicy))),
-  inspector_port: Schema.Number.annotate({
+  inspector_port: Schema.Finite.annotate({
     default: defaultInspectorPort,
     description: "Port to run the Edge Functions inspector on.",
     tags,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultInspectorPort))),
-  deno_version: Schema.Number.annotate({
+  deno_version: Schema.Finite.annotate({
     default: defaultDenoVersion,
     description: "The Deno major version to use.",
     tags,

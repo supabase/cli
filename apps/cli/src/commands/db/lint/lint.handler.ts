@@ -1,18 +1,16 @@
 import { Effect, Option } from "effect";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { failsOn } from "../../../command-internal/fail-on.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import type { DbTargetSelection } from "../../../command-internal/db-target-flags.ts";
 import type { DbLintFlags } from "./lint.command.ts";
 import {
   DbLintBeginTxError,
@@ -20,7 +18,6 @@ import {
   DbLintFailOnError,
   DbLintListSchemasError,
   DbLintMalformedJsonError,
-  DbLintMutuallyExclusiveFlagsError,
   DbLintQueryError,
 } from "./lint.errors.ts";
 import {
@@ -42,7 +39,7 @@ const asString = (value: unknown): string =>
   value === null || value === undefined ? "" : String(value);
 
 /** Lists the user schemas — used when `--schema` is omitted. */
-const listUserSchemas = Effect.fnUntraced(function* (session: DbSession) {
+const listUserSchemas = Effect.fn("DbLint.listUserSchemas")(function* (session: DbSession) {
   const rows = yield* session
     .query(LIST_SCHEMAS_SQL, [MANAGED_SCHEMAS])
     .pipe(
@@ -55,12 +52,13 @@ const listUserSchemas = Effect.fnUntraced(function* (session: DbSession) {
 });
 
 /** Runs the pgsql_check-based lint, minus the transaction setup the handler owns. */
-const lintDatabase = Effect.fnUntraced(function* (
+const lintDatabase = Effect.fn("DbLint.lintDatabase")(function* (
   session: DbSession,
   schemaFlags: ReadonlyArray<string>,
 ) {
   const output = yield* Output;
   const schemas = schemaFlags.length > 0 ? schemaFlags : yield* listUserSchemas(session);
+  yield* Effect.annotateCurrentSpan({ "schema.count": schemas.length });
 
   yield* session.exec(ENABLE_PGSQL_CHECK).pipe(
     Effect.mapError(
@@ -88,7 +86,7 @@ const lintDatabase = Effect.fnUntraced(function* (
         try: () => parseLintResult(data, `${schema}.${name}`),
         catch: (cause) =>
           new DbLintMalformedJsonError({
-            message: `failed to marshal json: ${String(cause)}`,
+            message: `failed to parse lint result: ${String(cause)}`,
           }),
       });
       results.push(result);
@@ -97,36 +95,13 @@ const lintDatabase = Effect.fnUntraced(function* (
   return results;
 });
 
-const runLint = Effect.fnUntraced(function* (
-  flags: DbLintFlags,
-  dnsResolver: "native" | "https",
-  target: DbTargetSelection,
-) {
+const runLint = Effect.fnUntraced(function* (flags: DbLintFlags, dnsResolver: "native" | "https") {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const dbConn = yield* DbConnection;
   const processControl = yield* ProcessControl;
 
-  // Mutually-exclusive db-url/linked/local group, keyed off explicitly-set flags,
-  // not `--local`'s default value.
-  const setFlags = target.setFlags;
-  if (setFlags.length > 1) {
-    return yield* Effect.fail(
-      new DbLintMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-      }),
-    );
-  }
-
-  // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
-  if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
-    return yield* Effect.fail(
-      new DbLintMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
-  }
+  const target = yield* resolveTarget(flags);
 
   const level = Option.getOrElse(flags.level, () => "warning");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
@@ -136,21 +111,21 @@ const runLint = Effect.fnUntraced(function* (
   const schemaFlags = flags.schema;
 
   const lintBody = Effect.gen(function* () {
-    // connType passes straight through; the resolver applies db-url > linked >
-    // local precedence and handles `--local`'s default.
-    const cfg = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType: target.connType ?? "local",
+    const cfg = yield* resolver.resolveConnection({
+      target,
       dnsResolver,
-      linkedProjectRef: flags.projectRef,
+      password: Option.none(),
+      networkBanRemoval: yield* hostedMutationPreapproval,
+    });
+
+    yield* Effect.annotateCurrentSpan({
+      "db.is_local": cfg.isLocal,
+      "db.lint.level": level,
+      "db.lint.fail_on": failOn,
     });
 
     const results = yield* Effect.scoped(
       Effect.gen(function* () {
-        yield* output.raw(
-          `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
-          "stderr",
-        );
         const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
         yield* session.exec("begin").pipe(
           Effect.mapError(
@@ -183,6 +158,7 @@ const runLint = Effect.fnUntraced(function* (
     }
 
     const filtered = filterLintResult(results, LINT_LEVEL_ENUM.toEnum(level));
+    yield* Effect.annotateCurrentSpan({ "db.lint.issue_count": filtered.length });
 
     if (output.format === "text") {
       // Encoding no-ops on an empty slice.
@@ -201,7 +177,7 @@ const runLint = Effect.fnUntraced(function* (
     if (failed) {
       const message = `fail-on is set to ${LINT_ALLOWED_LEVELS[failOnLevel]}, non-zero exit`;
       if (output.format === "text") {
-        return yield* Effect.fail(new DbLintFailOnError({ message }));
+        return yield* new DbLintFailOnError({ message });
       }
       // json / stream-json already emitted the result payload above; signal the
       // non-zero exit without a second stdout write that would corrupt it.
@@ -209,14 +185,11 @@ const runLint = Effect.fnUntraced(function* (
     }
   });
 
-  // For `--linked`, the ref is resolved up front (non-prompting) and the
-  // linked-project cache is refreshed on both success and failure; `--local`/`--db-url`
-  // never write it since caching only runs on the linked branch.
-  if (target.connType === "linked") {
-    const projectRef = yield* ProjectRefResolver;
+  // The linked-project cache is refreshed on success and failure; local and `--db-url` targets
+  // never write it.
+  if (target.kind === "linked") {
     const linkedProjectCache = yield* LinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(flags.projectRef);
-    return yield* lintBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+    return yield* lintBody.pipe(Effect.ensuring(linkedProjectCache.cache(target.ref)));
   }
   return yield* lintBody;
 });
@@ -224,8 +197,6 @@ const runLint = Effect.fnUntraced(function* (
 export const dbLint = Effect.fn("db.lint")(function* (flags: DbLintFlags) {
   const dnsResolver = yield* DnsResolverFlag;
   const telemetryState = yield* TelemetryState;
-  const cliArgs = yield* CliArgs;
-  const target = resolveDbTargetFlags(cliArgs.args);
   // Command-level instrumentation/JSON error handling are applied by `lint.command.ts`.
-  yield* runLint(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* runLint(flags, dnsResolver).pipe(Effect.ensuring(telemetryState.flush));
 });

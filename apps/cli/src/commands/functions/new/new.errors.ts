@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Data, Predicate } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -54,9 +54,6 @@ export function mapFunctionsNewWriteError(path: string) {
   return (cause: unknown): FunctionsNewWriteError =>
     new FunctionsNewWriteError({
       path,
-      message:
-        typeof cause === "object" && cause !== null && "message" in cause
-          ? String(cause.message)
-          : String(cause),
+      message: Predicate.hasProperty(cause, "message") ? String(cause.message) : String(cause),
     });
 }

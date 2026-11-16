@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Ref } from "effect";
 
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -19,7 +19,7 @@ export const projectsCreate = Effect.fn("projects.create")(function* (flags: Pro
     yield* requireExperimental;
   }
 
-  let createdRef: string | undefined;
+  const createdRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
     // Interactive mode requires a TTY stdin, `--interactive` (default true), and text-mode
@@ -61,11 +61,16 @@ export const projectsCreate = Effect.fn("projects.create")(function* (flags: Pro
       templateUrl: undefined,
       emitStructuredResult: true,
     });
-    createdRef = ref.length > 0 ? ref : undefined;
+    yield* Ref.set(createdRef, ref.length > 0 ? Option.some(ref) : Option.none());
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        createdRef === undefined ? Effect.void : linkedProjectCache.cache(createdRef),
+      Ref.get(createdRef).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (ref) => linkedProjectCache.cache(ref),
+          }),
+        ),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

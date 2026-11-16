@@ -42,30 +42,26 @@ function permissionDenied(method: "readFile" | "readFileString") {
 const tempRoot = useTempWorkdir("sso-saml-unit-");
 
 describe("readMetadataFile", () => {
-  it.live("returns the file content on UTF-8 XML", () =>
+  it.effect("returns the file content on UTF-8 XML", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const path = pathService.join(tempRoot.current, "good.xml");
       yield* fs.writeFileString(path, '<?xml version="1.0"?><md/>');
-      return yield* Effect.gen(function* () {
-        const out = yield* readMetadata(path);
-        expect(out).toBe('<?xml version="1.0"?><md/>');
-      }).pipe(Effect.provide(BunServices.layer));
+      const out = yield* readMetadata(path);
+      expect(out).toBe('<?xml version="1.0"?><md/>');
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails with TestOpenError on missing file", () =>
+  it.effect("fails with TestOpenError on missing file", () =>
     Effect.gen(function* () {
       const pathService = yield* Path.Path;
       const path = pathService.join(tempRoot.current, "missing.xml");
-      return yield* Effect.gen(function* () {
-        const exit = yield* Effect.exit(readMetadata(path));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("TestOpenError");
-        }
-      }).pipe(Effect.provide(BunServices.layer));
+      const exit = yield* Effect.exit(readMetadata(path));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("TestOpenError");
+      }
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -92,65 +88,57 @@ describe("readMetadataFile", () => {
     );
   });
 
-  it.live("fails with TestNonUtf8Error on invalid UTF-8 bytes", () =>
+  it.effect("fails with TestNonUtf8Error on invalid UTF-8 bytes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const path = pathService.join(tempRoot.current, "bad.xml");
       yield* fs.writeFile(path, Buffer.from([0xff, 0xfe, 0xfd]));
-      return yield* Effect.gen(function* () {
-        const exit = yield* Effect.exit(readMetadata(path));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("TestNonUtf8Error");
-          expect(dump).toContain("is not UTF-8 encoded");
-        }
-      }).pipe(Effect.provide(BunServices.layer));
+      const exit = yield* Effect.exit(readMetadata(path));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("TestNonUtf8Error");
+        expect(dump).toContain("is not UTF-8 encoded");
+      }
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });
 
 describe("readAttributeMappingFile", () => {
-  it.live("parses JSON and preserves user-defined keys (e.g. `default: 3`)", () =>
+  it.effect("parses JSON and preserves user-defined keys (e.g. `default: 3`)", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const path = pathService.join(tempRoot.current, "mapping.json");
       yield* fs.writeFileString(path, '{ "keys": { "a": { "name": "xyz", "default": 3 } } }');
-      return yield* Effect.gen(function* () {
-        const parsed = yield* readAttrMapping(path);
-        expect(parsed).toMatchObject({ keys: { a: { default: 3 } } });
-      }).pipe(Effect.provide(BunServices.layer));
+      const parsed = yield* readAttrMapping(path);
+      expect(parsed).toMatchObject({ keys: { a: { default: 3 } } });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails with TestOpenError on malformed JSON", () =>
+  it.effect("fails with TestOpenError on malformed JSON", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const path = pathService.join(tempRoot.current, "bad.json");
       yield* fs.writeFileString(path, "{not json}");
-      return yield* Effect.gen(function* () {
-        const exit = yield* Effect.exit(readAttrMapping(path));
-        expect(Exit.isFailure(exit)).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer));
+      const exit = yield* Effect.exit(readAttrMapping(path));
+      expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails with TestOpenError on missing file", () =>
+  it.effect("fails with TestOpenError on missing file", () =>
     Effect.gen(function* () {
       const pathService = yield* Path.Path;
       const path = pathService.join(tempRoot.current, "nonexistent.json");
-      return yield* Effect.gen(function* () {
-        const exit = yield* Effect.exit(readAttrMapping(path));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("TestOpenError");
-          expect(dump).toContain("failed to open attribute mapping");
-        }
-      }).pipe(Effect.provide(BunServices.layer));
+      const exit = yield* Effect.exit(readAttrMapping(path));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("TestOpenError");
+        expect(dump).toContain("failed to open attribute mapping");
+      }
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -184,7 +172,7 @@ describe("readAttributeMappingFile", () => {
 });
 
 describe("validateMetadataXmlBytes", () => {
-  it.live("rejects 0xFF / 0xFE byte sequence as non-UTF-8", () => {
+  it.effect("rejects 0xFF / 0xFE byte sequence as non-UTF-8", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         validateMetadataXmlBytes(
@@ -197,7 +185,7 @@ describe("validateMetadataXmlBytes", () => {
     });
   });
 
-  it.live("accepts a UTF-8 byte sequence", () => {
+  it.effect("accepts a UTF-8 byte sequence", () => {
     return Effect.gen(function* () {
       const result = yield* validateMetadataXmlBytes(
         new TextEncoder().encode("<xml/>"),

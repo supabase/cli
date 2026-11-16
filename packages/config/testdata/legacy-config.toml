@@ -34,6 +34,8 @@ health_timeout = "2m"
 # The database major version to use. This has to be the same as your remote database's. Run `SHOW
 # server_version;` on the remote database to check.
 major_version = 17
+# OrioleDB version to use as the Postgres storage engine.
+orioledb_version = "15.1.0.150"
 
 [db.migrations]
 # If disabled, migrations will be skipped during a db push or reset.
@@ -96,7 +98,7 @@ openai_api_key = "env(OPENAI_API_KEY)"
 
 # Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
 # are monitored, and you can view the emails that would have been sent from the web interface.
-[inbucket]
+[local_smtp]
 enabled = true
 # Port to use for the email testing server web interface.
 port = 54324
@@ -310,7 +312,7 @@ verify_enabled = true
 
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
-# `twitter`, `x`, `slack`, `spotify`, `workos`, `zoom`.
+# `twitter`, `x`, `slack_oidc`, `spotify`, `workos`, `zoom`.
 [auth.external.azure]
 enabled = true
 client_id = "env(AZURE_CLIENT_ID)"
@@ -347,8 +349,6 @@ backend = "postgres"
 
 # Experimental features may be deprecated any time
 [experimental]
-# Configures Postgres storage engine to use OrioleDB (S3)
-orioledb_version = "15.1.0.150"
 # Configures S3 bucket URL, eg. <bucket_name>.s3-<region>.amazonaws.com
 s3_host = "orioledb.s3-accelerate.amazonaws.com"
 # Configures S3 bucket region, eg. us-east-1

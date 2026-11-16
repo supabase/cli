@@ -11,7 +11,7 @@ function recordingTask() {
     fail: () => Effect.sync(() => void settles.push("fail")),
     info: () => Effect.void,
     cancel: () => Effect.void,
-    clear: () => Effect.sync(() => void settles.push("clear")),
+    clear: Effect.sync(() => void settles.push("clear")),
   };
   return { task, settles };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, PlatformError } from "effect";
+import { Effect, Exit, FileSystem, Layer, PlatformError, Predicate } from "effect";
 
 import { makeDir } from "./make-dir.ts";
 
@@ -78,13 +78,10 @@ describe("makeDir", () => {
   it.effect("propagates every other filesystem error", () => {
     const fs = failingFs("PermissionDenied");
     return run(DIR).pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
+      Effect.flip,
+      Effect.tap((error) =>
         Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("PermissionDenied");
-          }
+          expect(Predicate.isTagged(error.reason, "PermissionDenied")).toBe(true);
         }),
       ),
       Effect.provide(fs.layer),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -46,20 +46,19 @@ function setup() {
     CliOutput.layer(textCliOutputFormatter()),
     mockTelemetryRuntime({
       configDir: `${tempRoot.current}/.supabase`,
-      tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
   );
   return { layer, api };
 }
 
-describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
+describe("network-bans experimental gate ", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["network-bans", "get"] },
     { name: "remove", args: ["network-bans", "remove"] },
   ];
 
   for (const { name, args } of leaves) {
-    it.live(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
+    it.effect(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
@@ -71,7 +70,7 @@ describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(`${name} does not fail with the gate error once --experimental is set`, () => {
+    it.effect(`${name} does not fail with the gate error once --experimental is set`, () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -88,10 +87,10 @@ describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
     });
   }
 
-  it.live(
-    "remove: malformed --db-unban-ip CSV fails at parse time with pflag's exact diagnostic, before the gate",
+  it.effect(
+    "remove: malformed --db-unban-ip CSV fails at parse time with the exact diagnostic, before the gate",
     () => {
-      // `"1.2.3.4` is 8 bytes, so pflag's CSV reader hits EOF at column 9.
+      // `"1.2.3.4` is 8 bytes, so the CSV reader hits EOF at column 9.
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

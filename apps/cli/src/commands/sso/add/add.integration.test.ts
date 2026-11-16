@@ -1,10 +1,19 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Stdio } from "effect";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+  Stdio,
+} from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -15,10 +24,22 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { ProfileFlag } from "../../../command-internal/global-flags.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
+import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
+import type { SsoAddFlags } from "./add.command.ts";
 import { ssoAdd } from "./add.handler.ts";
+
+const OTHER_REF = "qrstuvwxyzabcdefghij";
 
 const RESPONSE_PROVIDER = {
   id: "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8",
@@ -29,11 +50,13 @@ const RESPONSE_PROVIDER = {
   domains: [{ domain: "example.com" }],
 };
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const tempRoot = useTempWorkdir("supabase-sso-add-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   network?: "fail";
@@ -41,7 +64,7 @@ interface SetupOpts {
   // Metadata-URL fetch responses keyed by URL prefix.
   metadataUrlResponse?: { status: number; body: string };
   /**
-   * Raw argv the handler sees via `Stdio.Stdio`, driving the pflag-faithful
+   * Raw argv the handler sees via `Stdio.Stdio`, driving the raw-argv
    * scan behind the required-flag, mutex, and value-reconciliation checks.
    * Keep in sync with the flags passed to `ssoAdd` (usually via `cliArgsFor`).
    */
@@ -51,6 +74,8 @@ interface SetupOpts {
    * carries a `--profile` the parser would have consumed.
    */
   profileFlag?: string;
+  /** The `SUPABASE_PROFILE` value `CommandSettings` captured. */
+  profileEnv?: string;
 }
 
 function jsonResponse(
@@ -143,7 +168,10 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    profileEnvValue: Option.fromUndefinedOr(opts.profileEnv),
+  });
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
@@ -152,31 +180,29 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       analytics,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "add", "--type", "saml"]),
     }),
     opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
 
   return { layer, out, api, analytics, telemetry, cache };
 }
 
-const defaultFlags = {
-  projectRef: Option.none<string>(),
-  type: "saml" as const,
-  domains: [] as ReadonlyArray<string>,
-  metadataFile: Option.none<string>(),
-  metadataUrl: Option.none<string>(),
+const defaultFlags: SsoAddFlags = {
+  remote: Option.none(),
+  projectRef: Option.none(),
+  type: "saml",
+  domains: [],
+  metadataFile: Option.none(),
+  metadataUrl: Option.none(),
   skipUrlValidation: false,
-  attributeMappingFile: Option.none<string>(),
-  nameIdFormat: Option.none<
-    | "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
-    | "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
-    | "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
-    | "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
-  >(),
+  attributeMappingFile: Option.none(),
+  nameIdFormat: Option.none(),
 };
 
 /**
@@ -184,7 +210,7 @@ const defaultFlags = {
  * reconciles the values it acts on against a scan of argv, not the flags
  * record itself.
  */
-function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
+function cliArgsFor(flags: SsoAddFlags): ReadonlyArray<string> {
   const argv: string[] = ["sso", "add", "--type", flags.type];
   if (Option.isSome(flags.projectRef)) {
     argv.push("--project-ref", flags.projectRef.value);
@@ -211,53 +237,131 @@ function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
 }
 
 describe("sso add integration", () => {
-  it.live("POSTs to /v1/projects/{ref}/config/auth/sso/providers with type=saml", () => {
+  it.effect("POSTs to /v1/projects/{ref}/config/auth/sso/providers with type=saml", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       const req = api.requests.find((r) => r.method === "POST");
       expect(req).toBeDefined();
       expect(req?.url).toContain(`/v1/projects/${VALID_REF}/config/auth/sso/providers`);
-      expect((req?.body as { type?: string })?.type).toBe("saml");
+      expect(req?.body).toHaveProperty("type", "saml");
+      assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "mutex check: --metadata-file + --metadata-url fails with cobra's exact error text",
+  it.effect("selects the project from a --remote the argv scan sees", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", `--remote=${OTHER_REF}`],
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      expect(api.requests.find((r) => r.method === "POST")?.url).toContain(
+        `/v1/projects/${OTHER_REF}/config/auth/sso/providers`,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "ignores a --remote token a bare --domains consumed as its value, as it does for --project-ref",
     () => {
-      const { layer } = setup({
-        cliArgs: [
-          "sso",
-          "add",
-          "--type",
-          "saml",
-          "--metadata-file",
-          "/tmp/missing.xml",
-          "--metadata-url",
-          "https://idp.example.com/m",
-        ],
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--domains", `--remote=${OTHER_REF}`],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          ssoAdd({
-            ...defaultFlags,
-            metadataFile: Option.some("/tmp/missing.xml"),
-            metadataUrl: Option.some("https://idp.example.com/m"),
-          }),
+        yield* ssoAdd({ ...defaultFlags, remote: Option.some({ _tag: "Ref", ref: OTHER_REF }) });
+        expect(api.requests.find((r) => r.method === "POST")?.url).toContain(
+          `/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("SsoMutexFlagError");
-          expect(dump).toContain(
-            "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
-          );
-        }
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect("lists the projects for the picker and fills the linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET" && request.url === `${DEFAULT_API_URL}/v1/projects`) {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (
+          request.method === "GET" &&
+          request.url === `${DEFAULT_API_URL}/v1/projects/${VALID_REF}`
+        ) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 201, RESPONSE_PROVIDER));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+      Stdio.layerTest({ args: Effect.succeed(["sso", "add", "--type", "saml"]) }),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoAdd(defaultFlags);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${DEFAULT_API_URL}/v1/projects`,
+        `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("mutex check: --metadata-file + --metadata-url fails with the exact error text", () => {
+    const { layer } = setup({
+      cliArgs: [
+        "sso",
+        "add",
+        "--type",
+        "saml",
+        "--metadata-file",
+        "/tmp/missing.xml",
+        "--metadata-url",
+        "https://idp.example.com/m",
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        ssoAdd({
+          ...defaultFlags,
+          metadataFile: Option.some("/tmp/missing.xml"),
+          metadataUrl: Option.some("https://idp.example.com/m"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoMutexFlagError");
+        expect(dump).toContain(
+          "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
     "mutex check: an explicit but empty --metadata-file= still conflicts with --metadata-url (changed, not truthy)",
     () => {
       const { layer } = setup({
@@ -291,7 +395,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "mutex check: a bare --metadata-file followed by --metadata-url is not a violation, and the consumed token is the file",
     () => {
       const { layer, api } = setup({
@@ -310,8 +414,8 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
-    "reconciles project-ref consuming --metadata-file: fails ref validation like Go, never reads metadata",
+  it.effect(
+    "reconciles project-ref consuming --metadata-file: looks the value up as a branch, never reads metadata",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -337,15 +441,17 @@ describe("sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("InvalidProjectRefError");
-          expect(dump).toContain("Invalid project ref format. Must be like");
+          expect(dump).toContain("LinkBranchListStatusError");
+          expect(dump).not.toContain("SsoAddMetadataFileError");
         }
-        expect(api.requests.some((r) => r.method === "POST")).toBe(false);
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/branches`,
+        ]);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "required emulation: a bare --domains consuming --type fails the required-flag check, no POST",
     () => {
       const { layer, api } = setup({
@@ -364,7 +470,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live("required emulation: the required-flag error wins over a mutex violation", () => {
+  it.effect("required emulation: the required-flag error wins over a mutex violation", () => {
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -400,8 +506,8 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "workdir emulation: --workdir consuming --metadata-file fails at Go's chdir, never POSTs",
+  it.effect(
+    "workdir emulation: --workdir consuming --metadata-file fails at chdir, never POSTs",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -437,7 +543,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "workdir emulation: the chdir failure wins over required-type and mutex violations",
     () => {
       const { layer, api } = setup({
@@ -483,30 +589,30 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live("workdir emulation: an existing --workdir directory proceeds to the POST", () => {
+  it.effect("workdir emulation: an existing --workdir directory proceeds to the POST", () => {
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--workdir", tempRoot.current],
     });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       const req = api.requests.find((r) => r.method === "POST");
-      expect((req?.body as { type?: string })?.type).toBe("saml");
+      expect(req?.body).toHaveProperty("type", "saml");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("required emulation: a -t shorthand invocation POSTs normally", () => {
+  it.effect("required emulation: a -t shorthand invocation POSTs normally", () => {
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "-t", "saml"],
     });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       const req = api.requests.find((r) => r.method === "POST");
-      expect((req?.body as { type?: string })?.type).toBe("saml");
+      expect(req?.body).toHaveProperty("type", "saml");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "required emulation: -t saml plus a consumed --type still POSTs, like pflag (type IS changed)",
+  it.effect(
+    "required emulation: -t saml plus a consumed --type still POSTs (type IS changed)",
     () => {
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "-t", "saml", "--domains", "--type", "saml"],
@@ -515,14 +621,12 @@ describe("sso add integration", () => {
         yield* ssoAdd(defaultFlags);
         const req = api.requests.find((r) => r.method === "POST");
         expect(req).toBeDefined();
-        const body = req?.body as { type?: string; domains?: string[] };
-        expect(body?.type).toBe("saml");
-        expect(body?.domains).toEqual(["--type"]);
+        expect(req?.body).toMatchObject({ type: "saml", domains: ["--type"] });
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "required emulation: a bare --domains consuming -t fails the required-flag check, no POST",
     () => {
       const { layer, api } = setup({
@@ -541,8 +645,8 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
-    "invalid-value emulation: a later invalid --type occurrence fails with pflag's shorthand-labelled error, no POST",
+  it.effect(
+    "invalid-value emulation: a later invalid --type occurrence fails with the shorthand-labelled error, no POST",
     () => {
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--type", "bogus"],
@@ -562,8 +666,8 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
-    "invalid-value emulation: a later inline-empty --skip-url-validation= fails like pflag, no POST",
+  it.effect(
+    "invalid-value emulation: a later inline-empty --skip-url-validation= fails, no POST",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -590,7 +694,7 @@ describe("sso add integration", () => {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
-            'invalid argument "" for "--skip-url-validation" flag: strconv.ParseBool: parsing "": invalid syntax',
+            'invalid argument "" for "--skip-url-validation" flag: expected a boolean',
           );
         }
         expect(api.requests.length).toBe(0);
@@ -598,8 +702,8 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live(
-    "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag and skips validation",
+  it.effect(
+    "value reconciliation: repeated --skip-url-validation resolves last-wins and skips validation",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -620,15 +724,13 @@ describe("sso add integration", () => {
           metadataUrl: Option.some("http://insecure.example.com/md"),
         });
         const req = api.requests.find((r) => r.method === "POST");
-        expect((req?.body as { metadata_url?: string })?.metadata_url).toBe(
-          "http://insecure.example.com/md",
-        );
+        expect(req?.body).toHaveProperty("metadata_url", "http://insecure.example.com/md");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
-    "value reconciliation: repeated --name-id-format resolves last-wins like pflag in the POST body",
+  it.effect(
+    "value reconciliation: repeated --name-id-format resolves last-wins in the POST body",
     () => {
       const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient" as const;
       const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
@@ -648,29 +750,32 @@ describe("sso add integration", () => {
           nameIdFormat: Option.some(transient), // Effect's first-wins parse
         });
         const req = api.requests.find((r) => r.method === "POST");
-        expect((req?.body as { name_id_format?: string })?.name_id_format).toBe(persistent);
+        expect(req?.body).toHaveProperty("name_id_format", persistent);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("missing-value emulation: a trailing bare --domains fails pflag parse, no POST", () => {
-    const { layer, api } = setup({
-      cliArgs: ["sso", "add", "--type", "saml", "--domains"],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const dump = Cause.pretty(exit.cause);
-        expect(dump).toContain("SsoFlagNeedsArgumentError");
-        expect(dump).toContain("flag needs an argument: --domains");
-      }
-      expect(api.requests.length).toBe(0);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "missing-value emulation: a trailing bare --domains fails flag parsing, no POST",
+    () => {
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--domains"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = Cause.pretty(exit.cause);
+          expect(dump).toContain("SsoFlagNeedsArgumentError");
+          expect(dump).toContain("flag needs an argument: --domains");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live(
-    "reconciles a bare --domains consuming --metadata-file: POSTs the domain pflag saw, no metadata",
+  it.effect(
+    "reconciles a bare --domains consuming --metadata-file: POSTs the domain the scan saw, no metadata",
     () => {
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--domains", "--metadata-file", "x.xml"],
@@ -679,14 +784,13 @@ describe("sso add integration", () => {
         yield* ssoAdd({ ...defaultFlags, metadataFile: Option.some("x.xml") });
         const req = api.requests.find((r) => r.method === "POST");
         expect(req).toBeDefined();
-        const body = req?.body as { domains?: string[]; metadata_xml?: string };
-        expect(body?.domains).toEqual(["--metadata-file"]);
-        expect(body?.metadata_xml).toBeUndefined();
+        expect(req?.body).toHaveProperty("domains", ["--metadata-file"]);
+        expect(req?.body).not.toHaveProperty("metadata_xml");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "reconciles a bare --metadata-url consuming --name-id-format: validates the consumed token as the URL",
     () => {
       const { layer, api } = setup({
@@ -718,7 +822,7 @@ describe("sso add integration", () => {
     },
   );
 
-  it.live("falls back to the parsed domains when the scan's raw values are malformed CSV", () => {
+  it.effect("falls back to the parsed domains when the scan's raw values are malformed CSV", () => {
     // Unreachable via the real CLI; only tests that reconciliation doesn't crash on malformed input.
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--domains", '--x"y'],
@@ -726,11 +830,11 @@ describe("sso add integration", () => {
     return Effect.gen(function* () {
       yield* ssoAdd({ ...defaultFlags, domains: ["fallback.example.com"] });
       const req = api.requests.find((r) => r.method === "POST");
-      expect((req?.body as { domains?: string[] })?.domains).toEqual(["fallback.example.com"]);
+      expect(req?.body).toHaveProperty("domains", ["fallback.example.com"]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads metadata file and sends as metadata_xml", () =>
+  it.effect("reads metadata file and sends as metadata_xml", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -742,12 +846,12 @@ describe("sso add integration", () => {
       return yield* Effect.gen(function* () {
         yield* ssoAdd({ ...defaultFlags, metadataFile: Option.some(path) });
         const req = api.requests.find((r) => r.method === "POST");
-        expect((req?.body as { metadata_xml?: string })?.metadata_xml).toContain("<md/>");
+        expect(req?.body).toHaveProperty("metadata_xml", expect.stringContaining("<md/>"));
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects non-UTF8 metadata file", () =>
+  it.effect("rejects non-UTF8 metadata file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -765,7 +869,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("sends metadata_url verbatim when --skip-url-validation", () => {
+  it.effect("sends metadata_url verbatim when --skip-url-validation", () => {
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -784,13 +888,11 @@ describe("sso add integration", () => {
         skipUrlValidation: true,
       });
       const req = api.requests.find((r) => r.method === "POST");
-      expect((req?.body as { metadata_url?: string })?.metadata_url).toBe(
-        "https://idp.example.com/m",
-      );
+      expect(req?.body).toHaveProperty("metadata_url", "https://idp.example.com/m");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("validates HTTPS metadata URL when not skipped — success path", () => {
+  it.effect("validates HTTPS metadata URL when not skipped — success path", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("https://idp.example.com/m"),
@@ -803,13 +905,11 @@ describe("sso add integration", () => {
     return Effect.gen(function* () {
       yield* ssoAdd(flags);
       const req = api.requests.find((r) => r.method === "POST");
-      expect((req?.body as { metadata_url?: string })?.metadata_url).toBe(
-        "https://idp.example.com/m",
-      );
+      expect(req?.body).toHaveProperty("metadata_url", "https://idp.example.com/m");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects non-HTTPS metadata URL with Go-format message", () => {
+  it.effect("rejects non-HTTPS metadata URL with the formatted message", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("http://idp.example.com/m"),
@@ -832,7 +932,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads attribute mapping JSON and preserves user-defined `default` field", () =>
+  it.effect("reads attribute mapping JSON and preserves user-defined `default` field", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -843,24 +943,22 @@ describe("sso add integration", () => {
       return yield* Effect.gen(function* () {
         yield* ssoAdd(flags);
         const req = api.requests.find((r) => r.method === "POST");
-        const mapping = (req?.body as { attribute_mapping?: { keys: { a: { default: number } } } })
-          ?.attribute_mapping;
-        expect(mapping?.keys.a.default).toBe(3);
+        expect(req?.body).toHaveProperty("attribute_mapping.keys.a.default", 3);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("sends domains array verbatim", () => {
+  it.effect("sends domains array verbatim", () => {
     const flags = { ...defaultFlags, domains: ["a.com", "b.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
       yield* ssoAdd(flags);
       const req = api.requests.find((r) => r.method === "POST");
-      expect((req?.body as { domains?: string[] })?.domains).toEqual(["a.com", "b.com"]);
+      expect(req?.body).toHaveProperty("domains", ["a.com", "b.com"]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders single-provider markdown in text mode", () => {
+  it.effect("renders single-provider markdown in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -869,23 +967,34 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=env returns no output", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+  it.effect("--output=env returns no output", () => {
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("--output=json encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("TS --output-format=json emits success", () => {
+  it.effect("Go --output=json keeps response keys outside the OpenAPI schema", () => {
+    const { layer, out } = setup({
+      outputFlag: "json",
+      body: { ...RESPONSE_PROVIDER, resource_id: "res-123" },
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      expect(out.stdoutText).toMatch(/"resource_id":\s*"res-123"/);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
@@ -893,7 +1002,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports SAML-disabled error on 404", () => {
+  it.effect("reports SAML-disabled error on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoAdd(defaultFlags));
@@ -904,15 +1013,21 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
-    const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
+  it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
+    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoAdd(defaultFlags));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
+        `GET ${DEFAULT_API_URL}/v1/organizations/acme/entitlements`,
+      ]);
+      assertPermissionDrift({ command: "sso add", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports unexpected-status error on 500", () => {
+  it.effect("reports unexpected-status error on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoAdd(defaultFlags));
@@ -920,12 +1035,12 @@ describe("sso add integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoAddUnexpectedStatusError");
-        expect(dump).toContain("Unexpected error adding identity provider");
+        expect(dump).toContain('Unexpected error adding identity provider: {"error":"boom"}');
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry + linked-project cache on success and failure", () => {
+  it.effect("flushes telemetry + linked-project cache on success and failure", () => {
     const { layer, telemetry, cache } = setup({ status: 500, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoAdd(defaultFlags));
@@ -934,23 +1049,23 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("--output=yaml encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("--output=toml encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves attribute_mapping `default` field in POST body", () =>
+  it.effect("preserves attribute_mapping `default` field in POST body", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -961,14 +1076,12 @@ describe("sso add integration", () => {
       return yield* Effect.gen(function* () {
         yield* ssoAdd(flags);
         const req = api.requests.find((r) => r.method === "POST");
-        const mapping = (req?.body as { attribute_mapping?: { keys: { a: { default: number } } } })
-          ?.attribute_mapping;
-        expect(mapping?.keys.a.default).toBe(42);
+        expect(req?.body).toHaveProperty("attribute_mapping.keys.a.default", 42);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("metadata URL fetch failure surfaces as add metadata file error", () => {
+  it.effect("metadata URL fetch failure surfaces as add metadata file error", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("https://idp.example.com/m"),
@@ -993,7 +1106,7 @@ describe("sso add integration", () => {
   // `Response` constructor always emits valid UTF-8, so that case can't be
   // expressed here.
 
-  it.live("malformed metadata URL surfaces invalid URI error", () => {
+  it.effect("malformed metadata URL surfaces invalid URI error", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("::::not a url::::"),
@@ -1009,7 +1122,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("nameIdFormat is forwarded in the request body when provided", () => {
+  it.effect("nameIdFormat is forwarded in the request body when provided", () => {
     const flags = {
       ...defaultFlags,
       nameIdFormat: Option.some("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" as const),
@@ -1018,13 +1131,14 @@ describe("sso add integration", () => {
     return Effect.gen(function* () {
       yield* ssoAdd(flags);
       const req = api.requests.find((r) => r.method === "POST");
-      expect((req?.body as { name_id_format?: string })?.name_id_format).toBe(
+      expect(req?.body).toHaveProperty(
+        "name_id_format",
         "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
       );
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("attribute mapping parse failure surfaces a tagged error", () =>
+  it.effect("attribute mapping parse failure surfaces a tagged error", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -1042,6 +1156,52 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("an attribute mapping with an unknown key fails before the POST", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "unknown-key.json");
+      yield* fs.writeFileString(path, '{"keys":{"email":{"nam":"email"}}}');
+      const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
+      const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(ssoAdd(flags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = Cause.pretty(exit.cause);
+          expect(dump).toContain("SsoAddAttributeMappingFileError");
+          expect(dump).toContain("failed to parse attribute mapping: Expected no excess property");
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("a transport failure surfaces as a network error naming the operation", () => {
+    const { layer } = setup({ network: "fail" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoAddNetworkError");
+        expect(dump).toContain("failed to create sso provider:");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a 201 body that fails the provider schema surfaces as an API response error", () => {
+    const { layer } = setup({ body: { saml: {} } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const classified = classifyCliCauseActionability(exit.cause);
+        expect(classified.error_fingerprint).toBe("tag:SsoAddNetworkError:api_response");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
   const writeProfileYaml = Effect.fnUntraced(function* (name: string, apiUrl: string) {
     const fs = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -1058,10 +1218,7 @@ describe("sso add integration", () => {
     return path;
   });
 
-  const withProfileEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-    withEnvVar("SUPABASE_PROFILE", value, body);
-
-  it.live(
+  it.effect(
     "profile emulation: --domains consuming --profile POSTs to the env profile's host, not the parsed file's",
     () =>
       Effect.gen(function* () {
@@ -1070,6 +1227,7 @@ describe("sso add integration", () => {
         const { layer, api, cache } = setup({
           cliArgs: ["sso", "add", "--type", "saml", "--domains", "--profile", alternate],
           profileFlag: alternate,
+          profileEnv: envProfile,
         });
         return yield* Effect.gen(function* () {
           yield* ssoAdd(defaultFlags);
@@ -1078,15 +1236,13 @@ describe("sso add integration", () => {
           expect(posts[0]?.url).toBe(
             `http://reconciled.example/v1/projects/${VALID_REF}/config/auth/sso/providers`,
           );
-          expect((posts[0]?.body as { domains?: ReadonlyArray<string> })?.domains).toEqual([
-            "--profile",
-          ]);
+          expect(posts[0]?.body).toHaveProperty("domains", ["--profile"]);
           expect(cache.cachedApiUrl).toBe("http://reconciled.example");
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(envProfile, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "profile emulation: --profile consuming a flag-shaped token fails LoadProfile, never POSTs",
     () => {
       const { layer, api } = setup({
@@ -1111,14 +1267,14 @@ describe("sso add integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("ProfileLoadError");
-          expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
+          expect(dump).toContain(`failed to read profile: unsupported config file type ""`);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("profile emulation: repeated --profile resolves last-wins, matching pflag", () =>
+  it.effect("profile emulation: repeated --profile resolves last-wins", () =>
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first.yml", "http://first.example");
       const second = yield* writeProfileYaml("second.yml", "http://second.example");
@@ -1133,11 +1289,11 @@ describe("sso add integration", () => {
         expect(posts[0]?.url).toBe(
           `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "profile emulation: the LoadProfile failure wins over the workdir, required-type, and mutex checks",
     () => {
       const { layer, api } = setup({
@@ -1182,11 +1338,11 @@ describe("sso add integration", () => {
           ).toBe(false);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live(
+  it.effect(
     "profile emulation: an agreeing --profile keeps the config layer's resolution (no override)",
     () =>
       Effect.gen(function* () {
@@ -1202,7 +1358,26 @@ describe("sso add integration", () => {
           expect(posts[0]?.url).toBe(
             `${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
           );
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
+});
+
+describeHostedConsent("sso add", {
+  api: { response: { status: 201, body: RESPONSE_PROVIDER } },
+  invoke: () => ({
+    run: ssoAdd({ ...defaultFlags, remote: Option.some({ _tag: "Ref", ref: VALID_REF }) }).pipe(
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["sso", "add", "--type", "saml", `--remote=${VALID_REF}`]),
+        }),
+      ),
+    ),
+  }),
+});
+
+describeHostedTargetSelection("sso add", {
+  operands: ["--type", "saml"],
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, RESPONSE_PROVIDER)),
+  run: (flags) => ssoAdd({ ...defaultFlags, ...flags }),
 });

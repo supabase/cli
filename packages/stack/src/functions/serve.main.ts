@@ -15,6 +15,7 @@ interface DenoErrorConstructors {
   readonly InvalidWorkerCreation?: abstract new (...args: never[]) => Error;
   readonly InvalidWorkerResponse?: abstract new (...args: never[]) => Error;
   readonly WorkerRequestCancelled?: abstract new (...args: never[]) => Error;
+  readonly WorkerAlreadyRetired?: abstract new (...args: never[]) => Error;
 }
 interface DenoApi {
   readonly env: { get(name: string): string | undefined; toObject(): Record<string, string> };
@@ -59,6 +60,7 @@ declare const EdgeRuntime: EdgeRuntimeApi;
 import { STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 import {
   createWorkerServicePathResolver,
+  isDenoConfigPath,
   packageJsonContainedFor,
   resolveFunctionConfig,
   type FunctionConfig,
@@ -73,17 +75,18 @@ const bootstrapConfig = Effect.runSync(
   Effect.gen(function* () {
     const read = <A>(config: Config.Config<A>) => config.pipe(Config.option);
     return {
-      hostPort: yield* read(Config.string("SUPABASE_INTERNAL_HOST_PORT")),
-      functionsRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
-      filesRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
-      jwtSecret: yield* read(Config.string("SUPABASE_INTERNAL_JWT_SECRET")),
-      supabaseUrl: yield* read(Config.string("SUPABASE_URL")),
-      wallclock: yield* read(Config.string("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC")),
-      publishableKey: yield* read(Config.string("SUPABASE_INTERNAL_PUBLISHABLE_KEY")),
-      secretKey: yield* read(Config.string("SUPABASE_INTERNAL_SECRET_KEY")),
-      functionsConfig: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_CONFIG")),
-      debug: yield* read(Config.string("SUPABASE_INTERNAL_DEBUG")),
-      jwks: yield* read(Config.string("SUPABASE_JWKS")),
+      hostPort: yield* read(Config.String("SUPABASE_INTERNAL_HOST_PORT")),
+      hostUrl: yield* read(Config.String("SUPABASE_INTERNAL_HOST_URL")),
+      functionsRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
+      filesRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
+      jwtSecret: yield* read(Config.String("SUPABASE_INTERNAL_JWT_SECRET")),
+      supabaseUrl: yield* read(Config.String("SUPABASE_URL")),
+      wallclock: yield* read(Config.String("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC")),
+      publishableKey: yield* read(Config.String("SUPABASE_INTERNAL_PUBLISHABLE_KEY")),
+      secretKey: yield* read(Config.String("SUPABASE_INTERNAL_SECRET_KEY")),
+      functionsConfig: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_CONFIG")),
+      debug: yield* read(Config.String("SUPABASE_INTERNAL_DEBUG")),
+      jwks: yield* read(Config.String("SUPABASE_JWKS")),
     };
   }).pipe(
     Effect.provideService(
@@ -95,6 +98,8 @@ const bootstrapConfig = Effect.runSync(
 const valueOr = (value: Option.Option<string>, fallback = "") =>
   Option.getOrElse(value, () => fallback);
 const HOST_PORT = valueOr(bootstrapConfig.hostPort, "8081");
+/* The host's HTTPS API origin when the stack serves TLS, otherwise plain loopback on its port. */
+const HOST_URL = valueOr(bootstrapConfig.hostUrl, `http://127.0.0.1:${HOST_PORT}`);
 const FUNCTIONS_ROOT = valueOr(bootstrapConfig.functionsRoot);
 const JWT_SECRET = valueOr(bootstrapConfig.jwtSecret);
 const SUPABASE_URL = valueOr(bootstrapConfig.supabaseUrl, "http://127.0.0.1:54321");
@@ -125,6 +130,10 @@ const DENO_SB_ERROR_MAP = new Map([
   [Deno.errors.InvalidWorkerResponse, SB_SPECIFIC_ERROR_CODE.InvalidWorkerResponse],
   [Deno.errors.WorkerRequestCancelled, SB_SPECIFIC_ERROR_CODE.WorkerLimit],
 ]);
+const isWorkerAlreadyRetired = (error: unknown) => {
+  const WorkerAlreadyRetired = Deno.errors.WorkerAlreadyRetired;
+  return WorkerAlreadyRetired !== undefined && error instanceof WorkerAlreadyRetired;
+};
 
 export enum RequestErrors {
   MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
@@ -202,10 +211,17 @@ const getResponse = (
   return new Response(body, { status, headers });
 };
 
+/** Lets browsers read router errors on requests that skip the preflight; preflights still fail. */
+const ERROR_CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey",
+  "Access-Control-Expose-Headers": "sb-error-code",
+};
+
 const getAuthErrorResponse = ({ code, message = "Invalid JWT" }: AuthFailure) =>
   getResponse({ code, message, msg: message }, STATUS_CODE.Unauthorized, {
+    ...ERROR_CORS_HEADERS,
     "sb-error-code": code,
-    "Access-Control-Expose-Headers": "sb-error-code",
   });
 
 const getWorkerErrorResponse = (error: unknown) => {
@@ -217,6 +233,7 @@ const getWorkerErrorResponse = (error: unknown) => {
           message: SB_SPECIFIC_ERROR_REASON[sbCode],
         },
         sbCode,
+        ERROR_CORS_HEADERS,
       );
     }
   }
@@ -226,6 +243,7 @@ const getWorkerErrorResponse = (error: unknown) => {
       message: "Request failed due to an internal server error",
     },
     STATUS_CODE.InternalServerError,
+    ERROR_CORS_HEADERS,
   );
 };
 
@@ -345,6 +363,20 @@ const functionConfig = (slug: string): Effect.Effect<FunctionConfig | undefined>
     overrides: configured,
     fs: denoFileSystem,
   });
+const warnedPlainDenoConfigs = new Set<string>();
+// Edge Runtime has no user-worker option to load a Deno config from an arbitrary path.
+const warnPlainDenoConfig = (slug: string, config: FunctionConfig): Effect.Effect<void> =>
+  config.importMapDiscoveredByRuntime ||
+  !isDenoConfigPath(config.importMapPath) ||
+  warnedPlainDenoConfigs.has(slug)
+    ? Effect.void
+    : Effect.sync(() => warnedPlainDenoConfigs.add(slug)).pipe(
+        Effect.andThen(
+          Console.warn(
+            `[functions] ${slug}: ${config.importMapPath} is not the nearest Deno config of ${config.entrypointPath}, so Edge Runtime loads it as a plain import map without comments or jsr:/npm: subpath imports. Move it next to the entrypoint or into a parent directory without a closer deno.json(c).`,
+          ),
+        ),
+      );
 const workerServicePath = createWorkerServicePathResolver(() =>
   Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
 );
@@ -358,12 +390,31 @@ const shouldUsePackageJsonDiscovery = (config: FunctionConfig): Effect.Effect<bo
         fs: denoFileSystem,
       });
 
-export function prepareUserRequest(request: Request): Request {
+interface RequestBodyReader {
+  read(): Promise<{ done: true; value?: undefined } | { done: false; value: Uint8Array }>;
+}
+const requestBodyChunks = (body: RequestBodyReader) =>
+  Stream.fromEffectRepeat(
+    foreign(() => body.read()).pipe(
+      Effect.flatMap((chunk) => (chunk.done ? Cause.done() : Effect.succeed(chunk.value))),
+    ),
+  );
+const drainRequestBody = (body: RequestBodyReader | undefined) =>
+  body === undefined ? Effect.void : Stream.runDrain(requestBodyChunks(body)).pipe(Effect.ignore);
+
+export function prepareUserRequest(request: Request, body: RequestBodyReader | undefined): Request {
   const url = new URL(request.url);
   const forwardedHost = request.headers.get("x-forwarded-host");
   if (forwardedHost) url.hostname = forwardedHost;
-  // Cloning tees the body, so an unread branch can stall early worker responses.
-  const forwarded = new Request(url.href, request);
+  // The runtime closes a connection whose request body is unread, which gateways report as 502, so
+  // the worker gets its own stream and cancelling it leaves the body for `drainRequestBody`.
+  const forwarded = new Request(url.href, {
+    method: request.method,
+    headers: request.headers,
+    body: body === undefined ? null : Stream.toReadableStream(requestBodyChunks(body)),
+    signal: request.signal,
+    duplex: "half",
+  });
   forwarded.headers.delete("sb-api-key");
   EdgeRuntime.applySupabaseTag(request, forwarded);
   return forwarded;
@@ -373,14 +424,23 @@ Deno.serve({
   handler: (request: Request) =>
     Effect.runPromiseExit(
       Effect.gen(function* () {
+        // `worker.fetch` settles its body pipe before resolving, so the drain only reads what the
+        // worker abandoned.
+        const body = yield* Effect.acquireRelease(
+          Effect.sync(() => request.body?.getReader()),
+          (body) => Effect.interruptible(drainRequestBody(body)),
+        );
         const { pathname } = new URL(request.url);
         if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
         if (pathname === "/_internal/metric")
           return Response.json(yield* foreign(() => EdgeRuntime.getRuntimeMetrics()));
         const functionName = pathname.split("/")[1];
-        if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (!functionName)
+          return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
         const config = yield* functionConfig(functionName);
-        if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (!config)
+          return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
+        yield* warnPlainDenoConfig(functionName, config);
         if (request.method !== "OPTIONS" && config.verifyJWT) {
           const token = getAuthToken(request);
           if (typeof token !== "string") return getAuthErrorResponse(token);
@@ -414,7 +474,9 @@ Deno.serve({
               workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
                 ? WALLCLOCK_LIMIT_SEC * 1000
                 : 400_000,
-              noModuleCache: true,
+              // Edge Runtime's reload mode re-extracts npm packages in place in the shared Deno cache,
+              // where concurrent worker boots race on the same files.
+              noModuleCache: false,
               noNpm,
               envVars,
               forceCreate: true,
@@ -425,21 +487,29 @@ Deno.serve({
               maybeEntrypoint: toFileUrl(config.entrypointPath).href,
               context: {
                 useReadSyncFileAPI: true,
-                ...(config.importMapPath === "" ? {} : { importMapPath: config.importMapPath }),
+                ...(config.importMapPath === "" || config.importMapDiscoveredByRuntime
+                  ? {}
+                  : { importMapPath: config.importMapPath }),
               },
               staticPatterns: config.staticFiles,
             }),
           );
-          return yield* foreign(() => worker.fetch(prepareUserRequest(request)));
+          return yield* foreign(() => worker.fetch(prepareUserRequest(request, body)));
         });
         return yield* workerRequest.pipe(
+          Effect.retry({
+            times: 1,
+            // A retired worker rejects the request before running it, so a bodyless request is safe
+            // to replay; a forwarded body cannot be replayed.
+            while: ({ cause }) => request.body === null && isWorkerAlreadyRetired(cause),
+          }),
           Effect.catchTag("BootstrapOperationError", ({ cause }) =>
             Console.error("[functions] worker error", cause).pipe(
               Effect.andThen(Effect.succeed(getWorkerErrorResponse(cause))),
             ),
           ),
         );
-      }),
+      }).pipe(Effect.scoped),
       { signal: request.signal },
     ).then((exit) => {
       if (Exit.isSuccess(exit)) return exit.value;
@@ -449,12 +519,10 @@ Deno.serve({
     }),
   onListen: () => {
     const names = Object.keys(configured);
-    const examples = names
-      .slice(0, 5)
-      .map((name) => ` - http://127.0.0.1:${HOST_PORT}/functions/v1/${name}`);
+    const examples = names.slice(0, 5).map((name) => ` - ${HOST_URL}/functions/v1/${name}`);
     Effect.runSync(
       Console.log(
-        `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
+        `Serving functions on ${HOST_URL}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
       ),
     );
   },
@@ -465,5 +533,6 @@ Deno.serve({
         message: "Request failed due to an internal server error",
       },
       500,
+      ERROR_CORS_HEADERS,
     ),
 });

@@ -1,4 +1,4 @@
-import { goUrlParse } from "./storage-url.ts";
+import { parseUrl } from "./storage-url.ts";
 
 /**
  * Derives the local API URL: an explicit `api.external_url` wins, otherwise
@@ -34,6 +34,6 @@ export function resolveStudioApiUrl(
   hostname: string,
   apiExternalUrl: string,
 ): string {
-  const { host } = goUrlParse(rawApiUrl);
+  const { host } = parseUrl(rawApiUrl);
   return host === "" || host === hostname ? apiExternalUrl : rawApiUrl;
 }

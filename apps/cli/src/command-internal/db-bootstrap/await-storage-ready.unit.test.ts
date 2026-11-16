@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import { HealthCheckTimeoutError } from "./health-check.ts";
@@ -19,7 +19,7 @@ function mockSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       const result = handler(args);
 
@@ -149,7 +149,7 @@ describe("awaitStorageReady", () => {
   );
 
   it.effect(
-    "is still retrying after 29 seconds, but fails once the 30th second is exhausted — pins Go's hardcoded 30s constant",
+    "is still retrying after 29 seconds, but fails once the 30th second is exhausted — pins the hardcoded 30s timeout",
     () =>
       Effect.gen(function* () {
         const mock = mockSpawner((args) => {

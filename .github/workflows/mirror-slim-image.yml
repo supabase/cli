@@ -133,6 +133,9 @@ jobs:
         env:
           REFERENCE: ${{ steps.validate.outputs.destination }}
           DIGEST: ${{ steps.validate.outputs.digest }}
+          # ECR Public can serve the tag's previous digest (or a 404) for ~30 s after the push;
+          # 13 reads 10 s apart allow ~2 min.
+          ATTEMPTS: "13"
         run: bun .github/scripts/mirror-slim-image.ts verify-digest
 
       - name: Mirror native artifacts

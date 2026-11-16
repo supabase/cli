@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { functionsListCommand } from "./list/list.command.ts";
 import { functionsDeleteCommand } from "./delete/delete.command.ts";
 import { functionsDownloadCommand } from "./download/download.command.ts";

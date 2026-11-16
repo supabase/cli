@@ -15,8 +15,6 @@ export const FEEDBACK_NOT_FOUND_MESSAGE =
   "from the linked project directory (or pass --project-ref <ref>) and log in as the " +
   "account that submitted it.";
 
-export const FEEDBACK_DELETE_CANCELLED_MESSAGE = "Deletion cancelled.";
-
 /** The token argument is not a UUID (checked client-side before any request). */
 export class FeedbackInvalidTokenError extends Data.TaggedError("FeedbackInvalidTokenError")<{
   readonly message: string;
@@ -37,14 +35,5 @@ export class FeedbackNotFoundError extends Data.TaggedError("FeedbackNotFoundErr
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
-  }
-}
-
-/** The user declined the confirmation prompt. */
-export class FeedbackDeleteCancelledError extends Data.TaggedError("FeedbackDeleteCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }

@@ -14,9 +14,9 @@ export const settleFeedbackTask =
     effect.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
-          ? task.clear()
+          ? task.clear
           : Cause.hasInterruptsOnly(exit.cause)
-            ? task.clear()
+            ? task.clear
             : task.fail(),
       ),
     );

@@ -1,18 +1,20 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { browserLayer } from "../../shared/runtime/browser.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { issueBug, issueDocs, issueFeature } from "./issue.handler.ts";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 
-const issueNoBrowserFlag = Flag.boolean("no-browser").pipe(
+const issueNoBrowserFlag = Flag.Boolean("no-browser").pipe(
   Flag.withDescription("Print the issue form URL without opening a browser."),
   Flag.withDefault(false),
 );
 
 const issueOptionalTextFlag = (name: string, description: string) =>
-  Flag.string(name).pipe(Flag.withDescription(description), Flag.optional);
+  Flag.String(name).pipe(Flag.withDescription(description), Flag.optional);
 
 const issueCommonContextFlag = issueOptionalTextFlag(
   "additional-context",
@@ -27,7 +29,7 @@ const issueBugConfig = {
   reproduce: issueOptionalTextFlag("reproduce", "Steps to reproduce."),
   crashReportId: issueOptionalTextFlag(
     "crash-report-id",
-    "Crash report ID printed by --create-ticket.",
+    "Crash report or support ticket ID, if you have one.",
   ),
   dockerServices: issueOptionalTextFlag(
     "docker-services",
@@ -38,7 +40,7 @@ const issueBugConfig = {
 } as const;
 
 const issueFeatureConfig = {
-  existingIssues: Flag.boolean("existing-issues").pipe(
+  existingIssues: Flag.Boolean("existing-issues").pipe(
     Flag.withDescription("Prefill the existing issues checklist."),
     Flag.withDefault(false),
   ),
@@ -77,11 +79,26 @@ const issueBugCommand = Command.make("bug", issueBugConfig).pipe(
       description: "Print a prefilled issue URL with a crash report ID",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "area",
+      "command",
+      "actual-output",
+      "expected-behavior",
+      "reproduce",
+      "crash-report-id",
+      "docker-services",
+      "additional-context",
+      "no-browser",
+    ],
+  }),
   Command.withHandler((flags) =>
     issueBug(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["issue", "bug"])),
   Command.provide(browserLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );
 
 const issueFeatureCommand = Command.make("feature", issueFeatureConfig).pipe(
@@ -94,11 +111,24 @@ const issueFeatureCommand = Command.make("feature", issueFeatureConfig).pipe(
       description: "Open a prefilled feature request",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "existing-issues",
+      "area",
+      "problem",
+      "proposed-solution",
+      "alternatives",
+      "additional-context",
+      "no-browser",
+    ],
+  }),
   Command.withHandler((flags) =>
     issueFeature(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["issue", "feature"])),
   Command.provide(browserLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );
 
 const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
@@ -111,11 +141,23 @@ const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
       description: "Open a prefilled documentation issue",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "link",
+      "issue-type",
+      "problem",
+      "improvement",
+      "additional-context",
+      "no-browser",
+    ],
+  }),
   Command.withHandler((flags) =>
     issueDocs(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["issue", "docs"])),
   Command.provide(browserLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );
 
 export const issueCommand = Command.make("issue").pipe(

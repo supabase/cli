@@ -24,7 +24,7 @@ function entry(overrides: Record<string, unknown> = {}) {
 const headerPlus = (ddl: string) => `${PGADMIN_DIFF_HEADER}\n\n${ddl}\n`;
 
 describe("processPgAdminDiffOutput", () => {
-  describe("filtering rules (container_output.go:154-195)", () => {
+  describe("filtering rules", () => {
     it("keeps DDL from every whitelisted entry type, joined under the exact 4-line pgAdmin header", () => {
       const types = ["extension", "function", "mview", "table", "trigger_function", "type", "view"];
       const entries = types.map((type, i) => entry({ type, diff_ddl: `DDL_${i};` }));
@@ -43,7 +43,7 @@ describe("processPgAdminDiffOutput", () => {
       expect(result).toEqual(Result.succeed(""));
     });
 
-    it("skips an entry whose diff_ddl is only whitespace after Go's TrimSpace", () => {
+    it("skips an entry whose diff_ddl is only whitespace after trimming", () => {
       const result = processPgAdminDiffOutput(JSON.stringify([entry({ diff_ddl: "   \n\t  " })]));
       expect(result).toEqual(Result.succeed(""));
     });
@@ -106,7 +106,7 @@ describe("processPgAdminDiffOutput", () => {
       expect(result).toEqual(Result.succeed(headerPlus("ALTER TABLE test;")));
     });
 
-    it("trims each kept DDL with Go's TrimSpace before joining", () => {
+    it("trims each kept DDL before joining", () => {
       const result = processPgAdminDiffOutput(
         JSON.stringify([entry({ diff_ddl: "  ALTER TABLE test;  \n" })]),
       );
@@ -114,7 +114,7 @@ describe("processPgAdminDiffOutput", () => {
     });
   });
 
-  describe("empty / DESKTOP-mode-prefix handling (container_output.go:141-147)", () => {
+  describe("empty / DESKTOP-mode-prefix handling", () => {
     it("returns an empty string for an entirely empty buffer", () => {
       expect(processPgAdminDiffOutput("")).toEqual(Result.succeed(""));
     });
@@ -130,14 +130,14 @@ describe("processPgAdminDiffOutput", () => {
       expect(processPgAdminDiffOutput(PGADMIN_DESKTOP_NOTE_PREFIX)).toEqual(Result.succeed(""));
     });
 
-    it("does not trim the DESKTOP-mode NOTE prefix when it isn't at the very front (Go's bytes.TrimPrefix is front-anchored only)", () => {
+    it("does not trim the DESKTOP-mode NOTE prefix when it isn't at the very front (the prefix is front-anchored only)", () => {
       const payload = `[]${PGADMIN_DESKTOP_NOTE_PREFIX}`;
       expect(Result.isFailure(processPgAdminDiffOutput(payload))).toBe(true);
     });
   });
 
-  describe("Go encoding/json acceptance rules", () => {
-    it("treats a top-level JSON null the same as Go's nil-slice no-op", () => {
+  describe("JSON acceptance rules", () => {
+    it("treats a top-level JSON null as a no-op", () => {
       expect(processPgAdminDiffOutput("null")).toEqual(Result.succeed(""));
     });
 
@@ -145,7 +145,7 @@ describe("processPgAdminDiffOutput", () => {
       expect(processPgAdminDiffOutput("[]")).toEqual(Result.succeed(""));
     });
 
-    it("accepts a null array element (Go unmarshals it into the zero-valued struct) and skips it", () => {
+    it("accepts a null array element (decoded as the zero-valued struct) and skips it", () => {
       expect(processPgAdminDiffOutput("[null]")).toEqual(Result.succeed(""));
     });
 
@@ -306,7 +306,7 @@ describe("processPgAdminDiffProgress", () => {
     expect(processPgAdminDiffProgress(input)).toEqual(["Diffing 1"]);
   });
 
-  it("matches across embedded \\r within a single line (the `s`/dotAll flag, Go's RE2 . matches \\r)", () => {
+  it("matches across embedded \\r within a single line (the `s`/dotAll flag, so `.` matches \\r)", () => {
     const input = "Comparing 10%\rComparing 20%\rComparing 30%";
     expect(processPgAdminDiffProgress(input)).toEqual(["Comparing 10%\rComparing 20%\rComparing "]);
   });

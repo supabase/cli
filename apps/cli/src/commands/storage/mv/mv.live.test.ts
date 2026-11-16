@@ -28,10 +28,24 @@ test("moves an uploaded object to a new path", ({ cli, cliEffect, project, works
           env: { SUPABASE_DB_PASSWORD: project.dbPassword },
         });
         requireLiveSuccess(linked, "link setup for storage mv");
-        const uploaded = yield* cliEffect(["storage", "cp", local, source, ...storageLiveFlags]);
+        const uploaded = yield* cliEffect([
+          "storage",
+          "cp",
+          local,
+          source,
+          "--yes",
+          ...storageLiveFlags,
+        ]);
         requireLiveSuccess(uploaded, "storage cp setup for storage mv");
 
-        const moved = yield* cliEffect(["storage", "mv", source, destination, ...storageLiveFlags]);
+        const moved = yield* cliEffect([
+          "storage",
+          "mv",
+          source,
+          destination,
+          "--yes",
+          ...storageLiveFlags,
+        ]);
         expect(moved.exitCode, moved.stderr).toBe(0);
         expect(moved.stderr, moved.stderr).toContain("Moving object:");
 

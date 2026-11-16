@@ -1,8 +1,9 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option, Redacted, Ref, Stream } from "effect";
-import { postgres, type ServiceCreation } from "@supabase/stack/effect";
+import { type ServiceCreation } from "@supabase/stack/effect";
+import { postgres } from "@supabase/stack/commands";
 
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { streamPgDumpWithClient } from "./pg-dump.run.ts";
@@ -11,9 +12,11 @@ import { DockerRun } from "./docker-run.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
+import { selection } from "../../tests/helpers/pins.ts";
 
 const runtimes = ["native", "docker"] as const;
-const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+const liveStackApi = stackApiLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 
 describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
   for (const runtime of runtimes) {
@@ -29,16 +32,11 @@ describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
             cacheRoot: `${root}/cache`,
             runtime,
           });
-          yield* Effect.addFinalizer(() =>
-            stack.destroy.pipe(
-              Effect.tapError((error) => Effect.logError(`Failed to destroy test stack: ${error}`)),
-              Effect.ignore,
-            ),
-          );
+          yield* Effect.addFinalizer(() => destroyTestStack(stack));
           const creation: Extract<ServiceCreation, { service: "database" }> = {
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("cli-dump-password"),
               jwtSecret: Redacted.make("cli-dump-jwt-secret-at-least-thirty-two-characters"),
               jwtExpiry: 3600,
@@ -62,17 +60,20 @@ describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
             PGPASSWORD: decodeURIComponent(connection.password),
             PGDATABASE: connection.pathname.slice(1),
           };
-          const setupResult = yield* stack.tools.run(postgres.psql({ major: 17 }), {
-            args: ["-X", "-v", "ON_ERROR_STOP=1"],
-            env,
-            stdin: Stream.make(
-              new TextEncoder().encode(
-                "CREATE TABLE public.cli_dump_story(value text); INSERT INTO public.cli_dump_story VALUES ('runtime-row');",
+          const setupResult = yield* stack.commands.run(
+            postgres.psql({ pin: selection.database }),
+            {
+              args: ["-X", "-v", "ON_ERROR_STOP=1"],
+              env,
+              stdin: Stream.make(
+                new TextEncoder().encode(
+                  "CREATE TABLE public.cli_dump_story(value text); INSERT INTO public.cli_dump_story VALUES ('runtime-row');",
+                ),
               ),
-            ),
-            stdout: (bytes) => Ref.update(output, (chunks) => [...chunks, bytes]),
-            stderr: (bytes) => Ref.update(stderr, (chunks) => [...chunks, bytes]),
-          });
+              stdout: (bytes) => Ref.update(output, (chunks) => [...chunks, bytes]),
+              stderr: (bytes) => Ref.update(stderr, (chunks) => [...chunks, bytes]),
+            },
+          );
           expect(setupResult.exitCode).toBe(0);
           const dumpEnv = {
             ...env,
@@ -84,7 +85,7 @@ describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
             script: "pg_dump --data-only",
             env: dumpEnv,
             onStdout: (bytes) => Ref.update(chunks, (current) => [...current, bytes]),
-            client: { kind: "stack", stack, command: "pg_dump", major: 17 },
+            client: { kind: "stack", stack, command: "pg_dump", pin: selection.database },
           });
           expect(result.exitCode).toBe(0);
           const dump = new TextDecoder().decode(

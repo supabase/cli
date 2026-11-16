@@ -1,6 +1,6 @@
 # 0004. CLI Design Goals & Development Workflows
 
-**Status**: accepted
+**Status**: accepted, amended by [0033](0033-target-selection-and-hosted-mutation-consent.md)
 **Date**: 2026-02-10
 
 ## Problem Statement
@@ -33,7 +33,7 @@ Services run locally via a unified process manager that manages both embedded bi
 - **For LLMs**: Same subcommands, pointed at local services.
 - **Goal**: Full local development environment with explicit `supabase push` / `supabase pull` to sync with the platform.
 
-The workflow is selected via `supabase dev --target <remote|local>` (or equivalent config). The subcommands underneath are identical — only the target changes.
+The workflow is selected via `supabase dev --target <remote|local>` (or equivalent config). The subcommands underneath are identical — only the target changes. The workspace `target` key (`local` or `remote`, [ADR 0033](0033-target-selection-and-hosted-mutation-consent.md)) is that config: database commands that can run either way follow it.
 
 ### Two Audiences
 
@@ -81,7 +81,9 @@ Starting from `supabase dev` and working outward, these are the commands to buil
 
 - **Remote-first** never touches production. All changes target a branch. Merging a branch to production is a platform action, not a CLI action.
 - **Local-first** is fully isolated. Local services have no connection to production data.
-- **Production access** (if ever needed) requires explicit confirmation — never implicit, never default.
+- The CLI reaches a hosted database or project only through explicit intent: a linked checkout, a project ref, or a `--db-url`.
+- Database operations that can run locally target the local stack unless the invocation or the workspace `target` selects remote.
+- Every hosted mutation requires confirmation. When not interactive, it requires `--yes`.
 
 ## Rationale
 

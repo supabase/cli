@@ -1,6 +1,9 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -10,17 +13,18 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { genBearerJwt } from "./bearer-jwt.handler.ts";
 import { parseBearerJwtExp, parseBearerJwtValidFor } from "./bearer-jwt.flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // `--role` stays optional at parse time so a missing value is enforced in
   // the handler instead, after telemetry is wired up — see
   // `GenBearerJwtRoleRequiredError`.
-  role: Flag.string("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
+  role: Flag.String("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
   // The displayed default is cosmetically "anonymous" but the real default
   // stays "" — an omitted `--sub` never puts a `sub` claim in the token at
   // all.
-  sub: Flag.string("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
-  exp: Flag.string("exp").pipe(
+  sub: Flag.String("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
+  exp: Flag.String("exp").pipe(
     Flag.withDescription("Expiry timestamp for this token."),
     Flag.mapTryCatch(
       (value) => parseBearerJwtExp(value),
@@ -28,7 +32,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  validFor: Flag.string("valid-for").pipe(
+  validFor: Flag.String("valid-for").pipe(
     Flag.withDescription("Validity duration for this token."),
     Flag.withDefault("30m"),
     Flag.mapTryCatch(
@@ -36,7 +40,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  payload: Flag.string("payload").pipe(
+  payload: Flag.String("payload").pipe(
     Flag.withDescription("Custom claims in JSON format."),
     Flag.withDefault("{}"),
   ),
@@ -57,8 +61,15 @@ const genBearerJwtRuntimeLayer = Layer.mergeAll(
 export const genBearerJwtCommand = Command.make("bearer-jwt", config).pipe(
   Command.withDescription("Generate a Bearer Auth JWT for accessing Data API"),
   Command.withShortDescription("Generate a Bearer Auth JWT for accessing Data API"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["role", "sub", "exp", "valid-for", "payload"],
+  }),
   Command.withHandler((flags) =>
     genBearerJwt(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(genBearerJwtRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

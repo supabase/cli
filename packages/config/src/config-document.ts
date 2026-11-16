@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import type { ConfigFormat } from "./config-format.ts";
+import { writeProviderSignupPreferredKeys } from "./lib/provider-signup.ts";
 import { getDefaultCliConfig, setOwnProperty, subtractValue } from "./sparse.ts";
 import type { CliProjectEnvironment } from "./project.ts";
 
@@ -26,6 +27,8 @@ export interface LoadedCliConfig {
   readonly config: CliConfig;
   readonly schemaRef?: string;
   readonly ignoredPaths: ReadonlyArray<string>;
+  /** Dotted paths of keys written with a deprecated spelling, e.g. `auth.email.enable_signup` or `remotes.staging.auth.sms.enable_signup`. */
+  readonly deprecatedPaths: ReadonlyArray<string>;
   /**
    * The raw, post-`env()`-interpolation document `config` was decoded from, with any matching
    * `[remotes.*]` override merged in. Lets callers inspect key presence that the decoded
@@ -34,7 +37,8 @@ export interface LoadedCliConfig {
    */
   readonly document?: Record<string, unknown>;
   /**
-   * The raw document as parsed from disk: pre-`env()`-interpolation, pre-`[remotes.*]`-merge
+   * The raw document as parsed from disk, minus an empty `experimental.orioledb_version`:
+   * pre-`env()`-interpolation, pre-`[remotes.*]`-merge
    * (unlike {@link document}, whose `remotes` key has already been merged/stripped). Callers
    * matching a `[remotes.*]` block by its literal `project_id` must use this, not `document`.
    * Present whenever the file parsed to an object.
@@ -59,13 +63,6 @@ export interface LoadedCliConfig {
    * `undefined` when no `projectRef` was requested or none matched.
    */
   readonly appliedRemote?: string;
-  /**
-   * The `auth.external.{linkedin,slack}` sub-objects stripped from {@link document} before it
-   * was returned, keyed by provider id (empty when neither was present). A caller scanning
-   * `document` on its own may need to fold this back in, since `document` alone under-reports
-   * what was originally there. Present whenever {@link document} is.
-   */
-  readonly removedDeprecatedExternalProviders?: Readonly<Record<string, unknown>>;
   /** The source that supplied each explicitly configured effective leaf value. */
   readonly valueOrigins?: ReadonlyArray<CliConfigValueOrigin>;
 }
@@ -84,7 +81,7 @@ export const cliConfigValueSourceAt = (
  * When `projectRef` is set, the matching `[remotes.<name>]` block is merged over the base
  * config before decode; omitting it loads the base config verbatim. Duplicate-`project_id` and
  * project-ref-format checks across every `[remotes.*]` block only run when
- * {@link InternalLoadCliConfigOptions.goViperCompat} is `true`, so callers that never opt into
+ * {@link InternalLoadCliConfigOptions.cliCompat} is `true`, so callers that never opt into
  * that mode aren't broken by an unrelated malformed remote block.
  */
 export interface LoadCliConfigOptions {
@@ -107,13 +104,13 @@ export interface LoadCliConfigOptions {
  */
 export interface InternalLoadCliConfigOptions extends LoadCliConfigOptions {
   /**
-   * Opts into Go/viper-parity decode and validation semantics: duplicate-`project_id` and
+   * Opts into the Supabase CLI's decode and validation semantics: duplicate-`project_id` and
    * project-ref-format checks run across every `[remotes.*]` block even without a `projectRef`,
-   * deprecated `auth.external.{linkedin,slack}` blocks warn on stderr, `env(...)` matching is
-   * case-agnostic, and comma-separated strings coerce into `[]string`-typed fields regardless of
-   * origin. Defaults to `false`, which `packages/stack` and the functions manifest rely on.
+   * `env(...)` matching is case-agnostic, and comma-separated strings coerce into array-typed
+   * fields regardless of origin. Defaults to `false`, the strict behaviour of the public
+   * `@supabase/config` API.
    */
-  readonly goViperCompat?: boolean;
+  readonly cliCompat?: boolean;
 }
 
 export interface SaveCliConfigOptions {
@@ -178,7 +175,7 @@ function toConfigDocument(
   config: CliConfig,
   schemaRef: string | undefined,
 ): Record<string, unknown> {
-  const encoded = encodeMinimalCliConfig(config);
+  const encoded = writeProviderSignupPreferredKeys(encodeMinimalCliConfig(config));
   return schemaRef === undefined ? encoded : { [cliConfigSchemaKey]: schemaRef, ...encoded };
 }
 

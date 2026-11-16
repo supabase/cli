@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   appendStorageVectorEnv,
@@ -7,10 +7,6 @@ import {
   type StorageContainerSpecInput,
   type StorageEnvInput,
 } from "./storage.service.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 const baseEnvInput: StorageEnvInput = {
   targetMigration: "",
@@ -63,7 +59,7 @@ describe("buildStorageEnv", () => {
     expect(env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
   });
 
-  test("matches Go's remaining static env values", () => {
+  test("sets the remaining static env values", () => {
     const env = buildStorageEnv(baseEnvInput);
     expect(env).toMatchObject({
       STORAGE_BACKEND: "file",
@@ -117,7 +113,7 @@ describe("buildStorageEnv", () => {
       expect(env["VECTOR_DATABASE_URL"]).toBeUndefined();
     });
 
-    test("appends the four VECTOR_* keys with Go's defaults when enabled and no override is set", () => {
+    test("appends the four VECTOR_* keys with defaults when enabled and no override is set", () => {
       const env = buildStorageEnv({ ...baseEnvInput, vectorBucketsEnabled: true });
       expect(env["VECTOR_ENABLED"]).toBe("true");
       expect(env["VECTOR_BUCKET_PROVIDER"]).toBe("pgvector");
@@ -134,7 +130,7 @@ describe("buildStorageEnv", () => {
       expect(env["DATABASE_URL"]).toContain("supabase_storage_admin:postgres@");
     });
 
-    test("respects a projectEnvValues override over the default, matching Go's envOrDefault", () => {
+    test("respects a projectEnvValues override over the default", () => {
       const env = buildStorageEnv({
         ...baseEnvInput,
         vectorBucketsEnabled: true,
@@ -178,6 +174,7 @@ describe("appendStorageVectorEnv", () => {
 
 describe("buildStorageContainerSpec", () => {
   const input: StorageContainerSpecInput = {
+    slim: false,
     projectId: "proj",
     networkId: "supabase_network_proj",
     image: "supabase/storage-api:v1",
@@ -230,9 +227,9 @@ describe("buildStorageContainerSpec", () => {
   });
 
   test("uses BusyBox wget flags on a slim storage image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildStorageContainerSpec({
       ...input,
+      slim: true,
       image: "ghcr.io/supabase/cli/storage:v1.72.1",
     });
     expect(spec.healthcheck?.test).toEqual([

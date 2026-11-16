@@ -5,6 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 
 /**
  * Raised by the `activate` and `check-availability` handlers when
@@ -68,13 +69,10 @@ export class VanitySubdomainsCheckUnexpectedStatusError extends Data.TaggedError
   readonly status: number;
   readonly body: string;
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, {
-      upgradeSuggested: this.upgradeSuggested,
-      notFoundIsInvalidInput: true,
-    });
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -97,13 +95,10 @@ export class VanitySubdomainsActivateUnexpectedStatusError extends Data.TaggedEr
   readonly status: number;
   readonly body: string;
   readonly message: string;
-  readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, {
-      upgradeSuggested: this.upgradeSuggested,
-      notFoundIsInvalidInput: true,
-    });
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

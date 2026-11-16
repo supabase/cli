@@ -45,6 +45,8 @@ export class InvalidFunctionDownloadResponseError extends Data.TaggedError(
   }
 }
 
+export class FunctionEszipDownloadError extends Data.Error<{ readonly message: string }> {}
+
 export class UnsafeFunctionDownloadPathError extends Data.TaggedError(
   "UnsafeFunctionDownloadPathError",
 )<{

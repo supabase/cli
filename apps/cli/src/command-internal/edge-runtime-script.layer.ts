@@ -4,10 +4,12 @@ import * as Net from "node:net";
 import { DebugFlag, NetworkIdFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { readDbToml } from "./db-config.toml-read.ts";
+import { CliConfigValues } from "../config/cli-config-values.service.ts";
+import { readDbConfig } from "./db-config.read.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { resolveEdgeRuntimeImage } from "./edge-runtime-image.ts";
+import { resolveEdgeRuntimeImage, resolveLockedEdgeRuntimeImage } from "./edge-runtime-image.ts";
+import { usesStackState } from "./stack-backend.ts";
 import { EdgeRuntimeScriptError } from "./edge-runtime-script.errors.ts";
 import {
   EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL,
@@ -49,6 +51,7 @@ export const edgeRuntimeScriptLayer = Layer.effect(
     const debug = yield* DebugFlag;
     const networkIdFlag = yield* NetworkIdFlag;
     const runtimeInfo = yield* RuntimeInfo;
+    const configValues = yield* CliConfigValues;
     // The pg-delta container needs `host.docker.internal:host-gateway` on Linux only, so a
     // `host.docker.internal` local DB host (from SUPABASE_SERVICES_HOSTNAME) resolves inside the
     // container on Linux/dev-container; Docker Desktop already provides this on macOS/Windows.
@@ -78,11 +81,20 @@ export const edgeRuntimeScriptLayer = Layer.effect(
           const workdir = opts.workdir ?? cliSettings.workdir;
           const denoVersion =
             opts.denoVersion ??
-            (yield* readDbToml(fs, path, workdir).pipe(
+            (yield* readDbConfig(fs, path, workdir).pipe(
+              Effect.provideService(CliConfigValues, configValues),
               Effect.mapError((error) => new EdgeRuntimeScriptError({ message: error.message })),
             )).denoVersion;
           const registryImage = yield* getRegistryImageUrl(
-            yield* resolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
+            (yield* usesStackState)
+              ? yield* resolveLockedEdgeRuntimeImage(workdir, denoVersion).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fs),
+                  Effect.provideService(Path.Path, path),
+                  Effect.mapError(
+                    (error) => new EdgeRuntimeScriptError({ message: error.message }),
+                  ),
+                )
+              : yield* resolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
             opts.projectEnvValues,
           ).pipe(
             Effect.mapError(
@@ -138,11 +150,9 @@ export const edgeRuntimeScriptLayer = Layer.effect(
           // after the script completed — the script's output is still valid. Any other
           // non-zero exit is real.
           if (result.exitCode !== 0 && !result.stderr.includes("main worker has been destroyed")) {
-            return yield* Effect.fail(
-              new EdgeRuntimeScriptError({
-                message: `${opts.errPrefix}: error running container: exit ${result.exitCode}:\n${result.stderr}`,
-              }),
-            );
+            return yield* new EdgeRuntimeScriptError({
+              message: `${opts.errPrefix}: error running container: exit ${result.exitCode}:\n${result.stderr}`,
+            });
           }
 
           // A script crash is otherwise masked by the "main worker has been destroyed"
@@ -150,11 +160,9 @@ export const edgeRuntimeScriptLayer = Layer.effect(
           // sentinel — printed only by the templates' catch blocks — marks that real failure so
           // the collected stderr reaches the user instead of looking like an empty diff.
           if (result.stderr.includes(EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL)) {
-            return yield* Effect.fail(
-              new EdgeRuntimeScriptError({
-                message: `${opts.errPrefix}: error running script:\n${result.stderr}`,
-              }),
-            );
+            return yield* new EdgeRuntimeScriptError({
+              message: `${opts.errPrefix}: error running script:\n${result.stderr}`,
+            });
           }
 
           return {

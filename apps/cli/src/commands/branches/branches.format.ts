@@ -4,6 +4,7 @@ import type {
   SupavisorConfigResponse_Output,
   V1GetABranchConfigOutput,
 } from "@supabase/api/effect";
+import { Result } from "effect";
 
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
@@ -88,17 +89,15 @@ interface PoolerParts {
   readonly runtimeParams: Readonly<Record<string, string>>;
 }
 
-export type PoolerParseResult =
-  | { readonly ok: true; readonly parts: PoolerParts }
-  | { readonly ok: false; readonly error: string };
-
 /**
  * Removes the `[YOUR-PASSWORD]` placeholder before parsing host/port/user, since it isn't valid
  * URL syntax. On failure, returns a structured error description, never the raw connection
  * string, since that would leak the pooler username, host, and port into stderr logs. Doesn't
  * enforce the profile-domain or tenant-ref guards used by `poolerConfigFromConnectionString`.
  */
-export function parsePoolerConnectionString(connString: string): PoolerParseResult {
+export function parsePoolerConnectionString(
+  connString: string,
+): Result.Result<PoolerParts, string> {
   const sanitized = connString.replaceAll(POOLER_PASSWORD_PLACEHOLDER, "");
   let url: URL;
   try {
@@ -106,30 +105,27 @@ export function parsePoolerConnectionString(connString: string): PoolerParseResu
   } catch {
     // Node's URL constructor embeds the input in its error message; return a stable
     // description with no input fragments so the warning line never leaks the pooler URL.
-    return { ok: false, error: "invalid URL" };
+    return Result.fail("invalid URL");
   }
   if (url.protocol !== "postgresql:" && url.protocol !== "postgres:") {
-    return { ok: false, error: `unexpected scheme ${url.protocol}` };
+    return Result.fail(`unexpected scheme ${url.protocol}`);
   }
   const port = Number.parseInt(url.port || "5432", 10);
   if (Number.isNaN(port)) {
-    return { ok: false, error: `invalid port ${url.port}` };
+    return Result.fail(`invalid port ${url.port}`);
   }
   const database = decodeURIComponent(url.pathname.replace(/^\//, "") || "postgres");
   const runtimeParams: Record<string, string> = {};
   url.searchParams.forEach((value, key) => {
     runtimeParams[key] = value;
   });
-  return {
-    ok: true,
-    parts: {
-      user: decodeURIComponent(url.username),
-      host: url.hostname,
-      port,
-      database,
-      runtimeParams,
-    },
-  };
+  return Result.succeed({
+    user: decodeURIComponent(url.username),
+    host: url.hostname,
+    port,
+    database,
+    runtimeParams,
+  });
 }
 
 interface PgConfig {
@@ -203,16 +199,16 @@ export function toStandardEnvs(
   let poolerWarning: string | undefined;
   let pooled: PgConfig = direct;
   const parsed = parsePoolerConnectionString(pooler.connection_string);
-  if (!parsed.ok) {
-    poolerWarning = `failed to parse pooler URL: ${parsed.error}`;
+  if (Result.isFailure(parsed)) {
+    poolerWarning = `failed to parse pooler URL: ${parsed.failure}`;
   } else {
     pooled = {
-      host: parsed.parts.host,
-      port: parsed.parts.port,
-      user: parsed.parts.user,
+      host: parsed.success.host,
+      port: parsed.success.port,
+      user: parsed.success.user,
       password: direct.password,
-      database: parsed.parts.database,
-      runtimeParams: parsed.parts.runtimeParams,
+      database: parsed.success.database,
+      runtimeParams: parsed.success.runtimeParams,
     };
   }
 

@@ -66,7 +66,7 @@ export interface BuildStudioEnvInput {
   readonly apiExtraSearchPath: ReadonlyArray<string>;
   /** `config.api.max_rows` — `PGRST_DB_MAX_ROWS`. */
   readonly apiMaxRows: number;
-  /** `envOverrideBool`-resolved `analytics.enabled` — `NEXT_PUBLIC_ENABLE_LOGS`. */
+  /** Whether Logflare starts (`analytics.enabled`, not excluded) — `ENABLED_FEATURES_LOGS_ALL`. */
   readonly analyticsEnabled: boolean;
   /** `config.analytics.backend`, post-`SUPABASE_ANALYTICS_BACKEND`-override — `NEXT_ANALYTICS_BACKEND_PROVIDER`. */
   readonly analyticsBackend: "postgres" | "bigquery";
@@ -99,7 +99,7 @@ export function buildStudioEnv(
     PGRST_DB_EXTRA_SEARCH_PATH: input.apiExtraSearchPath.join(","),
     PGRST_DB_MAX_ROWS: String(input.apiMaxRows),
     LOGFLARE_URL: `http://${input.logflareContainerName}:4000`,
-    NEXT_PUBLIC_ENABLE_LOGS: String(input.analyticsEnabled),
+    ENABLED_FEATURES_LOGS_ALL: String(input.analyticsEnabled),
     NEXT_ANALYTICS_BACKEND_PROVIDER: input.analyticsBackend,
     EDGE_FUNCTIONS_MANAGEMENT_FOLDER: toDockerMountPath(
       path.join(input.workdir, "supabase", "functions"),

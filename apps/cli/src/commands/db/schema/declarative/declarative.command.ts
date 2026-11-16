@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { dbSchemaDeclarativeSharedBase } from "./declarative.shared.ts";
 import { dbSchemaDeclarativeGenerateCommand } from "./generate/generate.command.ts";
 import { dbSchemaDeclarativeSyncCommand } from "./sync/sync.command.ts";

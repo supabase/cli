@@ -32,7 +32,7 @@ export const realtime = Schema.Struct({
       },
     ],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultIpVersion))),
-  max_header_length: Schema.Number.annotate({
+  max_header_length: Schema.Finite.annotate({
     default: defaultMaxHeaderLength,
     description: "Maximum length of the HTTP header.",
     tags,

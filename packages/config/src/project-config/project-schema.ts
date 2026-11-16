@@ -9,6 +9,8 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { Schema, SchemaAST } from "effect";
 import { CliConfigSchema } from "../base.ts";
+import { toPublishedJsonSchemaDocument } from "../json-schema-document.ts";
+import { PROVIDER_SIGNUP_ALIASES } from "../lib/provider-signup.ts";
 import { isDocumentOnlyLocalPath } from "./hosted-sections.ts";
 import type { ProjectConfig } from "./project-config.ts";
 
@@ -41,6 +43,26 @@ function toOptionalAst(ast: SchemaAST.AST): SchemaAST.AST {
 }
 
 /**
+ * ProjectConfig has no `enabled` alias: `enable_signup` is the canonical field, so it takes the
+ * description of its CliConfig `enabled` sibling instead of the deprecation notice.
+ */
+function canonicalDescription(
+  ast: SchemaAST.Objects,
+  path: ReadonlyArray<string>,
+  name: string,
+): string | undefined {
+  const alias = PROVIDER_SIGNUP_ALIASES.find(
+    (entry) => entry.legacy === name && entry.path.join(".") === path.join("."),
+  );
+  if (alias === undefined) {
+    return undefined;
+  }
+  const description = ast.propertySignatures.find((property) => property.name === alias.preferred)
+    ?.type.annotations?.description;
+  return typeof description === "string" ? description : undefined;
+}
+
+/**
  * `Suspend` nodes fall through untouched; no recursive schema reaches this walk today. A test
  * fails loudly if one is introduced, rather than this silently mishandling the recursion.
  *
@@ -59,7 +81,12 @@ function toDeepOptionalHostedAst(ast: SchemaAST.AST, path: ReadonlyArray<string>
       if (isEmptiedContainer(property.type, transformedType)) {
         return [];
       }
-      return [new SchemaAST.PropertySignature(property.name, toOptionalAst(transformedType))];
+      const description = canonicalDescription(ast, path, String(property.name));
+      const described =
+        description === undefined
+          ? transformedType
+          : Schema.make<Schema.Codec<unknown>>(transformedType).annotate({ description }).ast;
+      return [new SchemaAST.PropertySignature(property.name, toOptionalAst(described))];
     });
     const indexSignatures = ast.indexSignatures.flatMap((indexSignature) => {
       if (isSecretAst(indexSignature.type)) {
@@ -87,7 +114,7 @@ function toDeepOptionalHostedAst(ast: SchemaAST.AST, path: ReadonlyArray<string>
   if (SchemaAST.isUnion(ast)) {
     return new SchemaAST.Union(
       ast.types.map((type) => toDeepOptionalHostedAst(type, path)),
-      ast.mode,
+      ast.options,
       ast.annotations,
       ast.checks,
       ast.encoding,
@@ -136,14 +163,7 @@ export const ProjectConfigSchema: StandardSchemaV1<
   Schema.make<Schema.Codec<ProjectConfigSchemaType>>(projectConfigAst),
 );
 
-/** JSON Schema (draft 2020-12) rendering of {@link ProjectConfigSchema}. */
+/** JSON Schema (draft-07) rendering of {@link ProjectConfigSchema}. */
 export function toProjectConfigJsonSchema() {
-  const document = Schema.toJsonSchemaDocument(ProjectConfigSchema, {
-    additionalProperties: true,
-  });
-  return {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    ...document.schema,
-    ...(Object.keys(document.definitions).length > 0 ? { $defs: document.definitions } : {}),
-  };
+  return toPublishedJsonSchemaDocument(ProjectConfigSchema, { onExcessProperty: "ignore" });
 }

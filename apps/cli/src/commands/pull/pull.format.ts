@@ -55,15 +55,12 @@ export function pullPayload(aggregate: PullAggregate): Record<string, unknown> {
 
 /**
  * One-line `message` for `output.success`. Every branch names its own disposition up front
- * (dry-run, declined, partial-failure, or complete) so an agent reading just `.message` can't
+ * (dry-run, partial-failure, or complete) so an agent reading just `.message` can't
  * mistake one for a completed pull.
  */
 export function pullSummaryMessage(aggregate: PullAggregate): string {
   const counts = pullCounts(aggregate.results);
   const countsText = `${counts.changed} changed, ${counts.unchanged} unchanged, ${counts.skipped} skipped, ${counts.planned} planned, ${counts.failed} failed`;
-  if (!aggregate.confirmed && !aggregate.dryRun) {
-    return `Pull declined: nothing was changed (${countsText}).`;
-  }
   if (aggregate.dryRun) {
     return `Pull preview (dry run): nothing was changed (${countsText}).`;
   }
@@ -151,7 +148,7 @@ export interface PullConfirmMessageInput {
   /** The resolved target project ref — named in the header line so the confirmation body says
    *  which project/branch is about to be written to. */
   readonly ref: string;
-  /** The branch name `--project-ref` resolved, when it named one; `undefined` for a ref-shaped
+  /** The branch name `--remote` resolved, when it named one; `undefined` for a ref-shaped
    *  or linked-fallback target. */
   readonly branch: string | undefined;
   /** `config pull`'s own rendered diff body (`renderConfigPullText`), when there was

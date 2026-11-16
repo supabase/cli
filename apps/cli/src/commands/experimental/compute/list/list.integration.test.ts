@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { Effect, Option, FileSystem, Path, Schema } from "effect";
 import {
   makeComputeProject,
@@ -8,6 +8,10 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import { describeComputeTargetSelection } from "../../../../../tests/helpers/compute-target-selection.ts";
+import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
+import { resolveWorkdir } from "../../../../config/command-settings.layer.ts";
 import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import {
@@ -35,10 +39,10 @@ function project(config = CONFIG) {
 const listRoute = `GET ${computeRoute()}`;
 
 describe("compute list", () => {
-  it.live("shows configured and deployed compute as one inventory", () =>
+  it.effect("shows configured and deployed compute as one inventory", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out, http } = setupCompute({
         workdir: repo.dir,
         routes: {
           [listRoute]: {
@@ -59,7 +63,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         const stdout = out.stdoutText;
         expect(stdout).toContain("NAME");
@@ -75,11 +79,61 @@ describe("compute list", () => {
         expect(stdout).not.toContain("https://");
         expect(rows[1]).toContain("sandbox");
         expect(rows[2]).toContain("not deployed");
+        expect(http.routeKeys).toEqual([listRoute]);
+        assertPermissionDrift({
+          command: "compute list",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not assert a runtime for a compute that has never been deployed", () =>
+  it.effect("picks the project, lists its compute and records the linked project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        realLayers: true,
+        interactive: true,
+        promptSelectResponses: [COMPUTE_PROJECT_REF],
+        routes: {
+          "GET /v1/projects": { status: 200, body: [projectResponse(COMPUTE_PROJECT_REF)] },
+          [`GET /v1/projects/${COMPUTE_PROJECT_REF}`]: {
+            status: 200,
+            body: projectResponse(COMPUTE_PROJECT_REF),
+          },
+          [listRoute]: {
+            status: 200,
+            body: { data: [computeResource({ name: "api", runtime: "node" })] },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
+
+        expect(http.routeKeys).toEqual([
+          "GET /v1/projects",
+          listRoute,
+          `GET /v1/projects/${COMPUTE_PROJECT_REF}`,
+        ]);
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stdoutText).toContain("api");
+        expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "compute list",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("does not assert a runtime for a compute that has never been deployed", () =>
     Effect.gen(function* () {
       const repo = yield* project(`project_id = "demo"\n\n[compute.ghost]\n`);
       const { layer, out } = setupCompute({
@@ -88,7 +142,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         const row = out.stdoutText.split("\n").find((line) => line.includes("ghost"));
         expect(row).toBeDefined();
@@ -100,7 +154,7 @@ describe("compute list", () => {
 
   // A local directory with no `[compute.<name>]` entry: pushable, and the
   // runtime is the only thing a push would have to work out for itself.
-  it.live("calls out a deployed compute that config.toml does not know about", () =>
+  it.effect("calls out a deployed compute that config.toml does not know about", () =>
     Effect.gen(function* () {
       const created = yield* makeComputeProject({
         "supabase/config.toml": `project_id = "demo"\n`,
@@ -120,7 +174,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("stray");
         expect(out.stderrText).toContain("guess the runtime");
@@ -130,7 +184,7 @@ describe("compute list", () => {
 
   // Two of them, so the advisory has to read as a list rather than as one name
   // with a stray verb.
-  it.live("calls out every deployed compute config.toml does not know about", () =>
+  it.effect("calls out every deployed compute config.toml does not know about", () =>
     Effect.gen(function* () {
       const created = yield* makeComputeProject({
         "supabase/config.toml": `project_id = "demo"\n`,
@@ -156,7 +210,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("spare, stray are deployed but not in");
         expect(out.stderrText).toContain("guess the runtime");
@@ -167,7 +221,7 @@ describe("compute list", () => {
   // Deletion is asynchronous, so a compute can be listed while it is being torn
   // down. Reporting its build state would show `active` for something on its
   // way out.
-  it.live("shows a compute being torn down as deleting", () =>
+  it.effect("shows a compute being torn down as deleting", () =>
     Effect.gen(function* () {
       const repo = yield* project(`project_id = "demo"\n\n[compute.api]\nruntime = "node"\n`);
       const { layer, out } = setupCompute({
@@ -181,7 +235,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("deleting");
       }).pipe(Effect.provide(layer));
@@ -191,7 +245,7 @@ describe("compute list", () => {
   // Nothing local at all: `deployOneCompute` checks the source directory before
   // it ever infers a runtime, so "would have to guess the runtime" named the
   // wrong prerequisite for this one.
-  it.live("tells a compute with no local source to restore it, not to expect a guess", () =>
+  it.effect("tells a compute with no local source to restore it, not to expect a guess", () =>
     Effect.gen(function* () {
       const repo = yield* project(`project_id = "demo"\n`);
       const { layer, out } = setupCompute({
@@ -205,7 +259,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("no source in this project");
         expect(out.stderrText).not.toContain("guess the runtime");
@@ -213,7 +267,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("says so when the project has no compute at all", () =>
+  it.effect("says so when the project has no compute at all", () =>
     Effect.gen(function* () {
       const repo = yield* project(`project_id = "demo"\n`);
       const { layer, out } = setupCompute({
@@ -222,7 +276,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain(
           "No compute found. Scaffold one with supabase compute new <name>.",
@@ -231,7 +285,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits the inventory as structured data in json mode", () =>
+  it.effect("emits the inventory as structured data in json mode", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
@@ -246,7 +300,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         const success = out.messages.findLast(
           (message) => message.type === "success" && message.data !== undefined,
@@ -280,12 +334,12 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("serialises the inventory for the Go -o flag", () =>
+  it.effect("serialises the inventory for the -o flag", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "json",
+        outputFlag: "json",
         routes: {
           [listRoute]: {
             status: 200,
@@ -295,7 +349,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         // `-o` payloads own stdout outright: no clack success line may share it.
         const parsed = yield* Schema.decodeEffect(
@@ -310,17 +364,19 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("refuses -o env before making any request at all", () =>
+  it.effect("refuses -o env before making any request at all", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
-        goOutput: "env",
+        outputFlag: "env",
         routes: { [listRoute]: { status: 200, body: { data: [] } } },
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
         expect(http.routeKeys).toEqual([]);
@@ -331,7 +387,7 @@ describe("compute list", () => {
   // Until the Management API ships `not_found.compute.not_enabled`, an unenrolled
   // project answers the shared `generic_not_found`, which no branch claims — so
   // this pins the fallback that carries the alpha refusal until then.
-  it.live("still reports the alpha refusal's pre-rollout body as unavailable", () =>
+  it.effect("still reports the alpha refusal's pre-rollout body as unavailable", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -350,14 +406,16 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeUnavailableError);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
+  it.effect("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -376,7 +434,9 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeUnavailableError);
         expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
@@ -384,7 +444,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("names the unserved route instead of the project when the API has no such route", () =>
+  it.effect("names the unserved route instead of the project when the API has no such route", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -403,20 +463,20 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
-        expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
-        expect((error as ComputeRouteNotFoundError).detail).toContain(
-          `GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`,
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
         );
-        expect((error as ComputeRouteNotFoundError).suggestion).toContain("supabase issue");
-        expect((error as ComputeRouteNotFoundError).suggestion).not.toContain("supabase link");
+
+        assert.instanceOf(error, ComputeRouteNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
+        expect(error.detail).toContain(`GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`);
+        expect(error.suggestion).toContain("supabase issue");
+        expect(error.suggestion).not.toContain("supabase link");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("still reports a missing project when the 404 is the project's own", () =>
+  it.effect("still reports a missing project when the 404 is the project's own", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -430,31 +490,41 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
-        expect((error as ComputeProjectNotFoundError).suggestion).toContain("supabase link");
+        expect(error).toMatchObject({ suggestion: expect.stringContaining("supabase link") });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("surfaces an unexpected status rather than showing an empty list", () =>
+  it.effect("surfaces an unexpected status rather than showing an empty list", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer, http } = setupCompute({
         workdir: repo.dir,
         routes: { [listRoute]: { status: 500, body: { message: "boom" } } },
       });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ComputeApiUnexpectedStatusError);
+        expect(http.routeKeys).toEqual([listRoute]);
+        assertPermissionDrift({
+          command: "compute list",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("uses an explicit --project-ref without a linked project", () =>
+  it.effect("uses an explicit --remote=<ref> without a linked project", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -466,20 +536,32 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
+        yield* computeList({
+          remote: Option.some({ _tag: "Ref", ref: "qrstuvwxyzabcdefghij" }),
+          projectRef: Option.none(),
+        });
 
         expect(http.routeKeys).toEqual(["GET /v2/projects/qrstuvwxyzabcdefghij/compute"]);
+        assertPermissionDrift({
+          command: "compute list",
+          variant: { computeEnabled: true },
+          activeFlags: { remote: "qrstuvwxyzabcdefghij" },
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("requires a linked project when no ref is given", () =>
+  it.effect("requires a linked project when no ref is given", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({ workdir: repo.dir, linked: false });
 
       return yield* Effect.gen(function* () {
-        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
       }).pipe(Effect.provide(layer));
@@ -489,7 +571,7 @@ describe("compute list", () => {
   // A directory under the compute root with no `[compute.<name>]` entry is what
   // a bare `push` discovers and deploys, so an inventory that leaves it out can
   // say "No compute found" about a compute `push` would happily deploy.
-  it.live("includes a local compute directory that has no config entry", () =>
+  it.effect("includes a local compute directory that has no config entry", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -507,7 +589,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("scaffolded");
         expect(out.stdoutText).not.toContain("No compute found");
@@ -521,7 +603,7 @@ describe("compute list", () => {
   // The API omits `spec.runtime` only for a context-only build, so for a
   // deployed compute its absence *is* dockerfile. Falling back to the local
   // config there made `-o json` report a runtime the text table contradicted.
-  it.live("reports a deployed dockerfile compute as dockerfile in both renderings", () =>
+  it.effect("reports a deployed dockerfile compute as dockerfile in both renderings", () =>
     Effect.gen(function* () {
       const repo = yield* project('project_id = "demo"\n\n[compute.api]\nruntime = "node"\n');
       const { layer, out } = setupCompute({
@@ -533,7 +615,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         const success = out.messages.findLast(
           (message) => message.type === "success" && message.data !== undefined,
@@ -546,12 +628,12 @@ describe("compute list", () => {
   // An undeployed compute has no `size`/`instances` and a private one no `url`,
   // so a realistic inventory hands the encoder a payload full of holes. Pins
   // that they are omitted rather than rendered or thrown on.
-  it.live("encodes TOML for an inventory holding undeployed and private compute", () =>
+  it.effect("encodes TOML for an inventory holding undeployed and private compute", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "toml",
+        outputFlag: "toml",
         routes: {
           [listRoute]: {
             status: 200,
@@ -563,7 +645,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("project_ref = ");
         expect(out.stdoutText).not.toContain("undefined");
@@ -571,12 +653,12 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("encodes YAML when -o yaml asks for it", () =>
+  it.effect("encodes YAML when -o yaml asks for it", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "yaml",
+        outputFlag: "yaml",
         routes: {
           [listRoute]: {
             status: 200,
@@ -586,7 +668,7 @@ describe("compute list", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() });
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("project_ref:");
         expect(out.stdoutText).toContain("name: api");
@@ -598,14 +680,14 @@ describe("compute list", () => {
 
   // `table`/`csv` are accepted by the global flag for `db query`'s benefit; every
   // other resource command, including this one, renders text for them too.
-  it.live.each(["pretty", "table", "csv"] as const)(
+  it.effect.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
-    (goOutput) =>
+    (outputFlag) =>
       Effect.gen(function* () {
         const repo = yield* project();
         const { layer, out } = setupCompute({
           workdir: repo.dir,
-          goOutput,
+          outputFlag,
           routes: {
             [listRoute]: {
               status: 200,
@@ -615,7 +697,7 @@ describe("compute list", () => {
         });
 
         return yield* Effect.gen(function* () {
-          yield* computeList({ projectRef: Option.none() });
+          yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
           expect(out.stdoutText).toContain("NAME");
           expect(out.stdoutText).not.toContain("project_ref = ");
@@ -623,22 +705,20 @@ describe("compute list", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("flushes telemetry when the project config cannot be loaded", () =>
+  it.effect("flushes telemetry when the project config cannot be loaded", () =>
     Effect.gen(function* () {
       const repo = yield* project("project_id = [unclosed\n");
       const { layer, telemetry } = setupCompute({ workdir: repo.dir });
 
       return yield* Effect.gen(function* () {
-        yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+        yield* computeList({ remote: Option.none(), projectRef: Option.none() }).pipe(Effect.flip);
 
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // The default workdir resolution only probes config.toml, so a config.json-only
-  // project invoked from a subdirectory relies on this second climb to be found.
-  it.live(
+  it.effect(
     "discovers a config.json-only project's [compute.*] entry from a subdirectory when --workdir is defaulted",
     () =>
       Effect.gen(function* () {
@@ -655,14 +735,15 @@ describe("compute list", () => {
         const sub = path.join(created.dir, "nested", "dir");
         yield* fs.makeDirectory(sub, { recursive: true });
 
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
         const { layer, out } = setupCompute({
-          workdir: sub,
-          explicitWorkdir: false,
+          workdir: resolved.workdir,
+          explicitWorkdir: resolved.explicit,
           routes: { [listRoute]: { status: 200, body: { data: [] } } },
         });
 
         return yield* Effect.gen(function* () {
-          yield* computeList({ projectRef: Option.none() });
+          yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
           const row = out.stdoutText.split("\n").find((line) => line.includes("api"));
           expect(row).toBeDefined();
@@ -672,7 +753,7 @@ describe("compute list", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "does not discover the same config.json-only entry when --workdir is explicit (preserves bare-directory scaffolding semantics)",
     () =>
       Effect.gen(function* () {
@@ -696,11 +777,16 @@ describe("compute list", () => {
         });
 
         return yield* Effect.gen(function* () {
-          yield* computeList({ projectRef: Option.none() });
+          yield* computeList({ remote: Option.none(), projectRef: Option.none() });
 
           expect(out.stdoutText).not.toContain("api");
           expect(out.stdoutText).toContain("No compute found.");
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+});
+
+describeComputeTargetSelection("compute list", {
+  routes: (ref) => ({ [`GET /v2/projects/${ref}/compute`]: { status: 200, body: { data: [] } } }),
+  run: (flags) => computeList(flags),
 });

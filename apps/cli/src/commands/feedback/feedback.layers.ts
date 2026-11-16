@@ -7,8 +7,8 @@ import { DnsResolverFlag } from "../../command-internal/global-flags.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
-import type { DebugLoggerShape } from "../../command-internal/debug-logger.service.ts";
-import { DebugLogger } from "../../command-internal/debug-logger.service.ts";
+import type { DebugLoggerShape } from "../../shared/output/debug-logger.service.ts";
+import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
 import { dohFetch, type DohFetchOptions } from "../../command-internal/http-dns.ts";
 
 export const feedbackCliConfigLayer = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));

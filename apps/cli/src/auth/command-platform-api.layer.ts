@@ -1,10 +1,10 @@
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Layer, Option, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { DebugLogger } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { validateAccessToken } from "./access-token.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";
@@ -50,13 +50,13 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
 
   const authGateToken = yield* resolveAccessToken;
   if (Option.isNone(authGateToken)) {
-    return yield* Effect.fail(new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE }));
+    return yield* new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE });
   }
   yield* debugLogger.debug(`Supabase CLI ${CLI_VERSION}`);
   yield* debugLogger.debug(`Using profile: ${cliSettings.profile} (${cliSettings.projectHost})`);
   const storedToken = yield* resolveAccessToken;
   if (Option.isNone(storedToken)) {
-    return yield* Effect.fail(new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE }));
+    return yield* new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE });
   }
 
   return yield* makeApiClient(
@@ -67,8 +67,9 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
     },
     {
       transformClient,
+      retry: { maxRetries: Option.getOrUndefined(cliSettings.apiMaxRetries) },
     },
   );
-});
+}).pipe(Effect.withSpan("CommandPlatformApi.build"));
 
 export const commandPlatformApiLayer = Layer.effect(CommandPlatformApi, makeCommandPlatformApi);

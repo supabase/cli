@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { testDbCommand } from "./db/db.command.ts";
 import { testNewCommand } from "./new/new.command.ts";
 

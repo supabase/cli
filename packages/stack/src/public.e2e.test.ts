@@ -1,12 +1,15 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Redacted, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
-import { tmpdir } from "node:os";
-import { open, postgres } from "./effect.ts";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { HttpClient } from "effect/http";
+import { discover, open } from "./effect.ts";
+import { postgres } from "./Commands.ts";
 import * as PromiseStack from "./index.ts";
 import { assertOwnerExited, captureOwnerPid } from "../tests/owner.ts";
+import { destroyTestStack } from "../tests/stack-cleanup.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
 for (const runtime of ["node", "bun"] as const) {
   it.live(
@@ -20,7 +23,7 @@ for (const runtime of ["node", "bun"] as const) {
           [
             new URL("../tests/owner-exit-client.ts", import.meta.url).pathname,
             root,
-            `${tmpdir()}/supabase-stack-artifacts`,
+            testArtifactCacheRoot,
           ],
           { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
         );
@@ -49,7 +52,7 @@ it.live(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-public-e2e-" });
-      const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+      const cacheRoot = testArtifactCacheRoot;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
         ChildProcess.make(
@@ -91,9 +94,9 @@ it.live(
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           const pid = yield* captureOwnerPid(locations, stack.id);
-          yield* stack.destroy;
+          yield* destroyTestStack(stack);
           yield* assertOwnerExited(pid);
-        }).pipe(Effect.catchCause(Effect.die)),
+        }).pipe(Effect.orDie),
       );
       const mail = yield* stack.services.get(identity.instanceId);
       expect((yield* mail.status).lifecycle).toBe("running");
@@ -109,7 +112,7 @@ it.live(
       expect((yield* mail.credentials()).url).toBe(credentials.url);
 
       const stdoutChunks: Array<Uint8Array> = [];
-      const tool = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+      const tool = yield* stack.commands.run(postgres.psql({ pin: selection.database }), {
         args: ["--version"],
         stdout: (bytes) =>
           Effect.sync(() => {
@@ -123,8 +126,8 @@ it.live(
       );
       const database = yield* stack.services.create({
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("public-pgprove-password"),
           jwtSecret: Redacted.make("public-pgprove-jwt-secret"),
           jwtExpiry: 3600,
@@ -144,14 +147,14 @@ it.live(
         path.join(pgProveRoot, "nested.sql"),
         "SELECT plan(1);\nSELECT pass('public pgProve');\nSELECT * FROM finish();\n",
       );
-      const extension = yield* stack.tools.run(postgres.psql({ major: 17 }), {
+      const extension = yield* stack.commands.run(postgres.psql({ pin: selection.database }), {
         args: ["--dbname", databaseUrl, "-c", "CREATE EXTENSION IF NOT EXISTS pgtap"],
         stdout: () => Effect.void,
         stderr: () => Effect.void,
       });
       expect(extension.exitCode).toBe(0);
       const pgProveOutput: Array<Uint8Array> = [];
-      const pgProve = yield* stack.tools.run(postgres.pgProve({ major: 17 }), {
+      const pgProve = yield* stack.commands.run(postgres.pgProve({ pin: selection.database }), {
         args: ["--dbname", databaseUrl, "--ext", ".sql", "main.sql", "--verbose"],
         pgProve: {
           mounts: [{ source: pgProveRoot, target: "/tests" }],
@@ -180,10 +183,10 @@ it.live(
             const database = yield* Effect.tryPromise(() =>
               client.services.create({
                 service: "database",
+                pin: selection.database,
                 config: {
-                  version: "17",
-                  databasePassword: "plain-secret",
-                  jwtSecret: "plain-jwt-secret",
+                  databasePassword: "public-pgprove-password",
+                  jwtSecret: "public-pgprove-jwt-secret",
                   jwtExpiry: 3600,
                 },
                 endpoints: { sql: { port: "auto" } },
@@ -193,9 +196,8 @@ it.live(
             yield* Effect.tryPromise(() =>
               database.restart({
                 config: {
-                  version: "17",
-                  databasePassword: "replacement-secret",
-                  jwtSecret: "replacement-jwt",
+                  databasePassword: "public-pgprove-password",
+                  jwtSecret: "public-pgprove-jwt-secret",
                   jwtExpiry: 3600,
                 },
               }),
@@ -205,7 +207,7 @@ it.live(
             const databaseUrl = urls.databaseUrl;
             if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
             const promiseExtension = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.psql({ major: 17 }), {
+              client.commands.run(postgres.psql({ pin: selection.database }), {
                 args: ["--dbname", databaseUrl, "-c", "CREATE EXTENSION IF NOT EXISTS pgtap"],
                 stdout: () => {},
                 stderr: () => {},
@@ -215,7 +217,7 @@ it.live(
             const promiseProveOutput: Array<Uint8Array> = [];
             const promiseProveError: Array<Uint8Array> = [];
             const promiseProve = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.pgProve({ major: 17 }), {
+              client.commands.run(postgres.pgProve({ pin: selection.database }), {
                 args: ["--dbname", databaseUrl, "--ext", ".sql", "main.sql", "--verbose"],
                 pgProve: {
                   mounts: [{ source: pgProveRoot, target: "/tests" }],
@@ -239,7 +241,7 @@ it.live(
             ).toContain("public pgProve");
             const sqlOutput: Array<Uint8Array> = [];
             const sql = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.psql({ major: 17 }), {
+              client.commands.run(postgres.psql({ pin: selection.database }), {
                 args: ["--dbname", databaseUrl, "-At"],
                 stdin: Stream.toAsyncIterable(
                   Stream.make(new TextEncoder().encode("SELECT 42;\n")),
@@ -264,7 +266,7 @@ it.live(
               return yield* Effect.die("Snapshot source URL missing");
             const sourceUrl = sourceCredentials.databaseUrl;
             const seed = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.psql({ major: 17 }), {
+              client.commands.run(postgres.psql({ pin: selection.database }), {
                 args: [
                   "--dbname",
                   sourceUrl,
@@ -277,21 +279,24 @@ it.live(
             );
             expect(seed.exitCode).toBe(0);
             yield* Effect.tryPromise(() => database.stop());
-            const archive = path.join(root, "public-snapshot.tar");
-            yield* Effect.tryPromise(() => database.exportSnapshot(archive));
+            const snapshotKey = "public-roundtrip";
+            yield* Effect.tryPromise(() => database.saveSnapshot(snapshotKey));
+            yield* Effect.tryPromise(() => database.destroy());
             const restored = yield* Effect.tryPromise(() =>
               client.services.create({
                 service: "database",
+                pin: selection.database,
                 config: {
-                  version: "17",
-                  databasePassword: "restored-secret",
-                  jwtSecret: "restored-jwt-secret",
+                  databasePassword: "public-pgprove-password",
+                  jwtSecret: "public-pgprove-jwt-secret",
                   jwtExpiry: 3600,
                 },
                 endpoints: { sql: { port: "auto" } },
               }),
             );
-            yield* Effect.tryPromise(() => restored.restoreSnapshot(archive));
+            expect(yield* Effect.tryPromise(() => restored.restoreSnapshot(snapshotKey))).toBe(
+              true,
+            );
             yield* Effect.tryPromise(() => restored.start());
             yield* Effect.tryPromise(() => restored.ready());
             const restoredCredentials = yield* Effect.tryPromise(() =>
@@ -302,7 +307,7 @@ it.live(
             const restoredUrl = restoredCredentials.databaseUrl;
             const restoredOutput: Array<Uint8Array> = [];
             const restoredQuery = yield* Effect.tryPromise(() =>
-              client.tools.run(postgres.psql({ major: 17 }), {
+              client.commands.run(postgres.psql({ pin: selection.database }), {
                 args: ["--dbname", restoredUrl, "-Atc", "SELECT value FROM snapshot_rows"],
                 stdout: (bytes) => {
                   restoredOutput.push(bytes);
@@ -318,11 +323,16 @@ it.live(
                 .trim(),
             ).toBe("roundtrip");
             expect((yield* stack.services.list).map((service) => service.id)).toContain(
-              database.id,
+              restored.id,
             );
             const selected = yield* Effect.tryPromise(() =>
               client.composition.supabase([
-                { service: "mail", config: {}, endpoints: { http: { port: "auto" } } },
+                {
+                  service: "mail",
+                  pin: selection.mail,
+                  config: {},
+                  endpoints: { http: { port: "auto" } },
+                },
               ]),
             );
             const selectedMail = selected[0];
@@ -337,7 +347,14 @@ it.live(
             );
             const reused = yield* Effect.tryPromise(() =>
               client.composition.supabase(
-                [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+                [
+                  {
+                    service: "mail",
+                    pin: selection.mail,
+                    config: {},
+                    endpoints: { http: { port: "auto" } },
+                  },
+                ],
                 { reuseIds: [selectedMail.id] },
               ),
             );
@@ -354,7 +371,9 @@ it.live(
       );
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 180_000 },
 );
@@ -365,7 +384,7 @@ it.live(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-public-observation-" });
-      const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+      const cacheRoot = testArtifactCacheRoot;
       const locations = { stateRoot: `${root}/state`, cacheRoot };
       const stack = yield* Effect.tryPromise(() =>
         PromiseStack.create({ ...locations, projectRoot: root, runtime: "native" }),
@@ -374,9 +393,9 @@ it.live(
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           const pid = yield* captureOwnerPid(locations, owner.id);
-          yield* owner.destroy;
+          yield* destroyTestStack(owner);
           yield* assertOwnerExited(pid);
-        }).pipe(Effect.catchCause(Effect.die)),
+        }).pipe(Effect.orDie),
       );
       yield* Effect.addFinalizer(() =>
         Effect.tryPromise(() => stack.close()).pipe(
@@ -386,6 +405,7 @@ it.live(
       const mail = yield* Effect.tryPromise(() =>
         stack.services.create({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
         }),
@@ -417,7 +437,47 @@ it.live(
       );
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 60_000 },
 );
+
+for (const runtime of ["node", "bun"] as const) {
+  it.live(
+    `${runtime}: a Promise test stack resets to its checkpoint and is destroyed on disposal`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stateRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: `stack-test-client-${runtime}-`,
+        });
+        const child = yield* ChildProcess.make(
+          runtime === "bun" ? process.execPath : "node",
+          [new URL("../tests/test-stack-client.ts", import.meta.url).pathname, stateRoot],
+          { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+        );
+        const [stdout, stderr, code] = yield* Effect.all(
+          [
+            child.stdout.pipe(Stream.decodeText, Stream.mkString),
+            child.stderr.pipe(Stream.decodeText, Stream.mkString),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(Number(code), stderr).toBe(0);
+        const disposed = yield* Schema.decodeEffect(
+          Schema.fromJsonString(
+            Schema.Struct({ stackId: Schema.String, projectRoot: Schema.String }),
+          ),
+        )(stdout.trim());
+        expect(yield* discover({ stateRoot })).toEqual([]);
+        expect(yield* fs.exists(disposed.projectRoot)).toBe(false);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      ),
+    { timeout: 300_000 },
+  );
+}

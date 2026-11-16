@@ -1,5 +1,6 @@
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { BunServices } from "@effect/platform-bun";
-import { Data, Effect, FileSystem, Path, Schema } from "effect";
+import { Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { createServer } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 
@@ -9,14 +10,9 @@ import {
   runSupabaseEffect,
   runDockerEffect,
 } from "../../../tests/helpers/cli.ts";
-import {
-  sanitizeProjectId,
-  serviceContainerName,
-  localDbContainerId,
-} from "../../command-internal/docker-ids.ts";
-import { getRegistryImageUrl } from "../../command-internal/docker-registry.ts";
+import { serviceContainerName, localDbContainerId } from "../../command-internal/docker-ids.ts";
+import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
-import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
 
 class StartE2eSetupError extends Data.TaggedError("StartE2eSetupError")<{
   readonly message: string;
@@ -41,6 +37,7 @@ const START_TIMEOUT_MS = 280_000;
 const SHORT_E2E_TIMEOUT_MS = 30_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
 const CLEANUP_TIMEOUT_MS = 120_000;
+const INVOKE_TIMEOUT_MS = 60_000;
 
 /**
  * `--exclude` values for the 3 heaviest, least-relevant services (same set the sibling Docker
@@ -58,6 +55,35 @@ const EXCLUDED_SERVICE_KEYS: ReadonlySet<string> = new Set(["studio", "logflare"
  *    leaves commented out (defaulting to disabled).
  */
 const NEVER_RUNNING_SERVICE_KEYS: ReadonlySet<string> = new Set(["supavisor", "imgproxy"]);
+
+/* A made-up key: only its multiline shape matters. The trailing newline pins byte-for-byte delivery. */
+const MULTILINE_PEM = [
+  "-----BEGIN PRIVATE KEY-----",
+  "c3VwYWJhc2UtY2xpLWUyZS1mYWtlLWtleS1ub3QtYS1yZWFsLXNlY3JldC0wMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "-----END PRIVATE KEY-----",
+  "",
+].join("\n");
+
+const FunctionEnvResponse = Schema.fromJsonString(
+  Schema.Struct({ pem: Schema.NullOr(Schema.String), foo: Schema.NullOr(Schema.String) }),
+);
+
+const invokeEnvFunction = Effect.fnUntraced(function* (apiUrl: string, edgeRuntime: string) {
+  const { status, body } = yield* Effect.gen(function* () {
+    const response = yield* HttpClient.get(`${apiUrl}/functions/v1/env`);
+    return { status: response.status, body: yield* response.text };
+  }).pipe(Effect.timeout(INVOKE_TIMEOUT_MS));
+  const logs =
+    status === 200
+      ? ""
+      : yield* runDockerEffect(["logs", edgeRuntime]).pipe(
+          Effect.map(({ stdout, stderr }) => `${stdout}${stderr}`),
+          Effect.catch((error) => Effect.succeed(`<logs unavailable: ${error.message}>`)),
+        );
+  expect(status, `body: ${body}\nedge runtime logs:\n${logs}`).toBe(200);
+  return yield* Schema.decodeEffect(FunctionEnvResponse)(body);
+});
 
 function splitNonEmptyLines(text: string): ReadonlyArray<string> {
   return text
@@ -272,67 +298,87 @@ describe("supabase start (e2e)", () => {
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 
-  // The health watch inspects and dumps logs by container name against a real daemon and derives
-  // recovery advice from real log bytes — not observable through in-process mocks. Reproduces
-  // supabase/cli#5952: a locally cached image that cannot be executed.
+  /* Multiline values reach the edge runtime through its `docker cp` archive, never a host bind.
+     A bind also delivers them on native Linux daemons, so the restart checks the mounts too. */
   it.live(
-    "names the container and its image when a cached image cannot be executed",
+    "serves multiline functions env values on start and after stop and start",
     () =>
       Effect.gen(function* () {
-        const projectDir = yield* makeProject("sb-start-e2e-exec-");
+        const projectDir = yield* makeProject("sb-start-e2e-multiline-env-");
         const path = yield* Path.Path;
         const fs = yield* FileSystem.FileSystem;
-        const projectId = sanitizeProjectId(path.basename(projectDir));
-        const mailpitContainer = serviceContainerName("inbucket", projectId);
-        // The exact tag `start` resolves for Mailpit, so its already-cached check finds this
-        // broken build without reaching a registry.
-        const mailpitImage = yield* getRegistryImageUrl(dockerfileServiceImage("mailpit"));
+        const edgeRuntime = serviceContainerName(
+          "edge_runtime",
+          sanitizeProjectId(path.basename(projectDir)),
+        );
 
         const init = yield* runSupabaseEffect(["init"], {
           cwd: projectDir,
           exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
         });
         requireCliSuccess(init, "init setup");
+        const created = yield* runSupabaseEffect(["functions", "new", "env", "--auth", "none"], {
+          cwd: projectDir,
+          exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
+          env: { SUPABASE_YES: "1" },
+        });
+        requireCliSuccess(created, "functions new setup");
+        const functionsDir = path.join(projectDir, "supabase", "functions");
+        yield* fs.writeFileString(
+          path.join(functionsDir, "env", "index.ts"),
+          'Deno.serve(() => Response.json({ pem: Deno.env.get("PEM_KEY") ?? null, foo: Deno.env.get("FOO") ?? null }));\n',
+        );
+        yield* fs.writeFileString(
+          path.join(functionsDir, ".env"),
+          `PEM_KEY="${MULTILINE_PEM}"\nFOO="line1\\nline2"\n`,
+        );
         yield* overridePorts(projectDir);
 
-        // A `scratch` image whose entrypoint is not an executable binary — the
-        // kernel refuses it with exactly the "exec format error" this diagnoses.
-        const buildDir = path.join(projectDir, "broken-image");
-        yield* fs.makeDirectory(buildDir, { recursive: true });
-        yield* fs.writeFileString(path.join(buildDir, "mailpit"), "not an executable\n", {
-          mode: 0o755,
-        });
-        yield* fs.writeFileString(
-          path.join(buildDir, "Dockerfile"),
-          'FROM scratch\nCOPY mailpit /mailpit\nENTRYPOINT ["/mailpit"]\n',
-        );
-        yield* Effect.acquireRelease(
-          runDockerEffect(["build", "-q", "-t", mailpitImage, buildDir]).pipe(
-            Effect.as(mailpitImage),
-          ),
-          // Never leave a poisoned tag behind for later jobs on this runner.
-          (image) => runDockerEffect(["image", "rm", "-f", image]).pipe(Effect.ignore),
-        );
-
-        // Everything except Postgres and Mailpit is excluded: this scenario only
-        // needs one container that cannot start.
         const excludeArgs = SERVICE_CATALOG.flatMap((entry) =>
-          entry.excludeKey === undefined || entry.excludeKey === "mailpit"
+          entry.excludeKey === undefined ||
+          entry.excludeKey === "kong" ||
+          entry.excludeKey === "edge-runtime"
             ? []
             : ["--exclude", entry.excludeKey],
         );
+        const expected = { pem: MULTILINE_PEM, foo: "line1\nline2" };
+
         const start = yield* runSupabaseEffect(["start", ...excludeArgs], {
           cwd: projectDir,
           exitTimeoutMs: START_TIMEOUT_MS,
         });
+        expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+        const status = yield* runSupabaseEffect(["status", "-o", "json"], {
+          cwd: projectDir,
+          exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
+        });
+        requireCliSuccess(status, "status setup");
+        const { API_URL: apiUrl } = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Struct({ API_URL: Schema.String })),
+        )(status.stdout);
+        expect(yield* invokeEnvFunction(apiUrl, edgeRuntime)).toEqual(expected);
 
-        expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).not.toBe(0);
-        // The container's established name is "inbucket", not the id `docker create` returns.
-        expect(start.stderr).toContain(`${mailpitContainer} container logs:`);
-        expect(start.stderr).toContain(`${mailpitContainer} container is not ready`);
-        expect(start.stderr).toContain(`${mailpitContainer}'s image ${mailpitImage}`);
-        expect(start.stderr).toContain(`image rm -f ${mailpitImage}`);
-      }).pipe(Effect.provide(BunServices.layer)),
-    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
+        const stop = yield* runSupabaseEffect(["stop"], {
+          cwd: projectDir,
+          exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+        });
+        requireCliSuccess(stop, "stop");
+
+        const restart = yield* runSupabaseEffect(["start", ...excludeArgs], {
+          cwd: projectDir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+        });
+        expect(restart.exitCode, `stdout:\n${restart.stdout}\nstderr:\n${restart.stderr}`).toBe(0);
+        expect(yield* invokeEnvFunction(apiUrl, edgeRuntime)).toEqual(expected);
+        const { stdout: mounts } = yield* runDockerEffect([
+          "container",
+          "inspect",
+          edgeRuntime,
+          "--format",
+          "{{range .Mounts}}{{println .Destination}}{{end}}",
+        ]);
+        expect(splitNonEmptyLines(mounts)).not.toContain("/root/.supabase/multiline-env");
+      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+    START_TIMEOUT_MS * 2 + INVOKE_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS * 2,
   );
 });

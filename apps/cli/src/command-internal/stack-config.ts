@@ -1,52 +1,73 @@
+import { CommandSettings } from "../config/command-settings.service.ts";
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
-import { resolveCliConfigSubtree } from "@supabase/config/internal";
-import { validateCliConfig } from "@supabase/config/effect";
 import {
-  DEFAULT_LOCAL_JWT_SECRET,
-  DEFAULT_POSTGRES_ROOT_KEY,
-  type ServiceCreation as ServiceCreationType,
+  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+  DEFAULT_LOCAL_S3_REGION,
+  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+  DEFAULT_SIGNING_KEY,
+} from "@supabase/stack/defaults";
+import {
+  apiTlsContext,
+  type ServiceCreationInput as ServiceCreationType,
 } from "@supabase/stack/effect";
-import { Crypto, Effect, Data, FileSystem, Path, Redacted, SchemaIssue } from "effect";
+import { type ArtifactSelection } from "@supabase/stack/internal/artifacts";
+import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import { SecureRandom } from "effect/crypto";
+import { FetchHttpClient } from "effect/http";
 
-import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
+import { CliConfigKeys, type AnyCliConfigKey } from "../config/cli-config-keys.ts";
+import { resolveConfigSubtree } from "../config/cli-config-subtree.ts";
+import type {
+  CliConfigMaterialized,
+  CliConfigValues,
+} from "../config/cli-config-values.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
-import { resolveAuthConfig } from "./stack-auth-config.ts";
-import { parseGoDuration } from "./go-duration.ts";
-import { parseFileSizeLimit } from "./storage-bucket-config.ts";
-
-declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
+import { CLI_VERSION } from "../shared/cli/version.ts";
+import { decryptSecretMap } from "../shared/config/vault-decrypt.ts";
+import { toEdgeRuntimeSecretsEnv } from "../shared/functions/functions-config.ts";
 import {
-  decryptAuthSecret,
-  resolveJwtSecret,
-  envOverride,
-  envOverrideApiMaxRows,
-  envOverrideAuthPasswordRequirements,
-  envOverrideAnalyticsBackend,
-  envOverrideBool,
-  envOverrideDefaultPoolSize,
-  envOverrideDenoVersion,
-  envOverrideEdgeRuntimePolicy,
-  envOverrideMaxClientConn,
-  envOverrideMajorVersion,
-  envOverridePort,
-  envOverridePoolMode,
-  envOverrideRealtimeIpVersion,
-  envOverrideRealtimeMaxHeaderLength,
-  envOverrideUint,
-  resolveAuthCaptcha,
-  resolveAuthEmail,
-  resolveAuthEmailSmtp,
+  configLoadFailureSuggestion,
+  describeConfigLoadFailure,
+  loadResolvedConfigContext,
+  resolvePasskeyWebauthn,
+} from "./resolved-config-context.ts";
+import { resolveAuthConfig } from "./stack-auth-config.ts";
+import { smtpOn } from "./local-config-helpers.ts";
+import { parseDuration } from "./duration.ts";
+import { parseFileSizeLimit } from "./storage-bucket-config.ts";
+import { ramInBytes } from "./size-units.ts";
+import { stackArtifactSelection } from "./stack-artifact-selection.ts";
+import {
+  type LockRequest,
+  type LockResolutionError,
+  rejectFrozenWithoutConfig,
+} from "./stack-lock.ts";
+
+import {
+  resolveConfiguredSigningKeys,
   resolveAuthExternalProviders,
-  resolveAuthHooks,
-  resolveAuthMfa,
-  resolveAuthSms,
-  resolveDbSettingsEnvOverrides,
-  resolveGotrueOAuthServer,
-  resolveGotrueRateLimit,
-  resolveGotrueSessions,
-  resolveGotrueWeb3,
-  strToArr,
 } from "./local-config-values.ts";
+import { generateAsymmetricLocalJwt } from "./local-jwt.ts";
+import {
+  apiTlsCertReadErrorMessage,
+  apiTlsKeyReadErrorMessage,
+  apiTlsPairErrorMessage,
+  resolveApiTlsPath,
+  resolveEmailTemplatePaths,
+  resolveJwtSecret,
+  validateApiTlsPresence,
+} from "./config-validate.ts";
+import {
+  KONG_LOCAL_TLS_CERT,
+  KONG_LOCAL_TLS_KEY,
+} from "../commands/start/templates/kong-local-tls.ts";
+import { recordOrioleDbTelemetry } from "./db-image.ts";
+import {
+  resolveRemoteJwks,
+  resolveThirdPartyIssuerUrl,
+  thirdPartyIssuerUrlUnchecked,
+  toPublicJwk,
+} from "../shared/auth/jwks.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -56,665 +77,136 @@ import {
 /** A config error suitable for a stack command's user-facing boundary. */
 export class StackConfigError extends Data.TaggedError("StackConfigError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
 }
 
+/** The remediation a stack config failure carries, for the command error that reports it. */
+export const stackConfigSuggestion = (error: unknown): string | undefined =>
+  error instanceof StackConfigError ? error.suggestion : undefined;
+
 interface StackStartConfig {
-  readonly jwtSecret: Redacted.Redacted<string>;
+  /** The artifact pins every creation of this command carries. */
+  readonly selection: ArtifactSelection;
   readonly creations: (
     stackId: string,
-    options?: { readonly jwtSecret?: Redacted.Redacted<string> },
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
   readonly source: CliConfig;
+  /** Reads the PEM pair the API listener serves HTTPS with, when `[api.tls]` is enabled. */
+  readonly apiTls: Effect.Effect<
+    { readonly cert: string; readonly key: string } | undefined,
+    StackConfigError
+  >;
   readonly projectEnvValues: Readonly<Record<string, string>>;
-  readonly document?: Record<string, unknown>;
+  readonly originAt: CliConfigMaterialized["originAt"];
+  readonly remoteJwks: Effect.Effect<string | undefined, StackConfigError>;
+  readonly keys: Effect.Effect<
+    {
+      readonly publishableKey?: string;
+      readonly secretKey?: string;
+      readonly anonKey?: string;
+      readonly serviceRoleKey?: string;
+      readonly anonKeyIsOverride: boolean;
+      readonly serviceRoleKeyIsOverride: boolean;
+      readonly gotrueJwtKeys?: string;
+      readonly publicSigningKeys?: string;
+      readonly remoteJwks?: string;
+    },
+    StackConfigError
+  >;
 }
 
-type StackConfigEffect = Effect.Effect<
+type StackConfigEffect<E, R> = Effect.Effect<
   StackStartConfig,
-  StackConfigError,
-  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
+  StackConfigError | LockResolutionError | E,
+  | FileSystem.FileSystem
+  | Path.Path
+  | RuntimeInfo
+  | SecureRandom.SecureRandom
+  | CommandSettings
+  | CliConfigValues
+  | R
 >;
+
+/** Host directory holding a stack's Storage objects, beside its runtime state. */
+export const stackUploadsDir = (
+  path: Pick<Path.Path, "join">,
+  supabaseHome: string,
+  stackId: string,
+): string => path.join(supabaseHome, "stacks", stackId, "uploads");
+
+interface StackConfigOptions<E, R> {
+  /** The hosted project whose `[remotes.*]` block applies. */
+  readonly projectRef?: string;
+  /** Chooses the artifact pins instead of the bundled ones; without a `supabase/config.toml` the bundled pins apply, or a frozen run fails. */
+  readonly selection?: (
+    request: LockRequest,
+  ) => Effect.Effect<
+    ArtifactSelection,
+    StackConfigError | LockResolutionError | E,
+    FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom | R
+  >;
+  /** Fails with `frozen-missing` when there is no `supabase/config.toml` to lock. */
+  readonly frozen?: boolean;
+  /** Marks `selection` as publishing the lock, so the local auth keys must validate before it runs. */
+  readonly publishesLock?: boolean;
+}
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const withoutUndefined = (value: unknown): unknown => {
-  if (Redacted.isRedacted(value)) return value;
-  if (Array.isArray(value)) return value.map(withoutUndefined);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([, item]) => item !== undefined)
-      .map(([key, item]) => [key, withoutUndefined(item)]),
-  );
-};
+const encodeJwkArray = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
 
 const section = (document: Readonly<Record<string, unknown>> | undefined, name: string) => {
   const value = document?.[name];
   return isRecord(value) ? value : undefined;
 };
 
-const explicitPort = (
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  key: string,
-): number | undefined => {
-  const value = section(document, sectionName)?.[key];
-  return typeof value === "number" ? value : undefined;
+/** The config key behind a saved stack endpoint; its `path` and `env[0]` name the setting. */
+export type StackEndpointKey = Pick<AnyCliConfigKey, "path" | "env">;
+
+/**
+ * Maps a saved stack endpoint (service + endpoint name) to the config key that controls it.
+ * An endpoint missing here (e.g. `pooler.http`, `realtime.rpc`) is always automatic.
+ */
+const endpointKeysByServiceEndpoint: Readonly<Record<string, StackEndpointKey>> = {
+  "database.sql": CliConfigKeys.db.port,
+  "pooler.sql": CliConfigKeys.db.pooler.port,
+  "analytics.http": CliConfigKeys.analytics.port,
+  "studio.http": CliConfigKeys.studio.port,
+  "mail.http": CliConfigKeys.localSmtp.port,
+  "mail.smtp": CliConfigKeys.localSmtp.smtpPort,
+  "mail.pop3": CliConfigKeys.localSmtp.pop3Port,
+  "functions.inspector": CliConfigKeys.edgeRuntime.inspectorPort,
+  "rest.http": CliConfigKeys.api.port,
+  "auth.http": CliConfigKeys.api.port,
+  "realtime.http": CliConfigKeys.api.port,
+  "storage.http": CliConfigKeys.api.port,
+  "functions.http": CliConfigKeys.api.port,
 };
 
-const envPortOrConfigured = (
-  name: string,
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  key: string,
-  configured: number,
-  env: Readonly<Record<string, string>>,
-): number | undefined => {
-  if (envOverride(name, undefined, env) !== undefined) return configured;
-  return explicitPort(document, sectionName, key) === undefined ? undefined : configured;
-};
+/** The config key that sets a service endpoint's port, when the CLI exposes one. */
+export const stackEndpointKey = (service: string, endpoint: string): StackEndpointKey | undefined =>
+  endpointKeysByServiceEndpoint[`${service}.${endpoint}`];
 
-const envNestedPortOrConfigured = (
-  name: string,
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  nestedSection: string,
-  key: string,
-  configured: number,
-  env: Readonly<Record<string, string>>,
-): number | undefined => {
-  if (envOverride(name, undefined, env) !== undefined) return configured;
-  const nested = section(section(document, sectionName), nestedSection);
-  return typeof nested?.[key] === "number" ? configured : undefined;
-};
-
-const authProviderNames = [
-  "apple",
-  "azure",
-  "bitbucket",
-  "discord",
-  "facebook",
-  "github",
-  "gitlab",
-  "google",
-  "kakao",
-  "keycloak",
-  "linkedin_oidc",
-  "notion",
-  "twitch",
-  "twitter",
-  "x",
-  "slack_oidc",
-  "spotify",
-  "workos",
-  "zoom",
-] as const;
-
-const resolvedPort = (
-  name: string,
-  configured: number,
-  field: string,
-  env: Readonly<Record<string, string>>,
-) =>
-  envOverride(name, undefined, env) === undefined
-    ? configured
-    : envOverridePort(name, configured, field, env);
-
-const resolveAuthOverrides = (
-  auth: CliConfig["auth"],
-  document: Readonly<Record<string, unknown>> | undefined,
-  env: Readonly<Record<string, string>>,
-) => {
-  const authDocument = section(document, "auth");
-  const email = resolveAuthEmail(auth.email, authDocument, env);
-  const smtp = resolveAuthEmailSmtp(authDocument, env);
-  const hooks = resolveAuthHooks(authDocument, auth.hook, env);
-  const external = resolveAuthExternalProviders(authDocument, auth.external, env);
-  const externalResolved = { ...auth.external };
-  for (const name of authProviderNames) {
-    const value = external[name];
-    if (value === undefined) continue;
-    externalResolved[name] = {
-      ...externalResolved[name],
-      enabled: value.enabled,
-      client_id: value.clientId ?? externalResolved[name].client_id,
-      secret: value.secret,
-      url: value.url,
-      redirect_uri: value.redirectUri ?? externalResolved[name].redirect_uri,
-      skip_nonce_check: value.skipNonceCheck,
-      email_optional: value.emailOptional,
-    };
-  }
-  const figma = external.figma;
-  if (figma !== undefined) {
-    externalResolved.figma = {
-      ...externalResolved.figma,
-      enabled: figma.enabled,
-      client_id: figma.clientId ?? externalResolved.figma?.client_id,
-      secret: figma.secret,
-      url: figma.url,
-      redirect_uri: figma.redirectUri ?? externalResolved.figma?.redirect_uri,
-      skip_nonce_check: figma.skipNonceCheck,
-      email_optional: figma.emailOptional,
-    };
-  }
-  const hookValue = (
-    value: (typeof hooks)[keyof typeof hooks],
-    fallback: (typeof auth.hook)[keyof typeof auth.hook],
-  ) => value ?? fallback;
-  const hookResolved = {
-    mfa_verification_attempt: hookValue(
-      hooks.mfaVerificationAttempt,
-      auth.hook.mfa_verification_attempt,
-    ),
-    password_verification_attempt: hookValue(
-      hooks.passwordVerificationAttempt,
-      auth.hook.password_verification_attempt,
-    ),
-    custom_access_token: hookValue(hooks.customAccessToken, auth.hook.custom_access_token),
-    send_sms: hookValue(hooks.sendSms, auth.hook.send_sms),
-    send_email: hookValue(hooks.sendEmail, auth.hook.send_email),
-    before_user_created: hookValue(hooks.beforeUserCreated, auth.hook.before_user_created),
-  };
-  const resolvedEmailTemplate: CliConfig["auth"]["email"]["template"] = Object.fromEntries(
-    Object.entries(email.template).map(([name, value]) => [
-      name,
-      { subject: value.subject ?? "", content_path: value.content_path },
-    ]),
-  );
-  const resolvedEmailNotification: CliConfig["auth"]["email"]["notification"] = Object.fromEntries(
-    Object.entries(email.notification).map(([name, value]) => [
-      name,
-      {
-        enabled: value.enabled,
-        subject: value.subject ?? "",
-        content_path: value.content_path,
-      },
-    ]),
-  );
-  const resolvedEmail = {
-    ...email,
-    template: resolvedEmailTemplate,
-    notification: resolvedEmailNotification,
-  };
-  const additionalRedirectUrls = envOverride(
-    "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
-    undefined,
-    env,
-  );
-  const resolvedSmtp =
-    smtp === undefined
-      ? undefined
-      : {
-          enabled: smtp.enabled,
-          host: smtp.host,
-          ...(smtp.port === 0 ? {} : { port: smtp.port }),
-          user: smtp.user,
-          pass: smtp.pass,
-          admin_email: smtp.adminEmail,
-          sender_name: smtp.senderName,
-        };
-  const resolvedSms = resolveAuthSms(authDocument, auth.sms, env);
-  const thirdParty = {
-    firebase: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-        auth.third_party.firebase.enabled,
-        "auth.third_party.firebase.enabled",
-        env,
-      ),
-      project_id: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-        auth.third_party.firebase.project_id,
-        env,
-      ),
-    },
-    auth0: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-        auth.third_party.auth0.enabled,
-        "auth.third_party.auth0.enabled",
-        env,
-      ),
-      tenant: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-        auth.third_party.auth0.tenant,
-        env,
-      ),
-      tenant_region: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
-        auth.third_party.auth0.tenant_region,
-        env,
-      ),
-    },
-    aws_cognito: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-        auth.third_party.aws_cognito.enabled,
-        "auth.third_party.aws_cognito.enabled",
-        env,
-      ),
-      user_pool_id: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-        auth.third_party.aws_cognito.user_pool_id,
-        env,
-      ),
-      user_pool_region: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-        auth.third_party.aws_cognito.user_pool_region,
-        env,
-      ),
-    },
-    clerk: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-        auth.third_party.clerk.enabled,
-        "auth.third_party.clerk.enabled",
-        env,
-      ),
-      domain: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-        auth.third_party.clerk.domain,
-        env,
-      ),
-    },
-    workos: {
-      enabled: envOverrideBool(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-        auth.third_party.workos.enabled,
-        "auth.third_party.workos.enabled",
-        env,
-      ),
-      issuer_url: envOverride(
-        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-        auth.third_party.workos.issuer_url,
-        env,
-      ),
-    },
-  };
-  return {
-    ...auth,
-    enabled: envOverrideBool("SUPABASE_AUTH_ENABLED", auth.enabled, "auth.enabled", env),
-    site_url: envOverride("SUPABASE_AUTH_SITE_URL", auth.site_url, env),
-    additional_redirect_urls:
-      additionalRedirectUrls === undefined
-        ? auth.additional_redirect_urls
-        : strToArr(additionalRedirectUrls),
-    jwt_expiry: envOverrideUint(
-      "SUPABASE_AUTH_JWT_EXPIRY",
-      "auth.jwt_expiry",
-      auth.jwt_expiry,
-      env,
-    ),
-    enable_refresh_token_rotation: envOverrideBool(
-      "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
-      auth.enable_refresh_token_rotation,
-      "auth.enable_refresh_token_rotation",
-      env,
-    ),
-    refresh_token_reuse_interval: envOverrideUint(
-      "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
-      "auth.refresh_token_reuse_interval",
-      auth.refresh_token_reuse_interval,
-      env,
-    ),
-    enable_manual_linking: envOverrideBool(
-      "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
-      auth.enable_manual_linking,
-      "auth.enable_manual_linking",
-      env,
-    ),
-    enable_signup: envOverrideBool(
-      "SUPABASE_AUTH_ENABLE_SIGNUP",
-      auth.enable_signup,
-      "auth.enable_signup",
-      env,
-    ),
-    enable_anonymous_sign_ins: envOverrideBool(
-      "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
-      auth.enable_anonymous_sign_ins,
-      "auth.enable_anonymous_sign_ins",
-      env,
-    ),
-    minimum_password_length: envOverrideUint(
-      "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
-      "auth.minimum_password_length",
-      auth.minimum_password_length,
-      env,
-    ),
-    password_requirements: envOverrideAuthPasswordRequirements(auth.password_requirements, env),
-    publishable_key: envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", auth.publishable_key, env),
-    secret_key: envOverride("SUPABASE_AUTH_SECRET_KEY", auth.secret_key, env),
-    anon_key: envOverride("SUPABASE_AUTH_ANON_KEY", auth.anon_key, env),
-    service_role_key: envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, env),
-    rate_limit: resolveGotrueRateLimit(auth.rate_limit, env),
-    captcha: resolveAuthCaptcha(authDocument, auth.captcha, env),
-    hook: hookResolved,
-    mfa: resolveAuthMfa(auth.mfa, env),
-    sessions: resolveGotrueSessions(auth.sessions, env),
-    email: { ...resolvedEmail, smtp: resolvedSmtp },
-    sms: {
-      ...resolvedSms,
-      twilio: {
-        ...resolvedSms.twilio,
-        content_sid: envOverride(
-          "SUPABASE_AUTH_SMS_TWILIO_CONTENT_SID",
-          auth.sms.twilio.content_sid,
-          env,
-        ),
-      },
-    },
-    external: externalResolved,
-    web3: resolveGotrueWeb3(auth.web3, env),
-    oauth_server: resolveGotrueOAuthServer(auth.oauth_server, env),
-    third_party: thirdParty,
-  };
-};
-
-const resolveEffectiveCliConfig = (
-  config: CliConfig,
-  document: Readonly<Record<string, unknown>> | undefined,
-  env: Readonly<Record<string, string>>,
-): CliConfig => {
-  const api = config.api;
-  const db = config.db;
-  const storage = config.storage;
-  const realtime = config.realtime;
-  const analytics = config.analytics;
-  const studio = config.studio;
-  const mail = config.local_smtp;
-  const pooler = db.pooler;
-  const edge = config.edge_runtime;
-  const experimental = {
-    ...config.experimental,
-    orioledb_version: envOverride(
-      "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-      config.experimental.orioledb_version,
-      env,
-    ),
-  };
-  const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, env);
-  const apiExtraSearchPathOverride = envOverride("SUPABASE_API_EXTRA_SEARCH_PATH", undefined, env);
-  const imageDocument = section(section(document, "storage"), "image_transformation");
-  const imageEnabledOverride = envOverride(
-    "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
-    undefined,
-    env,
-  );
-  const imageEnabledExplicit =
-    imageDocument?.enabled !== undefined || imageEnabledOverride !== undefined;
-  const resolvedApi = {
-    ...api,
-    enabled: envOverrideBool("SUPABASE_API_ENABLED", api.enabled, "api.enabled", env),
-    port: resolvedPort("SUPABASE_API_PORT", api.port, "api.port", env),
-    schemas: apiSchemasOverride === undefined ? api.schemas : strToArr(apiSchemasOverride),
-    extra_search_path:
-      apiExtraSearchPathOverride === undefined
-        ? api.extra_search_path
-        : strToArr(apiExtraSearchPathOverride),
-    max_rows: envOverrideApiMaxRows(api.max_rows, env),
-    tls: {
-      ...api.tls,
-      enabled: envOverrideBool("SUPABASE_API_TLS_ENABLED", api.tls.enabled, "api.tls.enabled", env),
-      cert_path: envOverride("SUPABASE_API_TLS_CERT_PATH", api.tls.cert_path, env),
-      key_path: envOverride("SUPABASE_API_TLS_KEY_PATH", api.tls.key_path, env),
-    },
-    external_url: envOverride("SUPABASE_API_EXTERNAL_URL", api.external_url, env),
-    auto_expose_new_tables:
-      api.auto_expose_new_tables !== undefined ||
-      envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES", undefined, env) !== undefined
-        ? envOverrideBool(
-            "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES",
-            api.auto_expose_new_tables ?? false,
-            "api.auto_expose_new_tables",
-            env,
-          )
-        : undefined,
-  };
-  const resolvedStorage = {
-    ...storage,
-    enabled: envOverrideBool("SUPABASE_STORAGE_ENABLED", storage.enabled, "storage.enabled", env),
-    file_size_limit: envOverride(
-      "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
-      String(storage.file_size_limit),
-      env,
-    ),
-    image_transformation: imageEnabledExplicit
-      ? {
-          ...storage.image_transformation,
-          enabled: envOverrideBool(
-            "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
-            storage.image_transformation?.enabled ?? false,
-            "storage.image_transformation.enabled",
-            env,
-          ),
-        }
-      : undefined,
-    s3_protocol: {
-      ...storage.s3_protocol,
-      enabled: envOverrideBool(
-        "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
-        storage.s3_protocol.enabled,
-        "storage.s3_protocol.enabled",
-        env,
-      ),
-    },
-    analytics: {
-      ...storage.analytics,
-      enabled: envOverrideBool(
-        "SUPABASE_STORAGE_ANALYTICS_ENABLED",
-        storage.analytics.enabled,
-        "storage.analytics.enabled",
-        env,
-      ),
-      max_namespaces: envOverrideUint(
-        "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
-        "storage.analytics.max_namespaces",
-        storage.analytics.max_namespaces,
-        env,
-      ),
-      max_tables: envOverrideUint(
-        "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
-        "storage.analytics.max_tables",
-        storage.analytics.max_tables,
-        env,
-      ),
-      max_catalogs: envOverrideUint(
-        "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
-        "storage.analytics.max_catalogs",
-        storage.analytics.max_catalogs,
-        env,
-      ),
-    },
-    vector: {
-      ...storage.vector,
-      enabled: envOverrideBool(
-        "SUPABASE_STORAGE_VECTOR_ENABLED",
-        storage.vector.enabled,
-        "storage.vector.enabled",
-        env,
-      ),
-      max_buckets: envOverrideUint(
-        "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
-        "storage.vector.max_buckets",
-        storage.vector.max_buckets,
-        env,
-      ),
-      max_indexes: envOverrideUint(
-        "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
-        "storage.vector.max_indexes",
-        storage.vector.max_indexes,
-        env,
-      ),
-    },
-  };
-  const resolvedEdge = {
-    ...edge,
-    enabled: envOverrideBool(
-      "SUPABASE_EDGE_RUNTIME_ENABLED",
-      edge.enabled,
-      "edge_runtime.enabled",
-      env,
-    ),
-    policy: envOverrideEdgeRuntimePolicy(edge.policy, env),
-    deno_version: envOverrideDenoVersion(edge.deno_version, env),
-    inspector_port: resolvedPort(
-      "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-      edge.inspector_port,
-      "edge_runtime.inspector_port",
-      env,
-    ),
-  };
-  const resolvedAnalytics = {
-    ...analytics,
-    enabled: envOverrideBool(
-      "SUPABASE_ANALYTICS_ENABLED",
-      analytics.enabled,
-      "analytics.enabled",
-      env,
-    ),
-    port: resolvedPort("SUPABASE_ANALYTICS_PORT", analytics.port, "analytics.port", env),
-    ...(analytics.vector_port === undefined &&
-    envOverride("SUPABASE_ANALYTICS_VECTOR_PORT", undefined, env) === undefined
-      ? {}
-      : {
-          vector_port: resolvedPort(
-            "SUPABASE_ANALYTICS_VECTOR_PORT",
-            analytics.vector_port ?? 0,
-            "analytics.vector_port",
-            env,
-          ),
-        }),
-    backend: envOverrideAnalyticsBackend(analytics.backend, env),
-    gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
-    gcp_project_number: envOverride(
-      "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
-      analytics.gcp_project_number,
-      env,
-    ),
-    gcp_jwt_path: envOverride("SUPABASE_ANALYTICS_GCP_JWT_PATH", analytics.gcp_jwt_path, env),
-  };
-  const resolvedPooler = {
-    ...pooler,
-    enabled: envOverrideBool(
-      "SUPABASE_DB_POOLER_ENABLED",
-      pooler.enabled,
-      "db.pooler.enabled",
-      env,
-    ),
-    port: resolvedPort("SUPABASE_DB_POOLER_PORT", pooler.port, "db.pooler.port", env),
-    pool_mode: envOverridePoolMode(pooler.pool_mode, env),
-    default_pool_size: envOverrideDefaultPoolSize(pooler.default_pool_size, env),
-    max_client_conn: envOverrideMaxClientConn(pooler.max_client_conn, env),
-  };
-  const authEnabled = envOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    env,
-  );
-  // JWT security settings apply to non-Auth workloads too, so resolve them
-  // regardless of whether the Auth capability is enabled.
-  const authResolved = {
-    ...(authEnabled ? resolveAuthOverrides(config.auth, document, env) : config.auth),
-    enabled: authEnabled,
-    jwt_issuer: envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, env),
-    signing_keys_path: envOverride(
-      "SUPABASE_AUTH_SIGNING_KEYS_PATH",
-      config.auth.signing_keys_path,
-      env,
-    ),
-    jwt_secret: decryptAuthSecret(
-      envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, env),
-      env,
-    ),
-  };
-  return {
-    ...config,
-    api: resolvedApi,
-    auth: authResolved,
-    db: {
-      ...db,
-      port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
-      major_version: envOverrideMajorVersion(db.major_version, env),
-      health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
-      settings: resolveDbSettingsEnvOverrides(db.settings, env),
-      pooler: resolvedPooler,
-    },
-    edge_runtime: resolvedEdge,
-    experimental,
-    realtime: {
-      ...realtime,
-      enabled: envOverrideBool(
-        "SUPABASE_REALTIME_ENABLED",
-        realtime.enabled,
-        "realtime.enabled",
-        env,
-      ),
-      ip_version: envOverrideRealtimeIpVersion(realtime.ip_version, env),
-      max_header_length: envOverrideRealtimeMaxHeaderLength(realtime.max_header_length, env),
-    },
-    storage: resolvedStorage,
-    analytics: resolvedAnalytics,
-    studio: {
-      ...studio,
-      enabled: envOverrideBool("SUPABASE_STUDIO_ENABLED", studio.enabled, "studio.enabled", env),
-      port: resolvedPort("SUPABASE_STUDIO_PORT", studio.port, "studio.port", env),
-      api_url: envOverride("SUPABASE_STUDIO_API_URL", studio.api_url, env),
-      openai_api_key: decryptAuthSecret(
-        envOverride("SUPABASE_STUDIO_OPENAI_API_KEY", studio.openai_api_key, env),
-        env,
-      ),
-    },
-    local_smtp: {
-      ...mail,
-      enabled: envOverrideBool(
-        "SUPABASE_LOCAL_SMTP_ENABLED",
-        mail.enabled,
-        "local_smtp.enabled",
-        env,
-      ),
-      port: resolvedPort("SUPABASE_LOCAL_SMTP_PORT", mail.port, "local_smtp.port", env),
-      smtp_port: resolvedPort(
-        "SUPABASE_LOCAL_SMTP_SMTP_PORT",
-        mail.smtp_port ?? 0,
-        "local_smtp.smtp_port",
-        env,
-      ),
-      pop3_port: resolvedPort(
-        "SUPABASE_LOCAL_SMTP_POP3_PORT",
-        mail.pop3_port ?? 0,
-        "local_smtp.pop3_port",
-        env,
-      ),
-      admin_email: envOverride("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL", mail.admin_email, env),
-      sender_name: envOverride("SUPABASE_LOCAL_SMTP_SENDER_NAME", mail.sender_name, env),
-    },
-  };
-};
+export const stackMajorVersionKey: StackEndpointKey = CliConfigKeys.db.majorVersion;
 
 const unsupportedConfigPaths = [
-  "auth.third_party",
-  "auth.publishable_key",
-  "auth.secret_key",
-  "auth.anon_key",
-  "auth.service_role_key",
-  "api.tls",
-  "analytics.gcp_project_id",
-  "analytics.gcp_project_number",
-  "analytics.gcp_jwt_path",
-  "edge_runtime.deno_version",
-  "storage.analytics",
-  "experimental.orioledb_version",
-  "experimental.s3_host",
-  "experimental.s3_region",
-  "experimental.s3_access_key",
-  "experimental.s3_secret_key",
+  { path: "analytics.gcp_project_id", active: (config: CliConfig) => config.analytics.enabled },
+  {
+    path: "analytics.gcp_project_number",
+    active: (config: CliConfig) => config.analytics.enabled,
+  },
+  { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
+  { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
+  ...(["s3_host", "s3_region", "s3_access_key", "s3_secret_key"] as const).map((key) => ({
+    path: `experimental.${key}`,
+    // Legacy Compose forwards these to OrioleDB; the stack does not, so fail rather than drop them.
+    active: (config: CliConfig) => (config.db.orioledb_version ?? "") !== "",
+  })),
 ] as const;
 
 const pathValue = (value: unknown, path: string): unknown => {
@@ -766,18 +258,8 @@ const firstDifference = (left: unknown, right: unknown, path: string): string | 
 
 const configValidationError = (config: CliConfig): string | undefined => {
   const defaults = getDefaultCliConfig();
-  if (config.auth.enabled) {
-    for (const [name, template] of Object.entries(config.auth.email.template))
-      if (template.content_path !== "")
-        return `auth.email.template.${name}.content_path requires template serving, which is not supported by the experimental stack`;
-    for (const [name, notification] of Object.entries(config.auth.email.notification))
-      if (notification.enabled && notification.content_path !== "")
-        return `auth.email.notification.${name}.content_path requires template serving, which is not supported by the experimental stack`;
-  }
-  if (config.auth.signing_keys_path !== undefined)
-    return "auth.signing_keys_path is unsupported by the experimental stack";
-  for (const path of unsupportedConfigPaths) {
-    if (path.startsWith("auth.") && !config.auth.enabled) continue;
+  for (const { path, active } of unsupportedConfigPaths) {
+    if (!active(config)) continue;
     const value = pathValue(config, path);
     const baseline = pathValue(defaults, path);
     const difference = firstDifference(value, baseline, path);
@@ -785,69 +267,221 @@ const configValidationError = (config: CliConfig): string | undefined => {
   }
   if (config.analytics.enabled && config.analytics.backend !== "postgres")
     return "analytics.backend must be postgres for the experimental stack";
-  if (Object.keys(config.storage.vector.buckets).length > 0)
-    return "storage.vector settings are unsupported by the experimental stack";
   if (config.db.major_version !== 15 && config.db.major_version !== 17)
     return "db.major_version must be 15 or 17 for the experimental stack";
 
   return undefined;
 };
 
+const toStackConfigError = (cause: { readonly message: string }) =>
+  new StackConfigError({ message: cause.message });
+
 const endpoint = (port: number | undefined): { readonly port: number | "auto" } => ({
   port: port === undefined ? "auto" : port,
 });
 
-/** Loads and translates the effective project config for all stack commands.
- * Pass `opts.context` to reuse an already-loaded project context. */
+/** Loads and translates the effective project config for all stack commands. */
 export const loadStackConfig = Effect.fn("StackConfig.load")(
-  (projectRoot: string, opts?: { readonly context?: LocalProjectContext }): StackConfigEffect =>
+  <E = never, R = never>(
+    projectRoot: string,
+    opts?: StackConfigOptions<E, R>,
+  ): StackConfigEffect<E, R> =>
     Effect.gen(function* () {
-      const context =
-        opts?.context ??
-        (yield* loadLocalProjectContext(
-          projectRoot,
-          (message) => new StackConfigError({ message }),
-        ));
-      const effectiveInput = yield* Effect.try({
-        try: () =>
-          resolveEffectiveCliConfig(
-            context.config,
-            context.loaded?.document,
-            context.projectEnvValues,
-          ),
-        catch: (cause) =>
-          new StackConfigError({
-            message: cause instanceof Error ? cause.message : "invalid config overrides",
-          }),
-      });
-      const validatedConfig = yield* validateCliConfig(withoutUndefined(effectiveInput)).pipe(
-        Effect.mapError((cause) => {
-          const issues = SchemaIssue.makeFormatterStandardSchemaV1({
-            leafHook: () => "Invalid value",
-            checkHook: () => undefined,
-          })(cause.issue).issues;
-          const path = issues[0]?.path
-            ?.map((segment) => String(typeof segment === "object" ? segment.key : segment))
-            .join(".");
-          return new StackConfigError({
-            message: path === undefined ? "invalid config" : `invalid config at ${path}`,
-          });
-        }),
+      const {
+        resolvedConfig,
+        config: validatedConfig,
+        projectEnvValues,
+        document,
+      } = yield* loadResolvedConfigContext(
+        projectRoot,
+        Option.fromNullishOr(opts?.projectRef),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackConfigError({
+              message: describeConfigLoadFailure(cause),
+              suggestion: configLoadFailureSuggestion(cause),
+            }),
+        ),
+      );
+      const { originAt } = resolvedConfig.materialized;
+      yield* recordOrioleDbTelemetry(
+        validatedConfig.db.orioledb_version,
+        validatedConfig.db.major_version,
       );
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
-
-      const authConfig = yield* resolveAuthConfig(validatedConfig.auth, validatedConfig.local_smtp);
+      if (!resolvedConfig.hasConfigFile)
+        yield* rejectFrozenWithoutConfig(projectRoot, opts?.frozen === true);
+      const externalProviders = yield* Effect.try({
+        try: () =>
+          resolveAuthExternalProviders(section(document, "auth"), validatedConfig.auth.external),
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : "invalid auth provider config",
+          }),
+      });
+      const authExternalUrl = Option.getOrUndefined(
+        (yield* resolvedConfig
+          .get(CliConfigKeys.auth.externalUrl)
+          .pipe(Effect.mapError(toStackConfigError))).value,
+      );
+      const authConfig = yield* resolveAuthConfig(
+        validatedConfig.auth,
+        validatedConfig.local_smtp,
+        {
+          smtpEnabled: smtpOn(
+            resolvedConfig.materialized.config,
+            resolvedConfig.loaded.document ?? {},
+          ),
+          authExternalUrl,
+          apiExternalUrl: validatedConfig.api.external_url,
+          externalProviders,
+          ...(yield* resolvePasskeyWebauthn(resolvedConfig).pipe(
+            Effect.mapError(toStackConfigError),
+          )),
+        },
+      );
       const path = yield* Path.Path;
+      const { supabaseHome } = yield* CommandSettings;
+      /* Like legacy: both configured paths, joined to `supabase/`, else the embedded local pair. */
+      const tls = validatedConfig.api.tls;
+      const certPath = tls.cert_path ?? "";
+      const keyPath = tls.key_path ?? "";
+      const fs = yield* FileSystem.FileSystem;
+      const readTls = (file: string, message: (cause: unknown) => string) =>
+        fs
+          .readFileString(resolveApiTlsPath(path, projectRoot, file))
+          .pipe(
+            Effect.mapError(
+              (cause) => new StackConfigError({ message: message(cause.reason.cause ?? cause) }),
+            ),
+          );
+      /* Read only by the start that applies TLS; other commands use the pair saved at start. */
+      const apiTls = Effect.gen(function* () {
+        if (!tls.enabled) return undefined;
+        /* Like legacy, a disabled `[api]` still serves https, on the embedded pair. */
+        if (!validatedConfig.api.enabled)
+          return { cert: KONG_LOCAL_TLS_CERT, key: KONG_LOCAL_TLS_KEY };
+        yield* Effect.try({
+          try: () => validateApiTlsPresence(tls.cert_path, tls.key_path),
+          catch: (cause) =>
+            new StackConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
+        if (certPath === "") return { cert: KONG_LOCAL_TLS_CERT, key: KONG_LOCAL_TLS_KEY };
+        const pair = {
+          cert: yield* readTls(certPath, apiTlsCertReadErrorMessage),
+          key: yield* readTls(keyPath, apiTlsKeyReadErrorMessage),
+        };
+        /* Proven usable here, so start never fails on it after binding. */
+        yield* apiTlsContext(pair).pipe(
+          Effect.mapError(
+            (error) =>
+              new StackConfigError({
+                message: apiTlsPairErrorMessage(
+                  resolveApiTlsPath(path, projectRoot, certPath),
+                  resolveApiTlsPath(path, projectRoot, keyPath),
+                  error.cause,
+                ),
+              }),
+          ),
+        );
+        return pair;
+      });
+      const auth = validatedConfig.auth;
+      const issuer = yield* Effect.try({
+        try: () => {
+          const resolved = auth.enabled
+            ? resolveThirdPartyIssuerUrl(auth.third_party)
+            : thirdPartyIssuerUrlUnchecked(auth.third_party);
+          return resolved === undefined || resolved.length === 0 ? undefined : resolved;
+        },
+        catch: (cause) =>
+          new StackConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      const stackKeyError = (cause: unknown) =>
+        cause instanceof StackConfigError
+          ? cause
+          : new StackConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            });
+      const localKeys = yield* Effect.cached(
+        Effect.gen(function* () {
+          const configured = (value: string | undefined) =>
+            value === undefined || value === "" ? undefined : value;
+          const publishableKey = configured(auth.publishable_key);
+          const secretKey = configured(auth.secret_key);
+          const configuredAnonKey = configured(auth.anon_key);
+          const configuredServiceRoleKey = configured(auth.service_role_key);
+          const configuredSigningKeys = yield* resolveConfiguredSigningKeys(
+            validatedConfig,
+            projectRoot,
+          );
+          const signingKeys =
+            configuredSigningKeys ??
+            (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
+              ? undefined
+              : [DEFAULT_SIGNING_KEY]);
+          const signingKey = signingKeys?.[0];
+          return yield* Effect.try({
+            try: () => ({
+              ...(publishableKey === undefined ? {} : { publishableKey }),
+              ...(secretKey === undefined ? {} : { secretKey }),
+              ...(configuredAnonKey === undefined
+                ? signingKey === undefined
+                  ? {}
+                  : { anonKey: generateAsymmetricLocalJwt(signingKey, "anon") }
+                : { anonKey: configuredAnonKey }),
+              ...(configuredServiceRoleKey === undefined
+                ? signingKey === undefined
+                  ? {}
+                  : { serviceRoleKey: generateAsymmetricLocalJwt(signingKey, "service_role") }
+                : { serviceRoleKey: configuredServiceRoleKey }),
+              anonKeyIsOverride: configuredAnonKey !== undefined,
+              serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
+              ...(signingKeys === undefined
+                ? {}
+                : {
+                    gotrueJwtKeys: encodeJwkArray(signingKeys),
+                    publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
+                  }),
+            }),
+            catch: stackKeyError,
+          });
+        }).pipe(
+          Effect.mapError(stackKeyError),
+          Effect.provideService(FileSystem.FileSystem, yield* FileSystem.FileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      );
+      const remoteJwks = Effect.gen(function* () {
+        return issuer === undefined
+          ? undefined
+          : encodeJwkArray(
+              yield* resolveRemoteJwks(issuer).pipe(
+                Effect.provide(FetchHttpClient.layer),
+                Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
+                Effect.withSpan("StackConfig.fetchRemoteJwks"),
+              ),
+            );
+      });
+      const keys = Effect.gen(function* () {
+        const configuredKeys = yield* localKeys;
+        const refreshedRemoteJwks = yield* remoteJwks;
+        return {
+          ...configuredKeys,
+          ...(refreshedRemoteJwks === undefined ? {} : { remoteJwks: refreshedRemoteJwks }),
+        };
+      });
       const functionEnvironments = Object.fromEntries(
         yield* Effect.forEach(Object.entries(validatedConfig.functions), ([name, config]) =>
-          resolveCliConfigSubtree(
-            config.env,
-            { values: context.projectEnvValues },
-            `functions.${name}.env`,
-            { goViperCompat: true },
-          ).pipe(
+          resolveConfigSubtree(resolvedConfig, config.env, `functions.${name}.env`).pipe(
+            Effect.mapError((error) => new StackConfigError({ message: error.message })),
             Effect.map(
               (env) =>
                 [
@@ -899,23 +533,27 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           ),
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const functionsEnv = yield* Effect.try({
-        try: () =>
-          Object.fromEntries(
-            Object.entries(validatedConfig.edge_runtime.secrets ?? {}).map(([key, value]) => [
-              key,
-              decryptAuthSecret(value, context.projectEnvValues) ?? "",
-            ]),
-          ),
-        catch: (cause) => new StackConfigError({ message: String(cause) }),
-      });
+      const resolvedSecrets = yield* resolveConfigSubtree(
+        resolvedConfig,
+        validatedConfig.edge_runtime.secrets ?? {},
+        "edge_runtime.secrets",
+      ).pipe(Effect.mapError(toStackConfigError));
+      const functionsEnvResult = decryptSecretMap(
+        toEdgeRuntimeSecretsEnv(resolvedSecrets),
+        resolvedConfig.dotenvPrivateKeys,
+      );
+      if (!functionsEnvResult.ok)
+        return yield* new StackConfigError({
+          message: `failed to parse config: ${functionsEnvResult.error}`,
+        });
+      const functionsEnv = functionsEnvResult.value;
       const storageFileSizeLimit = yield* Effect.try({
         try: () => String(parseFileSizeLimit(validatedConfig.storage.file_size_limit)),
         catch: (cause) =>
           new StackConfigError({ message: `Invalid storage.file_size_limit: ${String(cause)}` }),
       });
       const healthTimeoutMs = yield* Effect.try({
-        try: () => parseGoDuration(validatedConfig.db.health_timeout) / 1_000_000,
+        try: () => parseDuration(validatedConfig.db.health_timeout) / 1_000_000,
         catch: (cause) =>
           new StackConfigError({ message: `Invalid db.health_timeout: ${String(cause)}` }),
       });
@@ -926,133 +564,119 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             : resolveJwtSecret(validatedConfig.auth.jwt_secret),
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const jwtSecret = Redacted.make(configuredJwtSecret ?? DEFAULT_LOCAL_JWT_SECRET);
-      const document = context.loaded?.document;
-      const rootKey = yield* Effect.try({
-        try: () => {
-          const raw = section(document, "db")?.root_key;
-          if (raw !== undefined && typeof raw !== "string")
-            throw new Error("db.root_key must be a string");
-          const value = decryptAuthSecret(
-            envOverride("SUPABASE_DB_ROOT_KEY", raw, context.projectEnvValues),
-            context.projectEnvValues,
-          );
-          return value === undefined || value === "" ? DEFAULT_POSTGRES_ROOT_KEY : value;
-        },
-        catch: (cause) => new StackConfigError({ message: String(cause) }),
-      });
-      const dbPort = envPortOrConfigured(
-        "SUPABASE_DB_PORT",
-        document,
-        "db",
-        "port",
-        validatedConfig.db.port,
-        context.projectEnvValues,
+      const jwtSecret =
+        configuredJwtSecret === undefined ? undefined : Redacted.make(configuredJwtSecret);
+      const rootKey = yield* resolvedConfig.get(CliConfigKeys.db.rootKey).pipe(
+        Effect.map(({ value, origin }) =>
+          origin.tier === "default" || value === "" ? undefined : value,
+        ),
+        Effect.mapError(toStackConfigError),
       );
-      const apiPort = envPortOrConfigured(
-        "SUPABASE_API_PORT",
-        document,
-        "api",
-        "port",
-        validatedConfig.api.port,
-        context.projectEnvValues,
-      );
-      const studioPort = envPortOrConfigured(
-        "SUPABASE_STUDIO_PORT",
-        document,
-        "studio",
-        "port",
-        validatedConfig.studio.port,
-        context.projectEnvValues,
-      );
-      const poolerPort = envNestedPortOrConfigured(
-        "SUPABASE_DB_POOLER_PORT",
-        document,
-        "db",
-        "pooler",
-        "port",
-        validatedConfig.db.pooler.port,
-        context.projectEnvValues,
-      );
-      const mailPort = envPortOrConfigured(
-        "SUPABASE_LOCAL_SMTP_PORT",
-        document,
-        "local_smtp",
-        "port",
-        validatedConfig.local_smtp.port,
-        context.projectEnvValues,
-      );
-      const mailSmtpPort = envPortOrConfigured(
-        "SUPABASE_LOCAL_SMTP_SMTP_PORT",
-        document,
-        "local_smtp",
-        "smtp_port",
+      const configuredPort = (path: string, port: number) =>
+        originAt(path).tier === "default" ? undefined : port;
+      const dbPort = configuredPort("db.port", validatedConfig.db.port);
+      const apiPort = configuredPort("api.port", validatedConfig.api.port);
+      const studioPort = configuredPort("studio.port", validatedConfig.studio.port);
+      const poolerPort = configuredPort("db.pooler.port", validatedConfig.db.pooler.port);
+      const mailPort = configuredPort("local_smtp.port", validatedConfig.local_smtp.port);
+      const mailSmtpPort = configuredPort(
+        "local_smtp.smtp_port",
         validatedConfig.local_smtp.smtp_port ?? 0,
-        context.projectEnvValues,
       );
-      const mailPop3Port = envPortOrConfigured(
-        "SUPABASE_LOCAL_SMTP_POP3_PORT",
-        document,
-        "local_smtp",
-        "pop3_port",
+      const mailPop3Port = configuredPort(
+        "local_smtp.pop3_port",
         validatedConfig.local_smtp.pop3_port ?? 0,
-        context.projectEnvValues,
       );
-      const analyticsPort = envPortOrConfigured(
-        "SUPABASE_ANALYTICS_PORT",
-        document,
-        "analytics",
-        "port",
-        validatedConfig.analytics.port,
-        context.projectEnvValues,
-      );
+      const analyticsPort = configuredPort("analytics.port", validatedConfig.analytics.port);
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
-      const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
+      const selection = yield* resolvedConfig.hasConfigFile && opts?.selection !== undefined
+        ? (opts.publishesLock === true ? localKeys : Effect.void).pipe(
+            Effect.andThen(
+              opts.selection({
+                projectRoot,
+                majorVersion: validatedConfig.db.major_version,
+                orioledbVersion: validatedConfig.db.orioledb_version,
+                services: validatedConfig.local?.services,
+              }),
+            ),
+          )
+        : stackArtifactSelection(validatedConfig.db).pipe(
+            Effect.mapError((error) => new StackConfigError({ message: error.message })),
+          );
+      const pgmetaCreation: ServiceCreationType = {
+        service: "pgmeta",
+        pin: selection.pgmeta,
+        config: {},
+        endpoints: { http: endpoint(undefined) },
+      };
+      const { template, notification } = validatedConfig.auth.email;
+      const emailTemplates = Effect.forEach(
+        !validatedConfig.auth.enabled
+          ? []
+          : [
+              ...Object.entries(template).map(([name, entry]) => ({
+                section: "template" as const,
+                name,
+                id: name,
+                contentPath: entry.content_path,
+              })),
+              ...Object.entries(notification)
+                .filter(([, entry]) => entry.enabled)
+                .map(([name, entry]) => ({
+                  section: "notification" as const,
+                  name,
+                  id: `${name}_notification`,
+                  contentPath: entry.content_path,
+                })),
+            ],
+        ({ section, name, id, contentPath }) =>
+          resolveEmailTemplatePaths({
+            section,
+            name,
+            contentPath,
+            contentPresent: false,
+            base: projectRoot,
+          }).pipe(
+            Effect.map((paths) =>
+              paths === undefined ? [] : [{ id, path: paths.candidate, root: projectRoot }],
+            ),
+          ),
+      ).pipe(
+        Effect.map((templates) => templates.flat()),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(toStackConfigError),
+      );
+      // The memory string is schema-validated, so `ramInBytes` cannot throw here.
+      const withContainerLimits = (creation: ServiceCreationType): ServiceCreationType => {
+        const container = validatedConfig.local?.services?.[creation.service]?.container;
+        return container?.memory === undefined && container?.cpus === undefined
+          ? creation
+          : {
+              ...creation,
+              container: {
+                ...(container.memory === undefined
+                  ? {}
+                  : { memoryBytes: ramInBytes(container.memory) }),
+                ...(container.cpus === undefined ? {} : { cpus: container.cpus }),
+              },
+            };
+      };
       const createCreations = (
         stackId: string,
-        options?: { readonly jwtSecret?: Redacted.Redacted<string> },
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
-        Effect.gen(function* () {
-          const effectiveJwtSecret = options?.jwtSecret ?? jwtSecret;
-          if (
-            options?.jwtSecret !== undefined &&
-            configuredJwtSecret !== undefined &&
-            Redacted.value(options.jwtSecret) !== configuredJwtSecret
-          )
-            return yield* new StackConfigError({
-              message: "The configured auth.jwt_secret does not match the existing stack",
-            });
-          const bootstrap = validatedConfig.edge_runtime.enabled
-            ? yield* typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
-                ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
-                : Effect.tryPromise({
-                    try: () => import("./stack-functions-bundler.ts"),
-                    catch: (cause) =>
-                      new StackConfigError({
-                        message: `Unable to load Functions bundler: ${String(cause)}`,
-                      }),
-                  }).pipe(
-                    Effect.flatMap(({ bundleStackFunctionsServeMainTemplate }) =>
-                      bundleStackFunctionsServeMainTemplate().pipe(
-                        Effect.mapError(
-                          (cause) => new StackConfigError({ message: cause.message }),
-                        ),
-                      ),
-                    ),
-                  )
-            : undefined;
-          return [
+        Effect.map(emailTemplates, (templates) => {
+          const creations: ReadonlyArray<ServiceCreationType> = [
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: String(validatedConfig.db.major_version),
-                databasePassword: Redacted.make("postgres"),
-                jwtSecret: effectiveJwtSecret,
+                ...(jwtSecret === undefined ? {} : { jwtSecret }),
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,
                 healthTimeoutMs,
-                rootKey: Redacted.make(rootKey),
+                ...(rootKey === undefined ? {} : { rootKey: Redacted.make(rootKey) }),
               },
               endpoints: { sql: endpoint(dbPort) },
             },
@@ -1060,8 +684,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "analytics" as const,
+                    pin: selection.analytics,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
                       backend: "postgres" as const,
                       apiKey: "api-key",
                     },
@@ -1073,9 +697,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "pooler" as const,
+                    pin: selection.pooler,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       poolMode,
                       tenant: "pooler-dev",
                       defaultPoolSize: validatedConfig.db.pooler.default_pool_size,
@@ -1085,28 +709,23 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.studio.enabled
-              ? [
-                  {
-                    service: "pgmeta" as const,
-                    config: { databaseUrl: "postgresql://placeholder" },
-                    endpoints: { http: endpoint(undefined) },
-                  } satisfies ServiceCreationType,
-                ]
-              : []),
+            ...(validatedConfig.studio.enabled ? [pgmetaCreation] : []),
             ...(validatedConfig.api.enabled
               ? [
                   {
                     service: "rest" as const,
+                    pin: selection.rest,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
                       schemas: validatedConfig.api.schemas.join(","),
                       extraSearchPath: validatedConfig.api.extra_search_path.join(","),
                       maxRows: validatedConfig.api.max_rows,
+                      ...(validatedConfig.api.db_pool === undefined
+                        ? {}
+                        : { dbPool: validatedConfig.api.db_pool }),
                       ...(validatedConfig.api.external_url === undefined
                         ? {}
                         : { externalApiUrl: validatedConfig.api.external_url }),
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1116,9 +735,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "auth" as const,
+                    pin: selection.auth,
                     config: {
                       ...authConfig,
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
+                      ...(templates.length === 0 ? {} : { templates }),
                     },
                     endpoints: { http: endpoint(apiPort) },
                   } satisfies ServiceCreationType,
@@ -1128,10 +749,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "realtime" as const,
+                    pin: selection.realtime,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
-                      secretKeyBase: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ipVersion:
                         validatedConfig.realtime.ip_version === "IPv6"
                           ? ("IPv6" as const)
@@ -1149,12 +769,15 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "storage" as const,
+                    pin: selection.storage,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
-                      filePath: `${storagePath}/${stackId}`,
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
+                      filePath: stackUploadsDir(path, supabaseHome, stackId),
                       fileSizeLimit: storageFileSizeLimit,
                       s3ProtocolEnabled: validatedConfig.storage.s3_protocol.enabled,
+                      s3AccessKeyId: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+                      s3SecretAccessKey: DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+                      s3Region: DEFAULT_LOCAL_S3_REGION,
                       vectorEnabled: validatedConfig.storage.vector.enabled,
                       vectorMaxBuckets: validatedConfig.storage.vector.max_buckets,
                       vectorMaxIndexes: validatedConfig.storage.vector.max_indexes,
@@ -1163,59 +786,36 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.analytics.enabled
-              ? [
-                  {
-                    service: "vector" as const,
-                    config: { analyticsUrl: "http://analytics", apiKey: "api-key" },
-                    endpoints: {
-                      http: endpoint(
-                        envPortOrConfigured(
-                          "SUPABASE_ANALYTICS_VECTOR_PORT",
-                          document,
-                          "analytics",
-                          "vector_port",
-                          validatedConfig.analytics.vector_port ?? 0,
-                          context.projectEnvValues,
-                        ),
-                      ),
-                    },
-                  } satisfies ServiceCreationType,
-                ]
-              : []),
             ...(validatedConfig.storage.image_transformation?.enabled === true
               ? [
                   {
                     service: "imgproxy" as const,
-                    config: { filePath: `${storagePath}/${stackId}` },
+                    pin: selection.imgproxy,
+                    config: { filePath: stackUploadsDir(path, supabaseHome, stackId) },
                     endpoints: { http: endpoint(undefined) },
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.edge_runtime.enabled && bootstrap !== undefined
+            ...(validatedConfig.edge_runtime.enabled
               ? [
                   {
                     service: "functions" as const,
+                    pin: selection.functions,
                     config: {
                       functionsRoot: `${projectRoot}/supabase/functions`,
                       filesRoot: projectRoot,
                       functions,
                       env: functionsEnv,
-                      bootstrap,
                       policy: validatedConfig.edge_runtime.policy,
                       verifyJwt: true,
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                     },
                     endpoints: {
                       http: endpoint(apiPort),
                       inspector: endpoint(
-                        envPortOrConfigured(
-                          "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-                          document,
-                          "edge_runtime",
-                          "inspector_port",
+                        configuredPort(
+                          "edge_runtime.inspector_port",
                           validatedConfig.edge_runtime.inspector_port,
-                          context.projectEnvValues,
                         ),
                       ),
                     },
@@ -1226,8 +826,14 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "studio" as const,
+                    pin: selection.studio,
                     config: {
-                      jwtSecret: Redacted.value(effectiveJwtSecret),
+                      snippetsRoot: `${projectRoot}/supabase/snippets`,
+                      apiSchemas: validatedConfig.api.schemas.join(","),
+                      apiExtraSearchPath: validatedConfig.api.extra_search_path.join(","),
+                      apiMaxRows: validatedConfig.api.max_rows,
+                      cliVersion: CLI_VERSION,
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ...(validatedConfig.studio.openai_api_key === undefined
                         ? {}
                         : { openaiApiKey: validatedConfig.studio.openai_api_key }),
@@ -1243,6 +849,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "mail" as const,
+                    pin: selection.mail,
                     config: {},
                     endpoints: {
                       http: endpoint(mailPort),
@@ -1253,13 +860,17 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                 ]
               : []),
           ];
+          return creations.map(withContainerLimits);
         });
       return {
-        jwtSecret,
+        selection,
         creations: createCreations,
         source: validatedConfig,
-        projectEnvValues: context.projectEnvValues,
-        ...(context.loaded?.document === undefined ? {} : { document: context.loaded.document }),
+        apiTls,
+        projectEnvValues,
+        originAt,
+        remoteJwks,
+        keys,
       };
     }),
 );
