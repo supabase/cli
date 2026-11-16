@@ -611,6 +611,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             ).pipe(
               Scope.provide(startupScope),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
+              Effect.provideService(FileSystem.FileSystem, deps.fs),
               Effect.mapError((cause) => serviceError("launch", cause)),
             );
             const result = yield* awaitStartup(
@@ -664,6 +665,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           ).pipe(
             Scope.provide(scope),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
+            Effect.provideService(FileSystem.FileSystem, deps.fs),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
           const collected = yield* collectNativeOutput(
@@ -819,7 +821,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           ),
           exit: Deferred.await(settled),
           stop: Ref.get(live).pipe(
-            Effect.flatMap((attempt) => attempt.native.kill),
+            Effect.flatMap((attempt) => attempt.native.stop),
             Effect.mapError((cause) => serviceError("stop", cause)),
           ),
           remove: Ref.set(endpoints, new Map()),

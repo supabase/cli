@@ -1,4 +1,15 @@
-import { Data, Duration, Effect, Fiber, Option, Scope, Sink, Stream } from "effect";
+import {
+  Data,
+  Duration,
+  Effect,
+  Fiber,
+  FileSystem,
+  Option,
+  Schedule,
+  Scope,
+  Sink,
+  Stream,
+} from "effect";
 import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { PlatformError } from "effect/PlatformError";
@@ -62,6 +73,8 @@ export interface NativeProcess {
   readonly exitCode: Effect.Effect<ExitCode, NativeProcessError>;
   readonly isRunning: Effect.Effect<boolean, NativeProcessError>;
   readonly kill: Effect.Effect<void, NativeProcessError>;
+  /** Kills the process group like `kill`, then returns only once the workload has exited. */
+  readonly stop: Effect.Effect<void, NativeProcessError>;
 }
 
 import { NATIVE_PROCESS_DISPATCH_SENTINEL } from "../internal/dispatch-markers.ts";
@@ -114,6 +127,9 @@ const mapProcessError = (error: unknown, spec: NativeProcessSpec): NativeProcess
 
 /** Guard against a stuck launcher reap/confirm, backed by measured real reap latency; missing it only falls through to a (still correct) forced launcher kill. */
 const launcherReapGuardTimeout: Duration.Input = "1 second";
+
+/** Bound on the wait for a SIGKILLed workload to leave the process table. */
+const workloadExitTimeout: Duration.Input = "5 seconds";
 
 /**
  * Starts one native process through a tiny parent-loss-aware launcher. The
@@ -271,6 +287,47 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
       pid: Number(handle.pid),
       platform: globalThis.process.platform,
     });
+    const fs = yield* Effect.serviceOption(FileSystem.FileSystem);
+    /**
+     * Waits until the workload (the group leader) has exited: signal 0 reports it absent, or on
+     * Linux `/proc` shows it as a zombie, which runs no code and holds no ports. A stop returns
+     * only after this, so callers never see a stopped service whose process still lives.
+     */
+    const awaitWorkloadExit = Effect.fn("NativeProcess.awaitWorkloadExit")(function* () {
+      if (globalThis.process.platform === "win32") return;
+      const pid = processGroupId;
+      const signalled = Effect.try({
+        try: () => globalThis.process.kill(pid, 0),
+        catch: (error) =>
+          typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH",
+      });
+      const exited = Effect.gen(function* () {
+        const absent = yield* signalled.pipe(
+          Effect.as(false),
+          Effect.catch((gone) => Effect.succeed(gone)),
+        );
+        if (absent) return true;
+        if (globalThis.process.platform !== "linux" || Option.isNone(fs)) return false;
+        const stat = yield* fs.value
+          .readFileString(`/proc/${pid}/stat`)
+          .pipe(Effect.orElseSucceed(() => ""));
+        const state = stat
+          .slice(stat.lastIndexOf(")") + 1)
+          .trim()
+          .split(/\s+/u)[0];
+        return stat === "" || state === "Z" || state === "X";
+      });
+      const gone = yield* exited.pipe(
+        Effect.repeat({ until: (done) => done, schedule: Schedule.spaced("20 millis") }),
+        Effect.timeoutOption(workloadExitTimeout),
+      );
+      yield* Effect.annotateCurrentSpan({ pid, exited: Option.isSome(gone) });
+      if (Option.isNone(gone))
+        return yield* new NativeProcessError({
+          message: `Native workload ${pid} did not exit after a stop`,
+          executable: spec.executable,
+        });
+    });
     const killProcess = Effect.fn("NativeProcess.kill")(function* () {
       yield* Effect.annotateCurrentSpan(spanAttributes());
       const running = yield* handle.isRunning.pipe(
@@ -395,6 +452,7 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
       exitCode,
       isRunning: mapError(handle.isRunning),
       kill: killProcess(),
+      stop: killProcess().pipe(Effect.andThen(awaitWorkloadExit())),
     } satisfies NativeProcess;
   }).pipe(
     Effect.uninterruptible,

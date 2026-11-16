@@ -536,6 +536,45 @@ describe("native process group cleanup", () => {
   );
 
   it.live.skipIf(process.platform === "win32")(
+    "returns from a stop only once a workload that ignores SIGTERM has left the process table",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const native = yield* spawnNativeProcess({
+            executable: process.execPath,
+            environment: testEnvironment,
+            gracefulStopTimeout: "200 millis",
+            args: [
+              "-e",
+              "process.on('SIGTERM', () => {}); process.stdout.write(`READY ${process.pid}\\n`); setInterval(() => {}, 1000);",
+            ],
+          });
+          const ready = yield* native.stdout.pipe(
+            Stream.decodeText,
+            Stream.filter((chunk) => chunk.includes("READY ")),
+            Stream.runHead,
+          );
+          const pid = Number(/READY (\d+)/u.exec(Option.getOrElse(ready, () => ""))?.[1]);
+          expect(Number.isSafeInteger(pid)).toBe(true);
+
+          yield* native.stop;
+
+          const alive = (() => {
+            try {
+              process.kill(pid, 0);
+            } catch {
+              return false;
+            }
+            // A zombie runs no code; only Linux exposes the state to check it.
+            if (process.platform !== "linux") return true;
+            return !/\)\s+[ZX]\s/u.test(execFileSync("cat", [`/proc/${pid}/stat`]).toString());
+          })();
+          expect(alive).toBe(false);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
     "cleans the workload group after the launcher dies",
     () =>
       Effect.scoped(
