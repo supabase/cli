@@ -69,6 +69,8 @@ import {
   NoFunctionsToDeployError,
 } from "../../../shared/functions/deploy.errors.ts";
 import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
+import { normalizeCliError } from "../../../shared/output/normalize-error.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
@@ -1246,6 +1248,34 @@ describe("functions deploy", () => {
         decode: true,
         message: "failed to read deploy response: Expected a valid JSON string",
       });
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.effect("fails a 402 envelope on an API deploy as a plan-limit error", () => {
+    const entitlement = {
+      feature: "function.max_count",
+      upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+    };
+    const { layer } = apiDeployHarness((request) =>
+      Effect.succeed(
+        request.method === "GET"
+          ? jsonResponse(request, 200, [])
+          : jsonResponse(request, 402, {
+              message: "Function limit reached for your plan",
+              error: { code: "entitlement_required", ...entitlement },
+            }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(FunctionsApiStatusError);
+      expect(error).toMatchObject({ status: 402, entitlement });
+      expect(classifyCliCauseActionability(Cause.fail(error)).error_category).toBe("plan_limit");
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
@@ -2831,6 +2861,75 @@ describe("functions deploy", () => {
       return Effect.gen(function* () {
         expect(yield* deployThroughDocker).toMatchObject({ status: 500 });
         expect(writes()).toEqual(["POST", "PATCH"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    const entitlement = {
+      feature: "function.max_count",
+      upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+    };
+    const planGateBody = {
+      message: "Function limit reached for your plan",
+      error: { code: "entitlement_required", ...entitlement },
+    };
+    const remoteFunction = {
+      id: "function-id",
+      slug: "hello-world",
+      name: "hello-world",
+      status: "ACTIVE",
+      version: 1,
+      created_at: 1_687_423_025_152,
+      updated_at: 1_687_423_025_152,
+      verify_jwt: true,
+      import_map: false,
+      entrypoint_path: "functions/hello-world/index.ts",
+    };
+
+    it.effect.each([
+      { action: "create", remote: [] },
+      { action: "update", remote: [remoteFunction] },
+    ])("fails a 402 envelope on function $action as a plan-limit error", ({ action, remote }) => {
+      const { layer } = setupDockerRetries(
+        (request) =>
+          Effect.succeed(
+            request.method === "GET"
+              ? jsonResponse(request, 200, remote)
+              : jsonResponse(request, 402, planGateBody),
+          ),
+        0,
+      );
+
+      return Effect.gen(function* () {
+        const error = yield* deployThroughDocker;
+
+        expect(error).toMatchObject({
+          status: 402,
+          message: expect.stringContaining(`unexpected ${action} function status 402: `),
+          entitlement,
+        });
+        expect(normalizeCliError(error)).toMatchObject({ entitlement });
+        expect(classifyCliCauseActionability(Cause.fail(error)).error_category).toBe("plan_limit");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("adds no entitlement on a function create 4xx without the envelope", () => {
+      const { layer } = setupDockerRetries(
+        (request) =>
+          Effect.succeed(
+            request.method === "GET"
+              ? jsonResponse(request, 200, [])
+              : jsonResponse(request, 403, { message: "Forbidden" }),
+          ),
+        0,
+      );
+
+      return Effect.gen(function* () {
+        const error = yield* deployThroughDocker;
+
+        expect(error).toMatchObject({
+          message: 'unexpected create function status 403: {"message":"Forbidden"}',
+        });
+        expect(error).not.toHaveProperty("entitlement");
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 

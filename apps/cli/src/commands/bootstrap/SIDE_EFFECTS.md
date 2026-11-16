@@ -92,7 +92,9 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
   deliberately skips the project-linked telemetry and the status check that the standalone `link`
   command performs. Its `linked-project.json` comes only from the post-run cache fill (see Files
   Written), not from a link step.
-- `create` fires no custom event.
+- `create` fires no custom event of its own. A create denied with a 4xx whose body is the
+  `entitlement_required` envelope fires `cli_upgrade_suggested` (via wrapper) before
+  `cli_command_executed`.
 - The native push step (`dbPushCore`) fires **no telemetry of its own** — it is the bare
   handler function, not `db push`'s own `push.command.ts` wrapper (the thing that fires
   `withCommandTelemetry` for the standalone command), so there is no risk of a second
