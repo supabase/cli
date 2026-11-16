@@ -1325,6 +1325,55 @@ export const V1CreateAProjectInput = Schema.Struct({
       description: "[Experimental] Whether to enable high availability for the project.",
     }),
   ),
+  db_sql: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Initial SQL to run on the database. Limited to 1024 characters (1 KiB). For complex database changes, please use migrations https://supabase.com/docs/guides/deployment/database-migrations",
+    }).check(
+      Schema.isMaxCodePoints(1024).annotate({ expected: "a string with at most 1024 code points" }),
+    ),
+  ),
+  auth_site_url: Schema.optionalKey(
+    Schema.String.annotate({ description: "URL of the authentication site.", format: "uri" }),
+  ),
+  data_api_exposed_schemas: Schema.optionalKey(
+    Schema.Array(Schema.String).annotate({ description: "Schemas exposed by the data API." }),
+  ),
+  data_api_use_api_schema: Schema.optionalKey(
+    Schema.Boolean.annotate({ description: "Whether to use the API schema for the data API." }),
+  ),
+  data_api_revoke_default_privileges: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Force revoke default privileges for the data API. This flag will be ignored if the organization enforces `true` by default, and cannot be overridden.",
+    }),
+  ),
+  github_installation_id: Schema.optionalKey(
+    Schema.Number.annotate({
+      description:
+        "GitHub installation ID for linkage. Must first grant access to the repository on the Dashboard.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      )
+      .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+  ),
+  github_repository_id: Schema.optionalKey(
+    Schema.Number.annotate({
+      description:
+        "GitHub repository ID for linkage. Must first grant access to the repository on the Dashboard.",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+          expected: "a value less than or equal to 9007199254740991",
+        }),
+      )
+      .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+  ),
 });
 export const V1CreateAProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
@@ -7736,6 +7785,12 @@ export const V1ReadOnlyQueryInput = Schema.Struct({
     Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
   ),
   parameters: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
+  disable_statement_timeout: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Disable statement timeout for the query. Role-based or global timeout \n        still apply https://supabase.com/docs/guides/database/postgres/timeouts",
+    }),
+  ),
 });
 export const V1RemoveAReadReplicaInput = Schema.Struct({
   ref: Schema.String.check(
@@ -8079,6 +8134,12 @@ export const V1RunAQueryInput = Schema.Struct({
   ),
   parameters: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
   read_only: Schema.optionalKey(Schema.Boolean),
+  disable_statement_timeout: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Disable statement timeout for the query. Role-based or global timeout \n        still apply https://supabase.com/docs/guides/database/postgres/timeouts",
+    }),
+  ),
 });
 export const V1ScrapeProjectMetricsInput = Schema.Struct({
   ref: Schema.String.check(
@@ -19179,6 +19240,13 @@ export const operationDefinitions = {
         "release_channel",
         "postgres_engine",
         "high_availability",
+        "db_sql",
+        "auth_site_url",
+        "data_api_exposed_schemas",
+        "data_api_use_api_schema",
+        "data_api_revoke_default_privileges",
+        "github_installation_id",
+        "github_repository_id",
       ],
     },
     response: { kind: "json" },
@@ -20769,7 +20837,11 @@ export const operationDefinitions = {
     pathParams: ["ref"],
     queryParams: [],
     headerParams: [],
-    requestBody: { kind: "json", contentType: "application/json", fields: ["query", "parameters"] },
+    requestBody: {
+      kind: "json",
+      contentType: "application/json",
+      fields: ["query", "parameters", "disable_statement_timeout"],
+    },
     response: { kind: "void" },
     inputSchema: V1ReadOnlyQueryInput,
     outputSchema: V1ReadOnlyQueryOutput,
@@ -20959,7 +21031,7 @@ export const operationDefinitions = {
     requestBody: {
       kind: "json",
       contentType: "application/json",
-      fields: ["query", "parameters", "read_only"],
+      fields: ["query", "parameters", "read_only", "disable_statement_timeout"],
     },
     response: { kind: "void" },
     inputSchema: V1RunAQueryInput,

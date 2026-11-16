@@ -210,14 +210,14 @@ command.
 
 ## Files Written
 
-| Path                                                                                     | Format           | When                                                                                                                                                                                                               |
-| ---------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/.branches/_current_branch`                                           | text             | on every start, only if absent — writes `"main"`                                                                                                                                                                   |
-| `<workdir>/supabase/snippets/`                                                           | —                | when Studio is enabled, only if absent — created before any container and kept on rollback; `podman create -v`, unlike Docker, rejects a missing bind source                                                       |
-| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env}/` | varies           | Edge Runtime's own JWT/service-role-key/secret env artifacts — see below                                                                                                                                           |
-| auth email `content_path` files (SELinux security label only, no content change)         | xattr            | when the container runtime applies SELinux labels (enforcing or permissive): the `rw,z` Kong bind relabels each mounted template to the shared container context; persists after `supabase stop`                   |
-| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                                             | SQLite lock file | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened) |
-| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`                       | SQLite lock file | held for the whole run: serializes lifecycle commands for the same project; waits up to 10 minutes (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened)                           |
+| Path                                                                             | Format           | When                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.branches/_current_branch`                                   | text             | on every start, only if absent — writes `"main"`                                                                                                                                                                   |
+| `<workdir>/supabase/snippets/`                                                   | —                | when Studio is enabled, only if absent — created before any container and kept on rollback; `podman create -v`, unlike Docker, rejects a missing bind source                                                       |
+| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/env/`         | dotenv           | Edge Runtime's own JWT/service-role-key/secret env artifacts — see below                                                                                                                                           |
+| auth email `content_path` files (SELinux security label only, no content change) | xattr            | when the container runtime applies SELinux labels (enforcing or permissive): the `rw,z` Kong bind relabels each mounted template to the shared container context; persists after `supabase stop`                   |
+| `$SUPABASE_HOME/locks/docker-lifecycle.lock`                                     | SQLite lock file | held for the whole run: shared for one project, exclusive for `stop --all`; waits up to 10 minutes for a conflicting command (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened) |
+| `$SUPABASE_HOME/locks/docker-project-<sha256(project label)>.lock`               | SQLite lock file | held for the whole run: serializes lifecycle commands for the same project; waits up to 10 minutes (skipped, with a debug line, when `$SUPABASE_HOME/locks` cannot be created or opened)                           |
 
 Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own bootstrap
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
@@ -255,27 +255,27 @@ since the content already lives inside the container's own filesystem.
 Studio reads/writes SQL snippets under `<workdir>/supabase/snippets/` at its own
 runtime; `start` only creates the empty directory (see Files Written).
 
-Edge Runtime's own JWT/service-role-key/configured-secret env file and multiline-env
-script + value files (`shared/functions/serve.ts`'s
-`writeDockerEnvFile`/`writeDockerMultilineEnvScript`) are
+Edge Runtime's own JWT/service-role-key/configured-secret env file
+(`shared/functions/serve.ts`'s `writeDockerEnvFile`) is
 staged on host disk under `<workdir>/supabase/.temp/start-secrets/<edgeRuntime
-containerName>/{env,multiline-env}/` (directory mode `0700`, files mode `0600`) — the
-env file is read client-side by `--env-file`, the multiline-env directory is
-bind-mounted `:ro,Z` into the container — a deterministic, persistent path rather than
+containerName>/env/` (directory mode `0700`, file mode `0600`) and read client-side
+by `--env-file` — a deterministic, persistent path rather than
 `os.tmpdir()` (which is frequently tmpfs and gets wiped on reboot) so
 `cleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
-them on `stop` or a failed-start rollback. Each writer removes and
-recreates its own subdirectory fresh on every call (self-healing), so a
+it on `stop` or a failed-start rollback. The writer removes and
+recreates its subdirectory fresh on every call (self-healing), so a
 shrinking env set never leaves stale files behind. The bootstrap `index.ts` template
 carries no secret content and, as of supabase/cli#6254, never touches host disk at all:
 it is streamed via `docker cp` straight into the created (not yet started) Edge Runtime
 container at `/root/index.ts` — a single-file host bind mount materializes as an empty directory on daemons
 that cannot see the client's filesystem (remote `DOCKER_HOST`/Docker-context daemons,
 podman machines), which broke `start` with edge-runtime's "failed to determine
-entrypoint". Only the bootstrap template is daemon-independent: user function
-sources under `supabase/functions/**` and the multiline-env script directory
-(present only when a secret value contains a newline) still arrive by host bind
-mounts and require a daemon that can see the project directory.
+entrypoint". The multiline-env script and value files (present only when a secret value
+contains a newline) ride in that same `docker cp` stream under
+`/root/.supabase/multiline-env/` as root-owned `0644` files that stay in the container
+until it is removed (supabase/cli#7603). User function sources under
+`supabase/functions/**` still arrive by host bind mounts and require a daemon that can
+see the project directory.
 
 ## API Routes
 
@@ -488,7 +488,7 @@ prose, not structured data.
   `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory. As of
   supabase/cli#6022 this is a no-op for a removed Kong/Postgres/Supavisor container
   (nothing under its own directory anymore); it still matters for a removed Edge Runtime
-  container, whose own env-file/multiline-env-script staging is
+  container, whose own env-file staging is
   unaffected by that change.
 - Existing local values declared under a Function import map's `scopes` are mounted read-only into Edge Runtime, and into the Studio container that shares the same resolved Function bind mounts, even when they resolve outside the nearest Git root. The Edge Runtime container additionally prunes its aggregated bind list before `docker create` — a bind already supplied verbatim by a same-mode parent bind is dropped so the bootstrap `docker cp` never sees a file bind nested inside a read-only parent (supabase/supabase#50088) — while Studio keeps the full unpruned set (its bring-up performs no `docker cp`). The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. Edge Runtime bring-up prints a `WARN` naming each distinct out-of-root host path once; Studio's bind resolution stays silent, so with Edge Runtime excluded (`-x edge-runtime`) the mounts still reach Studio and no warning is printed. Missing targets retain Edge Runtime startup's existing skip behavior. This is NOT the same permissiveness as email template `content_path` below — a `scopes` value is an explicit opt-in mechanism, mounted `:ro`, with containment enforced on the upload side elsewhere (`functions deploy`), whereas `content_path` has no opt-in at all and is enforced at resolution time, mounted `:rw,z`.
 - **Auth email `content_path` project-root containment AND readability apply here regardless of `auth.enabled`.** Kong's mount set (`resolveKongEmailTemplateMounts`, `start.handler.ts`) covers every configured `[auth.email.template.*]` entry, and every `enabled = true` `[auth.email.notification.*]` entry, unconditionally — Kong is the stack's mandatory gateway, independent of whether GoTrue itself is started. `start.handler.ts` resolves, confines (`resolveEmailTemplateContentPath`; symlinks dereferenced using `fs.realPath` before the check), AND read-verifies (a discarded `FileSystem.readFileString`) that same set in one eager pass before any Docker work, in addition to the `auth.enabled`-gated read `resolveLocalConfigValues`'s own validation performs; the resulting resolved path is threaded straight into Kong's bind mount (`buildKongEmailTemplateBind` in `kong.service.ts`, which no longer re-resolves anything) rather than re-derived later, right before Kong's own `docker create`. Each template is bound `rw,z`: when the container runtime applies SELinux labels (enforcing or permissive mode) it relabels the mounted host file in place with the shared container context so Kong can read it under enforcement — a persistent change to the file's security label that survives `supabase stop` — and the option is a no-op where the runtime has no SELinux support. A path that resolves outside the project root aborts the run with `Invalid config for auth.email.<section>.<name>.content_path: resolves outside the project root (<resolved path>)`; a resolved, in-root path that cannot be read as a regular file aborts with `Invalid config for auth.email.<section>.<name>.content_path: <read error>` — both before a single container is created, and both regardless of `auth.enabled` (closing the gap where a missing `content_path` would otherwise reach an unconditional Kong bind mount and the root-privileged Docker daemon would silently create a directory there).

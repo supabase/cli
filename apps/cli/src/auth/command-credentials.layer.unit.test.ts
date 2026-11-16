@@ -10,6 +10,7 @@ import {
   PlatformError,
   Redacted,
   Schema,
+  Tracer,
 } from "effect";
 import { beforeEach, vi } from "vitest";
 
@@ -32,6 +33,7 @@ const throwOnGetPasswordAccounts = new Set<string>();
 const throwOnDeleteAccounts = new Set<string>();
 const failDeleteAccounts = new Set<string>();
 const withTargetCalls: string[] = [];
+const getPasswordCalls: string[] = [];
 const opaqueAccounts = new Set<string>();
 let throwOnFindCredentials = false;
 
@@ -75,6 +77,7 @@ vi.mock("@napi-rs/keyring", () => ({
     }
     getPassword(): string | null {
       const key = this.key();
+      getPasswordCalls.push(key);
       if (throwOnGetPasswordAccounts.has(key)) {
         throw new Error("Keyring unavailable");
       }
@@ -145,6 +148,7 @@ beforeEach(() => {
   throwOnGetPasswordAccounts.clear();
   throwOnDeleteAccounts.clear();
   withTargetCalls.length = 0;
+  getPasswordCalls.length = 0;
   opaqueAccounts.clear();
   failDeleteAccounts.clear();
   throwOnFindCredentials = false;
@@ -231,6 +235,49 @@ describe("commandCredentialsLayer.getAccessToken", () => {
       const token = yield* getAccessToken;
       expectSomeToken(token, VALID_TOKEN);
     }).pipe(Effect.provide(makeLayer()));
+  });
+
+  it.effect("reads the keychain once per command until the stored token changes", () => {
+    passwords.set("Supabase CLI/supabase", VALID_TOKEN);
+    const stderr = captureStderr();
+    return Effect.gen(function* () {
+      const { getAccessToken, saveAccessToken, deleteAccessToken, deleteAllProjectCredentials } =
+        yield* CommandCredentials;
+      expectSomeToken(yield* getAccessToken, VALID_TOKEN);
+      expectSomeToken(yield* getAccessToken, VALID_TOKEN);
+      expect(getPasswordCalls).toEqual(["Supabase CLI/supabase"]);
+      const stderrText = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(stderrText.match(/Using access token for profile: supabase\n/g)).toHaveLength(2);
+
+      yield* deleteAllProjectCredentials;
+      expect(Option.isNone(yield* getAccessToken)).toBe(true);
+      yield* saveAccessToken(VALID_OAUTH_TOKEN);
+      expectSomeToken(yield* getAccessToken, VALID_OAUTH_TOKEN);
+      yield* deleteAccessToken;
+      expect(Option.isNone(yield* getAccessToken)).toBe(true);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => stderr.mockRestore())),
+      Effect.provide(makeLayer({ debug: true })),
+    );
+  });
+
+  it.effect("traces one keychain read for repeated token lookups", () => {
+    passwords.set("Supabase CLI/supabase", VALID_TOKEN);
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* CommandCredentials;
+      yield* getAccessToken;
+      yield* getAccessToken;
+      const reads = spans.filter((span) => span.name === "CommandCredentials.readKeyring");
+      expect(reads.map((span) => span.attributes.get("keyring.entry"))).toEqual(["profile"]);
+    }).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true), Effect.provide(makeLayer()));
   });
 
   it.effect("debug logs the access token source", () => {
