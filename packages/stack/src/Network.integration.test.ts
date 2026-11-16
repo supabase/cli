@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import * as Tls from "node:tls";
 import { createServer, type RequestListener } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
-import { HttpBody, HttpClient } from "effect/http";
+import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { API_TLS_CHECK_PATH, type HttpAccess, type HttpAccessSink } from "./HttpProxy.ts";
 import * as Network from "./Network.ts";
@@ -743,6 +743,35 @@ it.live("keeps a dedicated listener's client X-Forwarded headers without Kong's 
       );
       for (const name of ["x-forwarded-port", "x-forwarded-path", "x-forwarded-prefix"])
         expect(headers).not.toHaveProperty(name);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("leaves CORS on a dedicated listener to its service", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-dedicated-cors-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const target = yield* backendWith((incoming, response) => response.end(incoming.method));
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const studio = yield* network.register({
+        id: "studio",
+        endpoints: { http: endpoint(target, Effect.succeed(true)) },
+      });
+      yield* studio.bind;
+      const address = yield* studio.address("http", "host");
+      const client = yield* HttpClient.HttpClient;
+      for (const method of ["OPTIONS", "POST"] as const) {
+        const response = yield* client.execute(
+          HttpClientRequest.make(method)(`http://${address.host}:${address.port}/api/mcp`).pipe(
+            HttpClientRequest.setHeaders({ origin: "https://evil.example" }),
+          ),
+        );
+        expect(yield* response.text).toBe(method);
+        expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+      }
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

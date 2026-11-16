@@ -1,3 +1,19 @@
+/** Refuses browser requests from a non-loopback `Origin` on unauthenticated admin services. */
+const LOCAL_ORIGIN_GUARD = `      - name: pre-function
+        config:
+          access:
+            - |
+              local origin = kong.request.get_header("origin")
+              if origin then
+                local value = origin:lower()
+                local host = value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)")
+                host = host and host:gsub("%.$", "")
+                if not (host == "localhost" or host == "[::1]" or (host and (host:sub(-10) == ".localhost" or host:match("^127%.%d+%.%d+%.%d+$")))) then
+                  return kong.response.exit(403, { message = "Forbidden" })
+                end
+              end
+`;
+
 /**
  * Canonical `kong.yml` template; do not hand-edit. Also reused directly (not re-transcribed) by
  * `shared/functions/serve-main-offline.e2e.test.ts`'s offline Kong fixture.
@@ -215,19 +231,7 @@ services:
           - /pg/
     plugins:
       - name: cors
-      - name: pre-function
-        config:
-          access:
-            - |
-              local origin = kong.request.get_header("origin")
-              if origin then
-                local value = origin:lower()
-                local host = value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)")
-                if not (host == "localhost" or host == "[::1]" or (host and (host:match("^[^.]+%.localhost$") or host:match("^127%.%d+%.%d+%.%d+$")))) then
-                  return kong.response.exit(403, { message = "Forbidden" })
-                end
-              end
-  - name: analytics-v1
+${LOCAL_ORIGIN_GUARD}  - name: analytics-v1
     _comment: "Analytics: /analytics/v1/* -> http://logflare:4000/*"
     url: http://{{ .LogflareId }}:4000/
     routes:
@@ -258,16 +262,4 @@ services:
           - /mcp
     plugins:
       - name: cors
-      - name: pre-function
-        config:
-          access:
-            - |
-              local origin = kong.request.get_header("origin")
-              if origin then
-                local value = origin:lower()
-                local host = value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)")
-                if not (host == "localhost" or host == "[::1]" or (host and (host:match("^[^.]+%.localhost$") or host:match("^127%.%d+%.%d+%.%d+$")))) then
-                  return kong.response.exit(403, { message = "Forbidden" })
-                end
-              end
-`;
+${LOCAL_ORIGIN_GUARD}`;

@@ -782,6 +782,7 @@ it.live(
               "https://evil.example",
               "null",
               "http://localhost.evil.example",
+              "http://evillocalhost:3000",
             ]) {
               const refused = yield* send(method, path, origin);
               expect(refused.status).toBe(403);
@@ -793,6 +794,12 @@ it.live(
           expect(yield* local.text).toBe("POST");
           expect(local.headers["access-control-allow-origin"]).toBe("http://localhost:54323");
           expect((yield* send("POST", path, "http://127.0.0.1:3000")).status).toBe(200);
+          for (const origin of [
+            "http://app.dev.localhost:3000",
+            "http://localhost.:3000",
+            "http://[::1]:3000",
+          ])
+            expect((yield* send("POST", path, origin)).status).toBe(200);
           const socket = yield* rawClient(
             proxy.port,
             `GET ${path} HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`,

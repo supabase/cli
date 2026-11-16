@@ -324,7 +324,13 @@ const makeNetwork = (options: {
                                   yield* probe(key, host, port);
                                   const proxy = yield* makeHttpProxy({ host, port });
                                   yield* proxy.setRoutes(
-                                    toHttpRoutes(id, [{ prefix: "/" }], endpoint, false),
+                                    /* Like a container port map, a dedicated port leaves CORS to its service. */
+                                    toHttpRoutes(
+                                      id,
+                                      [{ prefix: "/", upstreamCors: true }],
+                                      endpoint,
+                                      false,
+                                    ),
                                   );
                                   return { proxy };
                                 }

@@ -330,13 +330,13 @@ const routeFor = (url: string, routes: ReadonlyArray<HttpRoute | HttpFileRoute>)
   );
 };
 
-const LOOPBACK_HOST = /^(?:localhost|[^.]+\.localhost|127(?:\.\d{1,3}){3}|\[::1\])$/u;
+const LOOPBACK_HOST = /^(?:(?:[^.]+\.)*localhost|127(?:\.\d{1,3}){3}|\[::1\])$/u;
 
 /** Whether a request carries no `Origin`, like a non-browser client, or a loopback one. */
 const loopbackOrigin = (origin: string | undefined): boolean => {
   if (origin === undefined) return true;
   if (!URL.canParse(origin)) return false;
-  return LOOPBACK_HOST.test(new URL(origin).hostname.toLowerCase());
+  return LOOPBACK_HOST.test(new URL(origin).hostname.toLowerCase().replace(/\.$/u, ""));
 };
 
 const corsMethods = "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS,TRACE,CONNECT";
