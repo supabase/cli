@@ -1,5 +1,6 @@
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { BunServices } from "@effect/platform-bun";
-import { Data, Effect, FileSystem, Path, Schema } from "effect";
+import { Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { createServer } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 
@@ -53,6 +54,33 @@ const EXCLUDED_SERVICE_KEYS: ReadonlySet<string> = new Set(["studio", "logflare"
  *    leaves commented out (defaulting to disabled).
  */
 const NEVER_RUNNING_SERVICE_KEYS: ReadonlySet<string> = new Set(["supavisor", "imgproxy"]);
+
+/* A made-up key: only its multiline shape matters. The trailing newline pins byte-for-byte delivery. */
+const MULTILINE_PEM = [
+  "-----BEGIN PRIVATE KEY-----",
+  "c3VwYWJhc2UtY2xpLWUyZS1mYWtlLWtleS1ub3QtYS1yZWFsLXNlY3JldC0wMDAw",
+  "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw",
+  "-----END PRIVATE KEY-----",
+  "",
+].join("\n");
+
+const FunctionEnvResponse = Schema.fromJsonString(
+  Schema.Struct({ pem: Schema.NullOr(Schema.String), foo: Schema.NullOr(Schema.String) }),
+);
+
+const invokeEnvFunction = Effect.fnUntraced(function* (apiUrl: string, edgeRuntime: string) {
+  const response = yield* HttpClient.get(`${apiUrl}/functions/v1/env`);
+  const body = yield* response.text;
+  const logs =
+    response.status === 200
+      ? ""
+      : yield* runDockerEffect(["logs", edgeRuntime]).pipe(
+          Effect.map(({ stdout, stderr }) => `${stdout}${stderr}`),
+          Effect.catch((error) => Effect.succeed(`<logs unavailable: ${error.message}>`)),
+        );
+  expect(response.status, `body: ${body}\nedge runtime logs:\n${logs}`).toBe(200);
+  return yield* Schema.decodeEffect(FunctionEnvResponse)(body);
+});
 
 function splitNonEmptyLines(text: string): ReadonlyArray<string> {
   return text
@@ -265,5 +293,81 @@ describe("supabase start (e2e)", () => {
         expect(proxyConnections).toBe(0);
       }).pipe(Effect.provide(BunServices.layer)),
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
+  );
+
+  /* Docker Desktop failed every restart while multiline values rode a host bind (#7603); this
+     pins their real-daemon delivery through the `docker cp` archive across stop and start. */
+  it.live(
+    "serves multiline functions env values on start and after stop and start",
+    () =>
+      Effect.gen(function* () {
+        const projectDir = yield* makeProject("sb-start-e2e-multiline-env-");
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const edgeRuntime = serviceContainerName(
+          "edge_runtime",
+          sanitizeProjectId(path.basename(projectDir)),
+        );
+
+        const init = yield* runSupabaseEffect(["init"], {
+          cwd: projectDir,
+          exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
+        });
+        requireCliSuccess(init, "init setup");
+        const created = yield* runSupabaseEffect(["functions", "new", "env", "--auth", "none"], {
+          cwd: projectDir,
+          exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
+          env: { SUPABASE_YES: "1" },
+        });
+        requireCliSuccess(created, "functions new setup");
+        const functionsDir = path.join(projectDir, "supabase", "functions");
+        yield* fs.writeFileString(
+          path.join(functionsDir, "env", "index.ts"),
+          'Deno.serve(() => Response.json({ pem: Deno.env.get("PEM_KEY") ?? null, foo: Deno.env.get("FOO") ?? null }));\n',
+        );
+        yield* fs.writeFileString(
+          path.join(functionsDir, ".env"),
+          `PEM_KEY="${MULTILINE_PEM}"\nFOO="line1\\nline2"\n`,
+        );
+        yield* overridePorts(projectDir);
+
+        const excludeArgs = SERVICE_CATALOG.flatMap((entry) =>
+          entry.excludeKey === undefined ||
+          entry.excludeKey === "kong" ||
+          entry.excludeKey === "edge-runtime"
+            ? []
+            : ["--exclude", entry.excludeKey],
+        );
+        const expected = { pem: MULTILINE_PEM, foo: "line1\nline2" };
+
+        const start = yield* runSupabaseEffect(["start", ...excludeArgs], {
+          cwd: projectDir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+        });
+        expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+        const status = yield* runSupabaseEffect(["status", "-o", "json"], {
+          cwd: projectDir,
+          exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
+        });
+        requireCliSuccess(status, "status setup");
+        const { API_URL: apiUrl } = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Struct({ API_URL: Schema.String })),
+        )(status.stdout);
+        expect(yield* invokeEnvFunction(apiUrl, edgeRuntime)).toEqual(expected);
+
+        const stop = yield* runSupabaseEffect(["stop"], {
+          cwd: projectDir,
+          exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+        });
+        requireCliSuccess(stop, "stop");
+
+        const restart = yield* runSupabaseEffect(["start", ...excludeArgs], {
+          cwd: projectDir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+        });
+        expect(restart.exitCode, `stdout:\n${restart.stdout}\nstderr:\n${restart.stderr}`).toBe(0);
+        expect(yield* invokeEnvFunction(apiUrl, edgeRuntime)).toEqual(expected);
+      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+    START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS * 2,
   );
 });
