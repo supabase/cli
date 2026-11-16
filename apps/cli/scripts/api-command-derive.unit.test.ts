@@ -585,6 +585,43 @@ describe("deriveApiCommands", () => {
       expect(waitOf(result)?.read).toBe("get-thing");
     });
 
+    it("resolves escaped status and error pointers against property names", () => {
+      const escapedRead = {
+        type: "object",
+        properties: {
+          "a/b": { type: "string", enum: ["done", "broken"] },
+          "c~d": { type: "string" },
+        },
+      };
+      const result = derive({
+        "create-thing": changeThing(link({ thing_id: "$response.body#/data/id" })),
+        "get-thing": readWith(
+          { ...poll, status: "/a~1b", error: "/c~0d" },
+          jsonResponse(escapedRead),
+        ),
+      });
+
+      expect(result.problems).toEqual([]);
+      expect(waitOf(result)).toMatchObject({ status: "/a~1b", error: "/c~0d" });
+    });
+
+    it("accepts a link parameter pointing at a required property with escaped characters", () => {
+      const escapedChange = {
+        type: "object",
+        required: ["a~/b"],
+        properties: { "a~/b": { type: "string" } },
+      };
+      const result = derive(
+        {
+          "create-thing": changeThing(link({ thing_id: "$response.body#/a~0~1b" }), escapedChange),
+          "get-thing": readThing,
+        },
+        ["create-thing", "get-thing"],
+      );
+
+      expect(result.problems).toEqual([]);
+    });
+
     it("ignores a link whose target has no poll", () => {
       const result = derive({
         "create-thing": changeThing(link({})),

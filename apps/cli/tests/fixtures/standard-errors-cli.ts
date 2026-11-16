@@ -31,6 +31,19 @@ const root = Command.make("supabase").pipe(
       ),
     ),
     standard(
+      "plan-gated",
+      Effect.fail(
+        new ApiCommandStatusError({
+          status: 403,
+          message: "Upgrade required",
+          entitlement: {
+            feature: "warehouse",
+            upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+          },
+        }),
+      ),
+    ),
+    standard(
       "needs-consent",
       Effect.fail(
         new HostedMutationConsentRequiredError({

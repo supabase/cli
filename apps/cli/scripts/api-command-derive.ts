@@ -419,10 +419,16 @@ const findSecret = (
 const schemaDescription = (spec: JsonObject, raw: unknown): string | undefined =>
   asString(asRecord(resolve(spec, raw))?.description);
 
+const pointerSegments = (pointer: string): ReadonlyArray<string> =>
+  pointer
+    .slice(1)
+    .split("/")
+    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
+
 const resolvePointer = (spec: JsonObject, root: unknown, pointer: string): unknown => {
   if (!pointer.startsWith("/")) return undefined;
   let current = resolve(spec, root);
-  for (const segment of pointer.slice(1).split("/")) {
+  for (const segment of pointerSegments(pointer)) {
     const node = asRecord(current);
     if (node === undefined) return undefined;
     const property = asRecord(node.properties)?.[segment];
@@ -441,7 +447,7 @@ const resolvePointer = (spec: JsonObject, root: unknown, pointer: string): unkno
 const pointerAlwaysPresent = (spec: JsonObject, root: unknown, pointer: string): boolean => {
   if (!pointer.startsWith("/")) return false;
   let current = resolve(spec, root);
-  for (const segment of pointer.slice(1).split("/")) {
+  for (const segment of pointerSegments(pointer)) {
     const node = asRecord(current);
     const property = asRecord(node?.properties)?.[segment];
     if (property === undefined || !asArray(node?.required).includes(segment)) return false;

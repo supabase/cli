@@ -139,6 +139,35 @@ describe("errors.standard failure contract", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("a plan-gated denial carries its entitlement in the JSON document", () =>
+    Effect.gen(function* () {
+      const { exitCode, stderr } = yield* runFixture(["plan-gated", "-o", "json"]);
+      expect(exitCode).toBe(1);
+      expect(yield* decodeJson(lastLine(stderr))).toEqual({
+        code: "forbidden",
+        status: 403,
+        message: "Upgrade required",
+        hint: null,
+        entitlement: {
+          feature: "warehouse",
+          upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+        },
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("a terminal run prints the upgrade hint for a plan-gated denial", () =>
+    Effect.gen(function* () {
+      const { exitCode, stderr } = yield* runFixture(["plan-gated"], {
+        STANDARD_ERRORS_FIXTURE_TTY: "1",
+      });
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Upgrade required");
+      expect(lastLine(stderr)).toContain("https://supabase.com/dashboard/org/acme/billing");
+      expect(stderr).not.toContain('"code"');
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("a terminal run prints the message and hint as text with the same exit code", () =>
     Effect.gen(function* () {
       const { exitCode, stdout, stderr } = yield* runFixture(["conflict"], {

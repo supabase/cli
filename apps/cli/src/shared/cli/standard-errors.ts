@@ -19,7 +19,11 @@ import {
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
 import { LinkBranchListStatusError } from "../../command-internal/target/branch-resolution.errors.ts";
-import { normalizeCause } from "../output/normalize-error.ts";
+import {
+  normalizeCause,
+  upgradeHint,
+  type PlanGateEntitlement,
+} from "../output/normalize-error.ts";
 import { writeStdio } from "../output/output.layer.ts";
 import {
   classifyCliErrorActionability,
@@ -58,6 +62,7 @@ interface StandardErrorDocument {
   readonly message: string;
   readonly hint: string | null;
   readonly api_code?: string;
+  readonly entitlement?: PlanGateEntitlement;
   readonly context?: Readonly<Record<string, string | number>>;
 }
 
@@ -79,7 +84,11 @@ const EXIT_CANCELLED = 130;
 const documentForStatus = (
   status: number,
   message: string,
-  extras: { readonly apiCode?: string | undefined; readonly hint?: string | undefined },
+  extras: {
+    readonly apiCode?: string | undefined;
+    readonly hint?: string | undefined;
+    readonly entitlement?: PlanGateEntitlement | undefined;
+  },
 ): StandardErrorDocument => {
   const code: StandardErrorCode =
     status === 400 || status === 422
@@ -101,6 +110,7 @@ const documentForStatus = (
     message,
     hint: extras.hint ?? null,
     ...(extras.apiCode === undefined ? {} : { api_code: extras.apiCode }),
+    ...(extras.entitlement === undefined ? {} : { entitlement: extras.entitlement }),
   };
 };
 
@@ -248,8 +258,10 @@ export const isMachineFailureMode = (
 /** Renders the failure as the stderr text: a leading blank line plus JSON, or a human message and hint. */
 const renderStandardFailure = (pending: PendingStandardFailure): string => {
   if (pending.machine) return `\n${JSON.stringify(pending.document)}\n`;
-  const { message, hint } = pending.document;
-  return `${styleText("red", message)}\n${hint === null ? "" : `${hint}\n`}`;
+  const { message, hint, entitlement } = pending.document;
+  return `${styleText("red", message)}\n${hint === null ? "" : `${hint}\n`}${
+    entitlement === undefined ? "" : `${upgradeHint(entitlement.upgrade_url)}\n`
+  }`;
 };
 
 /** Writes the pending failure to stderr; a closed or failing stderr never changes the exit code. */

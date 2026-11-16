@@ -51,6 +51,8 @@ before consent.
 | `1`   | API error (non-2xx)                                                      |
 | `1`   | with `--wait`: `operation_failed` (a failed status) or `wait_timeout`    |
 
+A 4xx `entitlement_required` body (`{"error":{"code":"entitlement_required","feature","upgrade_url"}}`) adds `entitlement: {feature, upgrade_url}` to the stderr error document in place of the token-permission hint; a terminal run prints the upgrade hint, and `cli_upgrade_suggested` fires. Other statuses and bodies carry no `entitlement` key.
+
 ## Environment Variables
 
 | Variable                          | Purpose                                                                                                            | Required?                                       |

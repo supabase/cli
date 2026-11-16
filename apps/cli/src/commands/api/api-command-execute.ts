@@ -6,7 +6,7 @@ import * as Headers from "effect/http/Headers";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
-import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
+import { parsePlanGateEnvelope, sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import { encodeStructYaml, shapeAny } from "../../command-internal/struct-output.encoders.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { readPointer } from "./api-command-pointer.ts";
@@ -97,7 +97,10 @@ const statusError = Effect.fnUntraced(function* (
   const text = textDecoder.decode(
     yield* readBytes(response).pipe(Effect.orElseSucceed(() => new Uint8Array())),
   );
-  const fields = apiErrorFields(Option.getOrUndefined(decodeJsonText(text)));
+  const body = Option.getOrUndefined(decodeJsonText(text));
+  const fields = apiErrorFields(body);
+  const entitlement =
+    response.status >= 400 && response.status < 500 ? parsePlanGateEnvelope(body) : undefined;
   return yield* new ApiCommandStatusError({
     status: response.status,
     message:
@@ -105,7 +108,10 @@ const statusError = Effect.fnUntraced(function* (
         ? `Unexpected status ${response.status}`
         : sanitizeErrorBody(fields.message),
     apiCode: fields.apiCode,
-    hint: fields.hint ?? statusHint(operationId, response.status),
+    hint:
+      fields.hint ??
+      (entitlement === undefined ? statusHint(operationId, response.status) : undefined),
+    ...(entitlement === undefined ? {} : { entitlement }),
   });
 });
 

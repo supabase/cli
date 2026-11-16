@@ -1,5 +1,6 @@
 import { Data } from "effect";
 
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -13,6 +14,7 @@ export class ApiCommandStatusError extends Data.TaggedError("ApiCommandStatusErr
   readonly message: string;
   readonly apiCode?: string | undefined;
   readonly hint?: string | undefined;
+  readonly entitlement?: PlanGateEntitlement | undefined;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });

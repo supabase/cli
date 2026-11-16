@@ -37,6 +37,7 @@ import {
 import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
 import {
   fakeConsole,
+  mockAnalytics,
   mockOutput,
   mockRuntimeInfo,
   mockStdin,
@@ -55,6 +56,8 @@ import { apiCommands } from "./generated.ts";
 import { readApiCommand } from "./api-command.annotation.ts";
 import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { apiCommandGroup, apiCommandGroups } from "./runtime.ts";
+import { standardFailureFor } from "../../shared/cli/standard-errors.ts";
+import { EventUpgradeSuggested } from "../../shared/telemetry/event-catalog.ts";
 import { resolveWarehouseEnabled } from "./warehouse-backend.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -206,6 +209,7 @@ interface CliOpts {
   readonly yes?: boolean;
   readonly route: Route;
   readonly root?: typeof warehouseRoot;
+  readonly analytics?: ReturnType<typeof mockAnalytics>;
 }
 
 /**
@@ -229,6 +233,7 @@ const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
     buildTestRuntime({
       out,
       api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
+      ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
       cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       tty: mockTty({ stdinIsTty: false, stdoutIsTty: false }),
       stdin: mockStdin(false),
@@ -596,6 +601,66 @@ describe("generated warehouse commands", () => {
         const failure = failureOf(yield* Effect.exit(run));
         expect(failure).toBeInstanceOf(ApiCommandStatusError);
         expect(failure).toMatchObject({ hint: expect.stringContaining(hint) });
+      });
+    });
+
+    it.effect("reports a plan-gated 403 with its entitlement in the document and telemetry", () => {
+      const analytics = mockAnalytics();
+      const planGate = {
+        error: {
+          code: "entitlement_required",
+          feature: "warehouse",
+          upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+        },
+      };
+      const { run } = setup(["warehouse", "enable", "--schema", "public"], {
+        yes: true,
+        route: () => ({ status: 403, body: planGate }),
+        analytics,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(run);
+        expect(Exit.isFailure(exit) && standardFailureFor(exit.cause).document).toMatchObject({
+          code: "forbidden",
+          status: 403,
+          hint: null,
+          entitlement: {
+            feature: "warehouse",
+            upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+          },
+        });
+        expect(analytics.captured.find((c) => c.event === EventUpgradeSuggested)).toMatchObject({
+          properties: { feature_key: "warehouse", org_slug: "acme" },
+        });
+      });
+    });
+
+    it.effect.each([
+      { name: "a 403 without the plan-gate code", status: 403, body: { message: "Forbidden" } },
+      {
+        name: "a 5xx carrying a plan-gate body",
+        status: 503,
+        body: {
+          error: {
+            code: "entitlement_required",
+            feature: "warehouse",
+            upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+          },
+        },
+      },
+    ])("reports no entitlement for $name", ({ status, body }) => {
+      const analytics = mockAnalytics();
+      const { run } = setup(["warehouse", "enable", "--schema", "public"], {
+        yes: true,
+        route: () => ({ status, body }),
+        analytics,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(run);
+        expect(Exit.isFailure(exit) && standardFailureFor(exit.cause).document).not.toHaveProperty(
+          "entitlement",
+        );
+        expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(false);
       });
     });
 
