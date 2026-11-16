@@ -167,7 +167,12 @@ function substituteEnvLeaf(
   value: string,
   env: Readonly<Record<string, string>>,
   cliCompat: boolean,
-): { readonly value: string; readonly resolved: boolean; readonly envName?: string } {
+): {
+  readonly value: string;
+  readonly resolved: boolean;
+  readonly envName?: string;
+  readonly referenced?: string;
+} {
   const match = (cliCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
   if (match === null) {
     return { value, resolved: false };
@@ -177,9 +182,9 @@ function substituteEnvLeaf(
   // A present-but-empty var (e.g. a dotenv `KEY=` line) preserves the `env(KEY)` literal, same
   // as an unset key, instead of substituting an empty string.
   if (envName === undefined || resolved === undefined || resolved === "") {
-    return { value, resolved: false };
+    return { value, resolved: false, referenced: envName };
   }
-  return { value: resolved, resolved: true, envName };
+  return { value: resolved, resolved: true, envName, referenced: envName };
 }
 
 function isDeferredEnvField(ast: SchemaAST.AST): boolean {
@@ -209,6 +214,7 @@ function walk(
     | ((path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void)
     | undefined,
   skip: ((path: ReadonlyArray<string>) => boolean) | undefined,
+  onEnvReference: ((path: ReadonlyArray<string>, name: string) => void) | undefined,
 ): unknown {
   if (skip?.(path) === true) {
     return document;
@@ -228,12 +234,33 @@ function walk(
               }
             }
           };
+    const referencedNames: Array<string> = [];
+    const onArrayEnvReference =
+      onEnvReference === undefined
+        ? undefined
+        : (_: ReadonlyArray<string>, name: string) => {
+            if (!referencedNames.includes(name)) {
+              referencedNames.push(name);
+            }
+          };
     const result = document.map((item, index) => {
       const child = ast === null ? null : descendAst(ast, String(index));
-      return walk(item, env, child, cliCompat, [...path, String(index)], onResolvedArrayEnv, skip);
+      return walk(
+        item,
+        env,
+        child,
+        cliCompat,
+        [...path, String(index)],
+        onResolvedArrayEnv,
+        skip,
+        onArrayEnvReference,
+      );
     });
     if (envNames.length > 0) {
       onResolvedEnv?.(path, envNames);
+    }
+    for (const name of referencedNames) {
+      onEnvReference?.(path, name);
     }
     return result;
   }
@@ -242,7 +269,10 @@ function walk(
     return Object.fromEntries(
       Object.entries(document).map(([key, value]) => {
         const child = ast === null ? null : descendAst(ast, key);
-        return [key, walk(value, env, child, cliCompat, [...path, key], onResolvedEnv, skip)];
+        return [
+          key,
+          walk(value, env, child, cliCompat, [...path, key], onResolvedEnv, skip, onEnvReference),
+        ];
       }),
     );
   }
@@ -256,6 +286,9 @@ function walk(
     }
 
     const interpolation = substituteEnvLeaf(document, env, cliCompat);
+    if (interpolation.referenced !== undefined) {
+      onEnvReference?.(path, interpolation.referenced);
+    }
     const substituted = interpolation.value;
     if (interpolation.resolved && interpolation.envName !== undefined) {
       onResolvedEnv?.(path, [interpolation.envName]);
@@ -300,6 +333,8 @@ export function interpolateEnvReferencesAgainstSchema(
     readonly onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void;
     /** A leaf or array at a path this returns true for is kept verbatim, already resolved. */
     readonly skip?: (path: ReadonlyArray<string>) => boolean;
+    /** Fires per `env(NAME)` leaf outside deferred fields, resolved or not; array leaves report once per name at the outermost array path. */
+    readonly onEnvReference?: (path: ReadonlyArray<string>, name: string) => void;
   },
 ): unknown {
   return walk(
@@ -310,5 +345,54 @@ export function interpolateEnvReferencesAgainstSchema(
     [],
     options?.onResolvedEnv,
     options?.skip,
+    options?.onEnvReference,
   );
+}
+
+function standInForAst(ast: SchemaAST.AST): unknown {
+  const node = unwrapAst(ast);
+  switch (node._tag) {
+    case "String":
+      return "";
+    case "Number":
+      return 0;
+    case "Boolean":
+      return false;
+    case "Arrays":
+      return [];
+    case "Objects":
+      return {};
+    case "Literal":
+      return node.literal;
+    case "Union": {
+      const literal = node.types.map(unwrapAst).find((variant) => variant._tag === "Literal");
+      if (literal !== undefined && literal._tag === "Literal") {
+        return literal.literal;
+      }
+      for (const variant of node.types) {
+        const standIn = standInForAst(variant);
+        if (standIn !== undefined) {
+          return standIn;
+        }
+      }
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** A type-correct placeholder for the schema leaf at `path`, or `undefined` if the path does not resolve. */
+export function standInAtPath(
+  schema: { readonly ast: SchemaAST.AST },
+  path: ReadonlyArray<string>,
+): unknown {
+  let ast: SchemaAST.AST | null = schema.ast;
+  for (const segment of path) {
+    ast = ast === null ? null : descendAst(ast, segment);
+    if (ast === null) {
+      return undefined;
+    }
+  }
+  return standInForAst(ast);
 }

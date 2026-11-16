@@ -27,21 +27,30 @@ export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStac
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    switch (this.reason) {
-      case "flags":
-        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
-      case "confirmation":
-        return { ...actionability.provideFlags, fingerprint_suffix: "confirmation" };
-      case "cancelled":
-        return { ...actionability.cancelled, fingerprint_suffix: "cancelled" };
-      case "invalid-config":
-        return stackTargetInvalidConfigActionability(this.targetIssue);
-      case "runtime":
-        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
-      case "uploads":
-        return { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
-      case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
-    }
+    return stackDestroyActionability(this);
   }
 }
+
+/** Classifies a destroy failure; `stack prune` reuses it for the same failures. */
+export const stackDestroyActionability = (error: {
+  readonly reason: StackCommandDestroyError["reason"];
+  readonly targetIssue?: StackTargetIssue;
+  readonly cause?: unknown;
+}): CliErrorActionabilityDeclaration => {
+  switch (error.reason) {
+    case "flags":
+      return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
+    case "confirmation":
+      return { ...actionability.provideFlags, fingerprint_suffix: "confirmation" };
+    case "cancelled":
+      return { ...actionability.cancelled, fingerprint_suffix: "cancelled" };
+    case "invalid-config":
+      return stackTargetInvalidConfigActionability(error.targetIssue);
+    case "runtime":
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    case "uploads":
+      return { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
+    case "stack":
+      return causeDeclaration(error.cause) ?? unclassifiedStackFailureActionability(error.cause);
+  }
+};

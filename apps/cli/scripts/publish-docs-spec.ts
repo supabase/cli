@@ -1,6 +1,6 @@
 /**
  * Publishes the generated CLI reference to the docs site by opening a PR against
- * supabase/supabase. Reads the spec on stdin:
+ * supabase/supabase, or writes it to a local checkout with --local. Reads the spec on stdin:
  *
  *   bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version>
  *
@@ -26,6 +26,7 @@ function jsonText(value: unknown): string {
 const { values } = parseArgs({
   options: {
     version: { type: "string" },
+    local: { type: "string" },
     repo: { type: "string", default: "supabase/supabase" },
     "spec-path": { type: "string", default: "apps/docs/spec/cli_v1_commands.yaml" },
     branch: { type: "string", default: "cli/ref-doc" },
@@ -41,17 +42,40 @@ const main = Effect.gen(function* () {
   const versionArgument = values.version;
   if (!versionArgument) {
     yield* Console.error(
-      "Usage: bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version> [--repo <owner/repo>] [--spec-path <path>] [--branch <name>] [--base <branch>] [--dry-run]",
+      "Usage: bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version> [--repo <owner/repo>] [--spec-path <path>] [--branch <name>] [--base <branch>] [--local <path>] [--dry-run]",
     );
     return yield* Effect.sync(() => process.exit(1));
   }
   const version = versionArgument.startsWith("v") ? versionArgument.slice(1) : versionArgument;
 
-  const repo = values.repo!;
-  const specPath = values["spec-path"]!;
-  const branch = values.branch!;
-  const base = values.base!;
-  const dryRun = values["dry-run"]!;
+  const repo = values.repo ?? "supabase/supabase";
+  const specPath = values["spec-path"] ?? "apps/docs/spec/cli_v1_commands.yaml";
+  const branch = values.branch ?? "cli/ref-doc";
+  const base = values.base ?? "master";
+  const dryRun = values["dry-run"] ?? false;
+  const localDir = values.local === undefined ? undefined : path.resolve(values.local);
+
+  if (localDir !== undefined) {
+    const relativeTarget = path.relative(localDir, path.resolve(localDir, specPath));
+    if (
+      values.local === "" ||
+      path.isAbsolute(specPath) ||
+      relativeTarget === ".." ||
+      relativeTarget.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeTarget)
+    ) {
+      yield* Console.error(
+        "Refusing local preview: provide a checkout path and a --spec-path inside it.",
+      );
+      return yield* Effect.sync(() => process.exit(1));
+    }
+    if (!(yield* fs.exists(path.join(localDir, path.dirname(specPath))))) {
+      yield* Console.error(
+        "Refusing local preview: the spec directory does not exist. Point --local at an existing supabase/supabase checkout.",
+      );
+      return yield* Effect.sync(() => process.exit(1));
+    }
+  }
 
   const spec = yield* Effect.tryPromise({
     try: () => Bun.stdin.text(),
@@ -95,27 +119,37 @@ const main = Effect.gen(function* () {
 
   if (dryRun) {
     yield* Console.log(
-      `Would publish ${spec.length} bytes to ${repo}:${specPath} on branch ${branch}`,
+      localDir === undefined
+        ? `Would publish ${spec.length} bytes to ${repo}:${specPath} on branch ${branch}`
+        : `Would write ${spec.length} bytes to ${path.join(localDir, specPath)}`,
     );
     return yield* Effect.sync(() => process.exit(0));
   }
 
   const prettier = path.resolve(import.meta.dir, "../node_modules/.bin/prettier");
+  const writeSpec = Effect.fn("Docs.writeSpec")(function* (checkoutDir: string) {
+    const target = path.join(checkoutDir, specPath);
+    yield* fs.writeFileString(target, spec);
+    yield* shell(
+      () =>
+        $`${prettier} --no-config --single-quote --print-width 100 --log-level warn --write ${target}`,
+    );
+    yield* Effect.annotateCurrentSpan("docs.commands.count", commands.length);
+  });
+
+  if (localDir !== undefined) {
+    yield* writeSpec(localDir);
+    yield* Console.log(`Wrote CLI reference to ${path.join(localDir, specPath)}`);
+    return;
+  }
+
   const message = "chore: update cli reference doc";
   yield* publishPullRequest({
     repo,
     base,
     branch,
     stagedPath: specPath,
-    write: (checkoutDir) =>
-      Effect.gen(function* () {
-        const target = path.join(checkoutDir, specPath);
-        yield* fs.writeFileString(target, spec);
-        yield* shell(
-          () =>
-            $`${prettier} --no-config --single-quote --print-width 100 --log-level warn --write ${target}`,
-        );
-      }),
+    write: writeSpec,
     commitMessage: message,
     pullRequestTitle: message,
     pullRequestBody: [

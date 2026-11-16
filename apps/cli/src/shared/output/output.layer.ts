@@ -28,6 +28,7 @@ import {
   Stream,
 } from "effect";
 
+import { envValue } from "../config/env-option.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import { CommandTarget } from "./command-target.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
@@ -486,15 +487,23 @@ export const textOutputLayer = Layer.effect(
         }),
       promptText: (
         message: string,
-        opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
+        opts?: {
+          validate?: (v: string) => string | undefined;
+          defaultValue?: string;
+          initialValue?: string;
+        },
       ) =>
         Effect.gen(function* () {
           const validate = opts?.validate;
+          /* clack prepends initialValue to piped input and a dumb terminal can't erase it. */
+          const editable = tty.stdinIsTty && (yield* envValue("TERM")) !== "dumb";
           const value = yield* Effect.promise(() =>
             text({
               message,
               validate: validate ? (v: string | undefined) => validate(v ?? "") : undefined,
               defaultValue: opts?.defaultValue,
+              initialValue: editable ? opts?.initialValue : undefined,
+              placeholder: editable ? undefined : opts?.initialValue,
             }),
           );
           if (isCancel(value)) {

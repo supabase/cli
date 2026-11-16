@@ -74,7 +74,12 @@ import {
 import { type GenTypesGenerateError, GenTypesGenerator } from "./types.generator.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
-import { defaultSchemas, localDbContainerId, parseQueryTimeoutMillis } from "./types.shared.ts";
+import {
+  defaultSchemas,
+  localDbContainerId,
+  parseQueryTimeoutMillis,
+  quoteJsonString,
+} from "./types.shared.ts";
 
 const mapProjectTypesError = mapHttpError({
   networkError: GenTypesNetworkError,
@@ -373,6 +378,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             dnsResolver,
             lang,
             includedSchemas: input.includedSchemas,
+            requestedSchemas: schemas,
             extraSearchPath: input.extraSearchPath,
             options: {
               ...languageOptions,
@@ -397,13 +403,19 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             classifyError: classifyGenerateError,
           });
 
+    for (const name of types.missingSchemas) {
+      yield* output.raw(
+        `${yellow(`Warning: schema ${yield* quoteJsonString(name)} is missing from the generated types: it does not exist, the connecting role cannot use it, or its name starts with pg_.`)}\n`,
+        "stderr",
+      );
+    }
     if (lang === "typescript") {
       yield* output.raw(
         "Generated TypeScript is unformatted. Format it with:\n  npx oxfmt <generated-file.ts>\n",
         "stderr",
       );
     }
-    yield* output.raw(types);
+    yield* output.raw(types.source);
   });
 
   const connectionInputFor = Effect.fnUntraced(function* (target: ResolvedTarget) {
@@ -780,12 +792,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const extraSearchPath = yield* resolveExtraSearchPath();
       const resolved = yield* connectTo(target);
 
-      const conn = resolved.isLocal
-        ? resolved.conn
-        : pinSupabaseTls(resolved.conn, cliSettings.profile);
-
       yield* runGenerate({
-        conn,
+        conn: resolved.conn,
         isLocal: resolved.isLocal,
         includedSchemas,
         extraSearchPath,

@@ -8,6 +8,7 @@ import type { ServiceCreation } from "../services/Catalog.ts";
 import {
   makeSupabaseComposition,
   planEndpointReplan,
+  planSupabaseComposition,
   type SupabaseCompositionOperations,
 } from "./Supabase.ts";
 import { selection } from "../../tests/pins.ts";
@@ -290,7 +291,8 @@ it.effect("gives Auth, Studio and Functions the API's HTTPS host URL, keeping St
 
 it("does not let an excluded sibling's stale fixed port mask a shared endpoint's own change", () => {
   const fixedPort = 54_321;
-  const saved: Pick<SavedStack, "instances" | "composition"> = {
+  const saved: Pick<SavedStack, "instances" | "composition" | "runtime"> = {
+    runtime: "docker",
     instances: [
       {
         id: "rest-1",
@@ -336,7 +338,8 @@ it("does not let an excluded sibling's stale fixed port mask a shared endpoint's
 });
 
 it("releases the shared listener's automatic claim when another sharing service takes a fixed port", () => {
-  const saved: Pick<SavedStack, "instances" | "composition"> = {
+  const saved: Pick<SavedStack, "instances" | "composition" | "runtime"> = {
+    runtime: "docker",
     instances: [
       {
         id: "auth-1",
@@ -356,4 +359,27 @@ it("releases the shared listener's automatic claim when another sharing service 
   ];
   expect(planEndpointReplan(saved, requested)?.releasesSharedApi).toBe(true);
   expect(planEndpointReplan(saved, [])).toBeUndefined();
+});
+
+it("plans a container limit edit as a change only on a container runtime", () => {
+  const auth = (memoryBytes: number): ServiceCreation => ({
+    service: "auth",
+    pin: selection.auth,
+    config: {},
+    endpoints: {},
+    container: { memoryBytes },
+  });
+  const saved = (runtime: SavedStack["runtime"]) => ({
+    runtime,
+    instances: [{ id: "auth-1", creation: auth(256 * 1024 ** 2) }],
+    composition: { members: [{ id: "auth-1", activation: "eager" as const }], dependencies: [] },
+  });
+  const requested = [auth(512 * 1024 ** 2)];
+
+  expect(planSupabaseComposition(saved("docker"), requested)).toMatchObject([
+    { id: "auth-1", change: "changed", paths: ["container.memoryBytes"] },
+  ]);
+  expect(planSupabaseComposition(saved("native"), requested)).toMatchObject([
+    { id: "auth-1", change: "unchanged" },
+  ]);
 });

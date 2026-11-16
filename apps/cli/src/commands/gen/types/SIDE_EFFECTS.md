@@ -146,6 +146,10 @@ introspection. On the legacy Docker Compose stack the banner prints before the r
 stopped stack still shows the chosen target. In-process TypeScript also prints a stderr note that the
 output is unformatted. TypeScript from the Management API prints no such note; when it is a fallback
 from a failed direct attempt, one stderr warning prints instead (see Notes).
+Each explicit `--schema` name that introspection does not return prints one stderr warning with the
+name JSON-quoted: `Warning: schema "<name>" is missing from the generated types: it does not exist,
+the connecting role cannot use it, or its name starts with pg_.` Without `--schema`, the default and
+`[api].schemas` names never warn, nor does the Management API path.
 
 ### `--output-format json`
 
@@ -230,8 +234,8 @@ removed in the next major version.` stdout carries only the types.
     `snap` profile host connects with `sslmode=require` and the bundled Supabase CA pinned (promoted to
     `verify-ca`) unless `sslmode` is set from any source, which is then used as is. A root cert
     set without `sslmode` replaces the bundled CA and keeps `require`. The connection resolver applies the pin for a project ref, its direct host and pooler
-    alike, including the pooler temp-role probe (see `db push`); this command applies it itself
-    only to a preview branch. On a project ref the `PG*` env (see `db push`) is validated and
+    alike, including the pooler temp-role probe, and for a `--remote=<db-url>` (see `db push`);
+    this command applies it itself only to a preview branch. On a project ref the `PG*` env (see `db push`) is validated and
     supplies the client-cert pair, and the 15s query timeout sets the connect timeout. A preview
     branch's direct host takes no `PG*` setting and is always pinned; its pooler fallback parses
     the pooler URL with the shell `PG*` env, so `PGSSLMODE`, `PGSSLROOTCERT`, the client-cert pair

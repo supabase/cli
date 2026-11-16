@@ -8,6 +8,8 @@ export interface TomlHeaderToken {
   readonly end: number;
   readonly path: ReadonlyArray<string>;
   readonly isArrayOfTables: boolean;
+  /** Offset just past the dotted key path, before any whitespace and the closing bracket. */
+  readonly keysEnd: number;
   /** Offset of a same-line `#` after the closing bracket. */
   readonly commentStart?: number;
 }
@@ -432,6 +434,7 @@ export function scanTomlDocument(source: string): TomlScanResult | TomlScanError
         end,
         path: parsedPath.segments,
         isArrayOfTables,
+        keysEnd: parsedPath.end,
         ...(headerComment === undefined ? {} : { commentStart: headerComment }),
       };
       headers.push(headerToken);

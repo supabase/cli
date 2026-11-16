@@ -13,7 +13,7 @@ import { Effect, type FileSystem, type Path } from "effect";
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
 import { resolveDbImage } from "../db-image.ts";
 import { resolveHealthTimeoutSeconds } from "../duration.ts";
-import { narrowConfigEnum } from "../local-config-values.ts";
+import { narrowConfigEnum } from "../config-validate.ts";
 import {
   InvalidServiceVersionTagError,
   readServiceVersionOverrides,
