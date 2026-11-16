@@ -8,7 +8,7 @@ import {
 } from "../../src/command-internal/hosted-consent/hosted-consent.errors.ts";
 import { parseTargetSelector } from "../../src/command-internal/target/target-selector.ts";
 import { projectTargetFlags } from "../../src/command-internal/target/target-flags.ts";
-import { ApiCommandStatusError } from "../../src/commands/api/api-command.errors.ts";
+import { ApiCommandStatusError } from "../../src/command-internal/command-errors/api-command.errors.ts";
 import { runCli } from "../../src/shared/cli/run.ts";
 import { mockAnalytics } from "../helpers/mocks.ts";
 

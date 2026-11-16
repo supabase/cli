@@ -4,7 +4,7 @@ import { Effect, FileSystem, Option, Predicate, Schema, type SchemaIssue } from 
 import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import type { ApiFlagValue } from "./api-command-flags.ts";
 import { readPointer, writePointer } from "./api-command-pointer.ts";
-import { ApiCommandUsageError } from "./api-command.errors.ts";
+import { ApiCommandUsageError } from "../../command-internal/command-errors/api-command.errors.ts";
 import type { ApiCommandEntry } from "./api-command.model.ts";
 
 /** Parsed flag values keyed by flag name; `None` means the flag was absent. */
@@ -88,16 +88,18 @@ const initialBody = (entry: ApiCommandEntry): Readonly<Record<string, unknown>> 
 };
 
 /**
- * The flat operation input `{...bodyFields, ...query, ref}`. A body override is the starting point
- * when given, else the synthesized envelope; only flags that were passed are written, each at its
- * own pointer. An override may only carry top-level fields the request body declares, and the
- * path and query values are applied last so body data cannot retarget the request.
+ * The flat operation input `{...bodyFields, ...query, ...headers, ref, <path parameter>}`. A body
+ * override is the starting point when given, else the synthesized envelope; only flags that were
+ * passed are written, each at its own pointer. An override may only carry top-level fields the
+ * request body declares, and the path values are applied last so body data cannot retarget the
+ * request.
  */
 export const assembleInput = Effect.fnUntraced(function* (
   entry: ApiCommandEntry,
   ref: string,
   flagValues: ApiFlagValues,
   bodyOverride: Option.Option<Readonly<Record<string, unknown>>>,
+  argument?: string,
 ) {
   if (Option.isSome(bodyOverride)) {
     const { requestBody } = definitionOf(entry);
@@ -115,14 +117,29 @@ export const assembleInput = Effect.fnUntraced(function* (
   }
   let body: unknown = Option.getOrElse(bodyOverride, () => initialBody(entry));
   const query: Record<string, unknown> = {};
+  const headers: Record<string, unknown> = {};
+  const positional: Record<string, unknown> = {};
   for (const binding of entry.bindings) {
+    if (binding.source === "argument") {
+      if (argument !== undefined) {
+        if (argument === "" || argument === "." || argument === "..") {
+          return yield* new ApiCommandUsageError({
+            message: `<${binding.argument}> must not be empty, "." or "..".`,
+            hint: "Pass the identifier of the resource.",
+          });
+        }
+        positional[binding.name] = argument;
+      }
+      continue;
+    }
     if (binding.source !== "flag") continue;
     const value = flagValues[binding.flag];
     if (value === undefined || Option.isNone(value)) continue;
     if (binding.location === "query") query[binding.name] = value.value;
+    if (binding.location === "header") headers[binding.name] = value.value;
     if (binding.location === "body") body = writePointer(body, binding.pointer, value.value);
   }
-  return { ...(isRecord(body) ? body : {}), ...query, ref };
+  return { ...(isRecord(body) ? body : {}), ...query, ...headers, ref, ...positional };
 });
 
 type Path = ReadonlyArray<PropertyKey>;
@@ -152,14 +169,18 @@ const missingKeyPaths = (issue: SchemaIssue.Issue, path: Path): ReadonlyArray<Pa
   }
 };
 
-/** The flag that supplies the input field at `path`, if an entry binding covers it. */
-const flagAt = (entry: ApiCommandEntry, path: Path): string | undefined => {
+/** The flag binding that supplies the input field at `path`, if one covers it. */
+const flagAt = (entry: ApiCommandEntry, path: Path) => {
   const pointer = `/${path.map(String).join("/")}`;
   for (const binding of entry.bindings) {
     if (binding.source !== "flag") continue;
-    if (binding.location === "body" && binding.pointer === pointer) return binding.flag;
-    if (binding.location === "query" && path.length === 1 && path[0] === binding.name) {
-      return binding.flag;
+    if (binding.location === "body" && binding.pointer === pointer) return binding;
+    if (
+      (binding.location === "query" || binding.location === "header") &&
+      path.length === 1 &&
+      path[0] === binding.name
+    ) {
+      return binding;
     }
   }
   return undefined;
@@ -167,12 +188,16 @@ const flagAt = (entry: ApiCommandEntry, path: Path): string | undefined => {
 
 const invalidRequest = (entry: ApiCommandEntry, error: Schema.SchemaError) => {
   const paths = missingKeyPaths(error.issue, []);
-  const flags = paths?.map((path) => flagAt(entry, path));
-  if (flags !== undefined && flags.every((flag) => flag !== undefined)) {
-    const names = flags.map((flag) => `--${flag}`).join(", ");
+  const missing = paths?.map((path) => flagAt(entry, path));
+  if (missing !== undefined && missing.every((binding) => binding !== undefined)) {
+    const names = missing.map((binding) => `--${binding.flag}`).join(", ");
+    const plural = missing.length === 1 ? "" : "s";
+    const allBody = missing.every((binding) => binding.location === "body");
     return new ApiCommandUsageError({
-      message: `Missing required ${flags.length === 1 ? "flag" : "flags"} ${names}`,
-      hint: "Pass the flag, or include the field in --body/--file.",
+      message: `Missing required flag${plural} ${names}`,
+      hint: allBody
+        ? `Pass the flag${plural}, or include the field${plural} in --body/--file.`
+        : `Pass the flag${plural}.`,
     });
   }
   return new ApiCommandUsageError({
@@ -190,11 +215,12 @@ export const decodeInput = (entry: ApiCommandEntry, input: unknown) =>
     input,
   ).pipe(Effect.mapError((error) => invalidRequest(entry, error)));
 
-/** What a request would send: method, path, query and body, with sensitive flag values masked. */
+/** What a request would send: method, path, query, headers and body, with sensitive flag values masked. */
 export interface ApiRequestPreview {
   readonly method: string;
   readonly path: string;
   readonly query: Readonly<Record<string, unknown>>;
+  readonly headers: Readonly<Record<string, unknown>>;
   readonly body: unknown;
 }
 
@@ -230,6 +256,7 @@ export const previewRequest = (entry: ApiCommandEntry, decoded: object): ApiRequ
     method: definition.method,
     path,
     query: pick(decoded, definition.queryParams),
+    headers: pick(decoded, definition.headerParams),
     body,
   };
 };

@@ -1,11 +1,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Console, Data, Effect, FileSystem, Path, Predicate, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import {
-  commandOverrides,
-  generatedOperations,
-  nouns,
-} from "../src/commands/api/api-command-overrides.ts";
+import { generatedOperations, nouns } from "../src/commands/api/api-command-policy.ts";
 import { openApiOperationIdMap } from "@supabase/api/effect";
 import { ApiCommandGenerationError, deriveApiCommands } from "./api-command-derive.ts";
 
@@ -92,7 +88,6 @@ const main = Effect.gen(function* () {
   const { entries, schemas, problems } = deriveApiCommands({
     spec,
     generated: generatedOperations,
-    overrides: commandOverrides,
     nouns,
     operationIdMap: openApiOperationIdMap,
     handWrittenTopLevel: yield* handWrittenTopLevel(cliRoot),

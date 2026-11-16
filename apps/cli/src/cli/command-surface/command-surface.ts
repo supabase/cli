@@ -5,18 +5,19 @@ import { readApiCommand } from "../../commands/api/api-command.annotation.ts";
 import type {
   ApiCommandBinding,
   ApiCommandEntry,
+  ApiCommandFlag,
   ApiCommandSchemas,
 } from "../../commands/api/api-command.model.ts";
-import { readCommandStage } from "../../commands/api/api-command-stage.ts";
-import type { CommandStage } from "../../commands/api/api-command-stage.ts";
+import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
+import type { CommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { apiCommands } from "../../commands/api/generated.ts";
-import { rootCommandForFeatures } from "../../cli/root.ts";
+import { rootCommandForFeatures } from "../root.ts";
 import { flattenSubcommands } from "../../docs/docs-introspection.ts";
-import { readCommandErrorsContract } from "../command-errors/command-errors.annotation.ts";
-import { readPermissions } from "../command-permissions/command-permissions.annotation.ts";
-import type { CommandPermissions } from "../command-permissions/model.ts";
-import { readTargetPolicy } from "../target/target-policy.ts";
-import type { TargetGroup } from "../target/target-policy.ts";
+import { readCommandErrorsContract } from "../../command-internal/command-errors/command-errors.annotation.ts";
+import { readPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
+import type { CommandPermissions } from "../../command-internal/command-permissions/model.ts";
+import { readTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import type { TargetGroup } from "../../command-internal/target/target-policy.ts";
 
 type JsonSchema = Readonly<Record<string, unknown>>;
 
@@ -29,7 +30,10 @@ interface SurfaceArgument {
   readonly variadic: boolean;
 }
 
-/** A flag as the parser accepts it; `env` is `null` because the parser carries no env name. */
+/**
+ * A flag as the parser accepts it, except that a generated API flag is `required` and `sensitive`
+ * as its operation declares; `env` is `null` because the parser carries no env name.
+ */
 interface SurfaceFlag {
   readonly name: string;
   readonly aliases: readonly string[];
@@ -91,9 +95,10 @@ const dryRunSchema: JsonSchema = {
     method: { type: "string" },
     path: { type: "string" },
     query: { type: "object" },
+    headers: { type: "object" },
     body: {},
   },
-  required: ["method", "path", "query", "body"],
+  required: ["method", "path", "query", "headers", "body"],
   additionalProperties: false,
 };
 
@@ -146,9 +151,11 @@ const sortedRecord = <A>(
 ): Readonly<Record<string, A>> =>
   Object.fromEntries([...entries].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
+const noApiFlags: ReadonlyMap<string, ApiCommandFlag> = new Map();
+
 const surfaceFlag = (
   flag: CommandSpec.Flag,
-  sensitiveFlags: ReadonlySet<string>,
+  apiFlags: ReadonlyMap<string, ApiCommandFlag>,
 ): readonly [string, SurfaceFlag] => [
   flag.name,
   {
@@ -156,13 +163,13 @@ const surfaceFlag = (
     aliases: flag.aliases,
     type: flag.typeName,
     choices: choicesOf(flag.type),
-    required: flag.required,
+    required: flag.required || apiFlags.get(flag.name)?.required === true,
     default: defaultOf(flag.fallbacks),
     env: null,
     negatable: flag.negation !== undefined,
     variadic: flag.variadic !== undefined,
     hidden: flag.hidden,
-    sensitive: flag.type._tag === "Redacted" || sensitiveFlags.has(flag.name),
+    sensitive: flag.type._tag === "Redacted" || apiFlags.get(flag.name)?.sensitive === true,
   },
 ];
 
@@ -174,7 +181,7 @@ const walkGlobalFlags = (root: CommandRoot) => {
       ? []
       : spec.value.flags
           .filter((flag) => flag.scope._tag === "Global")
-          .map((flag) => surfaceFlag(flag, new Set<string>())),
+          .map((flag) => surfaceFlag(flag, noApiFlags)),
   );
 };
 
@@ -191,7 +198,7 @@ const apiSurface = Effect.fn("CommandSurface.api")(function* (command: CommandRo
   if (schemas === undefined) {
     return yield* Effect.die(`no generated schemas for operation "${operationId}"`);
   }
-  const waitRead = generated.wait?.read;
+  const waitRead = generated.wait?.read === operationId ? undefined : generated.wait?.read;
   const waitSchemas = waitRead === undefined ? undefined : table[waitRead];
   if (waitRead !== undefined && waitSchemas === undefined) {
     return yield* Effect.die(`no generated schemas for operation "${waitRead}"`);
@@ -211,9 +218,7 @@ const apiSurface = Effect.fn("CommandSurface.api")(function* (command: CommandRo
       bindings,
     } satisfies SurfaceApi,
     result: { anyOf: branches } satisfies JsonSchema,
-    sensitiveFlags: new Set(
-      generated.flags.filter((flag) => flag.sensitive).map((flag) => flag.name),
-    ),
+    apiFlags: new Map(generated.flags.map((flag) => [flag.name, flag])),
   });
 });
 
@@ -228,16 +233,16 @@ export const commandSurfaceEntry = Effect.fn("CommandSurface.entry")(function* (
     return yield* Effect.die(`unknown command path "${path.join(" ")}"`);
   }
   const api = yield* apiSurface(command.value);
-  const sensitiveFlags = Option.match(api, {
-    onNone: () => new Set<string>(),
-    onSome: (found) => found.sensitiveFlags,
+  const apiFlags = Option.match(api, {
+    onNone: () => noApiFlags,
+    onSome: (found) => found.apiFlags,
   });
   const stage = readCommandStage(command.value);
   const target = readTargetPolicy(command.value);
   const permissions = readPermissions(command.value);
   const flags = spec.value.flags
     .filter((flag) => flag.scope._tag !== "Global")
-    .map((flag) => surfaceFlag(flag, sensitiveFlags));
+    .map((flag) => surfaceFlag(flag, apiFlags));
   const entry: CommandSurfaceEntry = {
     path,
     aliases: spec.value.alias === undefined ? [] : [spec.value.alias],

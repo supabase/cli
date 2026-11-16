@@ -46,22 +46,28 @@ const runWarehouse = (
 ) =>
   Effect.gen(function* () {
     const requests: Array<string> = [];
+    const bodies: Array<string> = [];
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     const server = yield* Effect.acquireRelease(
       Effect.try({
         try: () =>
           Bun.serve({
             hostname: "127.0.0.1",
             port: 0,
-            fetch(incoming) {
-              const { pathname } = new URL(incoming.url);
-              if (pathname === `/v1/projects/${REF}`) return Response.json({});
-              requests.push(`${incoming.method} ${pathname}`);
-              const served = route({ method: incoming.method, pathname });
-              return new Response(served.body, {
-                status: served.status,
-                headers: { "content-type": "application/json" },
-              });
-            },
+            fetch: (incoming) =>
+              runPromise(
+                Effect.gen(function* () {
+                  const { pathname } = new URL(incoming.url);
+                  if (pathname === `/v1/projects/${REF}`) return Response.json({});
+                  requests.push(`${incoming.method} ${pathname}`);
+                  bodies.push(yield* Effect.promise(() => incoming.text()));
+                  const served = route({ method: incoming.method, pathname });
+                  return new Response(served.body, {
+                    status: served.status,
+                    headers: { "content-type": "application/json" },
+                  });
+                }),
+              ),
           }),
         catch: (cause) => new ApiCommandsE2eSetupError({ cause }),
       }),
@@ -97,22 +103,8 @@ const runWarehouse = (
         SUPABASE_YES: undefined,
       },
     });
-    return { result, requests };
+    return { result, requests, bodies };
   }).pipe(Effect.scoped);
-
-it.live("warehouse enable prints the accepted response byte for byte", () =>
-  Effect.gen(function* () {
-    const accepted = `{"data":{"type":"warehouse_setup","attributes":{"selection_id":"${SEL}","status":"pending","future_field":{"nested":[1, 2]}}}}`;
-    const { result, requests } = yield* runWarehouse(
-      ["enable", "--schema", "public", "--yes", "-o", "json"],
-      () => ({ status: 202, body: accepted }),
-    );
-
-    requireCliSuccess(result, "warehouse enable --yes -o json");
-    expect(result.stdout, result.stderr).toBe(accepted);
-    expect(requests).toEqual([`POST ${ENABLE_PATH}`]);
-  }).pipe(Effect.provide(BunServices.layer)),
-);
 
 it.live("warehouse status reports a 409 as a conflict failure document on stderr", () =>
   Effect.gen(function* () {
@@ -175,9 +167,9 @@ it.live("warehouse enable --wait prints the final status read", () =>
 
 it.live("warehouse enable --file - reads the request body piped on stdin", () =>
   Effect.gen(function* () {
-    const accepted = `{"data":{"type":"warehouse_setup","attributes":{"selection_id":"${SEL}"}}}`;
+    const accepted = `{"data":{"type":"warehouse_setup","attributes":{"selection_id":"${SEL}","status":"pending","future_field":{"nested":[1, 2]}}}}`;
     const body = '{"data":{"type":"warehouse_setup","attributes":{"schema":"public"}}}';
-    const { result, requests } = yield* runWarehouse(
+    const { result, requests, bodies } = yield* runWarehouse(
       ["enable", "--file", "-", "--yes", "-o", "json"],
       () => ({ status: 202, body: accepted }),
       { stdin: body },
@@ -186,5 +178,6 @@ it.live("warehouse enable --file - reads the request body piped on stdin", () =>
     requireCliSuccess(result, "warehouse enable --file -");
     expect(result.stdout, result.stderr).toBe(accepted);
     expect(requests).toEqual([`POST ${ENABLE_PATH}`]);
+    expect(decodeJson(bodies[0] ?? "")).toEqual(decodeJson(body));
   }).pipe(Effect.provide(BunServices.layer)),
 );

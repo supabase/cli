@@ -4,7 +4,7 @@ import openApiSpec from "@supabase/api/openapi.json";
 import { Effect, Layer, Predicate, Schema, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
-import { commandSurface } from "../../command-internal/command-surface/command-surface.ts";
+import { commandSurface } from "../../cli/command-surface/command-surface.ts";
 import { ExperimentalFlag, GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import {
@@ -384,7 +384,7 @@ describe("generated command bindings", () => {
         );
         const waitRead = generated.find((entry) => entry.operationId === operationId)?.wait?.read;
         const waited = branches.find((branch) => branch["title"] === "waited");
-        if (waitRead === undefined) {
+        if (waitRead === undefined || waitRead === operationId) {
           expect(waited).toBeUndefined();
           return;
         }

@@ -15,7 +15,7 @@ import {
   ApiCommandStatusError,
   ApiCommandUsageError,
   ApiCommandWaitTimeoutError,
-} from "../../commands/api/api-command.errors.ts";
+} from "../../command-internal/command-errors/api-command.errors.ts";
 import {
   LinkBranchListNetworkError,
   LinkBranchListStatusError,

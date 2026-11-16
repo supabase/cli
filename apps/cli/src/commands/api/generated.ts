@@ -10,10 +10,8 @@ export const apiCommands = [
     apiPath: "/v2/projects/{ref}/warehouse/enable",
     summary: "Enable Warehouse replication",
     description:
-      "Enables replication for the currently eligible tables in a schema, or the named tables in that schema. Resolves source identities under the mutation lock without a preview or revision. Repeating the same selection is safe; a different existing selection is rejected. Schema selection excludes future tables; selected partition roots include future partitions. Acceptance does not imply completed synchronization.\n\nThis endpoint is currently in its **Alpha** stage.",
-    scope: "project",
+      "Enables replication for the currently eligible tables in a schema, or the named tables in that schema. Resolves source identities under the mutation lock without a preview or revision. Repeating the same selection is safe; a different existing selection is rejected. Schema selection excludes future tables; selected partition roots include future partitions. Acceptance does not imply completed synchronization.",
     readOnly: false,
-    stability: "experimental",
     feature: "warehouse",
     body: {
       contentType: "application/json",
@@ -127,10 +125,8 @@ export const apiCommands = [
     apiPath: "/v2/projects/{ref}/warehouse/setups/current",
     summary: "Get Warehouse initial synchronization status",
     description:
-      "Returns setup phases, linked tables, pipeline and routing state, cleanup errors, and optional FDW inspection. Set inspect_fdw=false to skip database FDW inspection. A null table replication_state means no observation is available. Status succeeded requires initial copy, a running pipeline and ready routing; it does not verify query connectivity. Pass the selection_id returned by enable to reject a changed selection while waiting.\n\nThis endpoint is currently in its **Alpha** stage.",
-    scope: "project",
+      "Returns setup phases, linked tables, pipeline and routing state, cleanup errors, and optional FDW inspection. Set inspect_fdw=false to skip database FDW inspection. A null table replication_state means no observation is available. Status succeeded requires initial copy, a running pipeline and ready routing; it does not verify query connectivity. Pass the selection_id returned by enable to reject a changed selection while waiting.",
     readOnly: true,
-    stability: "experimental",
     feature: "warehouse",
     response: {
       status: 200,
@@ -174,5 +170,13 @@ export const apiCommands = [
         flag: "selection-id",
       },
     ],
+    wait: {
+      read: "v2-get-warehouse-setup",
+      params: {},
+      status: "/data/attributes/status",
+      succeeded: ["succeeded"],
+      failed: ["failed"],
+      error: "/data/attributes/status_error",
+    },
   },
 ] as const satisfies readonly ApiCommandEntry[];

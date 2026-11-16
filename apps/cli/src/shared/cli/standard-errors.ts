@@ -17,7 +17,7 @@ import {
   ApiCommandStatusError,
   ApiCommandUsageError,
   ApiCommandWaitTimeoutError,
-} from "../../commands/api/api-command.errors.ts";
+} from "../../command-internal/command-errors/api-command.errors.ts";
 import { LinkBranchListStatusError } from "../../command-internal/target/branch-resolution.errors.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import { writeStdio } from "../output/output.layer.ts";

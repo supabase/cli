@@ -1,6 +1,18 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
+import {
+  Cause,
+  Console,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+  Stdio,
+} from "effect";
 import { CliOutput, Command } from "effect/cli";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as TestClock from "effect/testing/TestClock";
@@ -24,6 +36,7 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
 import {
+  fakeConsole,
   mockOutput,
   mockRuntimeInfo,
   mockStdin,
@@ -35,12 +48,12 @@ import {
   ApiCommandStatusError,
   ApiCommandUsageError,
   ApiCommandWaitTimeoutError,
-} from "./api-command.errors.ts";
+} from "../../command-internal/command-errors/api-command.errors.ts";
 import type { ApiCommandEntry } from "./api-command.model.ts";
 import { assembleInput, decodeInput, previewRequest } from "./api-command-request.ts";
 import { apiCommands } from "./generated.ts";
 import { readApiCommand } from "./api-command.annotation.ts";
-import { readCommandStage } from "./api-command-stage.ts";
+import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { apiCommandGroup, apiCommandGroups } from "./runtime.ts";
 import { resolveWarehouseEnabled } from "./warehouse-backend.ts";
 
@@ -393,6 +406,7 @@ describe("generated warehouse commands", () => {
           method: "POST",
           path: ENABLE_PATH,
           query: {},
+          headers: {},
           body: {
             data: { type: "warehouse_setup", attributes: { schema: "public", tables: ["a"] } },
           },
@@ -433,6 +447,7 @@ describe("generated warehouse commands", () => {
           method: "GET",
           path: STATUS_PATH,
           query: { inspect_fdw: "false" },
+          headers: {},
           body: null,
         });
       });
@@ -449,6 +464,7 @@ describe("generated warehouse commands", () => {
           method: "POST",
           path: ENABLE_PATH,
           query: {},
+          headers: {},
           body: { data: { type: "warehouse_setup", attributes: { schema: "public" } } },
         });
       });
@@ -616,6 +632,20 @@ describe("generated warehouse commands", () => {
     });
   });
 
+  describe("help", () => {
+    it.effect("marks a required API flag as required in its description", () => {
+      const { console, calls } = fakeConsole();
+      const { run } = setup(["warehouse", "enable", "--help"], { route: accepted });
+      return Effect.gen(function* () {
+        yield* run.pipe(Effect.provideService(Console.Console, console));
+        const lines = calls.join("\n").split("\n");
+        const flagLine = (name: string) => lines.find((line) => line.includes(`--${name} `));
+        expect(flagLine("schema")).toContain("Required unless the field is in --body or --file.");
+        expect(flagLine("table")).not.toContain("Required");
+      });
+    });
+  });
+
   describe("--wait", () => {
     const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
       Effect.raceFirst(Effect.forever(TestClock.adjust("2 seconds")), Fiber.await(fiber));
@@ -689,36 +719,75 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect(
-      "prints the original response and reads nothing when the change gives no selection_id",
+      "fails with the standard operation_failed error when a failed status has no error",
       () => {
-        const noSelection = {
-          data: { type: "warehouse_setup", attributes: { status: "pending" } },
-        };
-        const { sent, out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        const { run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
           yes: true,
-          route: () => ({ status: 202, body: noSelection }),
+          route: enableThenPoll([{ status: 200, body: statusBody("failed") }]),
         });
         return Effect.gen(function* () {
-          yield* run;
-          expect(sent.map((request) => request.method)).toEqual(["POST"]);
-          expect(out.stdoutText).toBe(encodeJson(noSelection));
+          const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* driveClock(fiber);
+          const failure = yield* Fiber.join(fiber);
+          expect(failure).toBeInstanceOf(ApiCommandOperationFailedError);
+          expect(failure).toMatchObject({
+            status: "failed",
+            message: 'The operation failed with status "failed".',
+          });
         });
       },
     );
 
-    it.effect("fails when the status_error pointer is set, whatever the status", () => {
-      const { run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+    it.effect("succeeds and prints the read when a succeeded status carries an error value", () => {
+      const settled = statusBody("succeeded", "earlier attempt failed");
+      const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
-        route: enableThenPoll([{ status: 200, body: statusBody("pending", "disk full") }]),
+        route: enableThenPoll([{ status: 200, body: settled }]),
       });
       return Effect.gen(function* () {
-        const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
         yield* driveClock(fiber);
-        const failure = yield* Fiber.join(fiber);
-        expect(failure).toBeInstanceOf(ApiCommandOperationFailedError);
-        expect(failure).toMatchObject({ status: "pending", message: "disk full" });
+        yield* Fiber.join(fiber);
+        expect(out.stdoutText).toBe(encodeJson(settled));
       });
     });
+
+    it.effect("keeps polling while a non-terminal status carries an error value", () => {
+      const { sent, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        route: enableThenPoll([
+          { status: 200, body: statusBody("pending", "retrying") },
+          { status: 200, body: statusBody("succeeded") },
+        ]),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        yield* Fiber.join(fiber);
+        expect(sent.filter((request) => request.method === "GET")).toHaveLength(2);
+      });
+    });
+
+    it.effect(
+      "ends the wait with a defect when the accepted response lacks the selection id",
+      () => {
+        const { sent, run } = setup(
+          ["warehouse", "enable", "--schema", "public", "--yes", "--wait"],
+          {
+            yes: true,
+            route: (request) =>
+              request.method === "POST"
+                ? { status: 202, body: { data: { type: "warehouse_setup", attributes: {} } } }
+                : { status: 200, body: statusBody("succeeded") },
+          },
+        );
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(run);
+          expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+          expect(sent.map((request) => request.method)).toEqual(["POST"]);
+        });
+      },
+    );
 
     it.effect("names the status command when the setup fails and when the wait times out", () => {
       const failing = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
@@ -760,6 +829,74 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    describe("on a read that polls itself", () => {
+      const statusWait = ["warehouse", "status", "--wait"];
+      const reads = (...replies: ReadonlyArray<Reply>): Route => {
+        let read = 0;
+        return () => replies[Math.min(read++, replies.length - 1)] ?? { status: 200, body: {} };
+      };
+
+      it.effect("polls its own route until the setup succeeds and prints the last read", () => {
+        const { sent, out, run } = setup(statusWait, {
+          route: reads(
+            { status: 200, body: statusBody("pending") },
+            { status: 200, body: statusBody("pending") },
+            { status: 200, body: statusBody("succeeded") },
+          ),
+        });
+        return Effect.gen(function* () {
+          const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+          yield* driveClock(fiber);
+          yield* Fiber.join(fiber);
+          expect(sent.map((request) => request.method)).toEqual(["GET", "GET", "GET"]);
+          expect(sent.every((request) => request.path === STATUS_PATH)).toBe(true);
+          expect(out.stdoutText).toBe(encodeJson(statusBody("succeeded")));
+        });
+      });
+
+      it.effect("fails with the reported status_error when the setup fails", () => {
+        const { run } = setup(statusWait, {
+          route: reads({ status: 200, body: statusBody("failed", "pipeline crashed") }),
+        });
+        return Effect.gen(function* () {
+          const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* driveClock(fiber);
+          const failure = yield* Fiber.join(fiber);
+          expect(failure).toBeInstanceOf(ApiCommandOperationFailedError);
+          expect(failure).toMatchObject({
+            message: expect.stringContaining("pipeline crashed"),
+            hint: expect.stringContaining(`supabase warehouse status --remote=${VALID_REF}`),
+          });
+        });
+      });
+
+      it.effect("times out and names the status command to check later", () => {
+        const { sent, run } = setup([...statusWait, "--timeout", "10s"], {
+          route: reads({ status: 200, body: statusBody("pending") }),
+        });
+        return Effect.gen(function* () {
+          const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* driveClock(fiber);
+          const failure = yield* Fiber.join(fiber);
+          expect(failure).toBeInstanceOf(ApiCommandWaitTimeoutError);
+          expect(failure).toMatchObject({
+            hint: expect.stringContaining(`supabase warehouse status --remote=${VALID_REF}`),
+          });
+          expect(sent.length).toBeGreaterThan(1);
+        });
+      });
+
+      it.effect("sends nothing under --dry-run", () => {
+        const { sent, run } = setup([...statusWait, "--dry-run"], {
+          route: ok(statusBody("succeeded")),
+        });
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toEqual([]);
+        });
+      });
+    });
+
     it.effect("rejects an invalid --timeout before sending anything", () => {
       const { sent, run } = setup(
         ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "soon"],
@@ -779,7 +916,11 @@ describe("generated warehouse commands", () => {
     };
     const fixtureRoot = (entry: ApiCommandEntry) =>
       Command.make("supabase").pipe(
-        Command.withSubcommands([apiCommandGroup("fixture", "Fixture commands", [entry])]),
+        Command.withSubcommands([
+          apiCommandGroup("fixture", { description: "Fixture commands", feature: "fixture" }, [
+            entry,
+          ]),
+        ]),
         Command.withGlobalFlags(GLOBAL_FLAGS),
       );
 
@@ -866,7 +1007,7 @@ describe("generated warehouse commands", () => {
           Option.some(entry.operationId),
         );
         expect(readCommandStage(command)).toEqual(
-          Option.some({ status: "experimental", gate: { kind: "feature", feature: "warehouse" } }),
+          Option.some({ status: "experimental", feature: "warehouse" }),
         );
       }
     });

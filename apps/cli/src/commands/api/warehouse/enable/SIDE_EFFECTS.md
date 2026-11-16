@@ -1,6 +1,6 @@
 # `supabase warehouse enable`
 
-Target: hosted, consent `no` (confirm unless `--yes`; a non-interactive run without `--yes` is a usage error), see [Command target](../../../../../docs/command-target.md)
+Target: hosted, consent default No (confirm unless `--yes`; a run that cannot prompt and has no `--yes` is a usage error), see [Command target](../../../../../docs/command-target.md)
 
 ## Feature gate
 
@@ -34,11 +34,12 @@ The command is generated from the Management API contract (`generated.ts`).
 | `POST` | `/v2/projects/{ref}/warehouse/enable`         | Bearer token | `{"data":{"type":"warehouse_setup","attributes":{…}}}`; only the flags that were given are present | passed through unchanged; `data.attributes.selection_id` feeds `--wait`                                                                       |
 | `GET`  | `/v2/projects/{ref}/warehouse/setups/current` | Bearer token | none                                                                                               | `data.attributes.status`, `status_error`; polled with backoff from 1s doubling to a 10s cap (a longer `Retry-After` wins), only with `--wait` |
 | `GET`  | `/v1/projects`                                | Bearer token | none                                                                                               | only when no ref resolved and the session is interactive (project picker)                                                                     |
+| `GET`  | `/v1/projects/{ref}`                          | Bearer token | none                                                                                               | `{ref, name, organization_id, organization_slug}`; linked-project cache miss only (best-effort, after the command)                            |
 
 `--body` or `--file` supply the whole body; a flag replaces its own field and nothing else. The
 input is validated before consent and before any request, so a top-level body key outside the
-declared request-body fields, an unknown nested field or a missing `--schema` fails with nothing sent. `--dry-run` prints `{method, path, query, body}` and sends
-nothing, before consent.
+declared request-body fields, an unknown nested field or a missing `--schema` fails with nothing sent. `--dry-run` prints `{method, path, query, headers, body}` and sends no command request (the linked-project cache read in the table above can still run),
+before consent.
 
 ## Exit Codes
 
@@ -48,7 +49,7 @@ nothing, before consent.
 | `2`   | `usage_error`: invalid flags or body, or consent needed without `--yes`  |
 | `130` | consent declined at the prompt (`cancelled`)                             |
 | `1`   | API error (non-2xx)                                                      |
-| `1`   | with `--wait`: `operation_failed` (failed status) or `wait_timeout`      |
+| `1`   | with `--wait`: `operation_failed` (a failed status) or `wait_timeout`    |
 
 ## Environment Variables
 
@@ -83,5 +84,6 @@ and `--wait` record `true`. Generated field flags, `--body`, `--file` and `--tim
 ## Notes
 
 - Repeating the same selection is safe; the API rejects a different existing selection.
-- A response without `data.attributes.selection_id` is printed as is, without waiting.
+- `--wait` fails only on a status in the failed set; `status_error` supplies the failure message and does not end the wait by itself.
+- `data.attributes.selection_id` is required in the accepted response; a response without it is a defect and ends `--wait` with an internal error, never a silent success.
 - `--wait` never resumes after a 409; any non-2xx while polling ends the command with the API error.

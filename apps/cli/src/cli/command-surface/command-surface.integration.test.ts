@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import { commandSurface, commandSurfaceEntry, walkCommandSurface } from "./command-surface.ts";
-import { rootCommandForFeatures } from "../../cli/root.ts";
+import { rootCommandForFeatures } from "../root.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -70,11 +70,16 @@ describe("command surface", () => {
         path: ["warehouse", "enable"],
         target: { group: "hosted", consent: "no" },
         errors: "standard",
-        stage: { status: "experimental", gate: { kind: "feature", feature: "warehouse" } },
+        stage: { status: "experimental", feature: "warehouse" },
         api: { operationId: "v2-enable-warehouse", request: { contentType: "application/json" } },
       });
       expect(titlesOf(enable?.result)).toEqual(["response", "waited", "dryRun"]);
-      expect(enable?.flags["table"]).toMatchObject({ type: "string", variadic: true });
+      expect(enable?.flags["schema"]).toMatchObject({ required: true });
+      expect(enable?.flags["table"]).toMatchObject({
+        type: "string",
+        variadic: true,
+        required: false,
+      });
       expect(enable?.flags["dry-run"]).toMatchObject({ type: "boolean", default: false });
       expect(Object.keys(enable?.flags ?? {})).not.toContain("output");
     }),
@@ -90,7 +95,7 @@ describe("command surface", () => {
     }),
   );
 
-  it.effect("declares a waited result only for a command with a wait read", () =>
+  it.effect("declares a waited result only for a command that waits on another read", () =>
     Effect.gen(function* () {
       const { variants } = yield* Effect.promise(() => surface);
       expect(titlesOf(variants.warehouse["warehouse status"]?.result)).toEqual([
@@ -121,13 +126,11 @@ describe("command surface", () => {
 
   it.effect("loads the generated schemas only through the surface extraction", () =>
     Effect.gen(function* () {
-      const extraction = yield* bundledInputs(
-        "src/command-internal/command-surface/command-surface.ts",
-      );
+      const extraction = yield* bundledInputs("src/cli/command-surface/command-surface.ts");
       const runtime = yield* bundledInputs("src/main.ts");
       expect(extraction).toContain("src/commands/api/generated.schemas.ts");
       expect(runtime).not.toContain("src/commands/api/generated.schemas.ts");
-      expect(runtime).not.toContain("src/command-internal/command-surface/command-surface.ts");
+      expect(runtime).not.toContain("src/cli/command-surface/command-surface.ts");
     }),
   );
 });

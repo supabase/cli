@@ -10,11 +10,26 @@ export type ApiCommandBinding =
       readonly source: "target";
     }
   | {
+      readonly location: "path";
+      readonly name: string;
+      /** The value comes from the command's positional argument. */
+      readonly source: "argument";
+      /** Name of the positional argument that supplies the value. */
+      readonly argument: string;
+    }
+  | {
       readonly location: "query";
       /** Query parameter name. */
       readonly name: string;
       readonly source: "flag";
       /** Name of the flag that supplies the value. */
+      readonly flag: string;
+    }
+  | {
+      readonly location: "header";
+      /** Header name as declared in the spec. */
+      readonly name: string;
+      readonly source: "flag";
       readonly flag: string;
     }
   | {
@@ -27,7 +42,7 @@ export type ApiCommandBinding =
       readonly flag: string;
     };
 
-/** One flag of a generated command, derived from a query parameter or a request body field. */
+/** One flag of a generated command, derived from a query parameter, a header parameter or a request body field. */
 export interface ApiCommandFlag {
   /** Kebab-case flag name without the leading dashes. */
   readonly name: string;
@@ -42,7 +57,7 @@ export interface ApiCommandFlag {
 
 /** What `--wait` polls after a change and when it is done. */
 export interface ApiCommandWait {
-  /** Operation id of the read operation to poll. */
+  /** Operation id of the read operation to poll; the command's own when it polls itself. */
   readonly read: string;
   /** Read parameter name to JSON pointer into the change response. */
   readonly params: Readonly<Record<string, string>>;
@@ -56,7 +71,7 @@ export interface ApiCommandWait {
 
 /** A generated command as plain data; the runtime turns each entry into a CLI command. */
 export interface ApiCommandEntry {
-  /** Noun path followed by the verb, e.g. `["warehouse", "enable"]`. */
+  /** Noun, optional sub-groups and the verb, e.g. `["warehouse", "enable"]`. */
   readonly command: readonly string[];
   /** Kebab-case operation id from the OpenAPI spec. */
   readonly operationId: string;
@@ -66,11 +81,9 @@ export interface ApiCommandEntry {
   readonly apiPath: string;
   readonly summary: string;
   readonly description?: string;
-  readonly scope: "project";
   readonly readOnly: boolean;
-  readonly stability: "experimental";
   /** Feature that gates the command's noun. */
-  readonly feature?: string;
+  readonly feature: string;
   /** Request body shape; `json-envelope` bodies wrap fields in `data.attributes`. */
   readonly body?: {
     readonly contentType: "application/json";
@@ -82,6 +95,11 @@ export interface ApiCommandEntry {
   readonly response: {
     readonly status: number;
     readonly kind: "json" | "text" | "empty";
+  };
+  /** The positional argument that carries the operation's one non-`ref` path parameter. */
+  readonly argument?: {
+    readonly name: string;
+    readonly description?: string;
   };
   readonly flags: readonly ApiCommandFlag[];
   readonly bindings: readonly ApiCommandBinding[];

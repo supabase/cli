@@ -28,21 +28,29 @@ The command is generated from the Management API contract (`generated.ts`).
 
 ## API Routes
 
-| Method | Path                                          | Auth         | Request body | Response (used fields)                                   |
-| ------ | --------------------------------------------- | ------------ | ------------ | -------------------------------------------------------- |
-| `GET`  | `/v2/projects/{ref}/warehouse/setups/current` | Bearer token | none         | passed through unchanged                                 |
-| `GET`  | `/v1/projects`                                | Bearer token | none         | only when no ref resolved and the session is interactive |
+| Method | Path                                          | Auth         | Request body | Response (used fields)                                          |
+| ------ | --------------------------------------------- | ------------ | ------------ | --------------------------------------------------------------- |
+| `GET`  | `/v2/projects/{ref}/warehouse/setups/current` | Bearer token | none         | passed through unchanged                                        |
+| `GET`  | `/v1/projects`                                | Bearer token | none         | only when no ref resolved and the session is interactive        |
+| `GET`  | `/v1/projects/{ref}`                          | Bearer token | none         | linked-project cache miss only (best-effort, after the command) |
 
 Query: `inspect_fdw=true|false` and `selection_id=<id>`, each only when its flag was given.
-`--dry-run` prints `{method, path, query, body}` and sends nothing.
+`--dry-run` prints `{method, path, query, headers, body}` and sends no command request (the linked-project cache read in the table above can still run).
+
+With `--wait` the command sends no change request: the first send is the first poll, and it polls
+its own route with its own flags. Polling backs off from 1s, doubling to a 10s cap (a longer
+`Retry-After` wins), until `data.attributes.status` is `succeeded` or `failed` or `--timeout`
+(default `10m`) elapses. The output is the last read. Any non-2xx while polling ends the command
+with the API error.
 
 ## Exit Codes
 
-| Code | Condition                          |
-| ---- | ---------------------------------- |
-| `0`  | success                            |
-| `2`  | `usage_error`: invalid flags       |
-| `1`  | API error (non-2xx, including 409) |
+| Code | Condition                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------ |
+| `0`  | success (with `--wait`, the setup succeeded)                                               |
+| `2`  | `usage_error`: invalid flags                                                               |
+| `1`  | API error (non-2xx, including 409)                                                         |
+| `1`  | with `--wait`: `operation_failed` (a failed status, with `status_error`) or `wait_timeout` |
 
 ## Environment Variables
 
@@ -62,14 +70,14 @@ Query: `inspect_fdw=true|false` and `selection_id=<id>`, each only when its flag
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
 Only the names of flags passed appear in `flags`. Target flags record their values, and `--dry-run`
-records `true`. Generated field flags (`--inspect-fdw`, `--selection-id`), `--body` and `--file` are
-recorded as `<redacted>`.
+and `--wait` record `true`. Generated field flags (`--inspect-fdw`, `--selection-id`) and `--timeout`
+are recorded as `<redacted>`.
 
 ## Output
 
-| Mode           | stdout                                   |
-| -------------- | ---------------------------------------- |
-| text (default) | the API's JSON response bytes, unchanged |
-| `-o json`      | the same bytes; no `target` key is added |
-| `-o yaml`      | the same document as YAML                |
-| `--dry-run`    | the request preview as JSON              |
+| Mode           | stdout                                                                |
+| -------------- | --------------------------------------------------------------------- |
+| text (default) | the API's JSON response bytes, unchanged; with `--wait` the last read |
+| `-o json`      | the same bytes; no `target` key is added                              |
+| `-o yaml`      | the same document as YAML                                             |
+| `--dry-run`    | the request preview as JSON                                           |

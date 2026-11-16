@@ -15,9 +15,8 @@ import {
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
   ApiCommandWaitTimeoutError,
-} from "./api-command.errors.ts";
+} from "../../command-internal/command-errors/api-command.errors.ts";
 import type { ApiCommandEntry, ApiCommandWait } from "./api-command.model.ts";
-import { apiCommands } from "./generated.ts";
 
 const POLL_BASE_DELAY = "1 second";
 const POLL_MAX_DELAY_MILLIS = 10_000;
@@ -167,11 +166,11 @@ export const writeApiResponse = Effect.fnUntraced(function* (
 
 interface WaitInput {
   readonly wait: ApiCommandWait;
-  /** The operation that produced `changed`. */
-  readonly changedEntry: ApiCommandEntry;
+  /** The operation the wait polls; its decoded input is `readInput`. */
+  readonly readEntry: ApiCommandEntry;
+  /** The flat input of the read operation, as assembled from flags or the change response. */
+  readonly readInput: Readonly<Record<string, unknown>>;
   readonly ref: string;
-  /** The change response the read parameters are taken from. */
-  readonly changed: ApiCommandResponse;
   readonly timeoutMillis: number;
 }
 
@@ -210,14 +209,13 @@ const failureReason = (reason: unknown): string | undefined => {
 const classify = (wait: ApiCommandWait, response: ApiCommandResponse, statusHint: string) => {
   const body = parseResponse(response);
   const status = readPointer(body, wait.status);
-  const reason =
-    wait.error === undefined ? undefined : failureReason(readPointer(body, wait.error));
-  const failedStatus = typeof status === "string" && wait.failed.includes(status);
-  if (reason !== undefined || failedStatus) {
+  if (typeof status === "string" && wait.failed.includes(status)) {
+    const reason =
+      wait.error === undefined ? undefined : failureReason(readPointer(body, wait.error));
     return Effect.fail(
       new ApiCommandOperationFailedError({
-        status: typeof status === "string" ? status : "unknown",
-        message: reason ?? `The operation failed with status "${String(status)}".`,
+        status,
+        message: reason ?? `The operation failed with status "${status}".`,
         hint: statusHint,
       }),
     );
@@ -232,36 +230,55 @@ const statusCommand = (
   ref: string,
   readInput: Readonly<Record<string, unknown>>,
 ): string => {
-  const flags = readEntry.bindings.flatMap((binding) => {
-    if (binding.source !== "flag") return [];
-    const value = readInput[binding.name];
-    return value === undefined ? [] : [`--${binding.flag} ${String(value)}`];
+  const valueOf = (binding: { readonly name: string }) => readInput[binding.name];
+  const positional = readEntry.bindings.flatMap((binding) => {
+    const value = valueOf(binding);
+    return binding.source === "argument" && value !== undefined ? [String(value)] : [];
   });
-  return ["supabase", ...readEntry.command, ...flags, `--remote=${ref}`].join(" ");
+  const flags = readEntry.bindings.flatMap((binding) => {
+    const value = valueOf(binding);
+    return binding.source === "flag" && value !== undefined
+      ? [`--${binding.flag} ${String(value)}`]
+      : [];
+  });
+  return ["supabase", ...readEntry.command, ...positional, ...flags, `--remote=${ref}`].join(" ");
 };
 
 /**
- * Polls the read operation until it reports a terminal status and returns the final response with
- * the operation that produced it. A failed status or failure reason, a timeout, or any non-2xx
- * read (a 409 included) ends the wait with an error. A change response that lacks a value the
- * read needs is returned as it is, without waiting.
+ * The input of a linked wait's read: the project ref plus each read parameter taken from the
+ * change response by pointer. Generation guarantees the response carries them, so a missing one
+ * is a defect.
  */
-export const waitForOperation = Effect.fn("api-command.wait")(function* (input: WaitInput) {
-  const { wait } = input;
-  const readEntry = apiCommands.find((candidate) => candidate.operationId === wait.read);
-  if (readEntry === undefined) {
-    return yield* Effect.die(new Error(`Unknown wait read operation ${wait.read}`));
-  }
+export const linkedReadInput = Effect.fnUntraced(function* (input: {
+  readonly wait: ApiCommandWait;
+  /** The operation that produced `changed`. */
+  readonly changedOperationId: string;
+  readonly ref: string;
+  readonly changed: ApiCommandResponse;
+}) {
   const changedBody = parseResponse(input.changed);
   const readInput: Record<string, unknown> = { ref: input.ref };
-  for (const [param, pointer] of Object.entries(wait.params)) {
+  for (const [param, pointer] of Object.entries(input.wait.params)) {
     const value = readPointer(changedBody, pointer);
-    if (value === undefined) {
-      yield* Effect.annotateCurrentSpan({ "wait.outcome": "skipped" });
-      return { entry: input.changedEntry, response: input.changed };
+    if (value === undefined || value === null) {
+      return yield* Effect.die(
+        new Error(
+          `${input.changedOperationId} did not return ${pointer}, which ${input.wait.read} needs to wait.`,
+        ),
+      );
     }
     readInput[param] = value;
   }
+  return readInput;
+});
+
+/**
+ * Polls the read operation until it reports a terminal status and returns the final response. A
+ * failed status, a timeout, or any non-2xx read (a 409 included) ends the wait with an error; the
+ * failure reason only supplies its message.
+ */
+export const waitForOperation = Effect.fn("api-command.wait")(function* (input: WaitInput) {
+  const { wait, readEntry, readInput } = input;
   const decoded = yield* decodeInput(readEntry, readInput);
   const hint = `Check it with \`${statusCommand(readEntry, input.ref, readInput)}\`.`;
   const attempts = yield* Ref.make(0);
@@ -297,5 +314,5 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
     "wait.attempts": yield* Ref.get(attempts),
     "wait.outcome": "succeeded",
   });
-  return { entry: readEntry, response: outcome.response };
+  return outcome.response;
 });
