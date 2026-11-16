@@ -31994,6 +31994,15 @@
                   "$ref": "#/components/schemas/V2WarehouseEnableAcceptedResponse_Output"
                 }
               }
+            },
+            "links": {
+              "setup": {
+                "operationId": "v2-get-warehouse-setup",
+                "parameters": {
+                  "ref": "$request.path.ref",
+                  "selection_id": "$response.body#/data/attributes/selection_id"
+                }
+              }
             }
           },
           "400": {
@@ -32089,23 +32098,9 @@
             "position": "before"
           }
         ],
-        "x-cli": {
+        "x-operation": {
           "group": "warehouse",
-          "method": "enable",
-          "flags": {
-            "tables": "table"
-          },
-          "wait": {
-            "read": "v2-get-warehouse-setup",
-            "params": {
-              "ref": "/data/id",
-              "selection_id": "/data/attributes/selection_id"
-            },
-            "status": "/data/attributes/status",
-            "succeeded": ["succeeded"],
-            "failed": ["failed"],
-            "error": "/data/attributes/status_error"
-          }
+          "method": "enable"
         },
         "x-endpoint-owners": ["pipelines"],
         "x-fga-permissions": [["database_write"]],
@@ -32231,10 +32226,10 @@
             "position": "before"
           }
         ],
-        "x-cli": {
-          "group": "warehouse.setups",
-          "method": "get",
-          "wait": {
+        "x-operation": {
+          "group": "warehouse",
+          "method": "status",
+          "poll": {
             "status": "/data/attributes/status",
             "succeeded": ["succeeded"],
             "failed": ["failed"],

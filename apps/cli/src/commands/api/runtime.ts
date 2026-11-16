@@ -37,7 +37,7 @@ import { ApiCommandUsageError } from "./api-command.errors.ts";
 import type { ApiCommandEntry } from "./api-command.model.ts";
 import { apiCommands } from "./generated.ts";
 import { withStandardErrors } from "../../command-internal/command-errors/command-errors.annotation.ts";
-import { nouns } from "./api-command-names.ts";
+import { nouns } from "./api-command-overrides.ts";
 
 const DEFAULT_WAIT_TIMEOUT = "10m";
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;

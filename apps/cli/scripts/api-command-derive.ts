@@ -1,10 +1,11 @@
 import type { OperationId } from "@supabase/api/effect";
-import { Predicate, Schema } from "effect";
+import { Cause, Exit, Predicate, Schema } from "effect";
 import {
   verbVocabulary,
-  type ApiCommandName,
+  type ApiCommandOverride,
+  type ApiCommandPoll,
   type ApiNoun,
-} from "../src/commands/api/api-command-names.ts";
+} from "../src/commands/api/api-command-overrides.ts";
 import type {
   ApiCommandBinding,
   ApiCommandEntry,
@@ -54,10 +55,34 @@ export class ApiCommandGenerationError extends Schema.TaggedError<ApiCommandGene
   }
 }
 
+const StatusMapping = {
+  status: Schema.String,
+  succeeded: Schema.Array(Schema.String),
+  failed: Schema.Array(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+};
+
+interface XOperation {
+  readonly group: string;
+  readonly method: string;
+  readonly poll?: ApiCommandPoll;
+}
+
+const XOperationSchema: Schema.Codec<XOperation> = Schema.Struct({
+  group: Schema.String,
+  method: Schema.String,
+  poll: Schema.optionalKey(Schema.Struct(StatusMapping)),
+});
+
+const decodeXOperation = Schema.decodeUnknownExit(XOperationSchema, {
+  onExcessProperty: "error",
+});
+
 interface DeriveInput {
   /** The parsed OpenAPI document. */
   readonly spec: JsonObject;
-  readonly names: Readonly<Record<string, ApiCommandName>>;
+  /** Per-operation CLI metadata; its fields win over the spec's `x-operation`. */
+  readonly overrides: Readonly<Record<string, ApiCommandOverride>>;
   readonly nouns: Readonly<Record<string, ApiNoun>>;
   /** Kebab-case operation id to the camelCase key of the typed client's `operationDefinitions`. */
   readonly operationIdMap: Readonly<Record<string, OperationId>>;
@@ -77,6 +102,15 @@ interface Operation {
   readonly path: string;
   readonly node: JsonObject;
   readonly pathItem: JsonObject;
+}
+
+interface OperationMetadata {
+  readonly group?: string;
+  readonly method?: string;
+  readonly flags: Readonly<Record<string, string>>;
+  readonly sensitive: ReadonlyArray<string>;
+  readonly poll?: ApiCommandPoll;
+  readonly wait?: ApiCommandWait;
 }
 
 interface FlagShape {
@@ -292,6 +326,13 @@ const kebabCase = (field: string): string =>
     .replaceAll("_", "-")
     .toLowerCase();
 
+/** `tables` to `table`, `entries` to `entry`; names ending in `ss`, `us` or `is` stay as they are. */
+const singular = (kebab: string): string => {
+  if (kebab.endsWith("ies")) return `${kebab.slice(0, -3)}y`;
+  if (/(?:ss|us|is)$/u.test(kebab) || !kebab.endsWith("s")) return kebab;
+  return kebab.slice(0, -1);
+};
+
 const credentialLike = (field: string): boolean =>
   kebabCase(field)
     .split("-")
@@ -324,6 +365,13 @@ const describeFlagSchema = (spec: JsonObject, raw: unknown): FlagShape | undefin
   }
   const scalar = describeScalar(spec, raw);
   return scalar === undefined ? undefined : { ...scalar, repeatable: false };
+};
+
+const isSecretField = (spec: JsonObject, raw: unknown): boolean => {
+  const schema = asRecord(resolve(spec, raw));
+  return (
+    schema?.writeOnly === true || schema?.format === "password" || schema?.["x-sensitive"] === true
+  );
 };
 
 const schemaDescription = (spec: JsonObject, raw: unknown): string | undefined =>
@@ -384,22 +432,148 @@ const operationParameters = (spec: JsonObject, operation: Operation): ReadonlyAr
     .map((raw) => asRecord(resolve(spec, raw)))
     .filter(Predicate.isNotUndefined);
 
-/** Derives the generated commands for every name-table entry and collects every lint failure. */
+/** Merges each operation's `x-operation` with its override entry; the override wins field by field. */
+const mergeMetadata = (
+  operations: ReadonlyMap<string, Operation>,
+  overrides: Readonly<Record<string, ApiCommandOverride>>,
+  problems: Array<string>,
+): ReadonlyMap<string, OperationMetadata> => {
+  const merged = new Map<string, OperationMetadata>();
+  for (const operationId of Object.keys(overrides)) {
+    if (!operations.has(operationId)) {
+      problems.push(`${operationId}: override entry has no operation in the spec`);
+    }
+  }
+  for (const [operationId, operation] of operations) {
+    const override = overrides[operationId];
+    const block = operation.node["x-operation"];
+    let fromSpec: XOperation | undefined;
+    if (block !== undefined) {
+      const decoded = decodeXOperation(block);
+      if (Exit.isFailure(decoded)) {
+        problems.push(`${operationId}: invalid x-operation: ${Cause.pretty(decoded.cause)}`);
+        continue;
+      }
+      fromSpec = decoded.value;
+    }
+    if (override === undefined && fromSpec === undefined) continue;
+    const group = override?.group ?? fromSpec?.group;
+    const method = override?.method ?? fromSpec?.method;
+    if (override !== undefined && (group === undefined || method === undefined)) {
+      problems.push(`${operationId}: override entry gives no command name; set group and method`);
+    }
+    const poll = override?.poll ?? fromSpec?.poll;
+    merged.set(operationId, {
+      ...(group === undefined ? {} : { group }),
+      ...(method === undefined ? {} : { method }),
+      flags: { ...override?.flags },
+      sensitive: [...(override?.sensitive ?? [])],
+      ...(poll === undefined ? {} : { poll }),
+      ...(override?.wait === undefined ? {} : { wait: override.wait }),
+    });
+    if (poll !== undefined && operation.method !== "GET") {
+      problems.push(`${operationId}: poll belongs on a read operation, not ${operation.method}`);
+    }
+  }
+  return merged;
+};
+
+const RESPONSE_POINTER = /^\$response\.body#(\/.*)$/u;
+const REQUEST_PATH = /^\$request\.path\.(.+)$/u;
+
+/**
+ * The wait a command's 2xx response `links` declare: the one link whose target operation has
+ * `poll`. Links to operations without `poll` are ignored.
+ */
+const linkedWait = (
+  spec: JsonObject,
+  operations: ReadonlyMap<string, Operation>,
+  metadata: ReadonlyMap<string, OperationMetadata>,
+  operation: Operation,
+  fail: (reason: string) => void,
+): ApiCommandWait | undefined => {
+  const responses = asRecord(operation.node.responses) ?? {};
+  const waits: Array<ApiCommandWait> = [];
+  for (const code of Object.keys(responses).sort()) {
+    if (!code.startsWith("2")) continue;
+    const links = asRecord(asRecord(resolve(spec, responses[code]))?.links) ?? {};
+    for (const [linkName, rawLink] of Object.entries(links)) {
+      const link = asRecord(resolve(spec, rawLink));
+      const targetId = asString(link?.operationId);
+      if (link === undefined || targetId === undefined) {
+        fail(`link "${linkName}" must name its target with operationId`);
+        continue;
+      }
+      const target = operations.get(targetId);
+      if (target === undefined) {
+        fail(`link "${linkName}" targets unknown operation "${targetId}"`);
+        continue;
+      }
+      const poll = metadata.get(targetId)?.poll;
+      if (poll === undefined) continue;
+
+      const params: Record<string, string> = {};
+      for (const [parameter, expression] of Object.entries(asRecord(link.parameters) ?? {})) {
+        const pointer = typeof expression === "string" ? RESPONSE_POINTER.exec(expression) : null;
+        const pathName = typeof expression === "string" ? REQUEST_PATH.exec(expression)?.[1] : null;
+        if (pointer?.[1] !== undefined) {
+          params[parameter] = pointer[1];
+        } else if (pathName !== null && pathName !== undefined) {
+          const hasPath = (candidate: Operation) =>
+            operationParameters(spec, candidate).some(
+              (item) => item.in === "path" && item.name === pathName,
+            );
+          if (parameter !== pathName || !hasPath(target) || !hasPath(operation)) {
+            fail(
+              `link "${linkName}" parameter "${parameter}": "${String(expression)}" needs a path parameter of that name on both operations`,
+            );
+          }
+        } else {
+          fail(
+            `link "${linkName}" parameter "${parameter}": unsupported expression ${JSON.stringify(expression)}`,
+          );
+        }
+      }
+      waits.push({
+        read: targetId,
+        params,
+        status: poll.status,
+        succeeded: poll.succeeded,
+        failed: poll.failed,
+        ...(poll.error === undefined ? {} : { error: poll.error }),
+      });
+    }
+  }
+  if (waits.length > 1) {
+    fail(
+      `more than one response link targets a polled operation (${waits.map((w) => w.read).join(", ")})`,
+    );
+    return undefined;
+  }
+  return waits[0];
+};
+
+/** Derives the generated commands from the merged `x-operation` and override metadata and collects every lint failure. */
 export function deriveApiCommands(input: DeriveInput): DeriveResult {
-  const { spec, names, nouns, operationIdMap, handWrittenTopLevel } = input;
+  const { spec, overrides, nouns, operationIdMap, handWrittenTopLevel } = input;
   const operations = collectOperations(spec);
   const problems: Array<string> = [];
+  const metadata = mergeMetadata(operations, overrides, problems);
+  const commandNamed = new Set(
+    [...metadata].flatMap(([id, item]) =>
+      item.group !== undefined && item.method !== undefined ? [id] : [],
+    ),
+  );
   const entries: Array<ApiCommandEntry> = [];
   const schemas: Record<string, ApiCommandSchemas> = {};
   const commandOwners = new Map<string, string>();
 
-  for (const [operationId, name] of Object.entries(names)) {
+  for (const [operationId, name] of metadata) {
+    const { group, method } = name;
+    if (group === undefined || method === undefined) continue;
     const fail = (reason: string) => problems.push(`${operationId}: ${reason}`);
     const operation = operations.get(operationId);
-    if (operation === undefined) {
-      fail("name table entry has no operation in the spec");
-      continue;
-    }
+    if (operation === undefined) continue;
     const definition = operationIdMap[operationId];
     if (definition === undefined) {
       fail("operation is missing from the typed client; regenerate @supabase/api");
@@ -407,16 +581,15 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     }
     const failuresBefore = problems.length;
 
-    const command = [...name.group.split("."), name.method];
-    const segments = [...name.group.split("."), name.method];
-    if (!segments.every((segment) => KEBAB.test(segment))) {
+    const command = [...group.split("."), method];
+    if (!command.every((segment) => KEBAB.test(segment))) {
       fail(`command "${command.join(" ")}" must be lowercase kebab-case words`);
     }
     if (command.length > MAX_COMMAND_WORDS) {
       fail(`command "${command.join(" ")}" exceeds ${MAX_COMMAND_WORDS} words`);
     }
-    if (name.customVerb !== true && !VERBS.has(name.method)) {
-      fail(`verb "${name.method}" is outside the vocabulary; use a listed verb or set customVerb`);
+    if (!VERBS.has(method)) {
+      fail(`verb "${method}" is outside the vocabulary; use a listed verb`);
     }
     const noun = nouns[command[0] ?? ""];
     if (noun === undefined) {
@@ -439,8 +612,8 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     const summary = asString(operation.node.summary);
     if (summary === undefined) fail("operation has no summary");
 
-    const renames = name.flags ?? {};
-    const sensitive = name.sensitive ?? [];
+    const renames = name.flags;
+    const sensitive = name.sensitive;
     const fields: Array<{
       readonly location: "query" | "body";
       readonly key: string;
@@ -448,6 +621,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       readonly shape: FlagShape;
       readonly required: boolean;
       readonly description: string | undefined;
+      readonly writeOnly: boolean;
     }> = [];
 
     const pathBindings: Array<ApiCommandBinding> = [];
@@ -475,6 +649,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
               required: parameter.required === true,
               description:
                 asString(parameter.description) ?? schemaDescription(spec, parameter.schema),
+              writeOnly: false,
             });
           }
           break;
@@ -537,6 +712,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
               shape,
               required: required.includes(field),
               description: schemaDescription(spec, schema),
+              writeOnly: isSecretField(spec, schema),
             });
           }
         }
@@ -559,7 +735,11 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     const seenNames = new Set<string>();
     const seenKeys = new Set<string>();
     for (const field of fields) {
-      const flagName = renames[field.key] ?? kebabCase(field.key);
+      const conventional =
+        field.location === "body" && field.shape.repeatable
+          ? singular(kebabCase(field.key))
+          : kebabCase(field.key);
+      const flagName = renames[field.key] ?? conventional;
       if (!KEBAB.test(flagName)) fail(`flag "${flagName}" must be lowercase kebab-case`);
       if (RESERVED_FLAGS.has(flagName)) {
         fail(
@@ -574,7 +754,8 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       }
       seenNames.add(flagName);
       seenKeys.add(field.key);
-      const isSensitive = sensitive.includes(field.key);
+      const isSensitive =
+        field.location === "body" && (field.writeOnly || sensitive.includes(field.key));
       if (field.location === "body" && credentialLike(field.key) && !isSensitive) {
         fail(
           `body field "${field.key}" looks like a credential; review it and list it under sensitive`,
@@ -602,8 +783,9 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       });
     }
 
-    if (name.wait !== undefined) {
-      lintWait({ spec, operations, names, operationId, operation, wait: name.wait, fail });
+    const wait = name.wait ?? linkedWait(spec, operations, metadata, operation, fail);
+    if (wait !== undefined) {
+      lintWait({ spec, operations, commandNamed, operation, wait, fail });
     }
 
     const response = classifySuccess(spec, operation, fail);
@@ -647,7 +829,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       response: { status: response.status, kind: response.kind },
       flags,
       bindings,
-      ...(name.wait === undefined ? {} : { wait: name.wait }),
+      ...(wait === undefined ? {} : { wait }),
     });
   }
 
@@ -660,20 +842,19 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
 function lintWait(input: {
   readonly spec: JsonObject;
   readonly operations: ReadonlyMap<string, Operation>;
-  readonly names: Readonly<Record<string, ApiCommandName>>;
-  readonly operationId: string;
+  readonly commandNamed: ReadonlySet<string>;
   readonly operation: Operation;
   readonly wait: ApiCommandWait;
   readonly fail: (reason: string) => void;
 }): void {
-  const { spec, operations, names, operation, wait, fail } = input;
+  const { spec, operations, commandNamed, operation, wait, fail } = input;
   const readOperation = operations.get(wait.read);
   if (readOperation === undefined) {
     fail(`wait.read "${wait.read}" has no operation in the spec`);
     return;
   }
-  if (names[wait.read] === undefined) {
-    fail(`wait.read "${wait.read}" is not in the name table, so it has no command`);
+  if (!commandNamed.has(wait.read)) {
+    fail(`wait.read "${wait.read}" has no command name`);
   }
 
   const readParameters = operationParameters(spec, readOperation);

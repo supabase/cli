@@ -1,7 +1,7 @@
 import type { OpenApiOperationId } from "@supabase/api/effect";
 import type { ApiCommandWait } from "./api-command.model.ts";
 
-/** Verbs every generated command may use; anything else needs `customVerb`. */
+/** Verbs every generated command may use. */
 export const verbVocabulary = [
   "list",
   "get",
@@ -10,6 +10,7 @@ export const verbVocabulary = [
   "delete",
   "enable",
   "disable",
+  "status",
 ] as const;
 
 export interface ApiNoun {
@@ -18,16 +19,25 @@ export interface ApiNoun {
   readonly feature?: string;
 }
 
-export interface ApiCommandName {
+/** How to tell that the resource a read operation returns has settled. */
+export type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "failed" | "error">;
+
+/**
+ * CLI-only metadata of one operation; its `group`, `method` and `poll` win over the spec's
+ * `x-operation`.
+ */
+export interface ApiCommandOverride {
   /** Dot-separated noun path, e.g. `warehouse`. Its first segment must be a key of `nouns`. */
-  readonly group: string;
-  readonly method: string;
-  /** Allows a `method` outside `verbVocabulary`. */
-  readonly customVerb?: true;
-  /** API field name to flag name. */
+  readonly group?: string;
+  /** A member of `verbVocabulary`. */
+  readonly method?: string;
+  /** API field name to flag name; wins over the naming convention. */
   readonly flags?: Readonly<Record<string, string>>;
   /** Credential-like body fields that were reviewed and are secrets. */
   readonly sensitive?: readonly string[];
+  /** Set on a read operation; response `links` that target it derive a `--wait`. */
+  readonly poll?: ApiCommandPoll;
+  /** Replaces any wait derived from response `links`. */
   readonly wait?: ApiCommandWait;
 }
 
@@ -35,19 +45,6 @@ export const nouns = {
   warehouse: { description: "Manage the data warehouse for a project", feature: "warehouse" },
 } as const satisfies Readonly<Record<string, ApiNoun>>;
 
-export const commandNames = {
-  "v2-enable-warehouse": {
-    group: "warehouse",
-    method: "enable",
-    flags: { tables: "table" },
-    wait: {
-      read: "v2-get-warehouse-setup",
-      params: { selection_id: "/data/attributes/selection_id" },
-      status: "/data/attributes/status",
-      succeeded: ["succeeded"],
-      failed: ["failed"],
-      error: "/data/attributes/status_error",
-    },
-  },
-  "v2-get-warehouse-setup": { group: "warehouse", method: "status", customVerb: true },
-} as const satisfies Partial<Record<OpenApiOperationId, ApiCommandName>>;
+export const commandOverrides = {} as const satisfies Partial<
+  Record<OpenApiOperationId, ApiCommandOverride>
+>;

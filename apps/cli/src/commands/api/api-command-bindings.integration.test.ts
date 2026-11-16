@@ -23,8 +23,7 @@ import {
   mockTelemetryRuntime,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
-import { commandNames } from "./api-command-names.ts";
-import type { ApiCommandName } from "./api-command-names.ts";
+import type { ApiCommandEntry } from "./api-command.model.ts";
 import { apiCommands } from "./generated.ts";
 import { apiCommandSchemas } from "./generated.schemas.ts";
 import { apiCommandGroups } from "./runtime.ts";
@@ -148,12 +147,18 @@ interface Input {
   readonly sample: unknown;
 }
 
-const names: Readonly<Record<string, ApiCommandName | undefined>> = commandNames;
-
-/** Every non-path input of the operation, read from openapi.json and the command name table. */
-const inputsOf = (operationId: string, operation: SpecOperation): ReadonlyArray<Input> => {
-  const flagFor = (field: string) =>
-    names[operationId]?.flags?.[field] ?? field.replaceAll("_", "-");
+/**
+ * Every non-path input of the operation, read from openapi.json; the flag spelling comes from the
+ * command's declared binding, since naming is the derivation's contract.
+ */
+const inputsOf = (
+  operation: SpecOperation,
+  bindings: ApiCommandEntry["bindings"],
+): ReadonlyArray<Input> => {
+  const flagFor = (location: Input["location"], field: string) => {
+    const binding = bindings.find((item) => item.location === location && item.name === field);
+    return binding?.source === "flag" ? binding.flag : `<unbound ${field}>`;
+  };
   const queries = operation.parameters
     .filter((parameter) => parameter["in"] === "query")
     .map((parameter): Input => {
@@ -161,7 +166,7 @@ const inputsOf = (operationId: string, operation: SpecOperation): ReadonlyArray<
       return {
         location: "query",
         field,
-        flag: flagFor(field),
+        flag: flagFor("query", field),
         pointer: undefined,
         required: parameter["required"] === true,
         sample: sampleOf(parameter["schema"]),
@@ -177,16 +182,17 @@ const inputsOf = (operationId: string, operation: SpecOperation): ReadonlyArray<
   const envelope = Object.keys(attributes).length > 0;
   const container = envelope ? attributes : operation.requestSchema;
   const required = asList(container["required"]);
-  const fields = Object.entries(asRecord(container["properties"])).map(
-    ([field, schema]): Input => ({
+  const fields = Object.entries(asRecord(container["properties"])).map(([field, schema]): Input => {
+    const sample = sampleOf(schema);
+    return {
       location: "body",
       field,
-      flag: flagFor(field),
+      flag: flagFor("body", field),
       pointer: `${envelope ? "/data/attributes" : ""}/${field}`,
       required: required.includes(field),
-      sample: sampleOf(schema),
-    }),
-  );
+      sample,
+    };
+  });
   return [...queries, ...fields];
 };
 
@@ -298,6 +304,8 @@ const send = (path: ReadonlyArray<string>, argv: ReadonlyArray<string>, status: 
   );
 };
 
+const generated: readonly ApiCommandEntry[] = apiCommands;
+
 const surface = await Effect.runPromise(commandSurface());
 const rows = [...Object.values(surface.commands), ...Object.values(surface.variants.warehouse)]
   .flatMap((entry) => (entry.api === undefined ? [] : [{ ...entry, api: entry.api }]))
@@ -316,7 +324,7 @@ describe("generated command bindings", () => {
   for (const row of rows) {
     const { operationId } = row.api;
     const operation = operationOf(operationId);
-    const inputs = inputsOf(operationId, operation);
+    const inputs = inputsOf(operation, row.api.bindings);
     const expectedPath = operation.template.replace("{ref}", VALID_REF);
 
     describe(row.path.join(" "), () => {
@@ -374,7 +382,7 @@ describe("generated command bindings", () => {
         expect(shapeOf(branches.find((branch) => branch["title"] === "response"))).toEqual(
           shapeOf(operation.responseSchema),
         );
-        const waitRead = names[operationId]?.wait?.read;
+        const waitRead = generated.find((entry) => entry.operationId === operationId)?.wait?.read;
         const waited = branches.find((branch) => branch["title"] === "waited");
         if (waitRead === undefined) {
           expect(waited).toBeUndefined();

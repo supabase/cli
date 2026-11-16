@@ -35,7 +35,7 @@ export interface ApiCommandFlag {
   readonly choices?: readonly string[];
   readonly repeatable: boolean;
   readonly required: boolean;
-  /** A body field the name table reviewed as a secret; its value is never echoed or recorded. */
+  /** A body field reviewed as a secret; its value is never echoed or recorded. */
   readonly sensitive?: true;
   readonly description?: string;
 }
