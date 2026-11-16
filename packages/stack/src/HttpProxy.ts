@@ -333,7 +333,7 @@ const routeFor = (url: string, routes: ReadonlyArray<HttpRoute | HttpFileRoute>)
 const LOOPBACK_HOST = /^(?:localhost|[^.]+\.localhost|127(?:\.\d{1,3}){3}|\[::1\])$/u;
 
 /** Whether a request carries no `Origin`, like a non-browser client, or a loopback one. */
-export const loopbackOrigin = (origin: string | undefined): boolean => {
+const loopbackOrigin = (origin: string | undefined): boolean => {
   if (origin === undefined) return true;
   if (!URL.canParse(origin)) return false;
   return LOOPBACK_HOST.test(new URL(origin).hostname.toLowerCase());
