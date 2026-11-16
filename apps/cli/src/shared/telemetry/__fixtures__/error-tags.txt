@@ -217,6 +217,7 @@ DockerRemoveAllListError
 DockerRemoveAllNetworkPruneError
 DockerRemoveAllStopError
 DockerRemoveAllVolumePruneError
+DockerResourceCreateError
 DockerRunError
 DocsExamplesError
 DomainsCnameError
@@ -224,6 +225,7 @@ DomainsNetworkError
 DomainsUnexpectedStatusError
 DuplicateRemoteProjectIdError
 EdgeRuntimeContainerCrashedError
+EdgeRuntimeDockerStepError
 EdgeRuntimeLogStreamLostError
 EdgeRuntimeScriptError
 EncryptionNetworkError
@@ -463,6 +465,9 @@ SecretsUnsetUnexpectedStatusError
 SeedConfigLoadError
 SeedMissingProjectConfigError
 SeedWorkdirError
+ServeConfigError
+ServeEnvError
+ServeFilesystemError
 ServeLocalDbInspectError
 ServeLocalDbNotRunningError
 ServiceVersionNotFoundError
