@@ -105,7 +105,6 @@ If code is shared across multiple commands, move it into the owning concern slic
 `docs/` is a special slice. It may contain pure helpers such as:
 
 - `command-docs.ts`
-- `markdown-formatter.ts`
 
 ## Command-Local Folders
 

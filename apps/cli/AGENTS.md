@@ -37,9 +37,15 @@ When two commands need the same responsibility, share it at the narrowest common
 only when a second concrete consumer exists, and move existing call sites together when the
 responsibility should evolve as one. Do not automatically extract every helper used twice.
 
-Config validation has one home: `src/command-internal/config-validate.ts` and
-`validateResolvedConfig`. Both config pipelines use it; extend the parity test when shared
-validation changes. `resolveEmailTemplateContentPath` rejects absolute paths, traversal, and
+Config validation has one home: the check units in `src/command-internal/config-check-*-units.ts`
+(auth and platform families, over `config-check-core.ts` and the primitives in `config-validate.ts`),
+ordered by `LOCAL_CHECK_ORDER` and `DB_CHECK_ORDER` in `config-check-units.ts` and run by
+`runConfigUnitsFirst`. `commands/config/validate/validate.units.ts` holds the units only `config validate` runs, and `validate.engine.ts` beside it runs them.
+`authDurationUnits` sit outside `LOCAL_CHECK_ORDER`: `start` runs them through
+`resolveStartAuthDurations`, `config validate` adds them after the local units, and other commands
+accept a malformed duration. Both config pipelines run the shared units; extend the parity test when shared validation changes.
+Runtime resolvers read shared helpers from `local-config-helpers.ts`, never build a validation view.
+`resolveEmailTemplateContentPath` rejects absolute paths, traversal, and
 symlinks escaping the project root; every `content_path` consumer gets this containment.
 
 ## CLI compatibility

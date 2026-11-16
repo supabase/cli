@@ -146,6 +146,10 @@ introspection. On the legacy Docker Compose stack the banner prints before the r
 stopped stack still shows the chosen target. In-process TypeScript also prints a stderr note that the
 output is unformatted. TypeScript from the Management API prints no such note; when it is a fallback
 from a failed direct attempt, one stderr warning prints instead (see Notes).
+Each explicit `--schema` name that introspection does not return prints one stderr warning with the
+name JSON-quoted: `Warning: schema "<name>" is missing from the generated types: it does not exist,
+the connecting role cannot use it, or its name starts with pg_.` Without `--schema`, the default and
+`[api].schemas` names never warn, nor does the Management API path.
 
 ### `--output-format json`
 
