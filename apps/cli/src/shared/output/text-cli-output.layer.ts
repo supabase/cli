@@ -11,9 +11,10 @@ export function textCliOutputLayer(
     stdout: process.stdout,
     stderr: process.stderr,
   },
+  agentMode = false,
 ) {
-  const stdout = textCliOutputFormatter(context, streams.stdout);
-  const stderr = textCliOutputFormatter(context, streams.stderr);
+  const stdout = textCliOutputFormatter(context, streams.stdout, agentMode);
+  const stderr = textCliOutputFormatter(context, streams.stderr, agentMode);
   return Layer.mergeAll(
     CliOutput.layer(stdout),
     CliOutput.layerPresenter({

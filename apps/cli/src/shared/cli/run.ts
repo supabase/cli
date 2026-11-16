@@ -61,6 +61,7 @@ import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 import {
   BOOLEAN_FLAG_VALUES,
   resolveAgentOutputFormatFromArgs,
+  resolveAgentModeFromArgs,
   ROOT_BOOLEAN_FLAGS,
 } from "./agent-output.ts";
 import {
@@ -400,10 +401,14 @@ function suggestionContextFor(
   return { rootCommand, args, ...(stackRootCommand ? { stackRootCommand } : {}) };
 }
 
-function formatterLayerFor(context: CliErrorSuggestionContext, format: OutputFormat) {
+function formatterLayerFor(
+  context: CliErrorSuggestionContext,
+  format: OutputFormat,
+  agentMode: boolean,
+) {
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter(context))
-    : textCliOutputLayer(context);
+    : textCliOutputLayer(context, undefined, agentMode);
 }
 
 /**
@@ -650,6 +655,7 @@ export function cliProgramFor<
   cliArgs: CliArgsShape,
   options: RunCliOptions<BeforeParseError>,
   outputFormat: OutputFormat,
+  agentMode = false,
 ) {
   const { args } = cliArgs;
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
@@ -673,6 +679,7 @@ export function cliProgramFor<
   const commandLayer = formatterLayerFor(
     suggestionContextFor(rootCommand, args, options.stackRootCommand),
     outputFormat,
+    agentMode,
   ).pipe(Layer.provideMerge(options.analyticsLayer));
   const cliProgramLayer = telemetryRuntimeLayer.pipe(
     Layer.provideMerge(cliSettingsLayerFor(runtimeLayer)),
@@ -731,11 +738,18 @@ export const runCli = Effect.fnUntraced(function* <
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
   const suggestionContext = suggestionContextFor(rootCommand, args, options.stackRootCommand);
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
-  const outputFormat = yield* Effect.gen(function* () {
+  const { outputFormat, agentMode } = yield* Effect.gen(function* () {
     const aiTool = yield* AiTool;
-    return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
+    return {
+      outputFormat: resolveAgentOutputFormatFromArgs(
+        args,
+        aiTool.name,
+        options.agentDefaultOutputFormat,
+      ),
+      agentMode: resolveAgentModeFromArgs(args, aiTool.name),
+    };
   }).pipe(Effect.provide(aiToolLayer));
-  const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat);
+  const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat, agentMode);
 
   const signalAwareLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),

@@ -1,17 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Console, Effect, Exit } from "effect";
+import { Console, Effect, Exit, Option } from "effect";
 import { Argument, CliError, CliOutput, Command, Flag } from "effect/cli";
 import { afterEach, beforeEach, vi } from "vitest";
 import { fakeConsole } from "../../../tests/helpers/mocks.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { withoutParseErrorHelpDump } from "../cli/run.ts";
+import { resolveAgentModeFromArgs } from "../cli/agent-output.ts";
 import { jsonCliOutputFormatter } from "./json-formatter.ts";
 import { textCliOutputLayer } from "./text-cli-output.layer.ts";
 import { textCliOutputFormatter } from "./text-formatter.ts";
 
 const command = Command.make("supabase", {
+  agent: Flag.String("agent").pipe(Flag.optional),
   file: Argument.String("file").pipe(
     Argument.optional,
     Argument.withDescription("The `file` to read"),
@@ -87,7 +89,7 @@ describe("text help presentation", () => {
         expect(output.includes("\u001b[")).toBe(colored);
         const plain = Bun.stripANSI(output);
         expect(plain).toContain("Read records with guide (https://example.com).");
-        expect(plain).toContain("    echo '**literal**' > \"$HOME/file\"\n      echo done");
+        expect(plain).toContain("      echo '**literal**' > \"$HOME/file\"\n        echo done");
         expect(plain).not.toContain("```sh");
         expect(plain).toContain("Print details");
         expect(plain).toContain("The file to read");
@@ -96,6 +98,111 @@ describe("text help presentation", () => {
         expect(plain).toContain("TARGET\n  Local only.");
         expect(plain.indexOf("TARGET")).toBeLessThan(plain.indexOf("USAGE"));
         expect(plain).toContain("PERMISSIONS");
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "explicit agent",
+      flags: ["--agent", "yes"],
+      detected: false,
+      force: "",
+      noColor: "",
+      colored: false,
+    },
+    { name: "detected agent", flags: [], detected: true, force: "", noColor: "", colored: false },
+    {
+      name: "explicit auto",
+      flags: ["--agent=auto"],
+      detected: true,
+      force: "",
+      noColor: "",
+      colored: false,
+    },
+    {
+      name: "human override",
+      flags: ["--agent=no"],
+      detected: true,
+      force: "",
+      noColor: "",
+      colored: true,
+    },
+    { name: "human default", flags: [], detected: false, force: "", noColor: "", colored: true },
+    {
+      name: "forced agent color",
+      flags: ["--agent=yes"],
+      detected: false,
+      force: "1",
+      noColor: "",
+      colored: true,
+    },
+    {
+      name: "NO_COLOR overrides force",
+      flags: ["--agent=yes"],
+      detected: false,
+      force: "1",
+      noColor: "1",
+      colored: false,
+    },
+  ])(
+    "applies help color policy for $name on both streams",
+    ({ flags, detected, force, noColor, colored }) =>
+      Effect.gen(function* () {
+        vi.stubEnv("CLICOLOR_FORCE", force);
+        vi.stubEnv("NO_COLOR", noColor);
+        for (const action of ["--help", "--unknown"]) {
+          const args = [...flags, action];
+          const { console, calls } = fakeConsole();
+          const exit = yield* withoutParseErrorHelpDump(
+            Command.runWith(command, { version: "test" })(args),
+            { rootCommand: command, args },
+          ).pipe(
+            Effect.provide([
+              textCliOutputLayer(
+                { rootCommand: command, args },
+                { stdout: color, stderr: color },
+                resolveAgentModeFromArgs(
+                  args,
+                  detected ? Option.some("test-agent") : Option.none(),
+                ),
+              ),
+              BunServices.layer,
+            ]),
+            Effect.provideService(Console.Console, console),
+            Effect.exit,
+          );
+          expect(Exit.isSuccess(exit)).toBe(action === "--help");
+          expect(calls).toHaveLength(1);
+          const output = calls.join("\n");
+          expect(output.startsWith(action === "--help" ? "log:" : "error:")).toBe(true);
+          expect(Bun.stripANSI(output)).toContain("Read records with guide (https://example.com).");
+          expect(output.includes("\u001b[")).toBe(colored);
+        }
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "aligns multiline descriptions and preserves literal tabs (colors=%s)",
+    (colors) =>
+      Effect.gen(function* () {
+        const { console, calls } = fakeConsole();
+        const description =
+          "First paragraph.\n\nSecond paragraph.\nContinuation.\n\n\tsource <(supabase completion bash)";
+        yield* Command.runWith(command.pipe(Command.withDescription(description)), {
+          version: "test",
+        })(["--help"]).pipe(
+          Effect.provide([
+            textCliOutputLayer(
+              { rootCommand: command, args: ["--help"] },
+              { stdout: colors ? color : pipe, stderr: pipe },
+            ),
+            BunServices.layer,
+          ]),
+          Effect.provideService(Console.Console, console),
+        );
+        expect(Bun.stripANSI(calls.join("\n"))).toContain(
+          "DESCRIPTION\n  First paragraph.\n\n  Second paragraph.\n  Continuation.\n\n  \tsource <(supabase completion bash)",
+        );
       }),
   );
 
