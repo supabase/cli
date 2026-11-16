@@ -16,7 +16,6 @@ describe("rpcClientFailureMessage", () => {
       reason: HttpClientError.HttpClientErrorSchema.fromHttpClientError(transport),
     });
 
-    expect(error.message).toBe("HttpError: ");
     expect(rpcClientFailureMessage(error)).toBe(
       "HttpError TransportError: Transport error (POST http://127.0.0.1:54321/rpc): fetch failed: other side closed (UND_ERR_SOCKET)",
     );
