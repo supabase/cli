@@ -1,4 +1,5 @@
 import { Argument, Command, Flag, Param } from "effect/cli";
+import { sparkGenTypes, withSparkBackend } from "../../../command-internal/spark/spark-commands.ts";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
@@ -109,7 +110,7 @@ const remoteTarget: ReadonlyArray<EntryCondition> = [
 ];
 
 const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof commandConfig>) =>
-  genTypes(flags).pipe(
+  withSparkBackend(genTypes(flags), sparkGenTypes(flags.lang, flags.schema)).pipe(
     withCommandTelemetry({
       flags,
       config: flagsConfig,

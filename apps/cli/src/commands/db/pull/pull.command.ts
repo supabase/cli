@@ -1,4 +1,5 @@
 import { Effect, Layer, Option } from "effect";
+import { sparkDbPull, withSparkBackend } from "../../../command-internal/spark/spark-commands.ts";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -140,7 +141,7 @@ export const dbPullCommand = Command.make("pull", config).pipe(
                   EXPERIMENTAL_SUGGESTION,
                 ),
               )
-            : dbPull(flags, projectEnv).pipe(
+            : withSparkBackend(dbPull(flags, projectEnv), sparkDbPull()).pipe(
                 withCommandTelemetry(telemetryOptions(flags)),
                 withJsonErrorHandling,
                 Effect.provide(dbPullRuntimeLayer),

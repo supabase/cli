@@ -141,6 +141,7 @@ const REGISTRY_NAME_EXEMPT: Readonly<Record<string, string>> = {
 const AMBIENT_ENV_EXEMPT: ReadonlyArray<RegExp> = [
   /^shared\/cli\/bin\.ts$/,
   /^shared\/compute\/stacks\//,
+  /^experimental\/spark-gateway\//,
 ];
 
 const BANNED_IDENTIFIERS: ReadonlyArray<RegExp> = [

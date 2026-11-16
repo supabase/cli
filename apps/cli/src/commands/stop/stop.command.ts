@@ -1,4 +1,5 @@
 import { Layer } from "effect";
+import { sparkStop, withSparkBackend } from "../../command-internal/spark/spark-commands.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -59,7 +60,10 @@ export const stopCommand = Command.make("stop", config).pipe(
     noApiEffectFlags: ["project-id", "backup", "no-backup", "all"],
   }),
   Command.withHandler((flags) =>
-    stop(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
+    withSparkBackend(stop(flags), sparkStop()).pipe(
+      withCommandTelemetry({ flags }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(stopRuntimeLayer),
   Command.provide(cliConfigValuesLayer),

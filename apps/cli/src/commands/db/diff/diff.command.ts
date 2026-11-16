@@ -1,4 +1,6 @@
+import { Option } from "effect";
 import { Command, Flag } from "effect/cli";
+import { sparkDbDiff, withSparkBackend } from "../../../command-internal/spark/spark-commands.ts";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -144,7 +146,7 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    dbDiff(flags).pipe(
+    withSparkBackend(dbDiff(flags), sparkDbDiff(Option.getOrUndefined(flags.file))).pipe(
       withCommandTelemetry({
         flags: {
           "use-migra": flags.useMigra,

@@ -1,4 +1,5 @@
 import { Command, Flag } from "effect/cli";
+import { sparkDbReset, withSparkBackend } from "../../../command-internal/spark/spark-commands.ts";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -53,7 +54,7 @@ export const dbResetCommand = Command.make("reset", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    dbReset(flags).pipe(
+    withSparkBackend(dbReset(flags), sparkDbReset()).pipe(
       withCommandTelemetry({
         flags: {
           "no-seed": flags.noSeed,

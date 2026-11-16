@@ -1,4 +1,5 @@
 import { Layer } from "effect";
+import { sparkStatus, withSparkBackend } from "../../command-internal/spark/spark-commands.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -97,7 +98,7 @@ export const statusCommand = Command.make("status", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    status(flags).pipe(
+    withSparkBackend(status(flags), sparkStatus()).pipe(
       withCommandTelemetry({
         flags,
         outputFormats: RESOURCE_OUTPUT_FORMATS,

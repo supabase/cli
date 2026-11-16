@@ -16,6 +16,8 @@
     "apps/cli/src/shared/cli/bin.ts",
     // Templates that run inside the user's deployed container, not in the CLI process.
     "apps/cli/src/shared/compute/stacks",
+    // Experimental Spark meta gateway, vendored as a standalone Bun process; not Effect code.
+    "apps/cli/src/experimental/spark-gateway",
     /* Standalone CI automation, not Effect code. `github-scripts-ci.yml` type-checks and tests it. */
     ".github/scripts",
     /* Static JSON fixtures served by the e2e replay server. */

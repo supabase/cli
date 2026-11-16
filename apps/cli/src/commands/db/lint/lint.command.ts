@@ -1,4 +1,8 @@
 import { Command, Flag } from "effect/cli";
+import {
+  sparkUnsupported,
+  withSparkBackend,
+} from "../../../command-internal/spark/spark-commands.ts";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
@@ -50,7 +54,7 @@ export const dbLintCommand = Command.make("lint", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    dbLint(flags).pipe(
+    withSparkBackend(dbLint(flags), sparkUnsupported("db lint")).pipe(
       withCommandTelemetry({
         flags: {
           schema: flags.schema,

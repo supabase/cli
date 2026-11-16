@@ -495,3 +495,14 @@ create` and `docker start`) is recovered like any other stopped stack. The named
   spec-matching keys; an unwalkable target (`ENOTDIR` — a value routed through a file) is
   skipped with a `WARN`, as documented on the `functions deploy`/`functions serve`
   SIDE_EFFECTS.md.
+
+## Experimental Spark backend
+
+`supabase start --experimental-spark` (hidden) writes `supabase/.spark/backend`, which keeps the
+project on the Spark backend for `start`, `stop`, `status`, `db diff|pull|push|reset` and
+`gen types typescript`; `db dump`, `db lint`, `inspect db` and `test db` exit 1 with "not supported
+on the experimental Spark backend". It starts `spark start` (`SUPABASE_SPARK_BIN`), the meta gateway
+in `src/experimental/spark-gateway` (run with `SUPABASE_SPARK_BUN`) and a Studio container, and
+records pids, ports and keys in `supabase/.spark/state.json` and logs in `supabase/.spark/*.log`.
+No Postgres container starts. `stop` removes the state file and keeps the data in
+`supabase/.temp/spark.db`; deleting `supabase/.spark` returns the project to the Postgres stack.
