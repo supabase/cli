@@ -2580,6 +2580,20 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const dashboardUrl = `${dependencies.dashboardUrl}/project/${projectRef}/functions`;
 
   const toDeploy = configs.filter((config) => config.enabled).map((config) => config.slug);
+  // Probed ahead of prune discovery and consent so an explicit local bundler fails before either.
+  // With nothing enabled there is nothing to bundle, so the fallback stays.
+  const dockerRunning =
+    useLocalBundler &&
+    toDeploy.length > 0 &&
+    (explicitUseApi || explicitUseDocker || (explicitLegacyBundle && flags.legacyBundle))
+      ? yield* isDockerRunning()
+      : undefined;
+  if (dockerRunning === false) {
+    return yield* new FunctionDeployDockerNotRunningError({
+      message:
+        "Docker is not running. Start Docker to bundle Functions locally, or deploy with --use-api instead.",
+    });
+  }
   const toPrune = flags.prune
     ? yield* findPruneCandidates(projectRef, configs, dependencies.api)
     : [];
@@ -2607,13 +2621,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
   const nothingToDeployMessage = useLocalBundler
     ? yield* Effect.gen(function* () {
-        if (!(yield* isDockerRunning())) {
-          if (explicitUseApi || explicitUseDocker || (explicitLegacyBundle && flags.legacyBundle)) {
-            return yield* new FunctionDeployDockerNotRunningError({
-              message:
-                "Docker is not running. Start Docker to bundle Functions locally, or deploy with --use-api.",
-            });
-          }
+        if (!(dockerRunning ?? (yield* isDockerRunning()))) {
           yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
           return yield* deployWithApi;
         }
