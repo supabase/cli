@@ -38,6 +38,12 @@ export const experimental = Schema.Struct({
       tags,
     }),
   ),
+  warehouse: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description: "Enable the experimental warehouse command family.",
+      tags,
+    }),
+  ),
   stack: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:

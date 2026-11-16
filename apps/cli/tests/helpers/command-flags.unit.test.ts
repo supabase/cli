@@ -53,5 +53,7 @@ describe("commandTreeFor", () => {
   it("only includes feature-gated commands for the variant that enables them", () => {
     expect(tree.has("compute list")).toBe(false);
     expect(commandTreeFor({ computeEnabled: true }).has("compute list")).toBe(true);
+    expect(tree.has("warehouse enable")).toBe(false);
+    expect(commandTreeFor({ warehouseEnabled: true }).has("warehouse enable")).toBe(true);
   });
 });

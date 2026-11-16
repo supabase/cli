@@ -17,7 +17,7 @@ interface AgentOutputOptions {
   readonly isBuiltInTextRequest?: boolean;
 }
 
-function readLongFlag(args: ReadonlyArray<string>, name: string): string | undefined {
+export function readLongFlag(args: ReadonlyArray<string>, name: string): string | undefined {
   const prefix = `${name}=`;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -33,7 +33,7 @@ function readLongFlag(args: ReadonlyArray<string>, name: string): string | undef
   }
 }
 
-function readOutputFlag(args: ReadonlyArray<string>): string | undefined {
+export function readOutputFlag(args: ReadonlyArray<string>): string | undefined {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) {

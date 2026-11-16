@@ -23,6 +23,7 @@ export class ExperimentalFeatureFlagError extends Data.TaggedError("Experimental
 const featureSchemas = {
   stack: CliConfigSchema.fields.experimental.to.fields.stack,
   compute: CliConfigSchema.fields.experimental.to.fields.compute,
+  warehouse: CliConfigSchema.fields.experimental.to.fields.warehouse,
 } as const;
 
 const firstExplicitLongFlagValue = (
@@ -76,6 +77,7 @@ export const readExperimentalFeatureConfig = (input: {
 const featureKeys = {
   stack: CliConfigKeys.experimental.stack,
   compute: CliConfigKeys.experimental.compute,
+  warehouse: CliConfigKeys.experimental.warehouse,
 } as const;
 
 /**

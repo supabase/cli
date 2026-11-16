@@ -1,0 +1,388 @@
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import openApiSpec from "@supabase/api/openapi.json";
+import { Effect, Layer, Predicate, Schema, Stdio } from "effect";
+import { CliOutput, Command } from "effect/cli";
+
+import { commandSurface } from "../../command-internal/command-surface/command-surface.ts";
+import { ExperimentalFlag, GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
+import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
+import {
+  VALID_REF,
+  VALID_TOKEN,
+  buildTestRuntime,
+  mockCommandPlatformApi,
+  mockCommandSettings,
+  useTempWorkdir,
+  withConfigEnv,
+} from "../../../tests/helpers/command-mocks.ts";
+import {
+  mockOutput,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTelemetryRuntime,
+  mockTty,
+} from "../../../tests/helpers/mocks.ts";
+import { commandNames } from "./api-command-names.ts";
+import type { ApiCommandName } from "./api-command-names.ts";
+import { apiCommands } from "./generated.ts";
+import { apiCommandSchemas } from "./generated.schemas.ts";
+import { apiCommandGroups } from "./runtime.ts";
+
+type Json = Readonly<Record<string, unknown>>;
+
+const asRecord = (value: unknown): Json => (Predicate.isObject(value) ? value : {});
+const asList = (value: unknown): ReadonlyArray<unknown> => (Array.isArray(value) ? value : []);
+
+const spec = asRecord(openApiSpec);
+const componentSchemas = asRecord(asRecord(spec["components"])["schemas"]);
+
+/** Follows `$ref`s to the component schema they name. */
+const resolveRef = (schema: unknown): Json => {
+  const node = asRecord(schema);
+  const ref = node["$ref"];
+  return typeof ref === "string"
+    ? resolveRef(componentSchemas[ref.replace("#/components/schemas/", "")])
+    : node;
+};
+
+const at = (schema: unknown, path: readonly string[]): Json =>
+  path.reduce<Json>((node, key) => resolveRef(node[key]), resolveRef(schema));
+
+interface SpecOperation {
+  readonly method: string;
+  readonly template: string;
+  readonly parameters: ReadonlyArray<Json>;
+  readonly requestSchema: Json | undefined;
+  readonly responseStatus: number;
+  readonly responseSchema: Json;
+}
+
+const operationOf = (operationId: string): SpecOperation => {
+  for (const [template, item] of Object.entries(asRecord(spec["paths"]))) {
+    for (const [method, raw] of Object.entries(asRecord(item))) {
+      const operation = asRecord(raw);
+      if (operation["operationId"] !== operationId) continue;
+      const success = Object.entries(asRecord(operation["responses"])).find(([status]) =>
+        status.startsWith("2"),
+      );
+      if (success === undefined) throw new Error(`${operationId} has no 2xx response`);
+      const json = (content: unknown) => asRecord(asRecord(content)["application/json"])["schema"];
+      const request = json(asRecord(operation["requestBody"])["content"]);
+      return {
+        method: method.toUpperCase(),
+        template,
+        parameters: asList(operation["parameters"]).map(asRecord),
+        requestSchema: request === undefined ? undefined : resolveRef(request),
+        responseStatus: Number(success[0]),
+        responseSchema: resolveRef(json(asRecord(success[1])["content"])),
+      };
+    }
+  }
+  throw new Error(`${operationId} is not in openapi.json`);
+};
+
+/** The JSON Schema types of a node, with OpenAPI 3.0 `nullable` folded in as a `null` type. */
+const typesOf = (node: Json): ReadonlyArray<string> => {
+  const declared = node["type"];
+  const types = (Array.isArray(declared) ? declared : declared === undefined ? [] : [declared]).map(
+    String,
+  );
+  return (node["nullable"] === true ? [...types, "null"] : types)
+    .filter((type, index, all) => all.indexOf(type) === index)
+    .toSorted((a, b) => a.localeCompare(b));
+};
+
+/** A structural fingerprint of a schema that ignores descriptions, examples and titles. */
+const shapeOf = (schema: unknown): unknown => {
+  const node = resolveRef(schema);
+  return {
+    types: typesOf(node),
+    enum: node["enum"] ?? null,
+    properties: Object.fromEntries(
+      Object.entries(asRecord(node["properties"])).map(([key, value]) => [key, shapeOf(value)]),
+    ),
+    required: asList(node["required"])
+      .map(String)
+      .toSorted((a, b) => a.localeCompare(b)),
+    items: node["items"] === undefined ? null : shapeOf(node["items"]),
+  };
+};
+
+const PATTERN_SAMPLES: Readonly<Record<string, string>> = {
+  "^[a-f0-9]{64}$": "ab".repeat(32),
+  "^[a-z]+$": "zyxwvutsrqponmlkjihg",
+};
+
+/** A value the field's schema accepts; an unknown string pattern fails loudly instead of guessing. */
+const sampleOf = (schema: unknown): unknown => {
+  const node = resolveRef(schema);
+  const choices = asList(node["enum"]);
+  if (choices.length > 0) return choices[0];
+  switch (node["type"]) {
+    case "boolean":
+      return true;
+    case "integer":
+    case "number":
+      return 1;
+    case "array":
+      return [sampleOf(node["items"]), `${String(sampleOf(node["items"]))}-2`];
+    case "string": {
+      const pattern = node["pattern"];
+      if (pattern === undefined) return "sample";
+      const sample = typeof pattern === "string" ? PATTERN_SAMPLES[pattern] : undefined;
+      if (sample === undefined) throw new Error(`no sample for string pattern ${String(pattern)}`);
+      return sample;
+    }
+    default:
+      throw new Error(`no sample for schema type ${String(node["type"])}`);
+  }
+};
+
+interface Input {
+  readonly location: "query" | "body";
+  readonly field: string;
+  readonly flag: string;
+  readonly pointer: string | undefined;
+  readonly required: boolean;
+  readonly sample: unknown;
+}
+
+const names: Readonly<Record<string, ApiCommandName | undefined>> = commandNames;
+
+/** Every non-path input of the operation, read from openapi.json and the command name table. */
+const inputsOf = (operationId: string, operation: SpecOperation): ReadonlyArray<Input> => {
+  const flagFor = (field: string) =>
+    names[operationId]?.flags?.[field] ?? field.replaceAll("_", "-");
+  const queries = operation.parameters
+    .filter((parameter) => parameter["in"] === "query")
+    .map((parameter): Input => {
+      const field = String(parameter["name"]);
+      return {
+        location: "query",
+        field,
+        flag: flagFor(field),
+        pointer: undefined,
+        required: parameter["required"] === true,
+        sample: sampleOf(parameter["schema"]),
+      };
+    });
+  if (operation.requestSchema === undefined) return queries;
+  const attributes = at(operation.requestSchema, [
+    "properties",
+    "data",
+    "properties",
+    "attributes",
+  ]);
+  const envelope = Object.keys(attributes).length > 0;
+  const container = envelope ? attributes : operation.requestSchema;
+  const required = asList(container["required"]);
+  const fields = Object.entries(asRecord(container["properties"])).map(
+    ([field, schema]): Input => ({
+      location: "body",
+      field,
+      flag: flagFor(field),
+      pointer: `${envelope ? "/data/attributes" : ""}/${field}`,
+      required: required.includes(field),
+      sample: sampleOf(schema),
+    }),
+  );
+  return [...queries, ...fields];
+};
+
+const argvOf = (inputs: ReadonlyArray<Input>): ReadonlyArray<string> =>
+  inputs.flatMap((input) =>
+    Array.isArray(input.sample)
+      ? input.sample.flatMap((item) => [`--${input.flag}`, String(item)])
+      : [`--${input.flag}`, String(input.sample)],
+  );
+
+const expectedQuery = (inputs: ReadonlyArray<Input>): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    inputs
+      .filter((input) => input.location === "query")
+      .map((input) => [input.field, String(input.sample)]),
+  );
+
+const expectedBody = (operation: SpecOperation, inputs: ReadonlyArray<Input>): unknown => {
+  if (operation.requestSchema === undefined) return undefined;
+  const attributes = Object.fromEntries(
+    inputs.filter((input) => input.location === "body").map((input) => [input.field, input.sample]),
+  );
+  const type = asList(
+    at(operation.requestSchema, ["properties", "data", "properties", "type"])["enum"],
+  )[0];
+  return { data: { type, attributes } };
+};
+
+const tempRoot = useTempWorkdir("supabase-api-bindings-int-");
+
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+interface Sent {
+  readonly method: string;
+  readonly path: string;
+  readonly search: string;
+  readonly body: unknown;
+}
+
+const TARGET_LOOKUP_PATH = `/v1/projects/${VALID_REF}`;
+
+/** Replaces `globalThis.fetch` while `body` runs and answers every call with `status` and `{}`. */
+const withApi = (status: number, sent: Array<Sent>) => {
+  const stub = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(String(input), init);
+    const url = new URL(request.url);
+    if (url.pathname === TARGET_LOOKUP_PATH) {
+      return Promise.resolve(
+        new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+      );
+    }
+    return request.text().then((text) => {
+      sent.push({
+        method: request.method,
+        path: url.pathname,
+        search: url.search.replace(/^\?/, ""),
+        body: text === "" ? undefined : decodeJson(text),
+      });
+      return new Response("{}", { status, headers: { "content-type": "application/json" } });
+    });
+  };
+  return <A, E, R>(body: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = globalThis.fetch;
+        globalThis.fetch = Object.assign(stub, { preconnect: previous.preconnect });
+        return previous;
+      }),
+      () => body,
+      (previous) =>
+        Effect.sync(() => {
+          globalThis.fetch = previous;
+        }),
+    );
+};
+
+const warehouseRoot = Command.make("supabase").pipe(
+  Command.withSubcommands(apiCommandGroups(["warehouse"])),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
+);
+
+/** Runs the real parser and generated leaf for `path` and `argv`; only `fetch` is stubbed. */
+const send = (path: ReadonlyArray<string>, argv: ReadonlyArray<string>, status: number) => {
+  const args = [...path, ...argv, `--remote=${VALID_REF}`, "--yes"];
+  const sent: Array<Sent> = [];
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out: mockOutput({ format: "text" }),
+      api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      tty: mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      stdin: mockStdin(false),
+      cliArgs: args,
+    }),
+    BunServices.layer,
+    CliOutput.layer(textCliOutputFormatter()),
+    Layer.succeed(ExperimentalFlag, false),
+    mockTelemetryRuntime({ configDir: tempRoot.current }),
+    mockRuntimeInfo({ cwd: tempRoot.current, homeDir: tempRoot.current }),
+    Stdio.layerTest({ args: Effect.succeed(args) }),
+  );
+  return withConfigEnv(
+    { SUPABASE_ACCESS_TOKEN: VALID_TOKEN, SUPABASE_NO_KEYRING: "1" },
+    Command.runWith(warehouseRoot, { version: "0.0.0-test" })(args),
+  ).pipe(
+    withApi(status, sent),
+    Effect.provide(layer),
+    Effect.map(() => sent),
+  );
+};
+
+const surface = await Effect.runPromise(commandSurface());
+const rows = [...Object.values(surface.commands), ...Object.values(surface.variants.warehouse)]
+  .flatMap((entry) => (entry.api === undefined ? [] : [{ ...entry, api: entry.api }]))
+  .toSorted((a, b) => a.api.operationId.localeCompare(b.api.operationId));
+
+const bindingKey = (binding: { readonly location: string; readonly name: string }): string =>
+  JSON.stringify(binding);
+
+describe("generated command bindings", () => {
+  it("covers every generated command", () => {
+    expect(rows.map((row) => row.api.operationId)).toEqual(
+      apiCommands.map((entry) => entry.operationId).toSorted(),
+    );
+  });
+
+  for (const row of rows) {
+    const { operationId } = row.api;
+    const operation = operationOf(operationId);
+    const inputs = inputsOf(operationId, operation);
+    const expectedPath = operation.template.replace("{ref}", VALID_REF);
+
+    describe(row.path.join(" "), () => {
+      it("binds the path reference and every other input to the spec's location", () => {
+        expect(operation.template.match(/\{[^}]+\}/g)).toEqual(["{ref}"]);
+        const expected = [
+          { location: "path", name: "ref", source: "target" },
+          ...inputs.map((input) =>
+            input.location === "query"
+              ? { location: "query", name: input.field, source: "flag", flag: input.flag }
+              : {
+                  location: "body",
+                  name: input.field,
+                  pointer: input.pointer,
+                  source: "flag",
+                  flag: input.flag,
+                },
+          ),
+        ];
+        expect(row.api.bindings.map(bindingKey).toSorted()).toEqual(
+          expected.map(bindingKey).toSorted(),
+        );
+      });
+
+      it.effect("sends every input at its binding", () =>
+        Effect.gen(function* () {
+          const requests = yield* send(row.path, argvOf(inputs), operation.responseStatus);
+          expect(requests).toHaveLength(1);
+          const [request] = requests;
+          expect(request?.method).toBe(operation.method);
+          expect(request?.path).toBe(expectedPath);
+          expect(Object.fromEntries(new URLSearchParams(request?.search))).toEqual(
+            expectedQuery(inputs),
+          );
+          expect(request?.body).toEqual(expectedBody(operation, inputs));
+        }),
+      );
+
+      it.effect("sends only the inputs the spec requires when no other flag is given", () =>
+        Effect.gen(function* () {
+          const required = inputs.filter((input) => input.required);
+          const requests = yield* send(row.path, argvOf(required), operation.responseStatus);
+          expect(requests).toHaveLength(1);
+          const [request] = requests;
+          expect(Object.fromEntries(new URLSearchParams(request?.search))).toEqual(
+            expectedQuery(required),
+          );
+          expect(request?.body).toEqual(expectedBody(operation, required));
+        }),
+      );
+
+      it("declares the operation's success response as the response result", () => {
+        expect(Object.keys(apiCommandSchemas)).toContain(operationId);
+        const branches = asList(asRecord(row.result)["oneOf"]).map(asRecord);
+        expect(shapeOf(branches.find((branch) => branch["title"] === "response"))).toEqual(
+          shapeOf(operation.responseSchema),
+        );
+        const waitRead = names[operationId]?.wait?.read;
+        const waited = branches.find((branch) => branch["title"] === "waited");
+        if (waitRead === undefined) {
+          expect(waited).toBeUndefined();
+          return;
+        }
+        expect(Object.keys(apiCommandSchemas)).toContain(waitRead);
+        expect(shapeOf(waited)).toEqual(shapeOf(operationOf(waitRead).responseSchema));
+      });
+    });
+  }
+});

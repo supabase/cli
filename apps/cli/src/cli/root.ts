@@ -23,6 +23,7 @@ import {
   type ProjectStateMode,
   projectStateModeLayer,
 } from "../shared/config/project-state-mode.ts";
+import { apiCommandGroups } from "../commands/api/runtime.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
@@ -147,6 +148,7 @@ interface RootCommandFeatures {
   readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
+  readonly warehouseEnabled?: boolean;
 }
 
 /** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
@@ -204,6 +206,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       testCommand,
       unlinkCommand,
       vanitySubdomainsCommand,
+      ...apiCommandGroups(options.warehouseEnabled ? ["warehouse"] : []),
       whoamiCommand,
     ]),
     Command.provide(

@@ -54,9 +54,13 @@ describe("boolean flag wiring", () => {
   it("gives every boolean flag a default, so omitting it is not a parse error", () => {
     for (const stackBackend of ["legacy", "stack"] as const) {
       for (const computeEnabled of [false, true]) {
-        expect(
-          booleanFlagsRequiringAValue(rootCommandForFeatures({ stackBackend, computeEnabled })),
-        ).toEqual([]);
+        for (const warehouseEnabled of [false, true]) {
+          expect(
+            booleanFlagsRequiringAValue(
+              rootCommandForFeatures({ stackBackend, computeEnabled, warehouseEnabled }),
+            ),
+          ).toEqual([]);
+        }
       }
     }
   });

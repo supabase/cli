@@ -7,6 +7,7 @@ import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
 import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
+import { resolveWarehouseEnabled } from "../commands/api/warehouse-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { cliEntrypointForFeatures, rootCommandForFeatures } from "./root.ts";
@@ -28,12 +29,16 @@ const selectionExit = await Effect.runPromiseExit(
       args,
       cwd: process.cwd(),
     });
-    return { projectState, stackBackend, computeEnabled };
+    const warehouseEnabled = yield* resolveWarehouseEnabled({
+      args,
+      cwd: process.cwd(),
+    });
+    return { projectState, stackBackend, computeEnabled, warehouseEnabled };
   }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer))),
 );
 const selectedFeatures = Exit.isSuccess(selectionExit)
   ? selectionExit.value
-  : ({ stackBackend: "legacy", computeEnabled: false } as const);
+  : ({ stackBackend: "legacy", computeEnabled: false, warehouseEnabled: false } as const);
 const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(
   selectedFeatures,
   args,

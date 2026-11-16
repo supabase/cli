@@ -37,6 +37,8 @@ type HostedConsentServices = Layer.Success<ReturnType<typeof consentLayer>>;
 
 interface HostedConsentEnv {
   readonly workdir: string;
+  /** Whether this case grants consent with `--yes`, for scenarios that run through argv. */
+  readonly yes: boolean;
   readonly out: ReturnType<typeof mockOutput>;
   readonly api: ReturnType<typeof mockCommandPlatformApi>;
 }
@@ -134,7 +136,7 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
           yield* scenario.setup(workdir).pipe(Effect.provide(BunServices.layer));
         }
 
-        const invocation = scenario.invoke({ workdir, out, api });
+        const invocation = scenario.invoke({ workdir, yes: options.yes ?? false, out, api });
         const shellEnv = <A, E, R>(body: Effect.Effect<A, E, R>) =>
           options.shellYes === true
             ? withConfigEnv({ SUPABASE_YES: "1" }, body)

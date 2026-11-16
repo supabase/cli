@@ -5,7 +5,7 @@
   "scripts": {
     "prepare": "effect-tsgo patch --no-typescript --oxlint && husky",
     "build": "pnpm exec turbo run build",
-    "generate": "pnpm exec turbo run @supabase/api#generate @supabase/stack#generate && pnpm exec turbo run supabase#schemas:generate",
+    "generate": "pnpm exec turbo run @supabase/api#generate @supabase/stack#generate supabase#api-commands:generate && pnpm exec turbo run supabase#schemas:generate",
     "test:live": "pnpm exec turbo run supabase#test:live --concurrency=1 --",
     "record": "pnpm exec turbo run @supabase/cli-e2e#record --",
     "test:smoke": "pnpm exec turbo run supabase#test:smoke --",
@@ -14,7 +14,7 @@
     "test:integration": "pnpm exec turbo run test:integration:run --continue=always --",
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --continue=always --",
     "test:vitest": "bun --bun vitest run --project '!*e2e*' --project '!*live*'",
-    "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check lint:actions:check",
+    "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check lint:actions:check api-commands:check",
     "fix:all": "pnpm exec turbo run knip:fix && pnpm exec turbo run lint:fix && pnpm exec turbo run fmt:fix",
     "lint:check": "oxlint --config .oxlintrc.json",
     "lint:fix": "oxlint --config .oxlintrc.json --fix --fix-suggestions",

@@ -4326,6 +4326,18 @@
             }
           ]
         },
+        "warehouse": {
+          "description": "Enable the experimental warehouse command family.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "pattern": "^env\\((.*)\\)$"
+            }
+          ]
+        },
         "stack": {
           "description": "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families.",
           "anyOf": [
@@ -9241,6 +9253,18 @@
                     "properties": {
                       "compute": {
                         "description": "Enable the experimental compute command family.",
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^env\\((.*)\\)$"
+                          }
+                        ]
+                      },
+                      "warehouse": {
+                        "description": "Enable the experimental warehouse command family.",
                         "anyOf": [
                           {
                             "type": "boolean"

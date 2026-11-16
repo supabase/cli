@@ -19,6 +19,7 @@ const VARIANTS: ReadonlyArray<PermissionVariant> = [
     projectState: Exit.succeed("stack"),
     stackBackend: "stack",
     computeEnabled: true,
+    warehouseEnabled: true,
   } satisfies Required<NonNullable<PermissionVariant>>,
 ];
 

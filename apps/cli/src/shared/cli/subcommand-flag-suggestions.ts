@@ -95,7 +95,8 @@ function commandFlagsFor(command: Command.Command.Any): ReadonlyArray<CommandFla
   });
 }
 
-function findCommand(
+/** The command at `pathWithoutRoot` below `root`, matching names and aliases. */
+export function findCommand(
   root: Command.Command.Any,
   pathWithoutRoot: ReadonlyArray<string>,
 ): Command.Command.Any | undefined {

@@ -25,6 +25,9 @@
         // Referenced from package.json#release.plugins; knip's Semantic Release plugin only
         // reads the root manifest.
         "scripts/analyze-commits-title.js",
+        // Data modules the generated command runtime and the contract extraction will consume.
+        "src/commands/api/generated.ts",
+        "src/commands/api/generated.schemas.ts",
         // tests/smoke-test.ts picks the platform file from a string map and spawns it.
         "tests/smoke-test-*.ts",
       ],

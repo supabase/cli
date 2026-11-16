@@ -24,6 +24,8 @@
     "access": "public"
   },
   "scripts": {
+    "api-commands:check": "bun scripts/generate-api-commands.ts --check",
+    "api-commands:generate": "bun scripts/generate-api-commands.ts",
     "build": "pnpm build:binary && pnpm build:shim",
     "build:binary": "bun scripts/build-binary.ts",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",

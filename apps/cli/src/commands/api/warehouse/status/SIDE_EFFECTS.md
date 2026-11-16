@@ -1,0 +1,74 @@
+# `supabase warehouse status`
+
+Target: hosted, no consent, see [Command target](../../../../../docs/command-target.md)
+
+## Feature gate
+
+Registered only when `experimental.warehouse` is enabled: set `[experimental] warehouse = true` or
+`SUPABASE_EXPERIMENTAL_WAREHOUSE=1`. `--experimental` alone does not expose it. When disabled the
+`warehouse` group is absent from help and completion and from the generated command documentation.
+The command is generated from the Management API contract (`generated.ts`).
+
+## Files Read
+
+| Path                                          | Format     | When                                                                               |
+| --------------------------------------------- | ---------- | ---------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.json`              | JSON       | when present, to resolve `experimental.warehouse` before the command tree is built |
+| `<workdir>/supabase/config.toml`              | TOML       | when no `config.json` exists, for the same setting                                 |
+| `<SUPABASE_HOME or ~/.supabase>/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring holds no credential          |
+| `<workdir>/supabase/.temp/project-ref`        | plain text | when neither `--project-ref`/`--remote=<ref>` nor `SUPABASE_PROJECT_ID` is set     |
+| `<SUPABASE_HOME or ~/.supabase>/profile`      | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set                             |
+
+## Files Written
+
+| Path                                            | Format | When                                                                                |
+| ----------------------------------------------- | ------ | ----------------------------------------------------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always, flushed on success and on failure                                           |
+| `<workdir>/supabase/.temp/linked-project.json`  | JSON   | post-run, once the project ref resolved, only when no such file exists for that ref |
+
+## API Routes
+
+| Method | Path                                          | Auth         | Request body | Response (used fields)                                   |
+| ------ | --------------------------------------------- | ------------ | ------------ | -------------------------------------------------------- |
+| `GET`  | `/v2/projects/{ref}/warehouse/setups/current` | Bearer token | none         | passed through unchanged                                 |
+| `GET`  | `/v1/projects`                                | Bearer token | none         | only when no ref resolved and the session is interactive |
+
+Query: `inspect_fdw=true|false` and `selection_id=<id>`, each only when its flag was given.
+`--dry-run` prints `{method, path, query, body}` and sends nothing.
+
+## Exit Codes
+
+| Code | Condition                          |
+| ---- | ---------------------------------- |
+| `0`  | success                            |
+| `2`  | `usage_error`: invalid flags       |
+| `1`  | API error (non-2xx, including 409) |
+
+## Environment Variables
+
+| Variable                          | Purpose                                                                                                            | Required?                                       |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
+| `SUPABASE_EXPERIMENTAL_WAREHOUSE` | command registration (boolean `1`/`true` enables, `0`/`false` disables; unset/empty uses `experimental.warehouse`) | no                                              |
+| `SUPABASE_ACCESS_TOKEN`           | auth token (bypasses credential file/keyring lookup)                                                               | no (falls back to keyring, then `access-token`) |
+| `SUPABASE_PROFILE`                | built-in profile name or YAML file path                                                                            | no (falls back to `~/.supabase/profile`)        |
+| `SUPABASE_PROJECT_ID`             | project ref, consulted after `--project-ref`                                                                       | no (falls back to `supabase/.temp/project-ref`) |
+| `SUPABASE_WORKDIR`                | project directory the command acts on                                                                              | no (falls back to `--workdir`, then the cwd)    |
+| `SUPABASE_HOME`                   | directory holding `telemetry.json`                                                                                 | no (falls back to `~/.supabase`)                |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups         |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+
+Generated flag values are never recorded; only the target flags and the `--dry-run`, `--wait`
+and `--timeout` runtime flags appear in `flags`.
+
+## Output
+
+| Mode           | stdout                                   |
+| -------------- | ---------------------------------------- |
+| text (default) | the API's JSON response bytes, unchanged |
+| `-o json`      | the same bytes; no `target` key is added |
+| `-o yaml`      | the same document as YAML                |
+| `--dry-run`    | the request preview as JSON              |
