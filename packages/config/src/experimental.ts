@@ -89,6 +89,23 @@ export const experimental = Schema.Struct({
       }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
+  spark: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.Boolean.annotate({
+        default: false,
+        description:
+          "Run the local stack on Spark (Data API and Auth on turso) instead of Postgres. Implies the experimental stack backend.",
+        tags,
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+      executable: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Absolute path of the spark binary.",
+          examples: ["/usr/local/bin/spark", "env(SPARK_BIN)"],
+          tags,
+        }),
+      ),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  ),
   pgdelta: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.Boolean.annotate({

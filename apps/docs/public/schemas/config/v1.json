@@ -4350,6 +4350,30 @@
           },
           "additionalProperties": false
         },
+        "spark": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run the local stack on Spark (Data API and Auth on turso) instead of Postgres. Implies the experimental stack backend.",
+              "default": false,
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
+            },
+            "executable": {
+              "type": "string",
+              "description": "Absolute path of the spark binary.",
+              "examples": ["/usr/local/bin/spark", "env(SPARK_BIN)"]
+            }
+          },
+          "additionalProperties": false
+        },
         "pgdelta": {
           "type": "object",
           "properties": {
@@ -8938,6 +8962,30 @@
                                 "pattern": "^env\\((.*)\\)$"
                               }
                             ]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "spark": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "description": "Run the local stack on Spark (Data API and Auth on turso) instead of Postgres. Implies the experimental stack backend.",
+                            "default": false,
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
+                          },
+                          "executable": {
+                            "type": "string",
+                            "description": "Absolute path of the spark binary.",
+                            "examples": ["/usr/local/bin/spark", "env(SPARK_BIN)"]
                           }
                         },
                         "additionalProperties": false

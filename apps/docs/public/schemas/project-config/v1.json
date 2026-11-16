@@ -1846,6 +1846,22 @@
             }
           },
           "additionalProperties": true
+        },
+        "spark": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Run the local stack on Spark (Data API and Auth on turso) instead of Postgres. Implies the experimental stack backend.",
+              "default": false
+            },
+            "executable": {
+              "type": "string",
+              "description": "Absolute path of the spark binary.",
+              "examples": ["/usr/local/bin/spark", "env(SPARK_BIN)"]
+            }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
