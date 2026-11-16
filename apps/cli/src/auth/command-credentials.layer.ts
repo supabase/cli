@@ -462,7 +462,17 @@ const makeCommandCredentials = Effect.gen(function* () {
 
   /* Read the keychain once per command: on macOS each read by an untrusted binary prompts. */
   const [lookupKeyring, invalidateKeyring] = yield* Effect.cachedInvalidateWithTTL(
-    lookupKeyringForAccount(keyringModule, profileAccount, runtimeInfo.platform),
+    lookupKeyringForAccount(keyringModule, profileAccount, runtimeInfo.platform).pipe(
+      Effect.tap((token) =>
+        Effect.annotateCurrentSpan({
+          "keyring.entry": Option.match(token, {
+            onNone: () => "none",
+            onSome: ({ account }) => account,
+          }),
+        }),
+      ),
+      Effect.withSpan("CommandCredentials.readKeyring"),
+    ),
     Duration.infinity,
   );
   const readKeyring = lookupKeyring.pipe(

@@ -10,6 +10,7 @@ import {
   PlatformError,
   Redacted,
   Schema,
+  Tracer,
 } from "effect";
 import { beforeEach, vi } from "vitest";
 
@@ -258,6 +259,25 @@ describe("commandCredentialsLayer.getAccessToken", () => {
       Effect.ensuring(Effect.sync(() => stderr.mockRestore())),
       Effect.provide(makeLayer({ debug: true })),
     );
+  });
+
+  it.effect("traces one keychain read for repeated token lookups", () => {
+    passwords.set("Supabase CLI/supabase", VALID_TOKEN);
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* CommandCredentials;
+      yield* getAccessToken;
+      yield* getAccessToken;
+      const reads = spans.filter((span) => span.name === "CommandCredentials.readKeyring");
+      expect(reads.map((span) => span.attributes.get("keyring.entry"))).toEqual(["profile"]);
+    }).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true), Effect.provide(makeLayer()));
   });
 
   it.effect("debug logs the access token source", () => {
