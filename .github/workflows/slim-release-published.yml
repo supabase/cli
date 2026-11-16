@@ -103,8 +103,7 @@ jobs:
           permission-pull-requests: write
 
       # One branch per planned item, rebuilt from the recorded base commit, never from a previous
-      # iteration's HEAD, unless someone else committed to it; `--release` pins the planned release,
-      # never "highest at apply time".
+      # iteration's HEAD; `--release` pins the planned release, never "highest at apply time".
       # `bun`/`pnpm` run with the tokens unset: only `git push` and `gh` ever see them.
       # A merge-queued branch rejects pushes; see ADR 0026 "Hotfix and upgrade pickup" for the wait and hand-off.
       - name: Apply planned updates
@@ -143,22 +142,9 @@ jobs:
               exit 1
             fi
 
-            # A branch carrying anyone else's commits gets the bump as a fast-forward on top; a
-            # bot-only branch is rebuilt, leased to the tip read here so a later push is never lost.
-            remote_sha="$(git ls-remote "$push_url" "refs/heads/${branch}" | awk -v ref="refs/heads/${branch}" '$2 == ref { print $1 }')"
-            start="$BASE_SHA"
-            push_args=("--force-with-lease=refs/heads/${branch}:${remote_sha}")
-            if [ -n "$remote_sha" ]; then
-              others="$(GH_TOKEN="$APP_TOKEN" gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${remote_sha}" \
-                --jq '[.commits[].commit.author.email | select(. != "41898282+github-actions[bot]@users.noreply.github.com")] | length')"
-              if [ "$others" != "0" ]; then
-                git fetch --no-tags --depth=1 "$push_url" "$remote_sha"
-                start="$remote_sha"
-                push_args=()
-                echo "${branch} has ${others} commit(s) from others; adding ${release} on top."
-              fi
-            fi
-            git checkout -B "$branch" "$start"
+            manual_steps="run manually: ${manual_prefix} ${release}, regenerate the Dockerfile with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
+
+            git checkout -B "$branch" "$BASE_SHA"
 
             env -u APP_TOKEN bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --release "$release"
             env -u APP_TOKEN -u GITHUB_TOKEN pnpm exec oxfmt --config .oxfmtrc.json packages/stack/src/Artifacts.ts
@@ -176,13 +162,41 @@ jobs:
             git add -- "${generated_files[@]}"
             git commit -m "$title"
 
-            if ! push_output="$(git push "${push_args[@]}" "$push_url" "HEAD:refs/heads/${branch}" 2>&1)"; then
+            # `--head` matches by branch name only and ignores the owner, so a fork PR with the
+            # same head branch name would otherwise match too; `isCrossRepository` excludes it.
+            existing="$(GH_TOKEN="$APP_TOKEN" gh pr list --head "$branch" --base "$DEFAULT_BRANCH" --state open --json number,isCrossRepository --jq 'map(select(.isCrossRepository | not)) | .[0].number // empty')"
+
+            # Commits someone else pushed to the open PR are replayed onto the fresh bump with git
+            # alone, so no code from the branch runs while the app token is in this shell.
+            if ! remote_sha="$(git ls-remote "$push_url" "refs/heads/${branch}" | awk -v ref="refs/heads/${branch}" '$2 == ref { print $1 }')"; then
+              echo "::error ::Failed to read ${branch}; ${manual_steps}"
+              exit 1
+            fi
+            if [ -n "$existing" ] && [ -n "$remote_sha" ]; then
+              if ! replay="$(GH_TOKEN="$APP_TOKEN" gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${remote_sha}" \
+                --jq '"\(.ahead_by) " + ([.commits[] | select((.parents | length) == 1 and .commit.author.email != "41898282+github-actions[bot]@users.noreply.github.com") | .sha] | join(" "))')"; then
+                echo "::error ::Failed to list the commits on ${branch}; ${manual_steps}"
+                exit 1
+              fi
+              read -r ahead_by others <<<"$replay"
+              if [ -n "${others:-}" ]; then
+                read -r -a others <<<"$others"
+                echo "${branch} has ${#others[@]} commit(s) from others; replaying them onto ${release}."
+                if ! git fetch --no-tags --depth="$((ahead_by + 1))" "$push_url" "$remote_sha" ||
+                  ! git cherry-pick --keep-redundant-commits "${others[@]}"; then
+                  git cherry-pick --abort 2>/dev/null || true
+                  echo "::error ::Could not replay the commits others pushed to ${branch} onto ${release}. Rebuild ${branch} from ${DEFAULT_BRANCH} with ${manual_prefix} ${release}, regenerate the Dockerfile with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then cherry-pick those commits by hand."
+                  exit 1
+                fi
+              fi
+            fi
+
+            if ! push_output="$(git push "--force-with-lease=refs/heads/${branch}:${remote_sha}" "$push_url" "HEAD:refs/heads/${branch}" 2>&1)"; then
               echo "$push_output"
               if ! grep -q "queued for merging cannot be updated" <<<"$push_output"; then
                 echo "::error ::Failed to push ${branch}. Run manually: ${manual_prefix} ${release}, regenerate the Dockerfile with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
                 exit 1
               fi
-              manual_steps="run manually: ${manual_prefix} ${release}, regenerate the Dockerfile with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
               queued_steps="Once ${branch} leaves the merge queue, ${manual_steps}"
               # The app token minted just before this step expires after one hour; capping the wait at
               # 50 minutes into the step leaves room for the lookups and the dispatch that follow it.
@@ -238,12 +252,9 @@ jobs:
             fi
             # Names the release this PR actually pins, not necessarily RELEASE_VERSION: postgres
             # can plan a hotfix on one line and an unrelated upgrade on another in one dispatch.
-            body="$(printf 'This %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nPlanned after supabase/slim-services published %s. A newer relevant release rewrites this branch from %s, or lands on top of it once someone else has pushed a commit.\n' \
+            body="$(printf 'This %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nPlanned after supabase/slim-services published %s. A newer relevant release rewrites this branch from %s and replays any commits others pushed to it.\n' \
               "$change" "$SERVICE" "$release" "$RELEASE_VERSION" "$DEFAULT_BRANCH")"
 
-            # `--head` matches by branch name only and ignores the owner, so a fork PR with the
-            # same head branch name would otherwise match too; `isCrossRepository` excludes it.
-            existing="$(GH_TOKEN="$APP_TOKEN" gh pr list --head "$branch" --base "$DEFAULT_BRANCH" --state open --json number,isCrossRepository --jq 'map(select(.isCrossRepository | not)) | .[0].number // empty')"
             if [ -n "$existing" ]; then
               if ! GH_TOKEN="$APP_TOKEN" gh pr edit "$existing" --title "$title" --body "$body"; then
                 echo "::error ::Pushed ${branch} but failed to edit pull request #${existing}. Run manually: ${manual_prefix} ${release}, then edit the pull request from ${branch} by hand."
