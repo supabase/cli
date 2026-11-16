@@ -1,4 +1,6 @@
 import { CliOutput } from "effect/cli";
+import { supportsColor, type ColorStream } from "../../command-internal/colors.ts";
+import { withHelpMarkdown } from "./help-markdown.ts";
 import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
 import {
   permissionSectionForHelp,
@@ -17,11 +19,20 @@ function stripSingleErrorHeader(text: string): string {
 }
 
 function insertBeforeUsage(text: string, section: string): string {
-  const at = `\n${text}`.indexOf("\nUSAGE\n");
-  return at === -1 ? text : `${text.slice(0, at)}${section}\n\n${text.slice(at)}`;
+  let at = 0;
+  for (const line of text.split("\n")) {
+    if (Bun.stripANSI(line) === "USAGE") {
+      return `${text.slice(0, at)}${section}\n\n${text.slice(at)}`;
+    }
+    at += line.length + 1;
+  }
+  return text;
 }
 
-export function textCliOutputFormatter(context?: CliErrorSuggestionContext): CliOutput.Formatter {
+export function textCliOutputFormatter(
+  context?: CliErrorSuggestionContext,
+  stream: ColorStream = process.stdout,
+): CliOutput.Formatter {
   const base = CliOutput.defaultFormatter({ colors: false });
   const formatErrorMessage = (error: FormattedCliError) =>
     error.changed ? error.message : stripSingleErrorHeader(base.formatErrors([error.source]));
@@ -29,9 +40,14 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
   return {
     ...base,
     formatHelpDoc: (doc) => {
-      const text = base.formatHelpDoc(
-        withOptionalSubcommandUsage(
-          withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+      const colors = supportsColor(stream);
+      const help = CliOutput.defaultFormatter({ colors });
+      const text = help.formatHelpDoc(
+        withHelpMarkdown(
+          withOptionalSubcommandUsage(
+            withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+          ),
+          colors,
         ),
       );
       const target = targetHelpFor(doc);

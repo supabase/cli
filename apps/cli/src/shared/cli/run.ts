@@ -28,7 +28,7 @@ import type { ProjectLinkState } from "../config/project-link-state.service.ts";
 import { legacyProjectStateLayer } from "../config/legacy-project-state.layer.ts";
 import type { LegacyProjectState } from "../config/legacy-project-state.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
-import { textCliOutputFormatter } from "../output/text-formatter.ts";
+import { textCliOutputLayer } from "../output/text-cli-output.layer.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
 import { failureBesideClosedStdout, ignoreStdoutClosed } from "../output/errors.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
@@ -403,7 +403,7 @@ function suggestionContextFor(
 function formatterLayerFor(context: CliErrorSuggestionContext, format: OutputFormat) {
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter(context))
-    : CliOutput.layer(textCliOutputFormatter(context));
+    : textCliOutputLayer(context);
 }
 
 /**

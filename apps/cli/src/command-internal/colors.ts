@@ -24,7 +24,7 @@ export interface ColorStream {
  *
  * Node's `FORCE_COLOR` is not honored — only the `CLICOLOR*` pair.
  */
-function supportsColor(stream: ColorStream): boolean {
+export function supportsColor(stream: ColorStream): boolean {
   const env = ambientEnvironment();
   if ((env["NO_COLOR"] ?? "") !== "") return false;
   const clicolorForce = env["CLICOLOR_FORCE"] ?? "";
