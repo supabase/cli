@@ -118,8 +118,8 @@ shell inherits the suppressing variables and is missed.
   `db push` describes reaches `pg_dump` as `PGSSLMODE=verify-ca` with the bundled CA: a
   container receives the PEM as `PGSSLROOTCERT_PEM` and writes it to `/tmp/supabase-root.crt`
   before `pg_dump` runs (no bind mount), and a native `pg_dump` reads it from a temp file
-  that is removed after the run. `system` pins
-  `verify-full`. Verifying without a root cert, or with `system`, uses the image's trust
+  that is removed after the run. A root cert file promotes `require` to `verify-ca`; `system`
+  pins `verify-full`. Verifying without a root cert, or with `system`, uses the image's trust
   store in a container and the host's CA bundle for a native `pg_dump`, which keeps
   libpq's `~/.postgresql/root.crt` when no root cert is set, keeps `system` on libpq 16+
   when `SSL_CERT_FILE` or `SSL_CERT_DIR` is set (libpq 15 uses only `SSL_CERT_FILE`),

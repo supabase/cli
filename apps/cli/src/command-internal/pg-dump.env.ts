@@ -136,12 +136,12 @@ export function toDumpEnv(conn: PgConnInput, remote = false): Record<string, str
     conn.sslrootcert === undefined && (conn.sslrootcertInline?.length ?? 0) > 0
       ? conn.sslrootcertInline
       : undefined;
-  /* libpq's `system` root cert implies and only allows `verify-full`; an inline root CA promotes
+  /* libpq's `system` root cert implies and only allows `verify-full`; any other root CA promotes
      `require` to `verify-ca`, as the driver does. */
   const sslmode =
     conn.sslrootcert === "system" && conn.sslmode !== "disable"
       ? "verify-full"
-      : inlineRootCert !== undefined && conn.sslmode === "require"
+      : (conn.sslrootcert ?? inlineRootCert) !== undefined && conn.sslmode === "require"
         ? "verify-ca"
         : conn.sslmode;
   if (sslmode !== undefined) env["PGSSLMODE"] = sslmode;
