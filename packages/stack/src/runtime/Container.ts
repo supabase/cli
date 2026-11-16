@@ -33,6 +33,14 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly kind?: StackFailureKind;
 }> {}
 
+/** Resource limits for a service's container; native processes ignore them. */
+/** Container limits, bounded below by the smallest values Docker accepts. */
+export const ContainerResources = Schema.Struct({
+  memoryBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(6 * 1024 ** 2))),
+  cpus: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0.01))),
+});
+export interface ContainerResources extends Schema.Schema.Type<typeof ContainerResources> {}
+
 interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
@@ -59,6 +67,8 @@ interface ContainerSpec {
   readonly stopSignal?: "SIGINT" | "SIGTERM";
   /** `uid:gid` the container runs as, overriding the image's own user. */
   readonly user?: string;
+  /** Memory (with swap pinned to the same value, so it cannot exceed it) and CPU limits. */
+  readonly resources?: ContainerResources;
 }
 
 export interface ContainerProcess {
@@ -193,7 +203,7 @@ const transientPullFailure = (error: ContainerError) =>
  * Runs one engine CLI invocation outside the owner's command runner, for resolving its target
  * itself. `pin` precedes `args` so the failure names the subcommand, not a pin flag.
  */
-const runRaw = (
+export const runRaw = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   engine: ContainerEngine,
   args: ReadonlyArray<string>,
@@ -770,6 +780,10 @@ export const makeContainerRuntime = (options: {
         "image.name": image,
         ...(spec.service === undefined ? {} : { "container.service": spec.service }),
         "container.ports": spec.ports ?? [],
+        ...(spec.resources?.memoryBytes === undefined
+          ? {}
+          : { "container.memory_bytes": spec.resources.memoryBytes }),
+        ...(spec.resources?.cpus === undefined ? {} : { "container.cpus": spec.resources.cpus }),
       });
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
@@ -863,6 +877,15 @@ export const makeContainerRuntime = (options: {
         ]),
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.stopSignal === undefined ? [] : ["--stop-signal", spec.stopSignal]),
+        ...(spec.resources?.memoryBytes === undefined
+          ? []
+          : [
+              "--memory",
+              String(spec.resources.memoryBytes),
+              "--memory-swap",
+              String(spec.resources.memoryBytes),
+            ]),
+        ...(spec.resources?.cpus === undefined ? [] : ["--cpus", String(spec.resources.cpus)]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
         image,
@@ -1044,7 +1067,35 @@ export const makeContainerRuntime = (options: {
                     )
                     .pipe(Effect.mapError((cause) => errorFor("start", cause)))
                 : undefined;
-              if (!interactive) yield* run(["start", name]);
+              if (!interactive)
+                yield* run(["start", name]).pipe(
+                  // Whether the engine stalled before or after starting the process decides the fix.
+                  Effect.catchTag("ContainerError", (failure) =>
+                    failure.kind !== "engine-timeout"
+                      ? Effect.fail(failure)
+                      : run(
+                          [
+                            "inspect",
+                            "--format",
+                            "status={{.State.Status}} started={{.State.StartedAt}} pid={{.State.Pid}} error={{.State.Error}}",
+                            name,
+                          ],
+                          { timeout: "5 seconds" },
+                        ).pipe(
+                          Effect.orElseSucceed(() => "unavailable"),
+                          Effect.flatMap((state) =>
+                            Effect.fail(
+                              new ContainerError({
+                                operation: failure.operation,
+                                message: `${failure.message}; container state: ${state}`,
+                                cause: failure.cause,
+                                kind: failure.kind,
+                              }),
+                            ),
+                          ),
+                        ),
+                  ),
+                );
               const wait: Effect.Effect<number, ContainerError> =
                 attached === undefined
                   ? run(["wait", name], {}).pipe(

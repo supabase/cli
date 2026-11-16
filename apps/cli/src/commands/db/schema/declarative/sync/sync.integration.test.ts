@@ -176,6 +176,7 @@ function syncStackApi(workdir: string, port: number) {
           ? Effect.succeed(database)
           : Effect.fail(new StackError({ operation: "get", message: "unknown instance" })),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: unusedSync },
     composition: {
       plan: () => Effect.succeed([]),

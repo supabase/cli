@@ -1,3 +1,5 @@
+import { styleText } from "node:util";
+
 import { Cause, Option } from "effect";
 import { CliError } from "effect/cli";
 import { unwrapNativeFailure } from "../telemetry/error-actionability.ts";
@@ -11,6 +13,10 @@ export type PlanGateEntitlement = {
   readonly feature: string;
   readonly upgrade_url: string;
 };
+
+/** The text-mode stderr line that tells the user a plan upgrade unlocks the denied feature. */
+export const upgradeHint = (upgradeUrl: string): string =>
+  `Your organization does not have access to this feature. Upgrade your plan: ${styleText("bold", upgradeUrl)}`;
 
 type NormalizedCliError = {
   readonly code: string;

@@ -392,12 +392,15 @@ export function shouldUseGlobalSignalInterrupt(args: ReadonlyArray<string>): boo
   );
 }
 
-function formatterLayerFor(
+function suggestionContextFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
-  format: OutputFormat,
-) {
-  const context = { rootCommand, args };
+  stackRootCommand: Command.Command.Any | undefined,
+): CliErrorSuggestionContext {
+  return { rootCommand, args, ...(stackRootCommand ? { stackRootCommand } : {}) };
+}
+
+function formatterLayerFor(context: CliErrorSuggestionContext, format: OutputFormat) {
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter(context))
     : CliOutput.layer(textCliOutputFormatter(context));
@@ -612,6 +615,8 @@ export interface RunCliOptions<BeforeParseError = never> {
   readonly beforeParse?: Effect.Effect<void, BeforeParseError, FileSystem.FileSystem | Path.Path>;
   /** The selected root's agent default, applied to failures `runCli` renders itself. */
   readonly agentDefaultOutputFormat: OutputFormat;
+  /** The root the stack opt-in would select, so a rejected stack-only flag can name the opt-in. */
+  readonly stackRootCommand?: Command.Command.Any;
   readonly analyticsLayer: Layer.Layer<
     Analytics,
     Config.ConfigError | PlatformError.PlatformError,
@@ -665,9 +670,10 @@ export function cliProgramFor<
     ),
   );
   const commandProgram = options.beforeParse ?? Effect.void;
-  const commandLayer = formatterLayerFor(rootCommand, args, outputFormat).pipe(
-    Layer.provideMerge(options.analyticsLayer),
-  );
+  const commandLayer = formatterLayerFor(
+    suggestionContextFor(rootCommand, args, options.stackRootCommand),
+    outputFormat,
+  ).pipe(Layer.provideMerge(options.analyticsLayer));
   const cliProgramLayer = telemetryRuntimeLayer.pipe(
     Layer.provideMerge(cliSettingsLayerFor(runtimeLayer)),
     Layer.provideMerge(cliProjectHomeLayerFor(runtimeLayer)),
@@ -723,7 +729,7 @@ export const runCli = Effect.fnUntraced(function* <
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
-  const suggestionContext = { rootCommand, args };
+  const suggestionContext = suggestionContextFor(rootCommand, args, options.stackRootCommand);
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
   const outputFormat = yield* Effect.gen(function* () {
     const aiTool = yield* AiTool;

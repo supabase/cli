@@ -1356,7 +1356,7 @@ describe("seed buckets", () => {
 
   it.effect("rejects SUPABASE_API_PORT=0 with the canonical missing-field error", () =>
     Effect.gen(function* () {
-      // `api.enabled` with a zero port is invalid config (`validateResolvedConfig`);
+      // `api.enabled` with a zero port is invalid config (the `api.port` check unit);
       // the override must not smuggle a zero port into the gateway URL.
       const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
         toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
@@ -1375,7 +1375,7 @@ describe("seed buckets", () => {
   it.effect("allows a zero api.port when the API is disabled, matching config validation", () =>
     Effect.gen(function* () {
       // The canonical zero-port rejection is gated on `api.enabled`
-      // (`validateResolvedConfig`); a disabled API with port 0 proceeds.
+      // (the `api.port` check unit); a disabled API with port 0 proceeds.
       const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
         toml: "[api]\nenabled = false\nport = 54321\n[storage.buckets.images]\npublic = true\n",
         files: { "supabase/.env": "SUPABASE_API_PORT=0\n" },

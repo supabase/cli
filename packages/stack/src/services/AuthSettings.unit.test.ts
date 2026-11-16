@@ -22,6 +22,65 @@ describe("Auth settings environment", () => {
     expect(env.GOTRUE_MAILER_URLPATHS_INVITE).toBe("https://login.example/auth/v1/verify");
     expect(env.GOTRUE_JWT_VALIDMETHODS).toBe("HS256,RS256,ES256");
     expect(env.GOTRUE_JWT_VALID_METHODS).toBe("HS256,RS256,ES256");
+    expect(env).not.toHaveProperty("GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED");
+  });
+
+  it("points Auth at each template on the API runtime address beside its subject", () => {
+    const creation = Schema.decodeSync(Creation)({
+      service: "auth",
+      pin: selection.auth,
+      config: {
+        databaseUrl: "postgresql://localhost/postgres",
+        templateBaseUrl: "http://host.supabase.internal:54321",
+        templateToken: "token",
+        templates: [
+          { id: "invite", path: "/project/invite.html", root: "/project" },
+          { id: "password_changed_notification", path: "/project/changed", root: "/project" },
+        ],
+        settings: {
+          email: {
+            enable_signup: true,
+            double_confirm_changes: true,
+            enable_confirmations: false,
+            secure_password_change: false,
+            max_frequency: "1m0s",
+            otp_length: 6,
+            otp_expiry: 3600,
+            template: { invite: { subject: "Join us" } },
+            notification: { password_changed: { enabled: true, subject: "Changed" } },
+          },
+        },
+      },
+    });
+    const env = Effect.runSync(makeSpec().env(creation, new Map(), true));
+
+    expect(env).toMatchObject({
+      GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED: "true",
+      GOTRUE_MAILER_TEMPLATES_INVITE:
+        "http://host.supabase.internal:54321/email/invite?token=token",
+      GOTRUE_MAILER_TEMPLATES_PASSWORD_CHANGED_NOTIFICATION:
+        "http://host.supabase.internal:54321/email/password_changed_notification?token=token",
+      GOTRUE_MAILER_SUBJECTS_INVITE: "Join us",
+      GOTRUE_MAILER_SUBJECTS_PASSWORD_CHANGED_NOTIFICATION: "Changed",
+    });
+  });
+
+  it("refuses to launch Auth with templates and no address or token", () => {
+    const run = (config: Record<string, unknown>) => {
+      const creation = Schema.decodeSync(Creation)({
+        service: "auth",
+        pin: selection.auth,
+        config: {
+          databaseUrl: "postgresql://localhost/postgres",
+          templates: [{ id: "invite", path: "/project/invite.html", root: "/project" }],
+          ...config,
+        },
+      });
+      return () => Effect.runSync(makeSpec().env(creation, new Map(), false));
+    };
+
+    expect(run({ templateToken: "token" })).toThrow("templateBaseUrl");
+    expect(run({ templateBaseUrl: "http://127.0.0.1:54321" })).toThrow("templateToken");
   });
 
   it("uses the default email rate limit without SMTP and configured limit with custom SMTP", () => {

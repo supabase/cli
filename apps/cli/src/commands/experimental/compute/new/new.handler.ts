@@ -40,6 +40,14 @@ import {
   type ComputeExposure,
   type ComputeRuntime,
   type ComputeSize,
+  DEFAULT_COMPUTE_SECRETS_SCOPE,
+  COMPUTE_SECRETS_SCOPE_DESCRIPTIONS,
+  parseComputeSecretsScope,
+  type ComputeSecretsScopeEnum,
+  COMPUTE_SECRETS_SCOPE_ENUM,
+  type ComputeSecretsScope,
+  parseSecretsScopeCustom,
+  formatSecretsScope,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import {
@@ -200,6 +208,53 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 });
 
 /**
+ */
+const resolveSecretsScope = Effect.fnUntraced(function* (options: {
+  readonly explicit: Option.Option<ComputeSecretsScope>;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
+}) {
+  if (Option.isSome(options.explicit)) {
+    return options.explicit.value;
+  }
+
+  if (options.canPrompt) {
+    const output = yield* Output;
+    const selected = yield* output.promptSelect(
+      "Which secrets should be available for this compute?",
+      defaultFirst(
+        [...COMPUTE_SECRETS_SCOPE_ENUM],
+        DEFAULT_COMPUTE_SECRETS_SCOPE as ComputeSecretsScopeEnum,
+      ).map((scope) => ({
+        value: scope,
+        label: scope,
+        hint: COMPUTE_SECRETS_SCOPE_DESCRIPTIONS[scope],
+      })),
+    );
+
+    let selectedSecretsScope: string | string[] = selected;
+
+    if ((selected as ComputeSecretsScopeEnum) === "custom") {
+      const customSecretsNames = yield* output.promptText("Comma-separated list of secret names:", {
+        validate: (value) => {
+          const customSecretsScope = parseSecretsScopeCustom(value);
+
+          return customSecretsScope.length > 0
+            ? undefined
+            : `Enter at least one secret name, separated by ","`;
+        },
+      });
+
+      selectedSecretsScope = parseSecretsScopeCustom(customSecretsNames);
+    }
+
+    return parseComputeSecretsScope(selectedSecretsScope) ?? DEFAULT_COMPUTE_SECRETS_SCOPE;
+  }
+
+  return DEFAULT_COMPUTE_SECRETS_SCOPE;
+});
+
+/**
  * The instance count to record, and whether to record it at all.
  *
  * Not prompted for, unlike the other dials — nobody knows the right instance
@@ -276,6 +331,12 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
+
+    const secretsScope = yield* resolveSecretsScope({
+      explicit: flags.secretsScope.pipe(Option.orElse(() => flags.secretsScopeCustom)),
+      canPrompt,
+    });
+
     const instances = recordedInstances(flags.instances);
     // Recorded in `config.toml` rather than applied at push time; see ./SIDE_EFFECTS.md.
     const exclude = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
@@ -335,6 +396,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         runtime,
         size,
         exposure,
+        secrets_scope: secretsScope,
         ...(instances === undefined ? {} : { instances }),
         ...(source === undefined ? {} : { source }),
         ...(exclude.length === 0 ? {} : { exclude }),
@@ -348,6 +410,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       "compute.runtime": runtime,
       "compute.size": size,
       "compute.exposure": exposure,
+      "compute.secrets_scope": secretsScope,
       "compute.starter_file_count": starters.length,
     });
     const destinationExisted = yield* fs.exists(destination);
@@ -384,6 +447,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       size,
       vcpu: vcpuForSize(size),
       exposure,
+      secrets_scope: secretsScope,
       // The count a deploy will use, whether or not it was written down — a
       // payload that omitted it for the default would read as "unknown" rather
       // than "one".
@@ -415,6 +479,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
         ["Access", exposure],
+        ["Secrets Scope", formatSecretsScope(secretsScope)],
         // `declared`, the way `compute status` labels the same number: nothing
         // is running yet, so a bare count would read as a live tally.
         ["Instances", `${instances ?? DEFAULT_COMPUTE_INSTANCES} declared`],

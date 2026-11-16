@@ -38,6 +38,8 @@ export const Config = Schema.Struct({
   databaseUrl: Schema.optionalKey(Schema.String),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   apiUrl: Schema.optionalKey(Schema.String),
+  /** The host's HTTPS API origin while the API serves TLS, which the banner prefers. */
+  hostApiUrl: Schema.optionalKey(Schema.String),
   jwtSecret: Schema.optionalKey(Schema.String),
   jwks: Schema.optionalKey(Schema.String),
   anonKey: Schema.optionalKey(Schema.String),
@@ -192,6 +194,9 @@ export const makeSpec = (
             }),
         ...(creation.config.apiUrl === undefined ? {} : { SUPABASE_URL: creation.config.apiUrl }),
         ...(hostPort === undefined ? {} : { SUPABASE_INTERNAL_HOST_PORT: hostPort }),
+        ...(creation.config.hostApiUrl === undefined
+          ? {}
+          : { SUPABASE_INTERNAL_HOST_URL: creation.config.hostApiUrl }),
         ...(creation.config.debug === true ? { SUPABASE_INTERNAL_DEBUG: "true" } : {}),
         ...(creation.config.databaseUrl === undefined
           ? {}

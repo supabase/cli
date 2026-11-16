@@ -2,7 +2,6 @@ import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
-import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -64,29 +63,7 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
           })
           .pipe(
             Effect.tapError(() => checking?.fail() ?? Effect.void),
-            Effect.catch((cause) =>
-              mapCheckError(cause).pipe(
-                Effect.catchTag("VanitySubdomainsCheckUnexpectedStatusError", (mapped) =>
-                  Effect.gen(function* () {
-                    // Unlike `activate`, this command suppresses the upgrade-suggestion
-                    // analytics event.
-                    const upgradeSuggested = yield* suggestUpgrade({
-                      projectRef: ref,
-                      statusCode: mapped.status,
-                      response: gateResponse(cause),
-                      trackAnalytics: false,
-                    });
-                    return yield* new VanitySubdomainsCheckUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                      entitlement: mapped.entitlement,
-                    });
-                  }),
-                ),
-              ),
-            ),
+            Effect.catch(mapCheckError),
           );
         yield* checking?.clear ?? Effect.void;
 

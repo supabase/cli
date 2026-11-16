@@ -22,7 +22,15 @@ export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")
 export class CliConfigRemovedKeyError extends Data.TaggedError("CliConfigRemovedKeyError")<{
   readonly path: string;
   readonly format: ConfigFormat;
-  readonly removedKeys: ReadonlyArray<{ readonly key: string; readonly replacement: string }>;
+  readonly removedKeys: ReadonlyArray<{
+    readonly key: string;
+    readonly replacement: string;
+    readonly path: ReadonlyArray<string>;
+    readonly replacementPath: ReadonlyArray<string>;
+    /** True when the removed key is a whole table, such as `inbucket`. */
+    readonly table: boolean;
+    readonly remote?: string;
+  }>;
 }> {
   override get message(): string {
     const file = this.path.split(/[\\/]/).slice(-2).join("/");
@@ -35,6 +43,12 @@ export class CliConfigRemovedKeyError extends Data.TaggedError("CliConfigRemoved
       ...this.removedKeys.map(({ key, replacement }) => `  ${key}: use ${replacement} instead.`),
     ].join("\n");
   }
+
+  /** The edit that clears this error, for commands that print a remediation next to the message. */
+  get suggestion(): string {
+    const file = this.path.split(/[\\/]/).slice(-2).join("/");
+    return `Update ${file}, then rerun the command.`;
+  }
 }
 
 /** Both `config.json` and `config.jsonc` exist in one project; `paths` lists every conflicting file. */
@@ -44,6 +58,21 @@ export class CliConfigFileConflictError extends Data.TaggedError("CliConfigFileC
   override get message(): string {
     const files = this.paths.map((path) => path.split(/[\\/]/).slice(-2).join("/"));
     return `Found both ${files.join(" and ")}. Keep one and delete the other.`;
+  }
+}
+
+/** A config file declares a schema version newer than this package reads. */
+export class CliConfigSchemaVersionError extends Data.TaggedError("CliConfigSchemaVersionError")<{
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly schemaRef: string;
+  /** The declared version in decimal digits, which can exceed the safe integer range. */
+  readonly declaredVersion: string;
+  readonly supportedVersion: number;
+}> {
+  override get message(): string {
+    const file = this.path.split(/[\\/]/).slice(-2).join("/");
+    return `${file} declares config schema v${this.declaredVersion}, but this version of the Supabase CLI only reads up to v${this.supportedVersion}. Upgrade the Supabase CLI to use this config.`;
   }
 }
 

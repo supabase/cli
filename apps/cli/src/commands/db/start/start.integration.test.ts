@@ -862,6 +862,7 @@ describe("db start", () => {
       });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Postgres 14 reached end of life");
         expect(out.stderrText).toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
         expect(dbSession.calls.length).toBeGreaterThan(0);
@@ -1950,7 +1951,7 @@ describe("db start", () => {
           const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(
-            "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+            "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
           );
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2161,6 +2162,7 @@ describe("db start stack backend", () => {
               : Effect.fail(new StackError({ operation: "get", message: `unknown ${id}` })),
         list: Effect.sync(() => registered),
       },
+      apiTls: { get: Effect.undefined },
       credentials: {
         get: Effect.succeed({
           jwtSecret: "secret",

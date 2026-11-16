@@ -44,6 +44,18 @@ const computeEntry = Schema.Struct({
       tags,
     }),
   ),
+  secrets_scope: Schema.optionalKey(
+    Schema.Union([Schema.String, Schema.Array(Schema.String)]),
+  ).annotate({
+    description: dedent`
+        controls whether secrets are available: \`all\` gives access to all defined secrets,
+        \`supabase\` exposes only the \`SUPABASE_*\` defaults, \`none\` hides all
+        secrets, \`string[]\` gives only the secrets named in the list.
+      `,
+    examples: ["all", ["STRIPE_KEY", "LLM_APIKEY"]],
+    default: "all",
+    tags,
+  }),
   instances: Schema.optionalKey(
     // Bounded to match the Management API's input schema; an out-of-range value would
     // be dropped rather than sent, deploying a different count than the config asked for.

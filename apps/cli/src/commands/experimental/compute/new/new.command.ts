@@ -1,5 +1,5 @@
-import { Layer } from "effect";
-import { Argument, Command, Flag } from "effect/cli";
+import { Effect, Layer, Option } from "effect";
+import { Argument, CliError, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
@@ -9,7 +9,9 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
 import {
   COMPUTE_EXPOSURES,
   COMPUTE_RUNTIMES,
+  COMPUTE_SECRETS_SCOPE,
   COMPUTE_SIZES,
+  parseSecretsScopeCustom,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { commandSettingsLayer } from "../../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../../command-internal/debug-logger.layer.ts";
@@ -37,6 +39,25 @@ const config = {
   exposure: cliFlag("exposure", (name) => Flag.Literals(name, COMPUTE_EXPOSURES), {
     description:
       "Whether the compute is reachable from the internet, recorded as `exposure` in the project config file. Prompted when omitted.",
+    optional: true,
+  }),
+  secretsScope: cliFlag("secrets-scope", (name) => Flag.Literals(name, COMPUTE_SECRETS_SCOPE), {
+    description:
+      "Controls whether secrets are available, overriding `secrets_scope` in the project config file for this deploy. Falls back to the recorded value, then all.",
+    optional: true,
+  }),
+  secretsScopeCustom: cliFlag("secrets-scope:custom", Flag.String, {
+    description:
+      "Controls whether secrets are available, overriding `secrets_scope` with a comma separated list of allowed secret names. Falls back to the recorded value, then all.",
+    parse: (flag: Flag.Flag<string>) =>
+      flag.pipe(
+        Flag.map(parseSecretsScopeCustom),
+        Flag.withMetavar("SECRET_NAMES"),
+        Flag.filter(
+          (secretNames) => secretNames != undefined && secretNames.length > 0,
+          () => "Must contain at least one secret name.",
+        ),
+      ),
     optional: true,
   }),
   instances: cliFlag("instances", Flag.Int, {
@@ -99,7 +120,15 @@ export const computeNewCommand = makeCommand("new", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["runtime", "size", "exposure", "instances", "source"],
+    noApiEffectFlags: [
+      "runtime",
+      "size",
+      "exposure",
+      "secrets-scope",
+      "secrets-scope:custom",
+      "instances",
+      "source",
+    ],
   }),
   Command.withHandler((flags) =>
     computeNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
@@ -108,4 +137,13 @@ export const computeNewCommand = makeCommand("new", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "local-only", consent: "none" }),
+  Command.validate(({ secretsScope, secretsScopeCustom }) =>
+    Option.isSome(secretsScope) && Option.isSome(secretsScopeCustom)
+      ? Effect.fail(
+          new CliError.ValidationError({
+            message: "--secrets-scope and --secrets-scope:custom are mutually exclusive",
+          }),
+        )
+      : Effect.void,
+  ),
 );

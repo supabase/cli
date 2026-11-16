@@ -111,12 +111,19 @@ const logValue = (value: string | undefined) =>
 
 const withoutProject = ({ project: _project, ...event }: LogflareEvent): LogflareEvent => event;
 
+/* Auth logs a template's URL when fetching or parsing it fails. */
+const templateToken = /(\/email\/[^?\s"]*\?token=)[^\s":&\\]+/gu;
+
 const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = {
   auth: (event) => {
-    const parsed = parseJsonObject(event.event_message);
+    const redacted = {
+      ...event,
+      event_message: event.event_message.replace(templateToken, "$1redacted"),
+    };
+    const parsed = parseJsonObject(redacted.event_message);
     return parsed === undefined
-      ? event
-      : { ...event, metadata: { ...event.metadata, timestamp: parsed.time, ...parsed } };
+      ? redacted
+      : { ...redacted, metadata: { ...redacted.metadata, timestamp: parsed.time, ...parsed } };
   },
   rest: (event) => {
     const request = postgrestRequest.exec(event.event_message);

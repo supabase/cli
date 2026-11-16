@@ -38,6 +38,10 @@ on:
         required: false
         type: string
         default: supabase
+    outputs:
+      setup_cli_npm_fallback:
+        description: "'true' when a setup-cli v3 smoke job installed from the GitHub release because the npm install failed"
+        value: ${{ jobs.setup-cli-smoke.outputs.npm_fallback }}
     secrets:
       SENTRY_DSN:
         required: false

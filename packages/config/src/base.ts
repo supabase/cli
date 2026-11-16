@@ -83,11 +83,13 @@ export const CliConfigSchema = Schema.Struct({
   remotes: RemotesSchema.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 
+/** `allowTrailingCommas` keeps VS Code from flagging the trailing commas in generated `config.jsonc`. */
 export function toCliConfigJsonSchema() {
-  return toPublishedJsonSchemaDocument(CliConfigSchema, {
+  const { $schema, ...rest } = toPublishedJsonSchemaDocument(CliConfigSchema, {
     onExcessProperty: "error",
     acceptEnvReferences: true,
   });
+  return { $schema, allowTrailingCommas: true, ...rest };
 }
 
 export type CliConfig = typeof CliConfigSchema.Type;

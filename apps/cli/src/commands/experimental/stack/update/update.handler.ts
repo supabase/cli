@@ -5,7 +5,10 @@ import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api
 import { probeLinkedTarget } from "../../../../command-internal/hosted-versions.ts";
 import { readProjectLink } from "../../../../shared/config/project-link.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import {
+  loadStackConfig,
+  stackConfigSuggestion,
+} from "../../../../command-internal/stack-config.ts";
 import {
   LOCK_FILE,
   LockResolutionError,
@@ -108,6 +111,7 @@ export const stackUpdate = Effect.fn("experimental.stack.update")(function* (
           : new StackCommandUpdateError({
               reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
               message: error.message,
+              suggestion: stackConfigSuggestion(error),
               cause: error,
             }),
       ),

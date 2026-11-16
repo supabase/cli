@@ -1,7 +1,10 @@
 import { defaultArtifactSelection } from "@supabase/stack/defaults";
 import { Effect, Ref, Schema } from "effect";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import {
+  loadStackConfig,
+  stackConfigSuggestion,
+} from "../../../../command-internal/stack-config.ts";
 import {
   LockResolutionError,
   outdatedServices,
@@ -79,6 +82,7 @@ export const stackOutdated = Effect.fn("experimental.stack.outdated")(function* 
           new StackCommandOutdatedError({
             reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
             message: error.message,
+            suggestion: stackConfigSuggestion(error),
             cause: error,
           }),
       ),

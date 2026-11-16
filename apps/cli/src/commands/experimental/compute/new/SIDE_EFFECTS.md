@@ -25,13 +25,13 @@ and the command handler does not run. See the [Compute command guide](../../../.
 
 ## Files Written
 
-| Path                                            | Format | When                                                                                                                                                                                                                                                                                           |
-| ----------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.{json,jsonc}`        | JSON   | on success, when it is the selected config — adds `compute.<name>` with the same keys, keeping comments                                                                                                                                                                                        |
-| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[compute.<name>]` with `runtime`, `size` and `exposure` always, `exclude` whenever the chosen runtime declares default patterns, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
-| `<workdir>/supabase/compute/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                                                                                          |
-| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                                                                                           |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                                                                                                                  |
+| Path                                            | Format | When                                                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.{json,jsonc}`        | JSON   | on success, when it is the selected config — adds `compute.<name>` with the same keys, keeping comments                                                                                                                                                                                                         |
+| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[compute.<name>]` with `runtime`, `size`, `exposure` and `secrets_scope` always, `exclude` whenever the chosen runtime declares default patterns, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
+| `<workdir>/supabase/compute/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                                                                                                           |
+| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                                                                                                            |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                                                                                                                                   |
 
 ## Default `exclude` patterns
 
@@ -68,12 +68,12 @@ prompt refuses a name that is not a DNS label or that `config.toml` already
 records — so nothing is asked, and nothing written, for a name the command was
 going to refuse. With `-o json|yaml|toml|env`, a redirected stdout, or a stdin
 that is not a terminal, there is nowhere to ask, and the command fails instead
-of defaulting: unlike the runtime, size and exposure, the name has no default to
+of defaulting: unlike the runtime, size, exposure and secrets scope, the name has no default to
 fall back on. Every prompt is gated on both streams, so
 `printf 'api\n' | supabase compute new` takes that failure path
 rather than reading the compute name off the pipe.
 
-`runtime`, `size` and `exposure` are always written, defaults included: they are
+`runtime`, `size`, `exposure` and `secrets_scope` are always written, defaults included: they are
 closed sets the command prompts for, and pinning the answer is the point of
 recording it. `instances` is written only when it differs from the default of 1 —
 it has no prompt, because how many instances a compute needs is not something a
@@ -138,7 +138,7 @@ No custom events — only the `cli_command_executed` that the instrumentation
 wrapper emits for every command.
 
 Nothing is emitted for a failure the parser catches, such as a
-`--runtime`/`--size`/`--exposure` value outside the choice list, or a negative
+`--runtime`/`--size`/`--exposure`/`--secrets-scope`/`--secrets-scope:custom` value outside the choice list, or a negative
 `--instances`. The wrapper is installed by
 `Command.withHandler`, so a command that never reaches its handler never reaches
 the instrumentation either — and `telemetry.json` is not written. A missing name

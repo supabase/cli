@@ -126,7 +126,7 @@ const applyStackMigrateAndSeed = (
 export const projectCatalogOverlay = (
   toml: Pick<DbConfigValues, "webhooksEnabled" | "baseline" | "vault">,
   workdir: string,
-): StackCatalogSetupInput["overlay"] => ({
+): NonNullable<StackCatalogSetupInput["overlay"]> => ({
   webhooks: "config",
   webhooksEnabled: toml.webhooksEnabled,
   apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,

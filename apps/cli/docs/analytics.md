@@ -68,6 +68,9 @@ It is emitted once per handled command invocation and includes:
 - `exit_code`
 - `duration_ms`
 - `output_format`
+- `config_format` (`toml`, `json` or `jsonc`) once the command reads the project's config file,
+  set on success and on failure, including when the file fails to parse. Commands that never read
+  the project config, and projects without one, omit it
 
 Failed invocations (`exit_code != 0`) handled by the TS shells also carry a
 sanitized error classification:

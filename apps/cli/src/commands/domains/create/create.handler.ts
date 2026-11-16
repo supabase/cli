@@ -11,7 +11,6 @@ import { verifyCname } from "../domains.cname.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
-import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import type { DomainsCreateFlags } from "./create.command.ts";
 
 const mapCreateError = mapDomainsHttpError("create");
@@ -48,7 +47,7 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
       .updateHostnameConfig({ ref, custom_hostname: flags.customHostname })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        Effect.catch(gateMapError({ projectRef: ref }, mapCreateError)),
+        Effect.catch(mapCreateError),
       );
     yield* creating?.clear ?? Effect.void;
 

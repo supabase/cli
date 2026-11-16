@@ -130,6 +130,62 @@ export function parseComputeExposure(value: string): ComputeExposure | undefined
   return isComputeExposure(canonical) ? canonical : undefined;
 }
 
+/**
+ */
+export const COMPUTE_SECRETS_SCOPE = ["all", "supabase", "none"] as const;
+
+export const COMPUTE_SECRETS_SCOPE_ENUM = [...COMPUTE_SECRETS_SCOPE, "custom"] as const;
+
+export type ComputeSecretsScopeEnum = (typeof COMPUTE_SECRETS_SCOPE_ENUM)[number];
+
+export type ComputeSecretsScope = (typeof COMPUTE_SECRETS_SCOPE)[number] | string[];
+
+/**
+ */
+export const DEFAULT_COMPUTE_SECRETS_SCOPE: ComputeSecretsScope = "all";
+
+/**  */
+export const COMPUTE_SECRETS_SCOPE_DESCRIPTIONS: Record<ComputeSecretsScopeEnum, string> = {
+  all: "Gives access to all defined secrets",
+  supabase: "Exposes only the SUPABASE_* defaults",
+  none: "Hides all secrets",
+  custom: "Exposes only the specified secret names",
+};
+
+function isComputeSecretScope(value: string | string[]): value is ComputeSecretsScope {
+  if (typeof value === "string") {
+    return COMPUTE_SECRETS_SCOPE.some((scope) => scope === value);
+  }
+
+  return Array.isArray(value) && value.every((secretName) => typeof secretName === "string");
+}
+
+/** As {@link parseComputeRuntime}, for secrets_scope. */
+export function parseComputeSecretsScope(
+  value: string | string[],
+): ComputeSecretsScope | undefined {
+  const canonical = typeof value === "string" ? value.trim().toLowerCase() : value;
+  return isComputeSecretScope(canonical) ? canonical : undefined;
+}
+
+export function parseSecretsScopeCustom(secretsNames: string) {
+  if (typeof secretsNames !== "string") {
+    return [];
+  }
+
+  const secretsNamesArray = secretsNames
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => !!name);
+
+  // Apply Set to create a distinct array with unique secret names
+  return [...new Set(secretsNamesArray)];
+}
+
+export function formatSecretsScope(secretsScope: string | string[]) {
+  return typeof secretsScope === "string" ? secretsScope : secretsScope.join(", ");
+}
+
 const VCPU_FOR_SIZE: Record<ComputeSize, number> = { "2gb": 1, "4gb": 2 };
 
 /** The vCPU count that comes with `size` — not independently choosable. */

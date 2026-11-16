@@ -11,6 +11,7 @@ describe("buildPostgrestEnv", () => {
     schemas: ["public", "graphql_public"],
     extraSearchPath: ["public", "extensions"],
     maxRows: 1000,
+    dbPool: undefined,
     dbHost: "supabase_db_proj",
     dbPassword: "postgres",
     jwks: '{"keys":[]}',
@@ -52,6 +53,7 @@ describe("buildPostgrestContainerSpec", () => {
     schemas: ["public"],
     extraSearchPath: ["public"],
     maxRows: 1000,
+    dbPool: undefined,
     dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
     jwks: '{"keys":[]}',
   };

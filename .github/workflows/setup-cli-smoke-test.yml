@@ -5,7 +5,7 @@ name: setup-cli Smoke Test
 # workflow_dispatch when debugging setup-cli regressions. Catches regressions like
 # supabase/setup-cli#427, where musl libc + archive layout changes silently broke the action on
 # Alpine. v3 installs from npm: each v3 runner first waits until npm serves the version, and the
-# job fails if setup-cli fell back to the GitHub release. A separate job forces that fallback.
+# job warns if setup-cli fell back to the GitHub release. A separate job forces that fallback.
 
 on:
   workflow_call:
@@ -14,6 +14,10 @@ on:
         description: Supabase CLI version to install via setup-cli (must already be published to GitHub Releases and npm)
         required: true
         type: string
+    outputs:
+      npm_fallback:
+        description: "'true' when any v3 job installed from the GitHub release because the npm install failed"
+        value: ${{ jobs.summary.outputs.npm_fallback }}
   workflow_dispatch:
     inputs:
       version:
@@ -89,7 +93,8 @@ jobs:
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
-      - name: Verify setup-cli installed from npm
+      - name: Warn if setup-cli fell back from npm
+        id: npm-source
         if: matrix.major-version == 'v3'
         shell: bash
         env:
@@ -97,9 +102,18 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${INSTALL_SOURCE}" != "npm" ]; then
-            echo "::error::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
-            exit 1
+            echo "::warning::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
+            echo "${INSTALL_SOURCE}" > npm-fallback.txt
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Record the npm fallback
+        if: steps.npm-source.outputs.fallback == 'true'
+        # Best-effort: a failed upload must not fail the release; the warning above still annotates the run.
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-fallback-v3-${{ matrix.runner }}
+          path: npm-fallback.txt
 
   # A separate job because GitHub Actions only honours `container:` on Linux runners, and mixing
   # container + non-container entries in one matrix is fragile when the value is empty. The
@@ -172,7 +186,8 @@ jobs:
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
-      - name: Verify setup-cli installed from npm
+      - name: Warn if setup-cli fell back from npm
+        id: npm-source
         if: matrix.major-version == 'v3'
         shell: bash
         env:
@@ -180,9 +195,18 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${INSTALL_SOURCE}" != "npm" ]; then
-            echo "::error::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
-            exit 1
+            echo "::warning::setup-cli fell back to ${INSTALL_SOURCE} because installing supabase@${VERSION#v} from npm failed; check the setup-cli step log"
+            echo "${INSTALL_SOURCE}" > npm-fallback.txt
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Record the npm fallback
+        if: steps.npm-source.outputs.fallback == 'true'
+        # Best-effort: a failed upload must not fail the release; the warning above still annotates the run.
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-fallback-v3-alpine
+          path: npm-fallback.txt
 
   setup-cli-smoke-test-github-release:
     name: setup-cli v3 GitHub release fallback (ubuntu-latest)
@@ -222,3 +246,30 @@ jobs:
             echo "::error::setup-cli installed from ${INSTALL_SOURCE} instead of falling back to the GitHub release with npm disabled"
             exit 1
           fi
+
+  summary:
+    name: setup-cli npm fallback summary
+    needs: [setup-cli-smoke-test, setup-cli-smoke-test-alpine]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: read
+    outputs:
+      npm_fallback: ${{ steps.fallbacks.outputs.npm_fallback }}
+    steps:
+      - id: fallbacks
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Never exits nonzero: failing here would fail the release.
+          if ! names="$(gh api --paginate "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[].name')"; then
+            echo "::warning::Could not list this run's artifacts, so the setup-cli npm fallback check did not run; check the setup-cli v3 smoke jobs for a fallback warning"
+            exit 0
+          fi
+          count="$(grep -c '^npm-fallback-' <<< "${names}" || true)"
+          echo "npm_fallback=$([ "${count}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"

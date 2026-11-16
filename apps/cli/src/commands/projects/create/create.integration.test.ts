@@ -395,6 +395,7 @@ describe("projects create integration", () => {
       });
       expect(out.stderrText).toContain("Selected org-id:");
       expect(out.stderrText).toContain("Selected region:");
+      expect(out.promptSelectCalls[1]?.options[0]?.value).toBe("ap-northeast-1");
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET ${API}/v1/organizations`,
         `POST ${API}/v1/projects`,

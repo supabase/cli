@@ -22,6 +22,36 @@ it("merges structured Auth lines into metadata and keeps the raw message", () =>
   });
 });
 
+it("masks a template token in Auth's message and metadata", () => {
+  const line = JSON.stringify({
+    level: "error",
+    msg: 'template: http://host.supabase.internal:54321/email/recovery?token=secret-uuid:1: unexpected "<" in operand',
+    error:
+      "http: GET http://host.supabase.internal:54321/email/recovery?token=secret-uuid: status code 404",
+    time: "2026-09-28T09:59:59Z",
+  });
+  const event = logflareEvent("auth", received, line);
+  expect(JSON.stringify(event)).not.toContain("secret-uuid");
+  expect(event.event_message).toContain("/email/recovery?token=redacted:1:");
+  expect(event.metadata).toMatchObject({
+    error: expect.stringContaining("/email/recovery?token=redacted: status code 404"),
+  });
+});
+
+it("keeps Auth metadata when a masked template URL is quoted", () => {
+  const line = JSON.stringify({
+    level: "error",
+    msg: 'Get "http://host.supabase.internal:54321/email/invite?token=secret-uuid": connection refused',
+    time: "2026-09-28T09:59:59Z",
+  });
+  const event = logflareEvent("auth", received, line);
+  expect(JSON.stringify(event)).not.toContain("secret-uuid");
+  expect(event.metadata).toMatchObject({
+    level: "error",
+    msg: expect.stringContaining('/email/invite?token=redacted": connection refused'),
+  });
+});
+
 it("ships an Auth JSON line nested too deep for metadata as its raw message", () => {
   const depth = 16_000;
   const line = `{"msg":"deep","detail":${"[".repeat(depth)}${"]".repeat(depth)}}`;

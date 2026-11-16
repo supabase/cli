@@ -280,6 +280,7 @@ const runningStackApi = (projectRoot: string) => {
   const stack: Stack = {
     id: "b".repeat(64),
     services: { create: () => unused, get: () => Effect.succeed(database), list: unused },
+    apiTls: { get: Effect.undefined },
     credentials: { get: unused },
     composition: {
       plan: () => unused,

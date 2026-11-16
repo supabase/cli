@@ -53,3 +53,19 @@ it.effect("gives Studio the local S3 protocol keys that Storage accepts", () =>
     });
   }),
 );
+
+it.effect("gives Studio its Logs pages only when analytics is bound", () =>
+  Effect.gen(function* () {
+    const spec = makeSpec();
+    const analyticsEnv = yield* spec.env(
+      creation({ analyticsUrl: "http://127.0.0.1:4000", analyticsApiKey: "api-key" }),
+      new Map(),
+      false,
+    );
+    const keyOnlyEnv = yield* spec.env(creation({ analyticsApiKey: "api-key" }), new Map(), false);
+    const noAnalyticsEnv = yield* spec.env(creation({}), new Map(), false);
+    expect(analyticsEnv.ENABLED_FEATURES_LOGS_ALL).toBe("true");
+    expect(keyOnlyEnv.ENABLED_FEATURES_LOGS_ALL).toBe("false");
+    expect(noAnalyticsEnv.ENABLED_FEATURES_LOGS_ALL).toBe("false");
+  }),
+);

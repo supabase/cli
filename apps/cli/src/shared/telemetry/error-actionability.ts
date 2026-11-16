@@ -640,9 +640,9 @@ function stackKindDeclaration(value: unknown): CliErrorActionabilityDeclaration 
 }
 
 /**
- * The declaration for a failure confirmed plan-gated by the entitlement
- * check (`suggestUpgrade`). Shared so every gated surface groups under
- * the same fingerprint family.
+ * The declaration for a failure confirmed plan-gated, by its `entitlement`
+ * or by the entitlement check (`suggestUpgrade`). Shared so every gated
+ * surface groups under the same fingerprint family.
  */
 export const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
   ...actionability.planLimit,
@@ -988,6 +988,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   CliConfigParseError: () => actionability.invalidConfig,
   CliConfigFileConflictError: () => actionability.invalidConfig,
   CliConfigRemovedKeyError: () => actionability.invalidConfig,
+  CliConfigSchemaVersionError: () => actionability.invalidConfig,
   CliProjectEnvParseError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
@@ -1145,7 +1146,12 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   if (depth >= MAX_CAUSE_DEPTH) {
     return toActionability(actionability.unknown, "error", "CauseChainLimit");
   }
-  const declared = readDeclaration(error);
+  // `mapHttpError` attaches `entitlement` only from a 4xx `entitlement_required` body, so it
+  // marks a plan-gated denial on any status error class, declared field or not.
+  const declared =
+    isErrorRecord(error) && isErrorRecord(error["entitlement"])
+      ? planLimitGatedActionability
+      : readDeclaration(error);
   if (declared !== undefined) {
     const stableTaggedName = readStableTaggedPrototypeName(error);
     const tag = readErrorTag(error);

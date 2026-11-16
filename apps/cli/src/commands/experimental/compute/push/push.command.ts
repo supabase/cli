@@ -1,4 +1,4 @@
-import { Argument, Command, Flag } from "effect/cli";
+import { Argument, CliError, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
@@ -12,7 +12,11 @@ import { computeRead } from "../../../../shared/compute/compute-api.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { COMPUTE_EXPOSURES } from "../../../../shared/compute/compute-runtimes.ts";
+import {
+  COMPUTE_EXPOSURES,
+  COMPUTE_SECRETS_SCOPE,
+  parseSecretsScopeCustom,
+} from "../../../../shared/compute/compute-runtimes.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computePush } from "./push.handler.ts";
@@ -20,6 +24,7 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 import { cliArgument, cliFlag, makeCommand, repeated } from "../../../../shared/cli/cli-params.ts";
+import { Effect, Option } from "effect";
 
 const config = {
   names: cliArgument("name", repeated(Argument.String), {
@@ -37,6 +42,25 @@ const config = {
   exposure: cliFlag("exposure", (name) => Flag.Literals(name, COMPUTE_EXPOSURES), {
     description:
       "Whether the compute is reachable from the internet, overriding `exposure` in the project config file for this deploy. Falls back to the recorded value, then public.",
+    optional: true,
+  }),
+  secretsScope: cliFlag("secrets-scope", (name) => Flag.Literals(name, COMPUTE_SECRETS_SCOPE), {
+    description:
+      "Controls whether secrets are available, overriding `secrets_scope` in the project config file for this deploy. Falls back to the recorded value, then all.",
+    optional: true,
+  }),
+  secretsScopeCustom: cliFlag("secrets-scope:custom", Flag.String, {
+    description:
+      "Controls whether secrets are available, overriding `secrets_scope` with a comma separated list of allowed secret names. Falls back to the recorded value, then all.",
+    parse: (flag: Flag.Flag<string>) =>
+      flag.pipe(
+        Flag.map(parseSecretsScopeCustom),
+        Flag.withMetavar("SECRET_NAMES"),
+        Flag.filter(
+          (secretNames) => secretNames != undefined && secretNames.length > 0,
+          () => "Must contain at least one secret name.",
+        ),
+      ),
     optional: true,
   }),
   noWait: cliFlag("no-wait", Flag.Boolean, {
@@ -84,7 +108,7 @@ export const computePushCommand = makeCommand("push", config).pipe(
           { operationId: "v2-create-compute-instance-upload", kind: "required" },
           { operationId: "v2-deploy-a-compute-instance", kind: "required" },
         ],
-        noApiEffectFlags: ["instances", "exposure"],
+        noApiEffectFlags: ["instances", "exposure", "secrets-scope", "secrets-scope:custom"],
       },
       withContext(
         withCondition(computeRead, { flag: "no-wait", is: false }),
@@ -102,4 +126,13 @@ export const computePushCommand = makeCommand("push", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "hosted", consent: "no" }),
+  Command.validate(({ secretsScope, secretsScopeCustom }) =>
+    Option.isSome(secretsScope) && Option.isSome(secretsScopeCustom)
+      ? Effect.fail(
+          new CliError.ValidationError({
+            message: "--secrets-scope and --secrets-scope:custom are mutually exclusive",
+          }),
+        )
+      : Effect.void,
+  ),
 );

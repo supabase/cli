@@ -3,7 +3,13 @@ import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
 import { Data, Deferred, Effect, Layer, Option, Random, Schema, type Scope, Stream } from "effect";
 import { FetchHttpClient, HttpClient, type HttpClientError } from "effect/http";
 import * as Socket from "effect/socket/Socket";
-import { ContractReset, ContractTarget, type ContractTargetError } from "./target.ts";
+import {
+  ContractReset,
+  ContractTarget,
+  type ContractTargetError,
+  ContractTrust,
+  inviteTemplateMarker,
+} from "./target.ts";
 
 /** One consumer behavior, run unchanged against every setup's {@link ContractTarget}. */
 interface ContractCase {
@@ -13,6 +19,7 @@ interface ContractCase {
     ContractCallError | ContractTargetError | HttpClientError.HttpClientError | Schema.SchemaError,
     | ContractTarget
     | ContractReset
+    | ContractTrust
     | HttpClient.HttpClient
     | Socket.WebSocketConstructor
     | Scope.Scope
@@ -48,11 +55,40 @@ const sdk = <R extends { readonly data: unknown; readonly error: unknown }>(
       : Effect.fail(new ContractCallError({ message: `${operation} failed`, cause: result.error })),
   );
 
+/* Bun's WebSocket trusting the setup's certificate, for Realtime over `wss:`. */
+const trustingWebSocket = (ca: string) =>
+  class extends WebSocket {
+    constructor(url: string | URL, protocols?: string | Array<string>) {
+      super(url, { tls: { ca }, ...(protocols === undefined ? {} : { protocols }) });
+    }
+  };
+
 const contractClient = (key: "PUBLISHABLE_KEY" | "ANON_KEY" | "SECRET_KEY") =>
-  ContractTarget.useSync((target) =>
-    createClient(target.API_URL, target[key], {
+  Effect.gen(function* () {
+    const target = yield* ContractTarget;
+    const ca = yield* ContractTrust;
+    const base = yield* FetchHttpClient.Fetch;
+    return createClient(target.API_URL, target[key], {
       auth: { persistSession: false, autoRefreshToken: false },
-    }),
+      ...(ca === undefined
+        ? {}
+        : {
+            global: {
+              fetch: Object.assign(
+                (input: Parameters<typeof base>[0], init?: BunFetchRequestInit) =>
+                  base(input, { ...init, tls: { ca } }),
+                { preconnect: base.preconnect },
+              ),
+            },
+            realtime: { transport: trustingWebSocket(ca) },
+          }),
+    });
+  });
+
+/** The fetch options every contract HTTP request takes: the setup's certificate, plus `extra`. */
+const requestInit = (extra: BunFetchRequestInit = {}) =>
+  ContractTrust.useSync((ca): BunFetchRequestInit =>
+    ca === undefined ? extra : { ...extra, tls: { ca } },
   );
 
 const unique = (prefix: string) =>
@@ -119,9 +155,10 @@ const decodeEvent = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const mailError = (message: string, cause?: unknown) =>
   new ContractCallError({ message: `Mailpit ${message}`, cause });
 
-/** Signs `email` up while subscribed to Mailpit's events, then returns the link mailed to it. */
-const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(function* (
+/** Runs `send` while subscribed to Mailpit's events, then returns the mail it sent `email`. */
+const mailedTo = Effect.fn("Contract.mailedTo")(function* <E, R>(
   email: string,
+  send: Effect.Effect<unknown, E, R>,
 ) {
   const { MAILPIT_URL } = yield* ContractTarget;
   const events = new URL("/api/events", MAILPIT_URL);
@@ -130,7 +167,7 @@ const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(func
     Effect.flatMap(Socket.readerString),
     Effect.mapError((cause) => mailError("events socket", cause)),
   );
-  yield* signUp(email);
+  yield* send;
   const mail = yield* Stream.fromEffectRepeat(
     Effect.mapError(pull, (cause) => mailError("events socket", cause)),
   ).pipe(
@@ -142,11 +179,20 @@ const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(func
   );
   if (Option.isNone(mail)) return yield* mailError("event stream ended");
   const response = yield* HttpClient.get(`${MAILPIT_URL}/api/v1/message/${mail.value.Data.ID}`);
-  const { Text, HTML } = yield* Schema.decodeUnknownEffect(MailBody)(yield* response.json);
+  return yield* Schema.decodeUnknownEffect(MailBody)(yield* response.json);
+});
+
+/** Signs `email` up, then returns the link mailed to it. */
+const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(function* (
+  email: string,
+) {
+  const { Text, HTML } = yield* mailedTo(email, signUp(email));
   const link = `${Text}\n${HTML}`
     .replaceAll("&amp;", "&")
     .match(/https?:\/\/[^\s"'<>]+\/verify\?[^\s"'<>]+/);
   if (link === null) return yield* mailError("no verify link");
+  /* Under TLS, Auth links name the HTTPS host URL. */
+  if ((yield* ContractTrust) !== undefined) expect(link[0]).toMatch(/^https:\/\//u);
   return link[0];
 });
 
@@ -165,13 +211,29 @@ const authCases: ReadonlyArray<ContractCase> = [
     run: Effect.gen(function* () {
       const email = `${yield* unique("confirmed")}@example.com`;
       const verified = yield* HttpClient.get(yield* signUpConfirmationLink(email)).pipe(
-        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        Effect.provideServiceEffect(
+          FetchHttpClient.RequestInit,
+          requestInit({ redirect: "manual" }),
+        ),
       );
       expect(verified.status).toBe(303);
       expect(verified.headers.location).toContain("access_token=");
       const { data, error } = yield* signIn(email);
       expect(error).toBeNull();
       expect(data.user?.email).toBe(email);
+    }),
+  },
+  {
+    name: "Auth mails an invite through the configured content_path template",
+    run: Effect.gen(function* () {
+      const email = `${yield* unique("invited")}@example.com`;
+      const admin = (yield* contractClient("SECRET_KEY")).auth.admin;
+      const { HTML } = yield* mailedTo(
+        email,
+        sdk("invite", () => admin.inviteUserByEmail(email)),
+      );
+      expect(HTML).toContain(inviteTemplateMarker);
+      expect(HTML).toMatch(/\/verify\?token=/u);
     }),
   },
 ];
@@ -291,7 +353,7 @@ const invokesEcho = (key: "PUBLISHABLE_KEY" | "ANON_KEY") =>
   Effect.gen(function* () {
     const client = yield* contractClient(key);
     const data = yield* sdk("invoke echo", (signal) => client.functions.invoke("echo", { signal }));
-    expect(data).toEqual({ ok: true });
+    expect(data).toMatchObject({ ok: true });
   });
 
 const functionsCases: ReadonlyArray<ContractCase> = [
@@ -303,6 +365,17 @@ const functionsCases: ReadonlyArray<ContractCase> = [
   {
     name: "Functions invokes a function with the legacy anon key",
     run: invokesEcho("ANON_KEY"),
+    timeout: COLD_LAUNCH_TIMEOUT_MS,
+  },
+  {
+    name: "Functions sees SUPABASE_DB_URL for the postgres role",
+    run: Effect.gen(function* () {
+      const client = yield* contractClient("PUBLISHABLE_KEY");
+      const data = yield* sdk("invoke echo", (signal) =>
+        client.functions.invoke("echo", { signal }),
+      );
+      expect(data).toMatchObject({ dbUser: "postgres" });
+    }),
     timeout: COLD_LAUNCH_TIMEOUT_MS,
   },
   {
@@ -353,6 +426,18 @@ const seedingCases: ReadonlyArray<ContractCase> = [
     name: "start applies migrations in byte order, then seeds in sql_paths order, then config buckets",
     run: appliesInOrder,
   },
+  {
+    name: "start seeds config vector buckets",
+    run: Effect.gen(function* () {
+      const client = yield* contractClient("SECRET_KEY");
+      const { vectorBuckets } = yield* sdk("list vector buckets", () =>
+        client.storage.vectors.listBuckets(),
+      );
+      expect(vectorBuckets.map(({ vectorBucketName }) => vectorBucketName)).toContain(
+        "config-vectors",
+      );
+    }),
+  },
 ];
 
 const resetCases: ReadonlyArray<ContractCase> = [
@@ -390,13 +475,20 @@ const contractCases: ReadonlyArray<ContractCase> = [
 /** Runs every contract case against one setup's running stack. */
 export const describeContract = <E>(
   setup: string,
-  target: Layer.Layer<ContractTarget | ContractReset, E>,
+  target: Layer.Layer<ContractTarget | ContractReset | ContractTrust, E>,
 ) =>
-  layer(Layer.mergeAll(target, FetchHttpClient.layer, Socket.layerWebSocketConstructorGlobal), {
-    /* Guards the stack start, including first image pulls or native artifact downloads. */
-    timeout: "5 minutes",
-    excludeTestServices: true,
-  })(`consumer contract (${setup})`, (it) => {
+  layer(
+    Layer.mergeAll(
+      Layer.effect(FetchHttpClient.RequestInit, requestInit()),
+      FetchHttpClient.layer,
+      Socket.layerWebSocketConstructorGlobal,
+    ).pipe(Layer.provideMerge(target)),
+    {
+      /* Guards the stack start, including first image pulls or native artifact downloads. */
+      timeout: "5 minutes",
+      excludeTestServices: true,
+    },
+  )(`consumer contract (${setup})`, (it) => {
     for (const { name, run, timeout } of contractCases)
       it.effect(name, () => run, timeout ?? 60_000);
   });

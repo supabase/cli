@@ -1,5 +1,17 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted, Stream } from "effect";
+import {
+  ConfigProvider,
+  Context,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Stream,
+} from "effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type {
@@ -58,6 +70,8 @@ interface RecordedStorageRequest {
   readonly url: string;
   readonly headers: Record<string, string | undefined>;
   readonly body: unknown;
+  /** The CA the request's `FetchHttpClient.RequestInit` trusts, when it sets one. */
+  readonly ca: unknown;
 }
 
 export interface SetupStorageOptions {
@@ -105,6 +119,8 @@ export interface SetupStorageStackApiOptions {
     | "failed"
     | "disabled";
   readonly storageError?: string;
+  /** The certificate the stack saved at its last start with `api.tls`; its API serves HTTPS. */
+  readonly apiTlsCert?: string;
 }
 
 const STORAGE_STACK_ID = "e".repeat(64);
@@ -157,6 +173,7 @@ const observation = (
     readonly protocol: "tcp" | "http";
     readonly host: string;
     readonly port: number;
+    readonly scheme?: "https";
   },
   error?: string,
 ): Observation => ({
@@ -234,7 +251,13 @@ export function buildStorageStackApi(
     storageWakeEnabled,
     options.storageEndpoint === false
       ? undefined
-      : { name: "http", protocol: "http", host: "127.0.0.1", port: 59999 },
+      : {
+          name: "http",
+          protocol: "http",
+          host: "127.0.0.1",
+          port: 59999,
+          ...(options.apiTlsCert === undefined ? {} : { scheme: "https" as const }),
+        },
     options.storageError,
   );
   const database = {
@@ -257,6 +280,11 @@ export function buildStorageStackApi(
       get: (id: string) =>
         id === database.id ? Effect.succeed(database) : Effect.succeed(storage),
       list: Effect.succeed(storageEnabled ? [database, storage] : [database]),
+    },
+    apiTls: {
+      get: Effect.succeed(
+        options.apiTlsCert === undefined ? undefined : { cert: options.apiTlsCert },
+      ),
     },
     credentials: { get: Effect.succeed(stackCredentials) },
     composition: {
@@ -320,7 +348,11 @@ function recordingStorageHttp(routes: ReadonlyArray<StorageRoute>) {
 
   const layer = Layer.succeed(
     HttpClient.HttpClient,
-    HttpClient.make((request) => {
+    HttpClient.make((request, _url, _signal, fiber) => {
+      const init = Context.getOption(fiber.context, FetchHttpClient.RequestInit).pipe(
+        Option.getOrUndefined,
+      );
+      const tls = Predicate.hasProperty(init, "tls") ? init.tls : undefined;
       let body: unknown;
       if (request.body._tag === "Uint8Array") {
         try {
@@ -334,6 +366,7 @@ function recordingStorageHttp(routes: ReadonlyArray<StorageRoute>) {
         url: request.url,
         headers: { ...request.headers },
         body,
+        ca: Predicate.hasProperty(tls, "ca") ? tls.ca : undefined,
       });
       let index = -1;
       for (let i = 0; i < routes.length; i++) {

@@ -62,7 +62,7 @@ describe("buildLogflareContainerSpec", () => {
           intervalSeconds: 10,
           timeoutSeconds: 2,
           retries: 3,
-          startPeriodSeconds: 10,
+          startPeriodSeconds: 60,
         });
         expect(spec.restartPolicy).toBe("unless-stopped");
         expect(spec.networkAliases).toEqual(["analytics"]);
@@ -205,7 +205,7 @@ describe("buildLogflareContainerSpec", () => {
         "--spider",
         "http://127.0.0.1:4000/health",
       ]);
-      expect(slim.healthcheck?.startPeriodSeconds).toBe(10);
+      expect(slim.healthcheck?.startPeriodSeconds).toBe(60);
     }).pipe(Effect.provide(BunPath.layer));
   });
 });

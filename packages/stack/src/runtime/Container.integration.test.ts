@@ -1550,7 +1550,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
   );
 
   it.effect(
-    "names the stalled engine subcommand and its stderr when an engine command times out",
+    "names the stalled engine subcommand, its stderr, and the container state when start times out",
     () =>
       Effect.gen(function* () {
         const engine = yield* makeStalledStartSpawner("Error: waiting for network sandbox");
@@ -1572,7 +1572,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(failure instanceof ContainerLaunchError).toBe(true);
         expect(failureKind(failure)).toBe("engine-timeout");
         expect(failure instanceof ContainerLaunchError ? failure.failure.message : undefined).toBe(
-          "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox",
+          "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox; container state: status=created started=0001-01-01T00:00:00Z pid=0 error=",
         );
       }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
@@ -2236,7 +2236,7 @@ const successfulHandle = (stdout = "") =>
     unref: Effect.succeed(Effect.void),
   });
 
-/** Answers every engine command except `start`, which writes `stderr` and never exits. */
+/** Answers every engine command except `start`, which writes `stderr` and never exits, leaving the container created. */
 const makeStalledStartSpawner = Effect.fn("ContainerTest.stalledStartSpawner")(function* (
   stderr: string,
 ) {
@@ -2244,6 +2244,10 @@ const makeStalledStartSpawner = Effect.fn("ContainerTest.stalledStartSpawner")(f
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
     if (command.args[0] === "info") return Effect.succeed(successfulHandle("fake-daemon-id"));
+    if (command.args[0] === "inspect")
+      return Effect.succeed(
+        successfulHandle("status=created started=0001-01-01T00:00:00Z pid=0 error="),
+      );
     if (command.args[0] !== "start") return Effect.succeed(successfulHandle());
     // The second pull only happens once the reader has consumed the stderr line.
     const stalledStderr = Stream.succeed(new TextEncoder().encode(stderr)).pipe(
