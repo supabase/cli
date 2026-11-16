@@ -41,6 +41,12 @@ export interface ApiCommandOverride {
   readonly wait?: ApiCommandWait;
 }
 
+/** Only these operations generate commands; `x-operation` on any other operation is ignored. */
+export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
+  "v2-enable-warehouse",
+  "v2-get-warehouse-setup",
+];
+
 export const nouns = {
   warehouse: { description: "Manage the data warehouse for a project", feature: "warehouse" },
 } as const satisfies Readonly<Record<string, ApiNoun>>;

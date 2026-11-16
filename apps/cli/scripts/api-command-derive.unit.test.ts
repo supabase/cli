@@ -42,6 +42,7 @@ const envelope = (attributes: Record<string, unknown>) => ({
 const derive = (
   operations: Record<string, unknown>,
   overrides: Record<string, ApiCommandOverride>,
+  generated: ReadonlyArray<string> = Object.keys(operations),
 ) =>
   deriveApiCommands({
     spec: {
@@ -53,6 +54,7 @@ const derive = (
       ),
       components: { schemas: { Tags: { type: "array", items: { type: "string" } } } },
     },
+    generated,
     overrides,
     nouns: { thing: { description: "Manage things", feature: "things" } },
     operationIdMap: Object.fromEntries(
@@ -495,6 +497,16 @@ describe("deriveApiCommands", () => {
       );
     });
 
+    it("rejects a link to a polled target that is not generated", () => {
+      const result = derive({ "create-thing": changeThing(link({})), "get-thing": readThing }, {}, [
+        "create-thing",
+      ]);
+
+      expect(result.problems).toEqual([
+        'create-thing: link "setup" targets "get-thing", which declares poll but is not generated',
+      ]);
+    });
+
     it.each([
       [
         "an unsupported expression",
@@ -542,20 +554,54 @@ describe("deriveApiCommands", () => {
       "create-thing: invalid x-operation",
     ],
     [
-      "an override entry that leaves the operation unnamed",
+      "a generated operation that has no name",
       { "create-thing": operation({}) },
       { "create-thing": { flags: { name: "label" } } },
-      "gives no command name",
-    ],
-    [
-      "an override entry for an operation missing from the spec",
-      { "create-thing": operation({ "x-operation": { group: "thing", method: "create" } }) },
-      { "missing-thing": create },
-      "missing-thing: override entry has no operation in the spec",
+      "create-thing: no command name",
     ],
   ])("rejects %s", (_label, operations, overrides, message) => {
     const result = derive(operations, overrides);
 
     expect(result.problems.join("\n")).toContain(message);
+  });
+
+  describe("generated operations", () => {
+    const named = operation({ "x-operation": { group: "thing", method: "create" } });
+
+    it("ignores x-operation on an operation that is not generated, even when it is invalid", () => {
+      const result = derive(
+        {
+          "create-thing": named,
+          "create-other": operation({
+            "x-operation": { group: "other", method: "frobnicate", bogus: 1 },
+          }),
+        },
+        {},
+        ["create-thing"],
+      );
+
+      expect(result.problems).toEqual([]);
+      expect(result.entries.map((entry) => entry.operationId)).toEqual(["create-thing"]);
+    });
+
+    it("rejects a generated operation that is missing from the spec", () => {
+      const result = derive({ "create-thing": named }, {}, ["create-thing", "missing-thing"]);
+
+      expect(result.problems).toEqual([
+        "missing-thing: generated operation has no operation in the spec",
+      ]);
+    });
+
+    it("rejects an override entry for an operation that is not generated", () => {
+      const result = derive(
+        { "create-thing": named, "create-other": named },
+        { "create-other": create },
+        ["create-thing"],
+      );
+
+      expect(result.problems).toEqual([
+        "create-other: override entry is for an operation that is not generated",
+      ]);
+    });
   });
 });

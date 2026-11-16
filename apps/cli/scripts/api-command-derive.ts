@@ -81,6 +81,8 @@ const decodeXOperation = Schema.decodeUnknownExit(XOperationSchema, {
 interface DeriveInput {
   /** The parsed OpenAPI document. */
   readonly spec: JsonObject;
+  /** Operation ids that generate commands; `x-operation` on any other operation is ignored. */
+  readonly generated: ReadonlyArray<string>;
   /** Per-operation CLI metadata; its fields win over the spec's `x-operation`. */
   readonly overrides: Readonly<Record<string, ApiCommandOverride>>;
   readonly nouns: Readonly<Record<string, ApiNoun>>;
@@ -432,19 +434,25 @@ const operationParameters = (spec: JsonObject, operation: Operation): ReadonlyAr
     .map((raw) => asRecord(resolve(spec, raw)))
     .filter(Predicate.isNotUndefined);
 
-/** Merges each operation's `x-operation` with its override entry; the override wins field by field. */
+/** Merges each generated operation's `x-operation` with its override entry; the override wins field by field. */
 const mergeMetadata = (
   operations: ReadonlyMap<string, Operation>,
+  generated: ReadonlyArray<string>,
   overrides: Readonly<Record<string, ApiCommandOverride>>,
   problems: Array<string>,
 ): ReadonlyMap<string, OperationMetadata> => {
   const merged = new Map<string, OperationMetadata>();
   for (const operationId of Object.keys(overrides)) {
-    if (!operations.has(operationId)) {
-      problems.push(`${operationId}: override entry has no operation in the spec`);
+    if (!generated.includes(operationId)) {
+      problems.push(`${operationId}: override entry is for an operation that is not generated`);
     }
   }
-  for (const [operationId, operation] of operations) {
+  for (const operationId of generated) {
+    const operation = operations.get(operationId);
+    if (operation === undefined) {
+      problems.push(`${operationId}: generated operation has no operation in the spec`);
+      continue;
+    }
     const override = overrides[operationId];
     const block = operation.node["x-operation"];
     let fromSpec: XOperation | undefined;
@@ -456,11 +464,10 @@ const mergeMetadata = (
       }
       fromSpec = decoded.value;
     }
-    if (override === undefined && fromSpec === undefined) continue;
     const group = override?.group ?? fromSpec?.group;
     const method = override?.method ?? fromSpec?.method;
-    if (override !== undefined && (group === undefined || method === undefined)) {
-      problems.push(`${operationId}: override entry gives no command name; set group and method`);
+    if (group === undefined || method === undefined) {
+      problems.push(`${operationId}: no command name; set group and method`);
     }
     const poll = override?.poll ?? fromSpec?.poll;
     merged.set(operationId, {
@@ -483,7 +490,7 @@ const REQUEST_PATH = /^\$request\.path\.(.+)$/u;
 
 /**
  * The wait a command's 2xx response `links` declare: the one link whose target operation has
- * `poll`. Links to operations without `poll` are ignored.
+ * `poll`. Links to operations without `poll` are ignored; a polled target that is not generated fails.
  */
 const linkedWait = (
   spec: JsonObject,
@@ -510,7 +517,14 @@ const linkedWait = (
         continue;
       }
       const poll = metadata.get(targetId)?.poll;
-      if (poll === undefined) continue;
+      if (poll === undefined) {
+        if (!metadata.has(targetId) && asRecord(target.node["x-operation"])?.poll !== undefined) {
+          fail(
+            `link "${linkName}" targets "${targetId}", which declares poll but is not generated`,
+          );
+        }
+        continue;
+      }
 
       const params: Record<string, string> = {};
       for (const [parameter, expression] of Object.entries(asRecord(link.parameters) ?? {})) {
@@ -555,10 +569,10 @@ const linkedWait = (
 
 /** Derives the generated commands from the merged `x-operation` and override metadata and collects every lint failure. */
 export function deriveApiCommands(input: DeriveInput): DeriveResult {
-  const { spec, overrides, nouns, operationIdMap, handWrittenTopLevel } = input;
+  const { spec, generated, overrides, nouns, operationIdMap, handWrittenTopLevel } = input;
   const operations = collectOperations(spec);
   const problems: Array<string> = [];
-  const metadata = mergeMetadata(operations, overrides, problems);
+  const metadata = mergeMetadata(operations, generated, overrides, problems);
   const commandNamed = new Set(
     [...metadata].flatMap(([id, item]) =>
       item.group !== undefined && item.method !== undefined ? [id] : [],
@@ -854,7 +868,7 @@ function lintWait(input: {
     return;
   }
   if (!commandNamed.has(wait.read)) {
-    fail(`wait.read "${wait.read}" has no command name`);
+    fail(`wait.read "${wait.read}" is not a generated command`);
   }
 
   const readParameters = operationParameters(spec, readOperation);
