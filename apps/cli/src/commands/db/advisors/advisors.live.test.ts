@@ -6,6 +6,26 @@ import { expect } from "vitest";
 
 import { queryLiveDb, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
 
+/** What the lint's filters see for `public.<table>` on a connection as `dbUrl`'s role. */
+const lintVisibility = (dbUrl: string, table: string) =>
+  Effect.tryPromise(() =>
+    queryLiveDb(
+      dbUrl,
+      `select current_user as role,
+         current_setting('pgrst.db_schemas', true) as session_default_exposed_schemas,
+         c.relrowsecurity as rls,
+         has_table_privilege('anon', c.oid, 'SELECT') as anon_select,
+         has_table_privilege('authenticated', c.oid, 'SELECT') as authenticated_select
+       from pg_catalog.pg_class c
+       join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relname = $1`,
+      [table],
+    ),
+  ).pipe(
+    Effect.map((rows) => `lint visibility of public.${table}: ${JSON.stringify(rows)}`),
+    Effect.catch((cause) => Effect.succeed(`lint visibility query failed: ${String(cause)}`)),
+  );
+
 // A table in `public` without row level security deterministically raises the
 // `rls_disabled_in_public` security lint.
 test("reads advisor findings over the database connection", ({ cliEffect, project }) =>
@@ -20,7 +40,10 @@ test("reads advisor findings over the database connection", ({ cliEffect, projec
 
         const result = yield* cliEffect(["db", "advisors", `--remote=${project.dbUrl}`]);
         expect(result.exitCode, result.stderr).toBe(0);
-        expect(result.stdout, result.stderr).not.toBe("");
+        if (result.stdout === "") {
+          const visibility = yield* lintVisibility(project.dbUrl, table);
+          expect.fail(`${result.stderr}\n${visibility}`);
+        }
         const findings = yield* Schema.decodeEffect(
           Schema.fromJsonString(Schema.Array(Schema.Unknown)),
         )(result.stdout);
@@ -75,6 +98,10 @@ test("reports public tables when the backend defaults exposed schemas to empty",
         expect(exposure).toEqual([{ v: "" }]);
         const result = yield* cliEffect(["db", "advisors", "--db-url", dbUrl.toString()]);
         expect(result.exitCode, result.stderr).toBe(0);
+        if (result.stdout === "") {
+          const visibility = yield* lintVisibility(dbUrl.toString(), table);
+          expect.fail(`${result.stderr}\n${visibility}`);
+        }
         const findings = yield* Schema.decodeEffect(
           Schema.fromJsonString(Schema.Array(Schema.Unknown)),
         )(result.stdout);
