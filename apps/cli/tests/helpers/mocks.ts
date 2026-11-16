@@ -269,7 +269,11 @@ export function mockOutput(
   }> = [];
   const promptTextCalls: Array<{
     message: string;
-    opts?: { defaultValue?: string; validate?: (v: string) => string | undefined };
+    opts?: {
+      defaultValue?: string;
+      initialValue?: string;
+      validate?: (v: string) => string | undefined;
+    };
   }> = [];
   const promptTextResponses = [...(opts.promptTextResponses ?? [])];
   const promptSelectResponses = [...(opts.promptSelectResponses ?? [])];
@@ -389,7 +393,11 @@ export function mockOutput(
         let callCount = 0;
         return (
           message: string,
-          options?: { defaultValue?: string; validate?: (v: string) => string | undefined },
+          options?: {
+            defaultValue?: string;
+            initialValue?: string;
+            validate?: (v: string) => string | undefined;
+          },
         ) => {
           callCount++;
           promptTextCalls.push({ message, opts: options });
