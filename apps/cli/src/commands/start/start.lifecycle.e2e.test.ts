@@ -298,8 +298,8 @@ describe("supabase start (e2e)", () => {
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 
-  /* Docker Desktop failed every restart while multiline values rode a host bind (#7603); this
-     pins their real-daemon delivery through the `docker cp` archive across stop and start. */
+  /* Multiline values reach the edge runtime through its `docker cp` archive, never a host bind.
+     A bind also delivers them on native Linux daemons, so the restart checks the mounts too. */
   it.live(
     "serves multiline functions env values on start and after stop and start",
     () =>
@@ -370,6 +370,14 @@ describe("supabase start (e2e)", () => {
         });
         expect(restart.exitCode, `stdout:\n${restart.stdout}\nstderr:\n${restart.stderr}`).toBe(0);
         expect(yield* invokeEnvFunction(apiUrl, edgeRuntime)).toEqual(expected);
+        const { stdout: mounts } = yield* runDockerEffect([
+          "container",
+          "inspect",
+          edgeRuntime,
+          "--format",
+          "{{range .Mounts}}{{println .Destination}}{{end}}",
+        ]);
+        expect(splitNonEmptyLines(mounts)).not.toContain("/root/.supabase/multiline-env");
       }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
     START_TIMEOUT_MS * 2 + INVOKE_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS * 2,
   );
