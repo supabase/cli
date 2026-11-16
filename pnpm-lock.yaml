@@ -338,8 +338,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@supabase/pg-delta':
-        specifier: 1.0.0-alpha.60
-        version: 1.0.0-alpha.60(@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0))(supports-color@7.2.0)
+        specifier: file:../../vendor/pg-delta-spark/supabase-pg-delta-1.0.0-alpha.60-spark.tgz
+        version: file:vendor/pg-delta-spark/supabase-pg-delta-1.0.0-alpha.60-spark.tgz(@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0))(supports-color@7.2.0)
       '@supabase/pg-topo':
         specifier: 1.0.0-alpha.8
         version: 1.0.0-alpha.8(supports-color@7.2.0)
@@ -2886,8 +2886,9 @@ packages:
     resolution: {integrity: sha512-DQ0aVH8wSQAccVqNoEkec62qCu2QRNyoGN53RqsVZ1k6F1zq4/v8scrlR6LNT2RJmT97apiTmORijPVhErCS2g==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/pg-delta@1.0.0-alpha.60':
-    resolution: {integrity: sha512-pUO6OPOCOhcz89tHL+oOGWUPkVgPiw50n7ftnpUoozdOhqsPEANj81SvRMXClCepgkysvI+CJSN868vtj6ueog==}
+  '@supabase/pg-delta@file:vendor/pg-delta-spark/supabase-pg-delta-1.0.0-alpha.60-spark.tgz':
+    resolution: {integrity: sha512-13Y403AgL3aSPhb1F+zlZBFFmobHMdkP3ZVxSYXx6EB3XzkyuwDzbUBZXJ7hm9HLuAfq3WtvZF2xXe9rPqqqIg==, tarball: file:vendor/pg-delta-spark/supabase-pg-delta-1.0.0-alpha.60-spark.tgz}
+    version: 1.0.0-alpha.60
     engines: {node: '>=20.0.0'}
     hasBin: true
     peerDependencies:
@@ -8612,7 +8613,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/pg-delta@1.0.0-alpha.60(@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0))(supports-color@7.2.0)':
+  '@supabase/pg-delta@file:vendor/pg-delta-spark/supabase-pg-delta-1.0.0-alpha.60-spark.tgz(@supabase/pg-topo@1.0.0-alpha.8(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
       '@types/debug': 4.1.13
       '@types/pg': 8.23.1
