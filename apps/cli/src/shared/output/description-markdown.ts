@@ -77,11 +77,11 @@ export function renderDescriptionMarkdown(description: string, colors: boolean):
       case "em":
         return style("italic", children);
       case "code":
-        return inCode ? children : style("inverse", children);
+        return inCode ? children : style("inverse", children.replace(/\r\n?|\n/g, " "));
       case "del":
         return style("strikethrough", children);
       case "a":
-        return Bun.stripANSI(children) === node.props.href
+        return !node.props.href || Bun.stripANSI(children) === node.props.href
           ? children
           : `${children} (${node.props.href})`;
       case "br":

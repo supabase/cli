@@ -66,6 +66,22 @@ describe("description authoring contract", () => {
     expect(Bun.stripANSI(renderDescriptionMarkdown(source, true))).toBe("https://example.com");
   });
 
+  it.each([false, true])(
+    "normalizes inline code newlines without changing block code (colors=%s)",
+    (colors) => {
+      expect(Bun.stripANSI(renderDescriptionMarkdown("`a\nb`\n\n```\na\nb\n```", colors))).toBe(
+        "a b\n\n    a\n    b",
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "renders empty-destination links without parentheses (colors=%s)",
+    (colors) => {
+      expect(Bun.stripANSI(renderDescriptionMarkdown("[**label**]()", colors))).toBe("label");
+    },
+  );
+
   it("distinguishes soft breaks from hard breaks and keeps autolinks usable", () => {
     expect(
       renderDescriptionMarkdown("first\nsecond  \nthird\n\n<https://example.com>", false),
