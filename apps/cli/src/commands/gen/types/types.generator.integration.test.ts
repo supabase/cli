@@ -72,6 +72,7 @@ const input = (lang: string, extraSearchPath: readonly string[] = []): GenTypesG
   dnsResolver: "native",
   lang,
   includedSchemas: ["public"],
+  requestedSchemas: [],
   extraSearchPath,
   options: {},
 });
@@ -199,7 +200,8 @@ describe.skipIf(process.platform === "win32")(
             return yield* Effect.scoped(
               generator.generate({
                 ...input("typescript"),
-                includedSchemas: ["public", "nope", "nope"],
+                includedSchemas: ["public", "nope", "graphql_public"],
+                requestedSchemas: ["public", "nope", "nope"],
               }),
             );
           }).pipe(Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, issued, ["public"])));

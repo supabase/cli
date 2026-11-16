@@ -266,7 +266,14 @@ function mockGenTypesGenerator(
         calls.push(input);
         return (
           opts.generate?.(input, calls.length - 1) ?? Effect.succeed(opts.output ?? "generated")
-        ).pipe(Effect.map((source) => ({ source, missingSchemas: opts.missingSchemas ?? [] })));
+        ).pipe(
+          Effect.map((source) => ({
+            source,
+            missingSchemas: (opts.missingSchemas ?? []).filter((name) =>
+              input.requestedSchemas.includes(name),
+            ),
+          })),
+        );
       }),
   });
   return {
@@ -4273,6 +4280,10 @@ describe("gen types", () => {
             'Warning: schema "quote\\"name" is missing from the generated types: it does not exist, the connecting role cannot use it, or its name starts with pg_.',
           ]);
           expect(defaulted.out.stderrText).not.toContain("Warning: ");
+          expect(generator.calls.map((call) => call.requestedSchemas)).toEqual([
+            ["public", "nope", 'quote"name'],
+            [],
+          ]);
         }).pipe(Effect.provide(BunServices.layer)),
     );
   });

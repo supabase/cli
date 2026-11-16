@@ -378,6 +378,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             dnsResolver,
             lang,
             includedSchemas: input.includedSchemas,
+            requestedSchemas: schemas,
             extraSearchPath: input.extraSearchPath,
             options: {
               ...languageOptions,
@@ -402,14 +403,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             classifyError: classifyGenerateError,
           });
 
-    /* Defaults such as graphql_public are absent on plain Postgres, so only --schema warns. */
-    if (schemas.length > 0) {
-      for (const name of types.missingSchemas) {
-        yield* output.raw(
-          `${yellow(`Warning: schema ${yield* quoteJsonString(name)} is missing from the generated types: it does not exist, the connecting role cannot use it, or its name starts with pg_.`)}\n`,
-          "stderr",
-        );
-      }
+    for (const name of types.missingSchemas) {
+      yield* output.raw(
+        `${yellow(`Warning: schema ${yield* quoteJsonString(name)} is missing from the generated types: it does not exist, the connecting role cannot use it, or its name starts with pg_.`)}\n`,
+        "stderr",
+      );
     }
     if (lang === "typescript") {
       yield* output.raw(

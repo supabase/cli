@@ -129,7 +129,7 @@ export const genTypesGeneratorLayer = Layer.effect(
           Effect.withSpan("GenTypes.introspect"),
         );
         const found = new Set(metadata.schemas.map((schema) => schema.name));
-        const missingSchemas = [...new Set(input.includedSchemas)].filter(
+        const missingSchemas = [...new Set(input.requestedSchemas)].filter(
           (name) => !found.has(name),
         );
         return yield* Effect.gen(function* () {
