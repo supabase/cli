@@ -109,6 +109,7 @@ import {
   StatusListError,
 } from "../../command-internal/status-errors.ts";
 import { renderStatusPretty } from "../../command-internal/status-pretty.ts";
+import { maybeShowStartStackNudge } from "../../command-internal/stack-nudge.ts";
 import {
   gateStatusState,
   resolveStatusLocalState,
@@ -1665,5 +1666,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
       yield* output.success("", statusValues);
     }
+    yield* maybeShowStartStackNudge();
   }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });

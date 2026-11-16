@@ -17,7 +17,12 @@ import {
   Stdio,
 } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { ExperimentalFlag, WorkdirFlag, YesFlag } from "../../command-internal/global-flags.ts";
+import {
+  AgentFlag,
+  ExperimentalFlag,
+  WorkdirFlag,
+  YesFlag,
+} from "../../command-internal/global-flags.ts";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textOutputLayer } from "../../shared/output/output.layer.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -527,6 +532,62 @@ describe("init", () => {
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
+
+  it.effect.each([
+    { env: {}, interactive: true, expected: "SUPABASE_EXPERIMENTAL_STACK=1 supabase init" },
+    {
+      env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+      interactive: true,
+      expected: "Experimental local stack enabled in supabase/config.toml",
+    },
+    { env: {}, interactive: false, expected: undefined },
+    {
+      env: {},
+      interactive: false,
+      agent: true,
+      expected: "Coding agents: offer this to the user and ask before re-running init",
+    },
+  ])(
+    "stack note (interactive=$interactive, agent=$agent, env=$env)",
+    ({ env, interactive, agent, expected }) => {
+      const tempDir = tempRoot.current;
+
+      return Effect.gen(function* () {
+        const { layer, out } = setup(tempDir, { env, interactive });
+
+        yield* init({
+          interactive: false,
+          useOrioledb: false,
+          force: false,
+          withVscodeWorkspace: false,
+          withVscodeSettings: false,
+          withIntellijSettings: false,
+        }).pipe(
+          Effect.provide(
+            agent === true
+              ? Layer.mergeAll(layer, Layer.succeed(AgentFlag, "yes" as const))
+              : layer,
+          ),
+        );
+
+        if (expected === undefined) {
+          expect(
+            out.messages
+              .filter((m) => m.type === "info")
+              .map((m) => m.message)
+              .join("\n"),
+          ).not.toContain("local stack");
+        } else {
+          expect(
+            out.messages
+              .filter((m) => m.type === "info")
+              .map((m) => m.message)
+              .join("\n"),
+          ).toContain(expected);
+        }
+      });
+    },
+  );
 
   it.effect("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
     const tempDir = tempRoot.current;

@@ -4,6 +4,7 @@ import { initProject } from "../../shared/init/project-init.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { resolveExperimentalFeature } from "../../shared/config/experimental-feature.ts";
 import { WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
+import { showInitStackNote } from "../../command-internal/stack-nudge.ts";
 import { InitConfigExistsError } from "./init.errors.ts";
 import type { InitFlags } from "./init.command.ts";
 
@@ -53,4 +54,5 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
   }
 
   yield* output.raw("Finished supabase init.\n");
+  yield* showInitStackNote(experimentalStack);
 });

@@ -212,6 +212,7 @@ command.
 
 | Path                                                                             | Format           | When                                                                                                                                                                                                               |
 | -------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `$SUPABASE_HOME/stack-nudge.json`                                                | JSON             | after the stack nudge is shown: `{"lastShownAt": <epoch millis>}`; read and written best-effort, failures are swallowed                                                                                            |
 | `<workdir>/supabase/.branches/_current_branch`                                   | text             | on every start, only if absent — writes `"main"`                                                                                                                                                                   |
 | `<workdir>/supabase/snippets/`                                                   | —                | when Studio is enabled, only if absent — created before any container and kept on rollback; `podman create -v`, unlike Docker, rejects a missing bind source                                                       |
 | `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/env/`         | dotenv           | Edge Runtime's own JWT/service-role-key/secret env artifacts — see below                                                                                                                                           |
@@ -410,6 +411,11 @@ buckets to prune.` for a bucket left in place. These seeding lines use the raw w
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).
 - stderr: the local-dev security notice block (bind-to-`0.0.0.0` / shared-default-keys /
   no-auth-on-Studio-pgMeta-analytics warning).
+- info log (conditional, fresh start only, never on the already-running path; text and json print it
+  on stderr, stream-json emits a `log` event with level `info` on stdout): a three-line nudge to
+  try the experimental local stack (`Try the new local stack: ...`, the switch steps, and the docs URL; agents also get a line asking them to offer the switch to the user). Shown only
+  in every output format when stdout is interactive or a coding agent is detected, and at most once
+  per 7 days (see "Files Written"). Never fails `start`.
 
 ### `--output-format json` / `--output-format stream-json`
 
