@@ -170,6 +170,8 @@ export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
     "an absent section means no exclusions, so an env exclusion list must apply while it is absent",
   "experimental.pgdelta":
     "enabled defaults to true without the section, so the env rollback must apply while it is absent",
+  "experimental.spark":
+    "a shell opt-in like SUPABASE_EXPERIMENTAL_STACK, so its env values must apply while the section is absent",
 };
 
 /** The optional section a key's env override requires, when its path sits under one. */
@@ -294,14 +296,6 @@ export const CLI_CONFIG_FAMILIES: ReadonlyArray<CliConfigFamilyDef> = [
  * config env name must never equal one of these.
  */
 export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
-  SUPABASE_SPARK_BIN: "experimental Spark backend: path of the spark binary",
-  SUPABASE_SPARK_BUN: "experimental Spark backend: bun binary that runs the meta gateway",
-  SUPABASE_PG_DELTA_DIR: "experimental Spark backend: pg-delta checkout used for db diff and pull",
-  SUPABASE_SPARK_STUDIO_IMAGE: "experimental Spark backend: Studio image",
-  SUPABASE_SPARK_NO_STUDIO: "experimental Spark backend: skip Studio",
-  SUPABASE_SPARK_API_PORT: "experimental Spark backend: gateway API port",
-  SUPABASE_SPARK_STUDIO_PORT: "experimental Spark backend: Studio port",
-  SUPABASE_SPARK_PORT: "experimental Spark backend: internal Spark port",
   SUPABASE_ACCESS_TOKEN: "platform auth",
   SUPABASE_ACTIVE_HELP: "shell completion",
   SUPABASE_ANON_KEY: "functions runtime env",

@@ -626,6 +626,9 @@
       "pgdelta": {
         "enabled": true
       },
+      "spark": {
+        "enabled": false
+      },
       "webhooks": {
         "enabled": false
       }

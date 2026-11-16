@@ -81,6 +81,9 @@
       "s3_host": null,
       "s3_region": null,
       "s3_secret_key": null,
+      "spark": {
+        "enabled": false
+      },
       "webhooks": {
         "enabled": false
       }
@@ -488,6 +491,9 @@
           "rules": []
         },
         "pgdelta": {
+          "enabled": false
+        },
+        "spark": {
           "enabled": false
         },
         "webhooks": {

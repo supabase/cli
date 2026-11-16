@@ -13,7 +13,8 @@ export type ProjectStateMode = "stack" | "legacy";
  * Reads the mode before any command runtime exists: `SUPABASE_EXPERIMENTAL_STACK=1|0` wins, and
  * an unset or empty value falls back to `[experimental] stack` in the project's config. It
  * decodes that single key, so an unreadable or invalid config counts as unset. Any other
- * environment value fails.
+ * environment value fails. `[experimental.spark] enabled` (or `SUPABASE_EXPERIMENTAL_SPARK_ENABLED`)
+ * selects the stack mode too.
  */
 export const projectStateMode = Effect.fn("ProjectStateMode.resolve")(function* (input: {
   readonly args?: ReadonlyArray<string>;
@@ -23,14 +24,17 @@ export const projectStateMode = Effect.fn("ProjectStateMode.resolve")(function* 
   ExperimentalFeatureFlagError,
   FileSystem.FileSystem | Path.Path
 > {
-  const enabled = yield* resolveExperimentalFeature({
-    feature: "stack",
-    configValue: readExperimentalFeatureConfig({
-      feature: "stack",
-      args: input.args ?? [],
-      cwd: input.cwd,
-    }),
-  });
+  const feature = (name: "stack" | "spark") =>
+    resolveExperimentalFeature({
+      feature: name,
+      configValue: readExperimentalFeatureConfig({
+        feature: name,
+        args: input.args ?? [],
+        cwd: input.cwd,
+      }),
+    });
+  // A Spark project runs on the stack backend: Spark is one of its service compositions.
+  const enabled = (yield* feature("stack")) || (yield* feature("spark"));
   const mode: ProjectStateMode = enabled ? "stack" : "legacy";
   yield* Effect.annotateCurrentSpan("project_state.mode", mode);
   return mode;

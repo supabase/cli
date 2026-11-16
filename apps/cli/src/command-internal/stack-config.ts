@@ -546,10 +546,51 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         config: {},
         endpoints: { http: endpoint(undefined) },
       };
+      const studioCreation = {
+        service: "studio" as const,
+        pin: selection.studio,
+        config: {
+          snippetsRoot: `${projectRoot}/supabase/snippets`,
+          apiSchemas: validatedConfig.api.schemas.join(","),
+          apiExtraSearchPath: validatedConfig.api.extra_search_path.join(","),
+          apiMaxRows: validatedConfig.api.max_rows,
+          cliVersion: CLI_VERSION,
+          ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
+          ...(validatedConfig.studio.openai_api_key === undefined
+            ? {}
+            : { openaiApiKey: validatedConfig.studio.openai_api_key }),
+          ...(validatedConfig.studio.api_url === getDefaultCliConfig().studio.api_url
+            ? {}
+            : { publicApiUrl: validatedConfig.studio.api_url }),
+        },
+        endpoints: { http: endpoint(studioPort) },
+      } satisfies ServiceCreationType;
+      const spark = validatedConfig.experimental.spark;
+      const sparkExecutable = spark?.executable ?? "";
+      if (spark?.enabled === true && !path.isAbsolute(sparkExecutable))
+        return yield* new StackConfigError({
+          message:
+            "experimental.spark.executable must be the absolute path of the spark binary (or set SUPABASE_EXPERIMENTAL_SPARK_EXECUTABLE)",
+        });
+      /** Spark serves the Data API and Auth itself; its meta adapter answers Studio and MCP. */
+      const sparkCreations: ReadonlyArray<ServiceCreationType> = [
+        {
+          service: "spark",
+          config: { executable: sparkExecutable, projectRoot },
+          endpoints: { http: endpoint(apiPort) },
+        },
+        {
+          service: "sparkmeta",
+          config: { projectRoot },
+          endpoints: { http: endpoint(undefined) },
+        },
+        ...(validatedConfig.studio.enabled ? [studioCreation] : []),
+      ];
       const createCreations = (
         stackId: string,
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
         Effect.sync(() => {
+          if (spark?.enabled === true) return sparkCreations;
           return [
             {
               service: "database",
@@ -701,29 +742,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.studio.enabled
-              ? [
-                  {
-                    service: "studio" as const,
-                    pin: selection.studio,
-                    config: {
-                      snippetsRoot: `${projectRoot}/supabase/snippets`,
-                      apiSchemas: validatedConfig.api.schemas.join(","),
-                      apiExtraSearchPath: validatedConfig.api.extra_search_path.join(","),
-                      apiMaxRows: validatedConfig.api.max_rows,
-                      cliVersion: CLI_VERSION,
-                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
-                      ...(validatedConfig.studio.openai_api_key === undefined
-                        ? {}
-                        : { openaiApiKey: validatedConfig.studio.openai_api_key }),
-                      ...(validatedConfig.studio.api_url === getDefaultCliConfig().studio.api_url
-                        ? {}
-                        : { publicApiUrl: validatedConfig.studio.api_url }),
-                    },
-                    endpoints: { http: endpoint(studioPort) },
-                  } satisfies ServiceCreationType,
-                ]
-              : []),
+            ...(validatedConfig.studio.enabled ? [studioCreation] : []),
             ...(validatedConfig.local_smtp.enabled
               ? [
                   {

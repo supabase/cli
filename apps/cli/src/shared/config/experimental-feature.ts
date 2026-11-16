@@ -1,7 +1,7 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
 import { cliConfigFormatForPath, parseCliConfigDocument } from "@supabase/config/internal";
 import { Config, Data, Effect, FileSystem, Option, Path, Result, Schema } from "effect";
-import { pickCliConfigKey } from "../../config/cli-config-key.ts";
+import { type CliConfigSources, pickCliConfigKey } from "../../config/cli-config-key.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveWorkdir } from "../../config/command-settings.layer.ts";
 import { rootFlagTokens } from "../cli/run.ts";
@@ -23,7 +23,18 @@ export class ExperimentalFeatureFlagError extends Data.TaggedError("Experimental
 const featureSchemas = {
   stack: CliConfigSchema.fields.experimental.to.fields.stack,
   compute: CliConfigSchema.fields.experimental.to.fields.compute,
+  spark: CliConfigSchema.fields.experimental.to.fields.spark,
 } as const;
+
+type ExperimentalFeature = keyof typeof featureSchemas;
+
+/** The opt-in boolean inside a decoded feature value; `[experimental.spark]` is a table. */
+const featureEnabled = (feature: ExperimentalFeature, value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") return value;
+  if (feature === "spark" && typeof value === "object" && value !== null && "enabled" in value)
+    return typeof value.enabled === "boolean" ? value.enabled : undefined;
+  return undefined;
+};
 
 const firstExplicitLongFlagValue = (
   args: ReadonlyArray<string>,
@@ -44,7 +55,7 @@ const readEnv = (name: string) =>
 
 /** Reads one experimental feature, treating unavailable or invalid configuration as unset. */
 export const readExperimentalFeatureConfig = (input: {
-  readonly feature: keyof typeof featureSchemas;
+  readonly feature: ExperimentalFeature;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
 }): Effect.Effect<boolean | undefined, never, FileSystem.FileSystem | Path.Path> =>
@@ -70,12 +81,13 @@ export const readExperimentalFeatureConfig = (input: {
       ),
     });
     const decoded = yield* Schema.decodeUnknownEffect(schema)(document);
-    return decoded.experimental?.[input.feature];
+    return featureEnabled(input.feature, decoded.experimental?.[input.feature]);
   }).pipe(Effect.orElseSucceed(() => undefined));
 
 const featureKeys = {
   stack: CliConfigKeys.experimental.stack,
   compute: CliConfigKeys.experimental.compute,
+  spark: CliConfigKeys.experimental.spark.enabled,
 } as const;
 
 /**
@@ -88,11 +100,11 @@ export const resolveExperimentalFeature = <E, R>(input: {
 }): Effect.Effect<boolean, E | ExperimentalFeatureFlagError, R | Path.Path> =>
   Effect.gen(function* () {
     const key = featureKeys[input.feature];
-    const envName = `SUPABASE_EXPERIMENTAL_${input.feature.toUpperCase()}`;
+    const envName = key.env[0] ?? `SUPABASE_EXPERIMENTAL_${input.feature.toUpperCase()}`;
     const path = yield* Path.Path;
     const shell = yield* readEnv(envName);
     const configValue = shell === undefined || shell === "" ? yield* input.configValue : undefined;
-    const picked = pickCliConfigKey(key, {
+    const sources: CliConfigSources = {
       flags: () => undefined,
       shell: (name) => (name === envName ? shell : undefined),
       projectEnv: () => undefined,
@@ -102,12 +114,18 @@ export const resolveExperimentalFeature = <E, R>(input: {
           : undefined,
       dotenvPrivateKeys: [],
       context: { workdir: "", projectRef: Option.none(), path, configAt: () => undefined },
-    });
+    };
+    const picked =
+      input.feature === "spark"
+        ? Result.map(pickCliConfigKey(featureKeys.spark, sources), ({ value }) => value)
+        : Result.map(pickCliConfigKey(featureKeys[input.feature], sources), ({ value }) =>
+            Option.getOrElse(value, () => false),
+          );
     if (Result.isFailure(picked)) {
       return yield* new ExperimentalFeatureFlagError({
         envName,
         message: picked.failure.message,
       });
     }
-    return Option.getOrElse(picked.success.value, () => false);
+    return picked.success;
   });

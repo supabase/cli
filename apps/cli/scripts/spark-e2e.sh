@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# End-to-end check of the experimental Spark backend through the Supabase CLI run from source:
-# start, supabase-js app with auth and RLS, Studio, db pull/diff/push/reset, unsupported SQL, stop.
-# Needs: a Spark binary (SUPABASE_SPARK_BIN), a pg-toolbelt checkout (SUPABASE_PG_DELTA_DIR),
-# the PoC example apps (SPARK_EXAMPLE_DIR, with `bun install` run), bun, node, jq, curl, python3, Docker.
-# Uses ports 54321, 54323 and 54331.
+# End-to-end check of the experimental Spark backend: a project opts in through config.toml, and
+# start runs Spark, its meta adapter and Studio on the native stack; then supabase-js with auth and
+# RLS, Studio, the Supabase MCP server, db pull/diff/push/reset, unsupported SQL and stop.
+# Needs: a Spark binary (SUPABASE_SPARK_BIN), the PoC example apps (SPARK_EXAMPLE_DIR, with
+# `bun install` run), a built Supabase MCP server (SUPABASE_MCP_CLI), bun, node, jq, curl, python3.
+# SUPABASE_CLI_BIN runs a compiled CLI instead of the source. Uses ports 54321 and 54323.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CLI_MAIN="$HERE/../src/main.ts"
-export SUPABASE_SPARK_BIN="${SUPABASE_SPARK_BIN:-$HOME/spark/target/release/spark}"
-export SUPABASE_PG_DELTA_DIR="${SUPABASE_PG_DELTA_DIR:-$HOME/pg-toolbelt/packages/pg-delta}"
-EXAMPLE="${SPARK_EXAMPLE_DIR:-$HOME/spark/poc/supabase-spark-dev/example}"
+# Defaults expect the spark and mcp checkouts next to this repository.
+SIBLINGS="$(cd "$HERE/../../../.." && pwd)"
+SPARK_BIN="${SUPABASE_SPARK_BIN:-$SIBLINGS/spark/target/release/spark}"
+EXAMPLE="${SPARK_EXAMPLE_DIR:-$SIBLINGS/spark/poc/supabase-spark-dev/example}"
+MCP_CLI="${SUPABASE_MCP_CLI:-$SIBLINGS/mcp/packages/mcp-server-supabase/dist/cli.js}"
 export SUPABASE_NO_UPDATE_NOTIFIER=1 SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1
 WORK="$(mktemp -d)"
 PROJECT="$WORK/spark-todos"
@@ -18,7 +21,7 @@ LOG="$WORK/e2e.log"
 
 cleanup() {
   local code=$?
-  (cd "$PROJECT" 2>/dev/null && sb stop >/dev/null 2>&1) || true
+  (cd "$PROJECT" 2>/dev/null && sb stack destroy --yes >/dev/null 2>&1) || true
   if [ "$code" -eq 0 ]; then rm -rf "$WORK"; else echo "✘ failed (exit $code); project and log kept in $WORK" >&2; fi
 }
 trap cleanup EXIT
@@ -27,38 +30,50 @@ ok() { printf '✔ %s\n' "$*"; }
 fail() { printf '✘ %s\n' "$*" >&2; [ -s "$LOG" ] && tail -40 "$LOG" >&2; exit 1; }
 run() { "$@" >"$LOG" 2>&1 || fail "$* (exit $?)"; }
 # Agent detection would switch the CLI to JSON output; the checks below read text output.
-for agent_var in AI_AGENT CLAUDECODE CLAUDE_CODE CLAUDE_CODE_IS_COWORK CURSOR_AGENT CURSOR_TRACE_ID CODEX_SANDBOX CODEX_CI CODEX_THREAD_ID GEMINI_CLI OPENCODE_CLIENT REPL_ID; do unset "$agent_var"; done
-sb() { bun "$CLI_MAIN" "$@"; }
-keys() { jq -r ".keys.$1" "$PROJECT/supabase/.spark/state.json"; }
-check() { run env ANON_KEY="$(keys anon)" SERVICE_KEY="$(keys service)" node "$EXAMPLE/$1"; }
-rest() { curl -s "$API/rest/v1/$1" -H "apikey: $(keys service)" -H "authorization: Bearer $(keys service)" "${@:2}"; }
+for agent_var in AI_AGENT CLAUDECODE CLAUDE_CODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_IS_COWORK CURSOR_AGENT CURSOR_TRACE_ID CODEX_SANDBOX CODEX_CI CODEX_THREAD_ID GEMINI_CLI OPENCODE_CLIENT REPL_ID; do unset "$agent_var"; done
+if [ -n "${SUPABASE_CLI_BIN:-}" ]; then
+  sb() { "$SUPABASE_CLI_BIN" "$@"; }
+else
+  sb() { bun "$CLI_MAIN" "$@"; }
+fi
+key() { sb status --env | sed -n "s/^$1='\\(.*\\)'\$/\\1/p"; }
+check() { run env ANON_KEY="$ANON_KEY" SERVICE_KEY="$SERVICE_KEY" node "$EXAMPLE/$1"; }
+rest() { curl -s "$API/rest/v1/$1" -H "apikey: $SERVICE_KEY" -H "authorization: Bearer $SERVICE_KEY" "${@:2}"; }
 no_postgres() {
   local found
-  found="$(docker ps --format '{{.Image}} {{.Names}}' | grep -Ei 'postgres' || true)"
-  [ -z "$found" ] || fail "a Postgres container is running: $found"
+  found="$( (docker ps --format '{{.Image}} {{.Names}}' 2>/dev/null || true; pgrep -a postgres || true) | grep -Ei 'postgres' || true)"
+  [ -z "$found" ] || fail "Postgres is running: $found"
 }
 
-for tool in bun node jq curl docker python3; do command -v "$tool" >/dev/null || fail "missing $tool"; done
-[ -x "$SUPABASE_SPARK_BIN" ] || fail "no spark binary at $SUPABASE_SPARK_BIN"
-[ -f "$SUPABASE_PG_DELTA_DIR/src/cli/main.ts" ] || fail "no pg-delta at $SUPABASE_PG_DELTA_DIR"
+for tool in bun node jq curl python3; do command -v "$tool" >/dev/null || fail "missing $tool"; done
+[ -x "$SPARK_BIN" ] || fail "no spark binary at $SPARK_BIN"
 [ -d "$EXAMPLE/node_modules" ] || fail "run bun install in $EXAMPLE"
-docker info >/dev/null 2>&1 || fail "Docker is not running"
-ok "setup: spark, pg-delta, bun, node, Docker and the example apps are ready"
+[ -f "$MCP_CLI" ] || fail "no Supabase MCP server at $MCP_CLI"
+ok "setup: spark, bun, node, the MCP server and the example apps are ready"
 
 mkdir -p "$PROJECT" && cd "$PROJECT"
 run sb init
 mkdir -p supabase/migrations
 cp "$EXAMPLE/todos.sql" supabase/migrations/20260101000000_todos.sql
-ok "supabase init in a new project, with a todos migration"
+cat >>supabase/config.toml <<TOML
 
-run sb start --experimental-spark
-grep -q "Studio URL" "$LOG" && grep -q "service_role key" "$LOG" || fail "supabase start printed no status"
+[experimental.spark]
+enabled = true
+executable = "$SPARK_BIN"
+TOML
+ok "supabase init in a new project, a todos migration, and [experimental.spark] enabled in config.toml"
+
+run sb start
+grep -q "Stack is ready" "$LOG" && grep -q "spark" "$LOG" || fail "supabase start reported no Spark stack"
 no_postgres
-ok "supabase start --experimental-spark: spark, gateway and Studio are up (no Postgres container)"
+ok "supabase start: Spark, its meta adapter and Studio on the native stack (no Postgres)"
 
 run sb status
-grep -q "API URL: $API" "$LOG" || fail "supabase status printed no API URL"
-ok "supabase status reports the Spark stack"
+grep -q "$API" "$LOG" && grep -q "spark" "$LOG" || fail "supabase status printed no Spark stack"
+ANON_KEY="$(key ANON_KEY)"
+SERVICE_KEY="$(key SERVICE_ROLE_KEY)"
+[ -n "$ANON_KEY" ] && [ -n "$SERVICE_KEY" ] || fail "supabase status --env printed no keys"
+ok "supabase status reports the Spark stack and its keys"
 
 check app.test.mjs
 ok "app (supabase-js): sign up, CRUD and RLS isolation on todos"
@@ -66,6 +81,15 @@ ok "app (supabase-js): sign up, CRUD and RLS isolation on todos"
 check studio.check.mjs
 no_postgres
 ok "Studio: table editor rows, create table and insert row from the UI, policies page, SQL editor"
+
+mkdir -p "$WORK/mcp-check"
+ln -s "$EXAMPLE/node_modules" "$WORK/mcp-check/node_modules"
+sed -e "s#command: 'bun', args: \[new URL('../spark-dev.ts', import.meta.url).pathname, 'mcp'\]#command: 'node', args: [process.env.MCP_CLI, '--access-token', 'local', '--project-ref', 'default', '--api-url', '$API', '--features', 'database,development']#" \
+  "$EXAMPLE/mcp.check.mjs" >"$WORK/mcp-check/mcp.check.mjs"
+grep -q "process.env.MCP_CLI" "$WORK/mcp-check/mcp.check.mjs" || fail "cannot point the MCP check at the MCP server"
+run env ANON_KEY="$ANON_KEY" MCP_CLI="$MCP_CLI" node "$WORK/mcp-check/mcp.check.mjs"
+ls supabase/migrations/*_add_labels.sql >/dev/null 2>&1 || fail "apply_migration wrote no migration file"
+ok "MCP: list_tables, apply_migration, execute_sql, list_migrations, generate_typescript_types, get_project_url"
 
 run sb gen types typescript --local
 grep -q "todos:" "$LOG" || fail "gen types has no todos table"
@@ -151,7 +175,8 @@ check app.test.mjs
 ok "db reset: data removed, all migrations replayed, the app works"
 
 run sb stop
-docker ps --format '{{.Names}}' | grep -q supabase_studio_spark && fail "containers left after stop"
-[ -f supabase/.spark/state.json ] && fail "state left after stop"
+pgrep -f "$SPARK_BIN" >/dev/null && fail "spark still running after stop"
+code=$(curl -s -o /dev/null -w '%{http_code}' "$API/rest/v1/" || true)
+[ "$code" = 000 ] || fail "the API still answers after stop (HTTP $code)"
 ok "supabase stop: nothing left running"
 printf '\nE2E OK\n'

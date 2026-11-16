@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { sparkUnsupported, withSparkBackend } from "./spark/spark-commands.ts";
+import { sparkUnsupported, withSparkBackend } from "./spark/spark-project.ts";
 import { Argument } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 

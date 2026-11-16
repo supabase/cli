@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import {
   sparkUnsupported,
   withSparkBackend,
-} from "../../../command-internal/spark/spark-commands.ts";
+} from "../../../command-internal/spark/spark-project.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 

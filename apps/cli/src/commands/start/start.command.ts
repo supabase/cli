@@ -1,5 +1,4 @@
 import { Layer } from "effect";
-import { sparkStart, withSparkBackend } from "../../command-internal/spark/spark-commands.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -50,17 +49,6 @@ const config = {
 
 export type StartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const commandConfig = {
-  ...config,
-  experimentalSpark: Flag.Boolean("experimental-spark").pipe(
-    Flag.withDescription(
-      "Run the project on the experimental Spark backend: Spark, a meta gateway and Studio, no Postgres",
-    ),
-    Flag.withDefault(false),
-    Flag.withHidden,
-  ),
-} as const;
-
 // `start` talks directly to Docker and makes no Management API calls, so it composes its own
 // runtime instead of `managementApiRuntimeLayer`. `httpClientLayer` is included explicitly
 // because the root runtime doesn't supply `HttpClient.HttpClient`;
@@ -100,21 +88,18 @@ const startRuntimeLayer = Layer.mergeAll(
   stdinLayer,
 );
 
-export const startCommand = Command.make("start", commandConfig).pipe(
+export const startCommand = Command.make("start", config).pipe(
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["exclude", "ignore-health-check", "experimental-spark", "preview"],
+    noApiEffectFlags: ["exclude", "ignore-health-check", "preview"],
   }),
   Command.withHandler((flags) =>
-    withSparkBackend(start(flags), sparkStart(), flags.experimentalSpark).pipe(
-      withCommandTelemetry({ flags }),
-      withJsonErrorHandling,
-    ),
+    start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(startRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(commandConfig),
+  withCliConfigFlags(config),
   withTargetPolicy({ group: "local-only", consent: "none" }),
 );

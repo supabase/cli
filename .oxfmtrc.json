@@ -6,7 +6,6 @@
     "apps/cli-e2e/fixtures/",
     "apps/docs/content/docs/commands/",
     "apps/docs/public/",
-    "**/testdata/",
-    "apps/cli/src/experimental/spark-gateway/"
+    "**/testdata/"
   ]
 }

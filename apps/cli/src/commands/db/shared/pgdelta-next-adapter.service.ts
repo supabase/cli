@@ -18,7 +18,9 @@ export type PgDeltaNextOperation =
   | "diff"
   | "declarativeExport"
   | "declarativePlan"
-  | "snapshotCapture";
+  | "snapshotCapture"
+  | "sparkPlan"
+  | "sparkExport";
 
 export type PgDeltaNextDiagnosticOrigin =
   | "source"
@@ -133,6 +135,34 @@ export interface PgDeltaNextSnapshotCaptureResult {
   readonly diagnostics: readonly PgDeltaNextDiagnostic[];
 }
 
+/** A Spark project's API: the stack's public URL and its service_role key. */
+export interface PgDeltaNextSparkConnection {
+  readonly url: string;
+  readonly key: string;
+}
+
+export interface PgDeltaNextSparkPlanInput {
+  readonly connection: PgDeltaNextSparkConnection;
+  readonly files: readonly PgDeltaNextSqlFile[];
+}
+
+/** A Spark plan, proven by replaying it on a scratch copy of the project. */
+export interface PgDeltaNextSparkPlanResult {
+  /** Rendered migration SQL; empty when there are no changes. */
+  readonly sql: string;
+  /** Messages for statements Spark rejects (`error`) or drops (`info`) in the schema files. */
+  readonly diagnostics: readonly {
+    readonly severity: "error" | "warning" | "info";
+    readonly message: string;
+  }[];
+  readonly proof?: {
+    readonly ok: boolean;
+    readonly expected: string;
+    readonly actual: string;
+    readonly diagnostics: readonly { readonly severity: string; readonly message: string }[];
+  };
+}
+
 export class PgDeltaNextError extends Data.TaggedError("PgDeltaNextError")<{
   readonly operation: PgDeltaNextOperation;
   readonly message: string;
@@ -157,6 +187,14 @@ export interface PgDeltaNextAdapterShape {
   readonly captureSnapshot: (
     input: PgDeltaNextSnapshotCaptureInput,
   ) => Effect.Effect<PgDeltaNextSnapshotCaptureResult, PgDeltaNextError>;
+  /** Plans a Spark project toward declarative files and proves the plan on Spark scratch. */
+  readonly planSparkSchema: (
+    input: PgDeltaNextSparkPlanInput,
+  ) => Effect.Effect<PgDeltaNextSparkPlanResult, PgDeltaNextError>;
+  /** Declarative files, grouped layout, for a Spark project's live schema. */
+  readonly exportSparkSchema: (
+    connection: PgDeltaNextSparkConnection,
+  ) => Effect.Effect<readonly PgDeltaNextSqlFile[], PgDeltaNextError>;
 }
 
 export class PgDeltaNextAdapter extends Context.Service<

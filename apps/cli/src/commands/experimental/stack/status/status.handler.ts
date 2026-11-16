@@ -393,7 +393,9 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
     );
     if (flags.env) {
       const database = observed.observed.find(
-        ({ instance }) => memberIds.has(instance.id) && instance.service === "database",
+        ({ instance }) =>
+          memberIds.has(instance.id) &&
+          (instance.service === "database" || instance.service === "spark"),
       );
       const databaseObservation = database?.observation;
       if (
@@ -407,7 +409,10 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           message: "The stack owner or primary database is unavailable for environment export.",
           suggestion: "Run supabase stack start first.",
         });
-      if (databaseObservation.config.service !== "database")
+      if (
+        databaseObservation.config.service !== "database" &&
+        databaseObservation.config.service !== "spark"
+      )
         return yield* new StackCommandStatusError({
           reason: "lifecycle",
           message: "The primary database configuration is unavailable for environment export.",

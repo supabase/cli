@@ -97,6 +97,40 @@ describe("loadStackConfig", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("runs Spark, its meta adapter and Studio instead of the Postgres services", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-spark"
+[api]
+port = 55521
+[experimental.spark]
+enabled = true
+executable = "/opt/spark/bin/spark"
+`);
+      const config = yield* load(root);
+      const services = yield* config.creations("stack-spark");
+
+      expect(services.map(({ service }) => service)).toEqual(["spark", "sparkmeta", "studio"]);
+      expect(byService(services).get("spark")).toEqual({
+        service: "spark",
+        config: { executable: "/opt/spark/bin/spark", projectRoot: root },
+        endpoints: { http: { port: 55521 } },
+      });
+      expect(byService(services).get("sparkmeta")?.config).toEqual({ projectRoot: root });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("requires an absolute Spark binary path when Spark is enabled", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-spark-bin"
+[experimental.spark]
+enabled = true
+`);
+      const error = yield* load(root).pipe(Effect.flip);
+
+      expect(error.message).toContain("experimental.spark.executable");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("decodes the default recipe and leaves listeners automatic", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-defaults"

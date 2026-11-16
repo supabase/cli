@@ -33,8 +33,6 @@
         "src/shared/feedback/database.types.ts",
         // Starter templates read as text by compute-stacks.macro.ts, never imported.
         "src/shared/compute/stacks/**",
-        // Experimental Spark meta gateway, spawned as a standalone Bun process.
-        "src/experimental/spark-gateway/**",
       ],
       // Binaries the machine provides rather than npm.
       "ignoreBinaries": [

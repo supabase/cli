@@ -86,6 +86,40 @@ stack = true
     );
   });
 
+  it.effect("routes a Spark project to the stack backend from config or the shell", () =>
+    withServices(
+      Effect.gen(function* () {
+        const root = yield* project(`project_id = "spark-routing-test"
+[experimental.spark]
+enabled = true
+`);
+        const plain = yield* project(`project_id = "spark-routing-off"\n`);
+        expect(yield* resolve({ args: ["start"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["db", "push"], cwd: root, env: {} })).toBe("stack");
+        expect(
+          yield* resolve({
+            args: ["start"],
+            cwd: root,
+            env: { SUPABASE_EXPERIMENTAL_SPARK_ENABLED: "false" },
+          }),
+        ).toBe("legacy");
+        expect(
+          yield* resolve({
+            args: ["start"],
+            cwd: plain,
+            env: { SUPABASE_EXPERIMENTAL_SPARK_ENABLED: "1" },
+          }),
+        ).toBe("stack");
+        const invalid = yield* resolve({
+          args: ["start"],
+          cwd: plain,
+          env: { SUPABASE_EXPERIMENTAL_SPARK_ENABLED: "yes" },
+        }).pipe(Effect.flip);
+        expect(invalid).toBeInstanceOf(StackRoutingError);
+      }),
+    ),
+  );
+
   it.effect("keeps storage on legacy when the feature flag is disabled", () => {
     return withServices(
       Effect.gen(function* () {
