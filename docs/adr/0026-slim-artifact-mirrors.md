@@ -198,9 +198,12 @@ build.
 
 Plan and apply run from the same checkout of the default branch in one job, so a re-run always
 recomputes from the latest develop: a stale plan can never be applied, and a superseded PR's branch
-is rewritten (force-pushed) in place rather than raced by a new one — a superseded PR is never
-auto-closed. A backlog republish of an older upstream version naturally plans nothing. A branch
-whose PR is in the merge queue rejects the force-push; the run waits up to 30 minutes (less when
+is rewritten (force-pushed with a lease on the tip it just read) in place rather than raced by a new
+one — a superseded PR is never auto-closed. A branch that carries a commit not authored by the
+workflow, such as a fix a maintainer pushed so the bump passes CI, is never rewritten: the newer
+release is committed on top of it and pushed as a fast-forward, so the fix survives. A backlog
+republish of an older upstream version naturally plans nothing. A branch whose PR is in the merge
+queue rejects the push; the run waits up to 30 minutes (less when
 earlier work leaves the app token too little lifetime) for the queue to merge or drop that PR, then
 re-sends the same dispatch and stops, so a fresh run re-plans every remaining update from the
 updated default branch. At most three re-sends run in a row. The concurrency group keeps every
