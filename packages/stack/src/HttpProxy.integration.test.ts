@@ -13,7 +13,7 @@ import { captureLogs } from "../tests/logs.ts";
 import { ProxyError } from "./Proxy.ts";
 import { API_TLS_CHECK_PATH, makeHttpProxy, type HttpAccess, type HttpRoute } from "./HttpProxy.ts";
 import { externalAddress, onCi, runCommand } from "../tests/api-tls.ts";
-import { sharedRoutes } from "./host/Endpoints.ts";
+import { joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
 
 const listen = (server: Server | NetServer, options?: { readonly beforeClose?: () => void }) =>
   Effect.acquireRelease(
@@ -749,6 +749,58 @@ it.live("adds a route's default headers only when the client sent none", () =>
       });
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "refuses cross-site browser requests to postgres-meta and MCP while local callers pass",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const backend = createServer((incoming, response) => response.end(incoming.method));
+        const backendAddress = yield* listen(backend);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes(
+          (["pgmeta", "studio"] as const).flatMap((service) =>
+            (joinRoutes({ service }, "http") ?? []).map((route) => ({
+              ...route,
+              id: service,
+              target: Effect.succeed(backendAddress),
+            })),
+          ),
+        );
+        const client = yield* HttpClient.HttpClient;
+        const send = (method: "OPTIONS" | "POST", path: string, origin?: string) =>
+          client.execute(
+            HttpClientRequest.make(method)(`http://127.0.0.1:${proxy.port}${path}`).pipe(
+              HttpClientRequest.setHeaders(origin === undefined ? {} : { origin }),
+            ),
+          );
+
+        for (const path of ["/pg/query", "/mcp"]) {
+          for (const method of ["OPTIONS", "POST"] as const) {
+            for (const origin of [
+              "https://evil.example",
+              "null",
+              "http://localhost.evil.example",
+            ]) {
+              const refused = yield* send(method, path, origin);
+              expect(refused.status).toBe(403);
+              expect(refused.headers["access-control-allow-origin"]).toBeUndefined();
+            }
+          }
+          expect(yield* (yield* send("POST", path)).text).toBe("POST");
+          const local = yield* send("POST", path, "http://localhost:54323");
+          expect(yield* local.text).toBe("POST");
+          expect(local.headers["access-control-allow-origin"]).toBe("http://localhost:54323");
+          expect((yield* send("POST", path, "http://127.0.0.1:3000")).status).toBe(200);
+          const socket = yield* rawClient(
+            proxy.port,
+            `GET ${path} HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`,
+          );
+          expect(yield* responseHead(socket)).toMatch(/^HTTP\/1\.1 403 /u);
+        }
+      }),
+    ).pipe(Effect.provide([NodeServices.layer, NodeHttpClient.layerNodeHttp])),
 );
 
 it.live(

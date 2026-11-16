@@ -630,7 +630,7 @@ describe("functions serve runtime template (offline)", () => {
           "-e",
           "KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
           "-e",
-          "KONG_PLUGINS=request-transformer,cors",
+          "KONG_PLUGINS=request-transformer,cors,pre-function",
           "-e",
           "KONG_NGINX_WORKER_PROCESSES=1",
           "-v",

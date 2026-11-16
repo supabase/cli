@@ -26,6 +26,7 @@ type RouteContribution =
       | "forwardedPrefix"
       | "keyRewrite"
       | "upstreamCors"
+      | "localOriginOnly"
     > &
       Partial<Pick<HttpRoute, "target">>)
   | Pick<HttpFileRoute, "prefix" | "file">;

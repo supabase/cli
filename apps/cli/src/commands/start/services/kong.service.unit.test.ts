@@ -171,7 +171,7 @@ describe("buildKongContainerSpec", () => {
         KONG_DNS_ORDER: "LAST,A,CNAME",
         KONG_DNS_NOT_FOUND_TTL: "1",
         KONG_DNS_VALID_TTL: "5",
-        KONG_PLUGINS: "request-transformer,cors",
+        KONG_PLUGINS: "request-transformer,cors,pre-function",
         KONG_PORT_MAPS: "54321:8000",
         KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "160k",
         KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k",

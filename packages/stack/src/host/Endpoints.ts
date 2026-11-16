@@ -194,9 +194,16 @@ export const joinRoutes = (
   if (name !== "http") return undefined;
   switch (creation.service) {
     case "studio":
-      return [{ prefix: "/mcp", upstreamPrefix: "/api/mcp", forwardedPrefix: "/mcp" }];
+      return [
+        {
+          prefix: "/mcp",
+          upstreamPrefix: "/api/mcp",
+          forwardedPrefix: "/mcp",
+          localOriginOnly: true,
+        },
+      ];
     case "pgmeta":
-      return [{ prefix: "/pg", upstreamPrefix: "/" }];
+      return [{ prefix: "/pg", upstreamPrefix: "/", localOriginOnly: true }];
     case "analytics":
       return [{ prefix: "/analytics/v1", upstreamPrefix: "/" }];
     case "pooler":
