@@ -25,8 +25,6 @@ jobs:
       - name: Regenerate API package
         run: pnpm generate
         working-directory: packages/api
-        env:
-          SUPABASE_API_URL: https://api.supabase.com
 
       - name: Regenerate API commands
         run: pnpm --filter supabase generate
@@ -65,6 +63,6 @@ jobs:
           body: |
             This PR was automatically created to sync the generated `@supabase/api` package with the latest Management API OpenAPI document.
 
-            Changes were detected in the upstream OpenAPI documents exposed by `https://api.supabase.com/api/v1-json` and `https://api.supabase.com/api/v2-json`.
+            Changes were detected in the upstream OpenAPI documents selected by `packages/api/scripts/openapi-source.json`.
           branch: sync/api-package
           base: develop

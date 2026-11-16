@@ -332,6 +332,9 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["organization_projects_read"]],
     oauthScope: "projects:read",
   },
+  "v2-enable-warehouse": { fga: [["database_write"]], oauthScope: "database:write" },
+  "v2-create-warehouse-setup": { fga: [["database_write"]], oauthScope: "database:write" },
+  "v2-get-warehouse-setup": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-list-log-drains": { fga: [["analytics_config_read"]], oauthScope: "analytics_config:read" },
   "v2-create-log-drain": {
     fga: [["analytics_config_write"]],

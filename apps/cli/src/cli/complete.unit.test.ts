@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import { Cause, Effect } from "effect";
 
-import { rootCommand } from "./root.ts";
+import { rootCommand, rootCommandForFeatures } from "./root.ts";
 import { StackRoutingError } from "../command-internal/stack-backend.ts";
 import {
   CompletionDirective,
@@ -240,15 +240,26 @@ describe("respondToComplete", () => {
   });
 
   describe("required-flag short-circuit", () => {
-    it("offers exactly the one required flag and nothing else for a command with a single required flag", () => {
-      const result = respondToComplete(rootCommand, ["__complete", "domains", "create", ""]);
+    it.each([
+      {
+        command: ["domains", "create"],
+        name: "--custom-hostname",
+        description: "The custom hostname to use for your Supabase project.",
+      },
+      {
+        command: ["warehouse", "enable"],
+        name: "--schema",
+        description:
+          "Source PostgreSQL schema. Without tables, selects its currently eligible tables only.",
+      },
+    ])("offers only the required $name for $command", ({ command, name, description }) => {
+      const result = respondToComplete(rootCommandForFeatures({ warehouseEnabled: true }), [
+        "__complete",
+        ...command,
+        "",
+      ]);
       expect(result).toEqual({
-        candidates: [
-          {
-            name: "--custom-hostname",
-            description: "The custom hostname to use for your Supabase project.",
-          },
-        ],
+        candidates: [{ name, description }],
         directive: CompletionDirective.Default,
       });
     });

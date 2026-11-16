@@ -32,6 +32,12 @@ const inspectRule = Schema.Struct({
 }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({})));
 
 export const experimental = Schema.Struct({
+  warehouse: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description: "Enable the experimental Warehouse command family.",
+      tags,
+    }),
+  ),
   compute: Schema.optionalKey(
     Schema.Boolean.annotate({
       description: "Enable the experimental compute command family.",

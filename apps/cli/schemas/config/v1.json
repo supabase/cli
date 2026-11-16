@@ -4314,6 +4314,18 @@
     "experimental": {
       "type": "object",
       "properties": {
+        "warehouse": {
+          "description": "Enable the experimental Warehouse command family.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "pattern": "^env\\((.*)\\)$"
+            }
+          ]
+        },
         "compute": {
           "description": "Enable the experimental compute command family.",
           "anyOf": [
@@ -9239,6 +9251,18 @@
                   "experimental": {
                     "type": "object",
                     "properties": {
+                      "warehouse": {
+                        "description": "Enable the experimental Warehouse command family.",
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^env\\((.*)\\)$"
+                          }
+                        ]
+                      },
                       "compute": {
                         "description": "Enable the experimental compute command family.",
                         "anyOf": [

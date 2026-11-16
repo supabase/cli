@@ -4,7 +4,7 @@ import { Config, Data, Effect, FileSystem, Option, Path, Result, Schema } from "
 import { pickCliConfigKey } from "../../config/cli-config-key.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveWorkdir } from "../../config/command-settings.layer.ts";
-import { rootFlagTokens } from "../cli/run.ts";
+import { extractCommandPath, hasRootVersionFlag, rootFlagTokens } from "../cli/run.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -23,6 +23,7 @@ export class ExperimentalFeatureFlagError extends Data.TaggedError("Experimental
 const featureSchemas = {
   stack: CliConfigSchema.fields.experimental.to.fields.stack,
   compute: CliConfigSchema.fields.experimental.to.fields.compute,
+  warehouse: CliConfigSchema.fields.experimental.to.fields.warehouse,
 } as const;
 
 const firstExplicitLongFlagValue = (
@@ -76,7 +77,32 @@ export const readExperimentalFeatureConfig = (input: {
 const featureKeys = {
   stack: CliConfigKeys.experimental.stack,
   compute: CliConfigKeys.experimental.compute,
+  warehouse: CliConfigKeys.experimental.warehouse,
 } as const;
+
+/** Resolves an opt-in family only for its own commands and root help/completion. */
+export const resolveExperimentalCommandFamily = (input: {
+  readonly feature: "compute" | "warehouse";
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
+}) =>
+  Effect.gen(function* () {
+    const routingArgs =
+      input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
+        ? input.args.slice(0, -1)
+        : input.args;
+    if (hasRootVersionFlag(routingArgs)) return false;
+    const commandPath = extractCommandPath(routingArgs);
+    const completePath =
+      commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
+        ? commandPath.slice(1)
+        : commandPath;
+    if (completePath[0] !== undefined && completePath[0] !== input.feature) return false;
+    return yield* resolveExperimentalFeature({
+      feature: input.feature,
+      configValue: readExperimentalFeatureConfig({ ...input, args: routingArgs }),
+    });
+  });
 
 /**
  * Resolves one experimental boolean: a shell boolean override, else the project

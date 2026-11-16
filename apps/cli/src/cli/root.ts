@@ -57,6 +57,7 @@ import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
+import { warehouseCommand } from "../commands/experimental/warehouse/warehouse.command.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { machineErrorContextLayer } from "../shared/output/machine-error-context.layer.ts";
@@ -147,6 +148,7 @@ interface RootCommandFeatures {
   readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
+  readonly warehouseEnabled?: boolean;
 }
 
 /** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
@@ -205,6 +207,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       unlinkCommand,
       vanitySubdomainsCommand,
       whoamiCommand,
+      ...(options.warehouseEnabled ? [warehouseCommand] : []),
     ]),
     Command.provide(
       Layer.unwrap(

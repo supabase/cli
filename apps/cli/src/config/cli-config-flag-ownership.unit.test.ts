@@ -14,7 +14,7 @@ const declarations: ReadonlyArray<{ path: string; names: ReadonlyArray<string> }
 const ownerOf = new Map(declarations.flatMap(({ path, names }) => names.map((n) => [n, path])));
 
 const commands = walkCommandTree(
-  rootCommandForFeatures({ stackBackend: "stack", computeEnabled: true }),
+  rootCommandForFeatures({ stackBackend: "stack", computeEnabled: true, warehouseEnabled: true }),
 );
 
 const ownedFlags = commands.flatMap((entry) =>
