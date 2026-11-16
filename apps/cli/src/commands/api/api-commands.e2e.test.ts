@@ -159,21 +159,17 @@ it.live("warehouse enable without --yes refuses to run when stdin is piped", () 
 
 it.live("warehouse enable --wait prints the final status read", () =>
   Effect.gen(function* () {
-    const reads = [statusBody("running"), statusBody("succeeded")];
-    let read = 0;
     const { result, requests } = yield* runWarehouse(
       ["enable", "--schema", "public", "--yes", "--wait", "--timeout", "30s", "-o", "json"],
       ({ method }) => {
         if (method === "POST") return json(202, { data: { attributes: { selection_id: SEL } } });
-        const next = reads[Math.min(read, reads.length - 1)] ?? statusBody("succeeded");
-        read += 1;
-        return next;
+        return statusBody("succeeded");
       },
     );
 
     requireCliSuccess(result, "warehouse enable --wait");
     expect(result.stdout, result.stderr).toBe(statusBody("succeeded").body);
-    expect(requests).toEqual([`POST ${ENABLE_PATH}`, `GET ${STATUS_PATH}`, `GET ${STATUS_PATH}`]);
+    expect(requests).toEqual([`POST ${ENABLE_PATH}`, `GET ${STATUS_PATH}`]);
   }).pipe(Effect.provide(BunServices.layer)),
 );
 

@@ -858,7 +858,10 @@ export const runCli = Effect.fnUntraced(function* <
           const mapped = standardFailureFor(cause, suggestionContext);
           return {
             exitCode: mapped.exitCode,
-            pending: { ...mapped, machine: isMachineFailureMode(args, tty.stdoutIsTty) },
+            pending: {
+              ...mapped,
+              machine: isMachineFailureMode(args, tty.stdoutIsTty, outputFormat),
+            },
           } satisfies RunOutcome;
         }
         // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a

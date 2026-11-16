@@ -27,7 +27,7 @@ export type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "fail
  * `x-operation`.
  */
 export interface ApiCommandOverride {
-  /** Dot-separated noun path, e.g. `warehouse`. Its first segment must be a key of `nouns`. */
+  /** A single noun, e.g. `warehouse`; it must be a key of `nouns`. */
   readonly group?: string;
   /** A member of `verbVocabulary`. */
   readonly method?: string;

@@ -10,8 +10,8 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const surface = Effect.runPromise(commandSurface());
 
 const titlesOf = (result: unknown): ReadonlyArray<unknown> =>
-  typeof result === "object" && result !== null && "oneOf" in result && Array.isArray(result.oneOf)
-    ? result.oneOf.map((branch) =>
+  typeof result === "object" && result !== null && "anyOf" in result && Array.isArray(result.anyOf)
+    ? result.anyOf.map((branch) =>
         typeof branch === "object" && branch !== null && "title" in branch ? branch.title : null,
       )
     : [];

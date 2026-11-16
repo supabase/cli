@@ -33,10 +33,8 @@ const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
 const BINARY_PATH = fileURLToPath(new URL(`../../dist/supabase${BINARY_EXT}`, import.meta.url));
 
-// E2E subprocesses should only enter agent output mode when a test explicitly
-// opts in via `options.env`. Keep this list aligned with @vercel/detect-agent
-// env probes so a developer's shell cannot accidentally change CLI rendering.
-const AGENT_DETECTION_ENV_KEYS: readonly string[] = [
+/** Env probes from `@vercel/detect-agent`; subprocess tests clear them so the developer's shell cannot switch the CLI into agent output mode. */
+export const AGENT_DETECTION_ENV_KEYS: readonly string[] = [
   "AI_AGENT",
   "CURSOR_TRACE_ID",
   "CURSOR_AGENT",

@@ -16,6 +16,15 @@ import {
   ApiCommandUsageError,
   ApiCommandWaitTimeoutError,
 } from "../../commands/api/api-command.errors.ts";
+import {
+  LinkBranchListNetworkError,
+  LinkBranchListStatusError,
+  LinkBranchNotFoundError,
+  LinkBranchNotLinkedError,
+  LinkBranchNotReadyError,
+  LinkParentRefInvalidError,
+} from "../../command-internal/target/branch-resolution.errors.ts";
+import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { standardFailureFor } from "./standard-errors.ts";
 
 const request = HttpClientRequest.get("https://api.example.test/v1/projects");
@@ -153,6 +162,61 @@ describe("standardFailureFor", () => {
         hint: "Pass only one target flag.",
       },
     },
+    {
+      name: "unlinked project",
+      cause: Cause.fail(new ProjectRefNotLinkedError({ message: "Cannot find project ref." })),
+      expected: { exitCode: 2, code: "usage_error", status: null, hint: null },
+    },
+    {
+      name: "branch without a linked parent",
+      cause: Cause.fail(
+        new LinkBranchNotLinkedError({ message: "No parent.", suggestion: "Run supabase link." }),
+      ),
+      expected: { exitCode: 2, code: "usage_error", status: null, hint: "Run supabase link." },
+    },
+    {
+      name: "invalid linked parent ref",
+      cause: Cause.fail(
+        new LinkParentRefInvalidError({ message: "Bad ref.", suggestion: "Re-run supabase link." }),
+      ),
+      expected: { exitCode: 2, code: "usage_error", status: null, hint: "Re-run supabase link." },
+    },
+    {
+      name: "unknown branch",
+      cause: Cause.fail(
+        new LinkBranchNotFoundError({ message: "No such branch.", suggestion: "List branches." }),
+      ),
+      expected: { exitCode: 2, code: "usage_error", status: null, hint: "List branches." },
+    },
+    {
+      name: "branch not ready",
+      cause: Cause.fail(
+        new LinkBranchNotReadyError({ branch: "b", status: "CREATING_PROJECT", message: "Wait." }),
+      ),
+      expected: { exitCode: 1, code: "api_error", status: null, hint: null },
+    },
+    {
+      name: "branch list transport failure",
+      cause: Cause.fail(new LinkBranchListNetworkError({ message: "offline" })),
+      expected: { exitCode: 1, code: "network_error", status: null, hint: null },
+    },
+    {
+      name: "branch list decode failure",
+      cause: Cause.fail(new LinkBranchListNetworkError({ message: "bad body", decode: true })),
+      expected: { exitCode: 1, code: "api_error", status: null, hint: null },
+    },
+    ...[
+      [401, "unauthenticated"],
+      [403, "forbidden"],
+      [404, "not_found"],
+      [500, "api_error"],
+    ].map(([status, code]) => ({
+      name: `branch list status ${status}`,
+      cause: Cause.fail(
+        new LinkBranchListStatusError({ status: Number(status), body: "", message: "failed" }),
+      ),
+      expected: { exitCode: 1, code: String(code), status: Number(status), hint: null },
+    })),
     {
       name: "defect",
       cause: Cause.die(new Error("boom")),

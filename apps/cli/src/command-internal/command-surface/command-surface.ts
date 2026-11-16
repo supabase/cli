@@ -63,7 +63,7 @@ interface CommandSurfaceEntry {
   readonly permissions?: CommandPermissions;
   readonly arguments: readonly SurfaceArgument[];
   readonly flags: Readonly<Record<string, SurfaceFlag>>;
-  /** `"undeclared"` for a hand-written command, else a JSON Schema `oneOf` of titled branches. */
+  /** `"undeclared"` for a hand-written command, else a JSON Schema `anyOf` of titled branches. */
   readonly result: "undeclared" | JsonSchema;
   readonly errors: "standard" | "legacy";
   readonly api?: SurfaceApi;
@@ -210,7 +210,7 @@ const apiSurface = Effect.fn("CommandSurface.api")(function* (command: CommandRo
           : { contentType: schemas.request.contentType, schema: schemas.request.schema },
       bindings,
     } satisfies SurfaceApi,
-    result: { oneOf: branches } satisfies JsonSchema,
+    result: { anyOf: branches } satisfies JsonSchema,
     sensitiveFlags: new Set(
       generated.flags.filter((flag) => flag.sensitive).map((flag) => flag.name),
     ),

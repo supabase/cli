@@ -148,7 +148,7 @@ const handle = Effect.fn("api-command.run")(function* (
 
       if (flags.dryRun) {
         yield* Effect.annotateCurrentSpan("run.outcome", "dry_run");
-        return yield* writeDocument(previewRequest(entry, decoded, flags.api), format);
+        return yield* writeDocument(previewRequest(entry, decoded), format);
       }
       if (!entry.readOnly) {
         yield* requireHostedMutationConsent({ action: consentAction(entry) });

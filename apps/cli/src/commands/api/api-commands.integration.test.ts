@@ -37,6 +37,7 @@ import {
   ApiCommandWaitTimeoutError,
 } from "./api-command.errors.ts";
 import type { ApiCommandEntry } from "./api-command.model.ts";
+import { assembleInput, decodeInput, previewRequest } from "./api-command-request.ts";
 import { apiCommands } from "./generated.ts";
 import { readApiCommand } from "./api-command.annotation.ts";
 import { readCommandStage } from "./api-command-stage.ts";
@@ -398,6 +399,29 @@ describe("generated warehouse commands", () => {
         });
       });
     });
+
+    it.effect("masks a sensitive field supplied through --body in the preview", () =>
+      Effect.gen(function* () {
+        const sensitiveEntry: ApiCommandEntry = {
+          ...enable,
+          flags: enable.flags.map((flag) =>
+            flag.name === "schema" ? { ...flag, sensitive: true } : flag,
+          ),
+        };
+        const body = Option.some({
+          data: { type: "warehouse_setup", attributes: { schema: "top-secret" } },
+        });
+        const input = yield* assembleInput(sensitiveEntry, VALID_REF, {}, body);
+        const decoded = yield* decodeInput(sensitiveEntry, input);
+
+        const preview = previewRequest(sensitiveEntry, decoded);
+
+        expect(encodeJson(preview)).not.toContain("top-secret");
+        expect(preview.body).toEqual({
+          data: { type: "warehouse_setup", attributes: { schema: "[redacted]" } },
+        });
+      }),
+    );
 
     it.effect("previews a read with a null body", () => {
       const { out, run } = setup(["warehouse", "status", "--inspect-fdw", "false", "--dry-run"], {

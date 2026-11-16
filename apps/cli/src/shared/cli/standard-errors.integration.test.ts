@@ -4,6 +4,8 @@ import { Effect, FileSystem, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 
+import { AGENT_DETECTION_ENV_KEYS } from "../../../tests/helpers/cli.ts";
+
 const FIXTURE = fileURLToPath(
   new URL("../../../tests/fixtures/standard-errors-cli.ts", import.meta.url),
 );
@@ -23,6 +25,7 @@ const runFixture = Effect.fn("StandardErrorsTest.run")(function* (
   const child = yield* spawner.spawn(
     ChildProcess.make(bun, [FIXTURE, ...args], {
       env: {
+        ...Object.fromEntries(AGENT_DETECTION_ENV_KEYS.map((key) => [key, ""])),
         SUPABASE_HOME: home,
         SUPABASE_NO_KEYRING: "1",
         SUPABASE_TELEMETRY_DISABLED: "1",
@@ -122,6 +125,17 @@ describe("errors.standard failure contract", () => {
       const { exitCode, stderr } = yield* runFixture(["crash"]);
       expect(exitCode).toBe(1);
       expect(yield* decodeJson(lastLine(stderr))).toMatchObject({ code: "internal_error" });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("an agent run on a terminal still reports the JSON document", () =>
+    Effect.gen(function* () {
+      const { exitCode, stdout, stderr } = yield* runFixture(["conflict", "--agent=yes"], {
+        STANDARD_ERRORS_FIXTURE_TTY: "1",
+      });
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+      expect(yield* decodeJson(lastLine(stderr))).toMatchObject({ code: "conflict", status: 409 });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

@@ -378,7 +378,7 @@ describe("generated command bindings", () => {
 
       it("declares the operation's success response as the response result", () => {
         expect(Object.keys(apiCommandSchemas)).toContain(operationId);
-        const branches = asList(asRecord(row.result)["oneOf"]).map(asRecord);
+        const branches = asList(asRecord(row.result)["anyOf"]).map(asRecord);
         expect(shapeOf(branches.find((branch) => branch["title"] === "response"))).toEqual(
           shapeOf(operation.responseSchema),
         );

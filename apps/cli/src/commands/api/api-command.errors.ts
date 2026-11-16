@@ -38,7 +38,7 @@ export class ApiCommandOperationFailedError extends Data.TaggedError(
   readonly hint: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
+    return actionability.apiStatus;
   }
 }
 
@@ -49,6 +49,6 @@ export class ApiCommandWaitTimeoutError extends Data.TaggedError("ApiCommandWait
   readonly hint: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return { ...actionability.invalidInput, fingerprint_suffix: "operation_timeout" };
+    return { ...actionability.apiStatus, fingerprint_suffix: "operation_timeout" };
   }
 }

@@ -65,5 +65,5 @@ if (simulateTty) {
 }
 
 await Effect.runPromise(
-  runCli(root, { agentDefaultOutputFormat: "text", analyticsLayer: mockAnalytics().layer }),
+  runCli(root, { agentDefaultOutputFormat: "json", analyticsLayer: mockAnalytics().layer }),
 );

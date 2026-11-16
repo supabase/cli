@@ -61,8 +61,9 @@ Query: `inspect_fdw=true|false` and `selection_id=<id>`, each only when its flag
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Generated flag values are never recorded; only the target flags and the `--dry-run`, `--wait`
-and `--timeout` runtime flags appear in `flags`.
+Only the names of flags passed appear in `flags`. Target flags record their values, and `--dry-run`
+records `true`. Generated field flags (`--inspect-fdw`, `--selection-id`), `--body` and `--file` are
+recorded as `<redacted>`.
 
 ## Output
 

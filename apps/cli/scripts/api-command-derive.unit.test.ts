@@ -384,6 +384,47 @@ describe("deriveApiCommands", () => {
     expect(unreviewed.problems.join("\n")).toContain('"api_key" looks like a credential');
   });
 
+  it("resolves wait pointers from a +json response", () => {
+    const jsonApi = (schema: unknown) => ({
+      "200": { description: "ok", content: { "application/vnd.api+json": { schema } } },
+    });
+    const result = derive(
+      {
+        "create-thing": operation({
+          "x-operation": { group: "thing", method: "create" },
+          responses: jsonApi({ type: "object", properties: { id: { type: "string" } } }),
+        }),
+        "get-thing": operation({
+          "x-operation": { group: "thing", method: "get" },
+          parameters: [
+            { name: "ref", in: "path", required: true, schema: { type: "string" } },
+            { name: "thing_id", in: "query", schema: { type: "string" } },
+          ],
+          responses: jsonApi({
+            type: "object",
+            properties: { status: { type: "string", enum: ["done", "pending"] } },
+          }),
+        }),
+      },
+      {
+        "create-thing": {
+          wait: {
+            read: "get-thing",
+            params: { thing_id: "/id" },
+            status: "/status",
+            succeeded: ["done"],
+            failed: [],
+          },
+        },
+      },
+    );
+
+    expect(result.problems).toEqual([]);
+    expect(result.entries.find((entry) => entry.operationId === "create-thing")?.wait?.read).toBe(
+      "get-thing",
+    );
+  });
+
   describe("wait from response links", () => {
     const changeResponse = (links: unknown) => ({
       "202": {
@@ -527,6 +568,18 @@ describe("deriveApiCommands", () => {
   });
 
   it.each([
+    [
+      "a nested group",
+      { "create-thing": operation({}) },
+      { "create-thing": { group: "thing.sub", method: "create" } },
+      'group "thing.sub" must be a single noun',
+    ],
+    [
+      "an operation without a ref path parameter",
+      { "create-thing": operation({ parameters: [] }) },
+      { "create-thing": create },
+      'operation has no "ref" path parameter',
+    ],
     [
       "a verb outside the vocabulary",
       { "create-thing": operation({}) },

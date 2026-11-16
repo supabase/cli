@@ -67,8 +67,9 @@ nothing, before consent.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Generated flag values are never recorded; only the target flags and the `--dry-run`, `--wait`
-and `--timeout` runtime flags appear in `flags`.
+Only the names of flags passed appear in `flags`. Target flags record their values, and `--dry-run`
+and `--wait` record `true`. Generated field flags, `--body`, `--file` and `--timeout` are recorded as
+`<redacted>`.
 
 ## Output
 

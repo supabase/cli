@@ -17,7 +17,7 @@ interface AgentOutputOptions {
   readonly isBuiltInTextRequest?: boolean;
 }
 
-export function readLongFlag(args: ReadonlyArray<string>, name: string): string | undefined {
+function readLongFlag(args: ReadonlyArray<string>, name: string): string | undefined {
   const prefix = `${name}=`;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];

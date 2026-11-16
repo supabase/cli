@@ -43,7 +43,6 @@ const CREDENTIAL_TOKENS: ReadonlySet<string> = new Set([
 const VERBS: ReadonlySet<string> = new Set(verbVocabulary);
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
-const MAX_COMMAND_WORDS = 4;
 const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/u;
 
 export class ApiCommandGenerationError extends Schema.TaggedError<ApiCommandGenerationError>()(
@@ -303,7 +302,7 @@ const classifySuccess = (
     }
     const content = asRecord(asRecord(resolve(spec, responses[code]))?.content) ?? {};
     const types = Object.keys(content);
-    const json = types.find((type) => type === "application/json" || type.endsWith("+json"));
+    const json = jsonMediaType(content);
     if (types.length === 0) {
       classified.push({ status, kind: "empty" });
     } else if (json !== undefined) {
@@ -397,12 +396,18 @@ const resolvePointer = (spec: JsonObject, root: unknown, pointer: string): unkno
   return current;
 };
 
+/** The JSON media type a response offers: `application/json` or a `+json` suffix type. */
+const jsonMediaType = (content: JsonObject): string | undefined =>
+  Object.keys(content).find((type) => type === "application/json" || type.endsWith("+json"));
+
 const successSchema = (spec: JsonObject, operation: Operation): unknown => {
   const responses = asRecord(operation.node.responses) ?? {};
   for (const code of Object.keys(responses).sort()) {
     if (!code.startsWith("2")) continue;
     const response = asRecord(resolve(spec, responses[code]));
-    const media = asRecord(asRecord(response?.content)?.["application/json"]);
+    const content = asRecord(response?.content) ?? {};
+    const mediaType = jsonMediaType(content);
+    const media = mediaType === undefined ? undefined : asRecord(content[mediaType]);
     if (media?.schema !== undefined) return media.schema;
   }
   return undefined;
@@ -595,12 +600,10 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     }
     const failuresBefore = problems.length;
 
-    const command = [...group.split("."), method];
+    const command = [group, method];
+    if (group.includes(".")) fail(`group "${group}" must be a single noun`);
     if (!command.every((segment) => KEBAB.test(segment))) {
       fail(`command "${command.join(" ")}" must be lowercase kebab-case words`);
-    }
-    if (command.length > MAX_COMMAND_WORDS) {
-      fail(`command "${command.join(" ")}" exceeds ${MAX_COMMAND_WORDS} words`);
     }
     if (!VERBS.has(method)) {
       fail(`verb "${method}" is outside the vocabulary; use a listed verb`);
@@ -742,6 +745,10 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       if (!fields.some((field) => field.location === "body" && field.key === key)) {
         fail(`sensitive "${key}" matches no body field`);
       }
+    }
+
+    if (pathBindings.length === 0) {
+      fail('unsupported in this runtime: operation has no "ref" path parameter');
     }
 
     const flags: Array<ApiCommandFlag> = [];

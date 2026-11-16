@@ -18,6 +18,7 @@ import {
   ApiCommandUsageError,
   ApiCommandWaitTimeoutError,
 } from "../../commands/api/api-command.errors.ts";
+import { LinkBranchListStatusError } from "../../command-internal/target/branch-resolution.errors.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import { writeStdio } from "../output/output.layer.ts";
 import {
@@ -26,7 +27,8 @@ import {
   CliErrorKind,
 } from "../telemetry/error-actionability.ts";
 import { isMachineResourceFormat } from "../output/resource-format.ts";
-import { readLongFlag, readOutputFlag } from "./agent-output.ts";
+import type { OutputFormat } from "../output/types.ts";
+import { readOutputFlag } from "./agent-output.ts";
 import {
   findCommand,
   resolvedCommandPathForArgv,
@@ -113,6 +115,14 @@ const failure = (
   document: { code, status: null, message, hint, ...extras },
 });
 
+/** Declared categories meaning the invocation or the project config must change before a retry can work. */
+const USAGE_CATEGORIES: ReadonlySet<CliErrorCategory> = new Set([
+  CliErrorCategory.InvalidInput,
+  CliErrorCategory.ProjectNotLinked,
+  CliErrorCategory.MissingProjectRef,
+  CliErrorCategory.InvalidConfig,
+]);
+
 const messageOf = (error: unknown, fallback: string): string =>
   error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
 
@@ -128,6 +138,12 @@ const failureForError = (
     return {
       exitCode: EXIT_FAILURE,
       document: documentForStatus(error.status, error.message, error),
+    };
+  }
+  if (error instanceof LinkBranchListStatusError) {
+    return {
+      exitCode: EXIT_FAILURE,
+      document: documentForStatus(error.status, error.message, {}),
     };
   }
   if (error instanceof ApiCommandUsageError) {
@@ -174,10 +190,19 @@ const failureForError = (
   const declared = classifyCliErrorActionability(error);
   if (
     declared.error_kind === CliErrorKind.UserActionable &&
-    declared.error_category === CliErrorCategory.InvalidInput
+    USAGE_CATEGORIES.has(declared.error_category)
   ) {
     const normalized = normalizeCause(cause, context);
     return failure(EXIT_USAGE, "usage_error", normalized.message, normalized.suggestion ?? null);
+  }
+  if (declared.error_kind === CliErrorKind.ExternalService) {
+    const normalized = normalizeCause(cause, context);
+    return failure(
+      EXIT_FAILURE,
+      declared.error_category === CliErrorCategory.Network ? "network_error" : "api_error",
+      normalized.message,
+      normalized.suggestion ?? null,
+    );
   }
   return failure(EXIT_FAILURE, "internal_error", normalizeCause(cause).message);
 };
@@ -210,19 +235,15 @@ export const errorsContractForRun = (
   return node === undefined ? "legacy" : readCommandErrorsContract(node);
 };
 
-/** Whether failures render as the JSON document: a machine `-o` or `--output-format`, or stdout that is not a TTY. */
+/** Whether failures render as the JSON document: a machine `-o`, a resolved non-text output format, or stdout that is not a TTY. */
 export const isMachineFailureMode = (
   args: ReadonlyArray<string>,
   stdoutIsTty: boolean,
-): boolean => {
-  const outputFormat = readLongFlag(args, "--output-format");
-  return (
-    !stdoutIsTty ||
-    outputFormat === "json" ||
-    outputFormat === "stream-json" ||
-    isMachineResourceFormat(Option.fromNullishOr(readOutputFlag(args)))
-  );
-};
+  outputFormat: OutputFormat,
+): boolean =>
+  !stdoutIsTty ||
+  outputFormat !== "text" ||
+  isMachineResourceFormat(Option.fromNullishOr(readOutputFlag(args)));
 
 /** Renders the failure as the stderr text: a leading blank line plus JSON, or a human message and hint. */
 const renderStandardFailure = (pending: PendingStandardFailure): string => {

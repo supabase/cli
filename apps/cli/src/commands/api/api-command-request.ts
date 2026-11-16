@@ -3,7 +3,7 @@ import { Effect, FileSystem, Option, Predicate, Schema, type SchemaIssue } from 
 
 import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import type { ApiFlagValue } from "./api-command-flags.ts";
-import { writePointer } from "./api-command-pointer.ts";
+import { readPointer, writePointer } from "./api-command-pointer.ts";
 import { ApiCommandUsageError } from "./api-command.errors.ts";
 import type { ApiCommandEntry } from "./api-command.model.ts";
 
@@ -208,11 +208,7 @@ const pick = (source: object, keys: ReadonlyArray<string>): Record<string, unkno
 };
 
 /** Describes the request a decoded input would send. */
-export const previewRequest = (
-  entry: ApiCommandEntry,
-  decoded: object,
-  flagValues: ApiFlagValues,
-): ApiRequestPreview => {
+export const previewRequest = (entry: ApiCommandEntry, decoded: object): ApiRequestPreview => {
   const definition = definitionOf(entry);
   const path = definition.pathParams.reduce<string>(
     (current, name) =>
@@ -225,8 +221,7 @@ export const previewRequest = (
     body = pick(decoded, definition.requestBody.fields);
     for (const binding of entry.bindings) {
       if (binding.location !== "body" || !sensitive.has(binding.flag)) continue;
-      const value = flagValues[binding.flag];
-      if (value !== undefined && Option.isSome(value)) {
+      if (readPointer(body, binding.pointer) !== undefined) {
         body = writePointer(body, binding.pointer, REDACTED_PREVIEW_VALUE);
       }
     }
