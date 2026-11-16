@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Clock,
@@ -219,7 +219,7 @@ const ids = (post: Received) => post.events.map((event) => event.id);
 const storedMessages = (logflare: FakeLogflare) =>
   logflare.stored.pipe(Effect.map((events) => events.map((event) => event.event_message)));
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 describe("LogForwarder", () => {
   it.live(

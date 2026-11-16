@@ -4,7 +4,7 @@ import { ServiceCreation, ServiceCreationInput, ServiceRestartInput } from "./se
 import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { CommandInvocation } from "./Commands.ts";
-import { StackKeysInput } from "./StackNamespace.ts";
+import { ApiTls, StackKeysInput } from "./StackNamespace.ts";
 import { failureKind } from "./FailureKind.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import { rejectExcessKeys } from "./internal/reject-excess-keys.ts";
@@ -133,6 +133,8 @@ export const Observation = Schema.Struct({
       protocol: Schema.Literals(["tcp", "http"]),
       host: Schema.String,
       port: Schema.Int,
+      /** `https` on the shared API endpoint while it serves TLS. */
+      scheme: Schema.optionalKey(Schema.Literal("https")),
     }),
   ),
   config: ServiceCreation,
@@ -226,6 +228,7 @@ export const OwnerRpc = RpcGroup.make(
       keys: Schema.optionalKey(StackKeysInput),
       eager: Schema.optionalKey(Schema.Boolean),
       retainMembers: Schema.optionalKey(Schema.Boolean),
+      apiTls: Schema.optionalKey(ApiTls),
     },
     success: Schema.Array(Definition),
     error: StackError,

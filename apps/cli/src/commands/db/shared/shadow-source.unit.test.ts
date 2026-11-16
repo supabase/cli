@@ -3,9 +3,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import { cleanSchemaPath, loadDeclaredSchemas } from "./shadow-source.ts";
-import type { PgDeltaTomlConfig } from "../../../command-internal/db-config.toml-read.ts";
+import type { PgDeltaConfig } from "../../../command-internal/db-config.read.ts";
 
-function pgDelta(overrides: Partial<PgDeltaTomlConfig> = {}): PgDeltaTomlConfig {
+function pgDelta(overrides: Partial<PgDeltaConfig> = {}): PgDeltaConfig {
   return {
     enabled: false,
     declarativeSchemaPath: Option.none(),

@@ -1,4 +1,5 @@
 import { scratchDir } from "../../command-internal/scratch-paths.ts";
+import { type ConfigFileRef, configFileRefFromPath } from "../../command-internal/config-advice.ts";
 import { usesStackState } from "../../command-internal/stack-backend.ts";
 import { BunPath } from "@effect/platform-bun";
 import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
@@ -827,10 +828,17 @@ function suggestUseApiRetry(
   return `\nRetry with ${styleAqua(`supabase functions download --use-api ${slug}`)} to unbundle server-side. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`;
 }
 
-function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text): string {
+function suggestDenoV2(
+  configFile: ConfigFileRef,
+  styleEmphasis: (text: string) => string = (text) => text,
+): string {
   // Preserves the established trailing newline; `styleEmphasis` covers the
   // config path the same way it covers the slug above.
-  return `Please use deno v2 in ${styleEmphasis("supabase/config.toml")} to download this Function:\n\n[edge_runtime]\ndeno_version = 2\n`;
+  const block =
+    configFile.format === "json"
+      ? '{\n  "edge_runtime": {\n    "deno_version": 2\n  }\n}'
+      : "[edge_runtime]\ndeno_version = 2";
+  return `Please use deno v2 in ${styleEmphasis(configFile.path)} to download this Function:\n\n${block}\n`;
 }
 
 /**
@@ -884,6 +892,11 @@ const resolveEdgeRuntimeImage = Effect.fn("functions.download.resolveEdgeRuntime
     // per-container, right before `ensureDockerNetwork` (see the caller).
     rawImage: edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled),
     projectEnvValues: context.projectEnvValues,
+    configFile: configFileRefFromPath(
+      yield* Path.Path,
+      dependencies.projectRoot,
+      context.configPath,
+    ),
   };
 });
 
@@ -893,6 +906,7 @@ interface EdgeRuntimeImage {
   /** Not yet registry-mapped/pull-resolved — see {@link resolveFunctionsDockerImage}. */
   readonly rawImage: string;
   readonly projectEnvValues: Readonly<Record<string, string>>;
+  readonly configFile: ConfigFileRef;
 }
 
 /**
@@ -1054,7 +1068,8 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
           .split(/\r?\n/)
           .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
       const suggestion =
-        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestUseApiRetry(slug, styleAqua);
+        (invalidEszipV2 ? suggestDenoV2(edgeRuntimeImage.configFile, styleEmphasis) : "") +
+        suggestUseApiRetry(slug, styleAqua);
       return yield* Effect.fail(
         Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
           suggestion,

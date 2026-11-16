@@ -60,6 +60,7 @@ export const prepareLocalTargetEndpoint = Effect.fn("DeclarativeSchema.localTarg
     "local",
     password,
     yield* isCheckoutLinked(yield* FileSystem.FileSystem, yield* Path.Path, workdir, projectId),
+    workdir,
   );
   const seam = yield* DeclarativeSeam;
   yield* seam.ensureLocalPostgresImageCurrent;

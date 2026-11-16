@@ -73,20 +73,39 @@ describe("command permission mapping completeness", () => {
 
   for (const { name, tree } of trees) {
     describe(name, () => {
-      const leaves = [...tree].filter(([, node]) => node.isLeaf);
+      const executableCommands = [...tree].filter(([, node]) => node.isExecutable);
 
-      it("declares permissions on every leaf", () => {
-        for (const [path, node] of leaves) {
+      it("requires hosted log access only for the executable viewer, not the source catalog", () => {
+        const viewer = tree.get("logs");
+        const sources = tree.get("logs sources");
+        expect(viewer?.isLeaf).toBe(false);
+        expect(viewer?.isExecutable).toBe(true);
+        const viewerPermissions = viewer === undefined ? undefined : declarationOf(viewer);
+        const sourcePermissions = sources === undefined ? undefined : declarationOf(sources);
+        expect(viewerPermissions?.status).toBe("mapped");
+        expect(sourcePermissions?.status).toBe("mapped");
+        if (viewerPermissions?.status !== "mapped" || sourcePermissions?.status !== "mapped")
+          throw new Error("Log permission declarations are missing");
+        expect(viewerPermissions.operations.map((entry) => entry.operationId)).toContain(
+          "v1-get-project-logs",
+        );
+        expect(sourcePermissions.operations.map((entry) => entry.operationId)).not.toContain(
+          "v1-get-project-logs",
+        );
+      });
+
+      it("declares permissions on every executable command", () => {
+        for (const [path, node] of executableCommands) {
           expect(declarationOf(node), `"${path}" declares no permissions`).toBeDefined();
         }
       });
 
-      it("declares permissions only on leaf commands", () => {
+      it("declares permissions only on executable commands", () => {
         for (const [path, node] of tree) {
-          if (node.isLeaf) continue;
+          if (node.isExecutable) continue;
           expect(
             declarationOf(node),
-            `"${path}" is a command group; declare permissions on its leaves instead`,
+            `"${path}" is a command group without a handler; declare permissions on its executable commands instead`,
           ).toBeUndefined();
         }
       });
@@ -94,7 +113,7 @@ describe("command permission mapping completeness", () => {
       it("classifies every flag a mapped leaf accepts, and only references flags that exist", () => {
         const globalFlags = new Set(GLOBAL_NO_API_EFFECT_FLAGS);
 
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const permissions = declarationOf(node);
           if (permissions?.status !== "mapped") continue;
 
@@ -195,7 +214,7 @@ describe("command permission mapping completeness", () => {
       });
 
       it("references only operationIds that exist in the bundled spec and declare FGA permissions", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const permissions = declarationOf(node);
           if (permissions?.status !== "mapped") continue;
           for (const entry of permissions.operations) {
@@ -213,7 +232,7 @@ describe("command permission mapping completeness", () => {
       });
 
       it("composes branch resolution on every leaf that accepts --remote, except the branches that act on a parent project", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const permissions = declarationOf(node);
           if (permissions?.status !== "mapped") continue;
           if (!node.flags.has("remote") || path.startsWith("branches ")) continue;
@@ -226,7 +245,7 @@ describe("command permission mapping completeness", () => {
       });
 
       it("only marks a leaf unmapped when it's on the known go-delegation allowlist", () => {
-        for (const [path, node] of leaves) {
+        for (const [path, node] of executableCommands) {
           const permissions = declarationOf(node);
           if (permissions?.status !== "unmapped") continue;
           expect(
@@ -242,7 +261,7 @@ describe("command permission mapping completeness", () => {
     for (const path of GO_DELEGATED_PATHS) {
       const declared = trees
         .flatMap(({ tree }) => [tree.get(path)])
-        .filter((node) => node?.isLeaf === true)
+        .filter((node) => node?.isExecutable === true)
         .map((node) => (node === undefined ? undefined : declarationOf(node)));
       expect(
         declared.length,

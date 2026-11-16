@@ -1,11 +1,11 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { create, open } from "./effect.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 import { selection } from "../tests/pins.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 it.live("persists effective credentials across service creation, reopen, and restart", () =>
   Effect.scoped(

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Console, Effect, Exit, Layer, Stdio } from "effect";
+import { Cause, Console, Effect, Exit, Layer, Schema, Stdio } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/cli";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
+import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { useTempWorkdir, withEnvVar } from "../../../tests/helpers/command-mocks.ts";
 import { emptyEnv, fakeConsole, mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
@@ -208,6 +209,24 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       }),
   );
 
+  it.effect("an invalid global flag value fails without any help dump", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      const exit = yield* runBranches(["--output-format", "xml"], console).pipe(Effect.exit);
+
+      expect(calls).toEqual([]);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      expect(exitCodeForFailure(exit.cause)).toBe(1);
+      expect(Cause.hasDies(exit.cause)).toBe(false);
+      expect(Cause.squash(exit.cause)).toMatchObject({
+        _tag: "InvalidValue",
+        option: "output-format",
+        value: "xml",
+      });
+    }),
+  );
+
   it.effect(
     "`--help` on a command with a required flag still prints the full help doc to stdout and exits 0 (untouched)",
     () =>
@@ -237,6 +256,45 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       expect(result).toBe("done");
       expect(calls.length).toBeGreaterThan(0);
       expect(calls.some((call) => call.includes("hello from a handler"))).toBe(true);
+    }),
+  );
+});
+
+describe("subcommand help doc", () => {
+  it.effect("lists a parent's shared flags among the subcommand's own flags in JSON help", () =>
+    Effect.gen(function* () {
+      const generate = Command.make("generate", { force: Flag.Boolean("force") });
+      const declarative = Command.make("declarative").pipe(
+        Command.withSharedFlags({ noCache: Flag.Boolean("no-cache") }),
+        Command.withSubcommands([generate]),
+      );
+      const root = Command.make("supabase").pipe(Command.withSubcommands([declarative]));
+      const args = ["declarative", "generate", "--help"];
+      const { console, calls } = fakeConsole();
+
+      yield* Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CliOutput.layer(jsonCliOutputFormatter()),
+            Layer.succeed(CliArgs, { args }),
+            Layer.succeed(Console.Console, console),
+            textOutputLayer(),
+            emptyEnv(),
+          ),
+        ),
+      );
+
+      expect(calls).toHaveLength(1);
+      const { doc } = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Struct({ doc: Schema.Record(Schema.String, Schema.Unknown) })),
+      )(calls[0]?.replace(/^log:/, ""));
+      expect(doc["flags"]).toEqual([
+        expect.objectContaining({ name: "no-cache" }),
+        expect.objectContaining({ name: "force" }),
+      ]);
+      expect(Object.keys(doc)).not.toContain("inheritedFlags");
+      expect(Object.keys(doc)).not.toContain("globalFlagsScope");
+      expect(Object.keys(doc)).not.toContain("commandPath");
     }),
   );
 });

@@ -32,12 +32,21 @@ import {
   decodeCliConfigDocumentForValidationEffect,
   loadCliConfig,
   loadCliConfigFile,
+  parseCliConfigDocumentFile,
   remoteNameForProjectRef,
   remoteProjectIdEntries,
   saveCliConfig,
+  createCliConfigDocumentText,
   writeCliConfigDocumentText,
 } from "./io.ts";
 import { loadCliConfig as loadCliConfigFromNode } from "./node.ts";
+import { findCliProjectPaths } from "./paths.ts";
+import { JsoncSyntaxError } from "./jsonc.ts";
+import {
+  CliConfigFileConflictError,
+  CliConfigParseError,
+  CliConfigSchemaVersionError,
+} from "./errors.ts";
 import { cliConfigStoreLayer } from "./cli-config.layer.ts";
 import { CliConfigStore } from "./cli-config.service.ts";
 import { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
@@ -208,7 +217,7 @@ describe("config io", () => {
       }),
     ));
 
-  test("rejects JSON comments and trailing commas", () =>
+  test("loads config.json with comments and trailing commas", () =>
     runConfigEffect(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -221,7 +230,7 @@ describe("config io", () => {
           path,
           `{
   // project ref
-  "project_id": "abc123",
+  "project_id": "abcdefghijklmnopqrst",
   "db": {
     "major_version": 16,
   }
@@ -229,9 +238,9 @@ describe("config io", () => {
 `,
         );
 
-        const exit = yield* Effect.exit(loadCliConfigFile(path));
+        const loaded = yield* loadCliConfigFile(path);
 
-        expect(Exit.isFailure(exit)).toBe(true);
+        expect(loaded.config.db.major_version).toBe(16);
       }),
     ));
 
@@ -275,6 +284,15 @@ describe("config io", () => {
   test("rejects a non-finite number during decode", () => {
     expect(() => decodeCliConfig({ db: { port: Infinity } })).toThrow("Expected a finite number");
     expect(() => decodeCliConfig({ api: { max_rows: NaN } })).toThrow("Expected a finite number");
+  });
+
+  test("decodes an optional api.db_pool of one or more whole connections", () => {
+    expect(decodeCliConfig({}).api.db_pool).toBeUndefined();
+    expect(decodeCliConfig({ api: { db_pool: 1 } }).api.db_pool).toBe(1);
+    expect(() => decodeCliConfig({ api: { db_pool: 0 } })).toThrow("one or more connections");
+    expect(() => decodeCliConfig({ api: { db_pool: 1.5 } })).toThrow(
+      "a whole number of connections",
+    );
   });
 
   test("only validates the highest-priority enabled sms provider during decode", () => {
@@ -476,6 +494,177 @@ stack = true
       }),
     ));
 
+  test("loads a commented config.jsonc and discovers it from a nested cwd", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const nestedCwd = join(cwd, "apps", "web");
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+
+        yield* fs.makeDirectory(nestedCwd, { recursive: true });
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          jsoncPath,
+          `{
+  // project ref
+  "project_id": "jsonc_ref",
+  "db": { "major_version": 16, },
+}
+`,
+        );
+
+        const loaded = yield* loadCliConfig(nestedCwd);
+        expect(loaded?.format).toBe("json");
+        expect(loaded?.path.endsWith("config.jsonc")).toBe(true);
+        expect(loaded?.config.project_id).toBe("jsonc_ref");
+        expect(loaded?.config.db.major_version).toBe(16);
+
+        const paths = yield* findCliProjectPaths(nestedCwd);
+        expect(paths?.configPath).toBe(jsoncPath);
+        expect(paths?.projectRoot).toBe(cwd);
+      }),
+    ));
+
+  test("fails loading with CliConfigFileConflictError when config.json and config.jsonc both exist", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = join(cwd, "supabase", "config.json");
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, `{"project_id": "from_json"}`);
+        yield* fs.writeFileString(jsoncPath, `{"project_id": "from_jsonc"}`);
+
+        const exit = yield* Effect.exit(loadCliConfig(cwd));
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(CliConfigFileConflictError);
+          if (error.value instanceof CliConfigFileConflictError) {
+            expect(error.value.paths).toEqual([jsonPath, jsoncPath]);
+            expect(error.value.message).toBe(
+              "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
+            );
+          }
+        }
+      }),
+    ));
+
+  test("fails saving with CliConfigFileConflictError and leaves both files untouched", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = join(cwd, "supabase", "config.json");
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+        const jsonText = `{"project_id": "from_json"}`;
+        const jsoncText = `// keep me\n{"project_id": "from_jsonc"}`;
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, jsonText);
+        yield* fs.writeFileString(jsoncPath, jsoncText);
+
+        const exit = yield* Effect.exit(saveCliConfig({ cwd, config: sampleConfig }));
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(CliConfigFileConflictError);
+          if (error.value instanceof CliConfigFileConflictError) {
+            expect(error.value.paths).toEqual([jsonPath, jsoncPath]);
+            expect(error.value.message).toBe(
+              "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
+            );
+          }
+        }
+        expect(yield* fs.readFileString(jsonPath)).toBe(jsonText);
+        expect(yield* fs.readFileString(jsoncPath)).toBe(jsoncText);
+      }),
+    ));
+
+  test("prefers config.jsonc over config.toml and reports the toml as ignored", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+        const tomlPath = yield* configTomlPath(cwd);
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsoncPath, `{ // wins\n "project_id": "jsonc_ref" }`);
+        yield* fs.writeFileString(tomlPath, `project_id = "toml-ref"\n`);
+
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded?.path).toBe(jsoncPath);
+        expect(loaded?.config.project_id).toBe("jsonc_ref");
+        expect(loaded?.ignoredPaths).toEqual([tomlPath]);
+      }),
+    ));
+
+  test("saves back to config.jsonc without creating config.json and removes a sibling config.toml", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = join(cwd, "supabase", "config.json");
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+        const tomlPath = yield* configTomlPath(cwd);
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsoncPath, `{ // old\n "project_id": "old_ref" }`);
+        yield* fs.writeFileString(tomlPath, `project_id = "toml-ref"\n`);
+
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        expect(saved.format).toBe("json");
+        expect(saved.path).toBe(jsoncPath);
+        expect(yield* fs.exists(jsonPath)).toBe(false);
+        expect(yield* fs.exists(tomlPath)).toBe(false);
+        const reloaded = yield* loadCliConfig(cwd);
+        expect(reloaded?.path).toBe(jsoncPath);
+        expect(reloaded?.config.project_id).toBe("ref_123");
+      }),
+    ));
+
+  test("returns a CliConfigParseError caused by a JsoncSyntaxError with line and column for malformed config.jsonc", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsoncPath, `{\n  // note\n  "project_id": ,\n}`);
+
+        const exit = yield* Effect.exit(loadCliConfig(cwd));
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(CliConfigParseError);
+          if (error.value instanceof CliConfigParseError) {
+            expect(error.value.path).toBe(jsoncPath);
+            expect(error.value.format).toBe("json");
+            expect(error.value.cause).toBeInstanceOf(JsoncSyntaxError);
+            if (error.value.cause instanceof JsoncSyntaxError) {
+              expect(error.value.cause.line).toBe(3);
+              expect(error.value.cause.column).toBe(17);
+            }
+          }
+        }
+      }),
+    ));
+
   test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", () =>
     runConfigEffect(
       Effect.gen(function* () {
@@ -518,6 +707,61 @@ stack = true
 
         const loaded = yield* loadCliConfig(cwd, { tomlOnly: true });
         expect(loaded).toBeNull();
+      }),
+    ));
+
+  test("loads TOML with tomlOnly when config.json and config.jsonc conflict", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(join(cwd, "supabase", "config.json"), `{"project_id": "a"}`);
+        yield* fs.writeFileString(join(cwd, "supabase", "config.jsonc"), `{"project_id": "b"}`);
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "toml-ref"\n`,
+        );
+
+        const loaded = yield* loadCliConfig(cwd, { tomlOnly: true });
+        expect(loaded?.format).toBe("toml");
+        expect(loaded?.config.project_id).toBe("toml-ref");
+      }),
+    ));
+
+  test("returns null when tomlOnly is set and only config.jsonc exists", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(join(cwd, "supabase", "config.jsonc"), `{"project_id": "b"}`);
+
+        const loaded = yield* loadCliConfig(cwd, { tomlOnly: true });
+        expect(loaded).toBeNull();
+      }),
+    ));
+
+  test("writes config.toml and removes config.jsonc when saving TOML in a JSONC project", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsoncPath, `// c\n{"project_id": "b"}`);
+
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig, format: "toml" });
+
+        expect(saved.path).toBe(join(cwd, "supabase", "config.toml"));
+        expect(yield* fs.exists(saved.path)).toBe(true);
+        expect(yield* fs.exists(jsoncPath)).toBe(false);
       }),
     ));
 
@@ -881,6 +1125,119 @@ major_version = 16
         expect(saved.format).toBe("json");
         expect(saved.path).toBe(jsonPath);
         expect(yield* fs.exists(tomlPath)).toBe(false);
+      }),
+    ));
+
+  test("saving over a commented config.jsonc keeps comments, updates changed values and removes dropped keys cleanly", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsoncPath = join(cwd, "supabase", "config.jsonc");
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          jsoncPath,
+          `{
+  // project identity
+  "project_id": "old_ref", // renamed below
+  /* database settings */
+  "db": {
+    "pooler": {
+      "enabled": true, // keep pooling on
+      "pool_mode": "session",
+    },
+  },
+}
+`,
+        );
+
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        expect(saved.path).toBe(jsoncPath);
+        expect(yield* fs.readFileString(jsoncPath)).toBe(`{
+  // project identity
+  "project_id": "ref_123", // renamed below
+  /* database settings */
+  "db": {
+    "pooler": {
+      "enabled": true, // keep pooling on
+    },
+  },
+}
+`);
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded?.config).toEqual(sampleConfig);
+      }),
+    ));
+
+  test("removing the last key of an object in a strict config.json keeps the file valid JSON", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          jsonPath,
+          `{
+  "project_id": "ref_123",
+  "db": {
+    "pooler": {
+      "enabled": true,
+      "pool_mode": "session"
+    }
+  }
+}
+`,
+        );
+
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        const written = yield* fs.readFileString(jsonPath);
+        expect(yield* decodeJson(written)).toMatchObject({
+          project_id: "ref_123",
+          db: { pooler: { enabled: true } },
+        });
+        expect(written).not.toContain("pool_mode");
+      }),
+    ));
+
+  test("saving TOML over a config.toml keeps its leading #:schema directive first", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
+        const directive = "#:schema https://example.com/config.schema.json";
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(tomlPath, `${directive}\nproject_id = "old_ref"\n`);
+
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        const written = yield* fs.readFileString(tomlPath);
+        expect(written.split("\n")[0]).toBe(directive);
+        expect(written).toContain('project_id = "ref_123"');
+      }),
+    ));
+
+  test("saving TOML keeps a #:schema directive that has trailing whitespace", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
+        const directive = "#:schema https://example.com/config.schema.json";
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(tomlPath, `${directive}  \nproject_id = "old_ref"\n`);
+
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+
+        const written = yield* fs.readFileString(tomlPath);
+        expect(written.split("\n")[0]?.trimEnd()).toBe(directive);
       }),
     ));
 
@@ -2245,14 +2602,14 @@ project_id = "stagingrefaaaaaaaaaa"
     {
       name: "[inbucket] whatever its contents",
       toml: "[inbucket]\nenabled = false\n",
-      key: "[inbucket]",
-      replacement: "[local_smtp]",
+      key: "inbucket",
+      replacement: "local_smtp",
     },
     {
       name: "[remotes.*.inbucket]",
       toml: `${stagingRemote}\n[remotes.staging.inbucket]\nport = 33333\n`,
-      key: "[remotes.staging.inbucket]",
-      replacement: "[remotes.staging.local_smtp]",
+      key: "remotes.staging.inbucket",
+      replacement: "remotes.staging.local_smtp",
     },
     {
       name: "a non-empty experimental.orioledb_version",
@@ -2275,20 +2632,20 @@ project_id = "stagingrefaaaaaaaaaa"
     {
       name: "an enabled [auth.external.slack]",
       toml: "[auth.external.slack]\nenabled = true\n",
-      key: "[auth.external.slack]",
-      replacement: "[auth.external.slack_oidc]",
+      key: "auth.external.slack",
+      replacement: "auth.external.slack_oidc",
     },
     {
       name: "a disabled [auth.external.linkedin]",
       toml: "[auth.external.linkedin]\nenabled = false\n",
-      key: "[auth.external.linkedin]",
-      replacement: "[auth.external.linkedin_oidc]",
+      key: "auth.external.linkedin",
+      replacement: "auth.external.linkedin_oidc",
     },
     {
       name: "a remote's [auth.external.linkedin]",
       toml: `${stagingRemote}\n[remotes.staging.auth.external.linkedin]\nenabled = true\n`,
-      key: "[remotes.staging.auth.external.linkedin]",
-      replacement: "[remotes.staging.auth.external.linkedin_oidc]",
+      key: "remotes.staging.auth.external.linkedin",
+      replacement: "remotes.staging.auth.external.linkedin_oidc",
     },
   ])("rejects $name", ({ toml, key, replacement }) =>
     runConfigEffect(
@@ -2308,8 +2665,11 @@ project_id = "stagingrefaaaaaaaaaa"
         );
 
         expect(error.message).toBe(
-          "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+          "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
         );
+        expect(error).toMatchObject({
+          suggestion: "Update supabase/config.toml, then rerun the command.",
+        });
       }),
     ));
 
@@ -2340,13 +2700,16 @@ enabled = false
         expect(error.message).toBe(
           [
             "supabase/config.toml uses config keys that are no longer supported:",
-            "  [inbucket]: use [local_smtp] instead.",
+            "  inbucket: use local_smtp instead.",
             "  experimental.orioledb_version: use db.orioledb_version instead.",
-            "  [auth.external.slack]: use [auth.external.slack_oidc] instead.",
-            "  [remotes.staging.inbucket]: use [remotes.staging.local_smtp] instead.",
-            "  [remotes.staging.auth.external.linkedin]: use [remotes.staging.auth.external.linkedin_oidc] instead.",
+            "  auth.external.slack: use auth.external.slack_oidc instead.",
+            "  remotes.staging.inbucket: use remotes.staging.local_smtp instead.",
+            "  remotes.staging.auth.external.linkedin: use remotes.staging.auth.external.linkedin_oidc instead.",
           ].join("\n"),
         );
+        expect(error).toMatchObject({
+          suggestion: "Update supabase/config.toml, then rerun the command.",
+        });
       }),
     ));
 
@@ -2797,6 +3160,91 @@ describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
   });
 });
 
+describe("createCliConfigDocumentText", () => {
+  function targetIn() {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const dir = join(yield* makeTempProject(), "supabase");
+      yield* fs.makeDirectory(dir, { recursive: true });
+      return { dir, filePath: join(dir, "config.jsonc") };
+    });
+  }
+
+  test("creates the file with the requested mode and no temp file left behind", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+
+        const created = yield* createCliConfigDocumentText(filePath, "{}\n", 0o600);
+
+        expect(created).toBe(true);
+        expect(yield* fs.readFileString(filePath)).toBe("{}\n");
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+
+  test("applies the requested mode exactly, whatever the umask", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { filePath } = yield* targetIn();
+
+        yield* createCliConfigDocumentText(filePath, "{}\n", 0o666);
+
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o666);
+      }),
+    ));
+
+  test("creates the file exclusively when the filesystem has no hard links", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+        const noLinks: FileSystem.FileSystem = {
+          ...fs,
+          link: (from) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "link",
+                pathOrDescriptor: from,
+                description: "operation not supported",
+              }),
+            ),
+        };
+        const create = (content: string) =>
+          createCliConfigDocumentText(filePath, content, 0o600).pipe(
+            Effect.provideService(FileSystem.FileSystem, noLinks),
+          );
+
+        expect(yield* create("{}\n")).toBe(true);
+        expect(yield* create('{ "second": true }\n')).toBe(false);
+        expect(yield* fs.readFileString(filePath)).toBe("{}\n");
+        expect((yield* fs.stat(filePath)).mode & 0o777).toBe(0o600);
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+
+  test("returns false and leaves an existing file untouched", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { dir, filePath } = yield* targetIn();
+        yield* fs.writeFileString(filePath, '{ "kept": true }\n');
+
+        const created = yield* createCliConfigDocumentText(filePath, "{}\n", 0o600);
+
+        expect(created).toBe(false);
+        expect(yield* fs.readFileString(filePath)).toBe('{ "kept": true }\n');
+        expect(yield* fs.readDirectory(dir)).toEqual(["config.jsonc"]);
+      }),
+    ));
+});
+
 describe("writeCliConfigDocumentText", () => {
   function tempFileTargets() {
     return Effect.gen(function* () {
@@ -2958,7 +3406,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
         expect(error).toMatchObject({
           _tag: "CliConfigRemovedKeyError",
           removedKeys: [
-            { key: "[inbucket]", replacement: "[local_smtp]" },
+            { key: "inbucket", replacement: "local_smtp" },
             {
               key: "remotes.staging.experimental.orioledb_version",
               replacement: "remotes.staging.db.orioledb_version",
@@ -3158,4 +3606,342 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
         expect(config.remotes["staging"]).toBeDefined();
       }),
     ));
+});
+
+describe("config io schema version", () => {
+  const v = (n: string) => `https://supabase.com/schemas/config/v${n}.json`;
+
+  const writeConfig = (name: string, content: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      const path = join(cwd, "supabase", name);
+      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path, content);
+      return { cwd, path };
+    });
+
+  const failureOf = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(effect);
+      const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+      expect(Option.isSome(error)).toBe(true);
+      return Option.getOrThrow(error);
+    });
+
+  const tooNew: ReadonlyArray<{
+    readonly name: string;
+    readonly file: string;
+    readonly content: string;
+    readonly version: bigint;
+  }> = [
+    { name: "config.json", file: "config.json", content: `{"$schema": "${v("2")}"}`, version: 2n },
+    {
+      name: "config.jsonc",
+      file: "config.jsonc",
+      content: `{\n // c\n "$schema": "${v("2")}",\n}`,
+      version: 2n,
+    },
+    {
+      name: "config.toml directive",
+      file: "config.toml",
+      content: `#:schema ${v("2")}\nproject_id = "x"\n`,
+      version: 2n,
+    },
+    {
+      name: "config.toml $schema key",
+      file: "config.toml",
+      content: `"$schema" = "${v("2")}"\n`,
+      version: 2n,
+    },
+    {
+      name: "config.toml with a body smol-toml cannot parse",
+      file: "config.toml",
+      content: `#:schema ${v("2")}\n[db\nfuture = = syntax\n`,
+      version: 2n,
+    },
+    {
+      name: "config.toml with a version past the safe integer range",
+      file: "config.toml",
+      content: `#:schema ${v("99999999999999999999")}\n`,
+      version: 99999999999999999999n,
+    },
+  ];
+
+  test("a version past the safe integer range serializes to JSON with every digit", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const { cwd } = yield* writeConfig(
+          "config.toml",
+          `#:schema ${v("99999999999999999999")}\n`,
+        );
+
+        const error = yield* failureOf(loadCliConfig(cwd));
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- the contract under test is plain JSON.stringify
+        expect(JSON.stringify(error)).toContain('"declaredVersion":"99999999999999999999"');
+      }),
+    ));
+
+  const whitespaceTolerantDirectives: ReadonlyArray<readonly [string, string]> = [
+    ["trailing spaces", `#:schema ${v("2")}  \nproject_id = "x"\n`],
+    ["a trailing tab", `#:schema ${v("2")}\t\nproject_id = "x"\n`],
+    ["an indented directive", `  #:schema ${v("2")}\nproject_id = "x"\n`],
+    ["an indented comment before it", `  # note\n\t#:schema ${v("2")}\nproject_id = "x"\n`],
+  ];
+
+  test.each(whitespaceTolerantDirectives)(
+    "loadCliConfig fails on a v2 directive with %s",
+    (_name, content) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const { cwd } = yield* writeConfig("config.toml", content);
+
+          expect(yield* failureOf(loadCliConfig(cwd))).toBeInstanceOf(CliConfigSchemaVersionError);
+        }),
+      ),
+  );
+
+  test.each(tooNew)(
+    "loadCliConfig fails on a newer schema in $name",
+    ({ file, content, version }) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const { cwd, path } = yield* writeConfig(file, content);
+
+          const error = yield* failureOf(loadCliConfig(cwd));
+
+          expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+          expect(error).toMatchObject({
+            _tag: "CliConfigSchemaVersionError",
+            path,
+            declaredVersion: String(version),
+            supportedVersion: 1,
+          });
+          expect(error instanceof CliConfigSchemaVersionError ? error.message : "").toBe(
+            `supabase/${file} declares config schema v${version}, but this version of the Supabase CLI only reads up to v1. Upgrade the Supabase CLI to use this config.`,
+          );
+        }),
+      ),
+  );
+
+  test("loadCliConfigFile and parseCliConfigDocumentFile fail on a newer schema", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const { cwd, path } = yield* writeConfig("config.json", `{"$schema": "${v("2")}"}`);
+
+        expect(yield* failureOf(loadCliConfigFile(path))).toBeInstanceOf(
+          CliConfigSchemaVersionError,
+        );
+        expect(yield* failureOf(parseCliConfigDocumentFile(cwd))).toBeInstanceOf(
+          CliConfigSchemaVersionError,
+        );
+      }),
+    ));
+
+  test("saveCliConfig over a newer-schema file fails and leaves the bytes unchanged", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const content = `// keep me\n{"$schema": "${v("2")}", "project_id": "x"}`;
+        const { cwd, path } = yield* writeConfig("config.jsonc", content);
+
+        const error = yield* failureOf(saveCliConfig({ cwd, config: sampleConfig }));
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(path)).toBe(content);
+      }),
+    ));
+
+  test("saveCliConfig with an explicit schemaRef over a newer-schema file fails and leaves the bytes unchanged", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const content = `// keep me\n{"$schema": "${v("2")}", "project_id": "x"}`;
+        const { cwd, path } = yield* writeConfig("config.jsonc", content);
+
+        const error = yield* failureOf(
+          saveCliConfig({ cwd, config: sampleConfig, schemaRef: CLI_CONFIG_SCHEMA_URL }),
+        );
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(path)).toBe(content);
+      }),
+    ));
+
+  test("saveCliConfig with an explicit schemaRef overwrites an existing file that does not parse", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, path } = yield* writeConfig("config.toml", `[db\nbroken = = 1\n`);
+
+        yield* saveCliConfig({ cwd, config: sampleConfig, schemaRef: CLI_CONFIG_SCHEMA_URL });
+
+        const written = yield* fs.readFileString(path);
+        expect(written).toContain('project_id = "ref_123"');
+        expect(written).not.toContain("broken");
+      }),
+    ));
+
+  test("saveCliConfig with an explicit schemaRef over an unparseable TOML with a v2 directive fails and leaves the bytes unchanged", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const content = `#:schema ${v("2")}\n[db\nbroken = = 1\n`;
+        const { cwd, path } = yield* writeConfig("config.toml", content);
+
+        const error = yield* failureOf(
+          saveCliConfig({ cwd, config: sampleConfig, schemaRef: CLI_CONFIG_SCHEMA_URL }),
+        );
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(path)).toBe(content);
+      }),
+    ));
+
+  test("saveCliConfig with a newer explicit schemaRef fails and writes nothing", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+
+        const error = yield* failureOf(
+          saveCliConfig({ cwd, config: sampleConfig, schemaRef: v("2") }),
+        );
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.exists(join(cwd, "supabase", "config.json"))).toBe(false);
+      }),
+    ));
+
+  test("saveCliConfig to JSON fails and keeps a TOML file whose $schema key is newer than its directive", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const content = `#:schema ${v("1")}\n"$schema" = "${v("2")}"\nproject_id = "x"\n`;
+        const { cwd, path } = yield* writeConfig("config.toml", content);
+
+        const error = yield* failureOf(
+          saveCliConfig({ cwd, config: sampleConfig, format: "json" }),
+        );
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(path)).toBe(content);
+      }),
+    ));
+
+  test("saveCliConfig fails and keeps a shadowed config.toml that declares a newer schema", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const { cwd } = yield* writeConfig("config.json", `{"project_id": "x"}`);
+        const tomlPath = join(cwd, "supabase", "config.toml");
+        const toml = `#:schema ${v("2")}\nproject_id = "y"\n`;
+        yield* fs.writeFileString(tomlPath, toml);
+
+        const error = yield* failureOf(saveCliConfig({ cwd, config: sampleConfig }));
+
+        expect(error).toBeInstanceOf(CliConfigSchemaVersionError);
+        expect(yield* fs.readFileString(tomlPath)).toBe(toml);
+      }),
+    ));
+
+  const loadsAsBefore: ReadonlyArray<{
+    readonly name: string;
+    readonly file: string;
+    readonly content: string;
+  }> = [
+    {
+      name: "v1 JSON",
+      file: "config.json",
+      content: `{"$schema": "${v("1")}", "project_id": "x"}`,
+    },
+    { name: "undeclared JSON", file: "config.json", content: `{"project_id": "x"}` },
+    {
+      name: "v1 TOML directive",
+      file: "config.toml",
+      content: `#:schema ${v("1")}\nproject_id = "x"\n`,
+    },
+    { name: "undeclared TOML", file: "config.toml", content: `project_id = "x"\n` },
+    {
+      name: "legacy docs URL",
+      file: "config.json",
+      content: `{"$schema": "https://supabase.com/docs/cli/config.schema.json", "project_id": "x"}`,
+    },
+    {
+      name: "legacy node_modules path",
+      file: "config.jsonc",
+      content: `{"$schema": "./node_modules/@supabase/config/schema.json", "project_id": "x"}`,
+    },
+    {
+      name: "unrecognized URL",
+      file: "config.json",
+      content: `{"$schema": "https://example.com/x.json", "project_id": "x"}`,
+    },
+    {
+      name: "a directive that follows other content",
+      file: "config.toml",
+      content: `project_id = "x"\n#:schema ${v("2")}\n`,
+    },
+  ];
+
+  test.each(loadsAsBefore)("loadCliConfig still loads $name", ({ file, content }) =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const { cwd } = yield* writeConfig(file, content);
+
+        const loaded = yield* loadCliConfig(cwd);
+
+        expect(loaded?.config.project_id).toBe("x");
+      }),
+    ),
+  );
+
+  test("a malformed TOML file without a newer schema still fails with CliConfigParseError", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const { cwd } = yield* writeConfig("config.toml", `#:schema ${v("1")}\n[db\n`);
+
+        expect(yield* failureOf(loadCliConfig(cwd))).toBeInstanceOf(CliConfigParseError);
+      }),
+    ));
+
+  const declarations: ReadonlyArray<{
+    readonly name: string;
+    readonly file: string;
+    readonly content: string;
+    readonly expected: { readonly ref: string; readonly version: bigint | undefined } | undefined;
+  }> = [
+    {
+      name: "a TOML directive",
+      file: "config.toml",
+      content: `#:schema ${v("1")}\n`,
+      expected: { ref: v("1"), version: 1n },
+    },
+    {
+      name: "a JSON $schema",
+      file: "config.json",
+      content: `{"$schema": "https://example.com/x.json"}`,
+      expected: { ref: "https://example.com/x.json", version: undefined },
+    },
+    { name: "nothing", file: "config.json", content: "{}", expected: undefined },
+  ];
+
+  test.each(declarations)(
+    "parseCliConfigDocumentFile exposes schemaDeclaration for $name",
+    ({ file, content, expected }) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const { cwd } = yield* writeConfig(file, content);
+
+          const parsed = yield* parseCliConfigDocumentFile(cwd);
+
+          expect(parsed?.schemaDeclaration).toEqual(expected);
+        }),
+      ),
+  );
 });

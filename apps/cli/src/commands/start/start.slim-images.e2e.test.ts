@@ -1,6 +1,7 @@
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import { BunServices } from "@effect/platform-bun";
-import { Clock, Crypto, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { Clock, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
 import {
   catalogPins,
@@ -228,8 +229,8 @@ const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
   image: string,
   args: ReadonlyArray<string>,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  const containerName = `sb-wget-probe-${yield* crypto.randomUUIDv4}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const containerName = `sb-wget-probe-${yield* crypto.uuidV4()}`;
   const removeContainer = runDockerEffect(["rm", "--force", containerName], {
     timeout: WGET_PROBE_CLEANUP_TIMEOUT_MS,
   }).pipe(
@@ -330,7 +331,9 @@ describe("supabase start slim images (e2e)", () => {
             yield* runWgetInImage(image, waitArgs);
           }
         }
-      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer)),
+      ),
     WGET_PROBE_TEST_TIMEOUT_MS,
   );
 

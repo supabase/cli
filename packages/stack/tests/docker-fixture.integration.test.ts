@@ -1,5 +1,5 @@
 import { PgClient } from "@effect/sql-pg";
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Context, Effect, FileSystem, Layer, Redacted, Schema, Stream } from "effect";
@@ -145,7 +145,9 @@ describe.runIf(testEngine === "docker")(
         Effect.tap((results) =>
           Effect.sync(() => results.forEach(({ exists }) => expect(exists).toBe(true))),
         ),
-        Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
       ),
     );
   },

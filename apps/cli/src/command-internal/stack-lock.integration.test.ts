@@ -1,8 +1,9 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { LOCK_SCHEMA_URL, writeLock, type Lock } from "@supabase/stack/effect";
 import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
-import { Crypto, Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
+import { Digest } from "effect/crypto";
 
 import {
   database15,
@@ -22,12 +23,12 @@ import { selectionForRequest } from "./stack-project-selection.ts";
 const inProject = <A, E>(
   body: (
     projectRoot: string,
-  ) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Crypto.Crypto>,
+  ) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Digest.Digest>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* body(yield* fs.makeTempDirectoryScoped({ prefix: "stack-lock-int-" }));
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const requestFor = (
   projectRoot: string,

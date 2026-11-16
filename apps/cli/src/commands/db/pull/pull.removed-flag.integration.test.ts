@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Path, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -25,7 +25,7 @@ const testRoot = Command.make("supabase").pipe(
 );
 
 const USE_PG_DELTA_SUGGESTION =
-  "Use --declarative to pull the declarative schema. The diff engine is chosen with --diff-engine or [experimental.pgdelta] enabled in config.toml.";
+  "Use --declarative to pull the declarative schema. The diff engine is chosen with --diff-engine or experimental.pgdelta.enabled in the config file.";
 const EXPERIMENTAL_MESSAGE = "The --experimental structured-dump mode of db pull was removed.";
 const EXPERIMENTAL_SUGGESTION =
   "Use --declarative to pull per-object schema files, or pass --experimental=false (or unset SUPABASE_EXPERIMENTAL) for a migration pull.";
@@ -73,7 +73,7 @@ const runDbPull = (
       Effect.exit,
     );
     return { exit, out, analytics, workdir };
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const removedError = (exit: Exit.Exit<unknown, unknown>) => {
   expect(Exit.isFailure(exit)).toBe(true);

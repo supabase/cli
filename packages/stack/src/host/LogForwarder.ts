@@ -1,7 +1,6 @@
 import {
   Cause,
   Clock,
-  Crypto,
   Data,
   Duration,
   Effect,
@@ -18,6 +17,7 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import type { CompositionConfig } from "../Orchestrator.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
@@ -326,7 +326,8 @@ const retryWarningOnce =
 export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwarderOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const hasher = yield* Digest.Digest;
   const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
   const forwarderScope = yield* Effect.scope;
   const candidates = yield* Ref.make<ReadonlyMap<string, Candidate>>(new Map());
@@ -338,7 +339,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
   >(undefined);
   const epochs = yield* Ref.make(0);
   const rebinding = yield* Semaphore.make(1);
-  const run = yield* crypto.randomUUIDv4;
+  const run = yield* crypto.uuidV4();
   const launchPrefix = `${run}:`;
   const launchOf = (candidate: Candidate) =>
     `${launchPrefix}${candidate.instance.id}:${candidate.launchId ?? "unknown"}`;
@@ -460,8 +461,8 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
     );
 
   const eventId = Effect.fnUntraced(function* (instanceId: string, position: LogPosition) {
-    const digest = yield* crypto.digest(
-      "SHA-256",
+    const digest = yield* hasher.digest(
+      Digest.sha256,
       encoder.encode(`${instanceId}\0${position.generation}\0${position.byteOffset}`),
     );
     const hex = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0"));

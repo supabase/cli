@@ -1,6 +1,6 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
+import { cliConfigFormatForPath, parseCliConfigDocument } from "@supabase/config/internal";
 import { Config, Data, Effect, FileSystem, Option, Path, Result, Schema } from "effect";
-import * as SmolToml from "smol-toml";
 import { pickCliConfigKey } from "../../config/cli-config-key.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveWorkdir } from "../../config/command-settings.layer.ts";
@@ -36,8 +36,6 @@ const firstExplicitLongFlagValue = (
   return undefined;
 };
 
-const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
-
 const readEnv = (name: string) =>
   Config.option(Config.String(name)).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
@@ -63,9 +61,9 @@ export const readExperimentalFeatureConfig = (input: {
     const project = yield* findCliProjectPaths(resolvedWorkdir.workdir, { search: false });
     if (project === null) return undefined;
     const content = yield* fs.readFileString(project.configPath);
-    const document = project.configPath.endsWith(".json")
-      ? yield* Schema.decodeEffect(UnknownFromJsonString)(content)
-      : yield* Effect.try(() => SmolToml.parse(content));
+    const document = yield* Effect.try(() =>
+      parseCliConfigDocument(content, cliConfigFormatForPath(project.configPath)),
+    );
     const schema = Schema.Struct({
       experimental: Schema.optionalKey(
         Schema.Struct({ [input.feature]: featureSchemas[input.feature] }),

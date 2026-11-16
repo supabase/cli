@@ -5,7 +5,7 @@ This document explains how the CLI's on-disk config document loading works, acro
 
 ## Vocabulary
 
-- `CliConfig`: the persisted config-file document (`supabase/config.toml` / `supabase/config.json`)
+- `CliConfig`: the persisted config-file document (`supabase/config.toml`, `supabase/config.json`, or `supabase/config.jsonc`)
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
 - `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
@@ -89,13 +89,15 @@ upward until it finds the nearest ancestor containing one of:
 
 - `supabase/config.toml`
 - `supabase/config.json`
+- `supabase/config.jsonc`
 
 The first match wins. A caller that already holds an authoritative, pre-resolved root — for
 example one derived from an explicit `--workdir`/`SUPABASE_WORKDIR` — can pass `{ search: false }`
 to check only that exact directory, with no ancestor climb.
 
-Within one discovered `supabase/` directory, `config.json` takes precedence over `config.toml`
-when both files exist.
+Within one discovered `supabase/` directory, `config.json` or `config.jsonc` takes precedence over
+`config.toml` when both exist. Discovery never fails on a `config.json` + `config.jsonc` pair; loading
+and saving do. `supabase config convert` migrates a `config.toml` project to `config.jsonc`.
 
 This produces a `CliProjectPaths` (the type is exported from `@supabase/config`):
 
@@ -116,13 +118,13 @@ and env files under `supabase/`.
 
 The project-scoped files are:
 
-- `supabase/config.toml` or `supabase/config.json`
+- `supabase/config.toml`, `supabase/config.json`, or `supabase/config.jsonc`
 - `supabase/.env`
 - `supabase/.env.local`
 
 Their intended roles are:
 
-- `config.toml` or `config.json`: the shared, committed `CliConfig` document
+- `config.toml`, `config.json`, or `config.jsonc`: the shared, committed `CliConfig` document
 - `.env`: managed or shared project env values
 - `.env.local`: user-editable local overrides
 
@@ -138,8 +140,13 @@ defines the full config/env scope for that invocation.
 these rules:
 
 - `loadCliConfig(cwd)` discovers the project, then:
-  - if both `supabase/config.json` and `supabase/config.toml` exist, JSON wins
-  - the returned `LoadedCliConfig.ignoredPaths` reports the shadowed config file path
+  - `config.json` and `config.jsonc` are both parsed as JSONC (comments and trailing commas
+    allowed); parse errors report the line and column
+  - if both `supabase/config.json` and `supabase/config.jsonc` exist, loading fails with
+    `CliConfigFileConflictError` naming both files
+  - if a JSON file and `supabase/config.toml` both exist, JSON wins, and the returned
+    `LoadedCliConfig.ignoredPaths` reports the shadowed `config.toml`; the CLI warns that it is
+    ignored
   - if only one config file exists, that file is loaded
   - if no config file exists in the discovered project, loading returns `null`
 - `loadCliConfigFile(path)` loads one explicit file path directly instead of discovering or
@@ -147,16 +154,24 @@ these rules:
 
 `saveCliConfig()` uses these rules:
 
-- if the discovered project already has `config.json`, save back to JSON
+- if the discovered project already has `config.jsonc`, save back to it; otherwise, if it has
+  `config.json`, save back to that
 - otherwise if it already has `config.toml`, save back to TOML
 - otherwise default new writes to `supabase/config.json`
+- if both `config.json` and `config.jsonc` exist, saving fails with `CliConfigFileConflictError`
 - callers can still force a format explicitly via `SaveCliConfigOptions.format`
-- after writing, it removes the sibling config file in the other format, if one exists, so a
-  project never ends up with both after a save
+- when the target is an existing JSON/JSONC file, the save applies minimal `jsonc-parser` edits towards
+  the regenerated document so comments and key order survive, and falls back to the regenerated text
+  if the edited text does not re-parse to exactly that document; new files and format switches
+  always write the regenerated text
+- a TOML save keeps the existing file's first-line `#:schema <url>` directive
+- after writing, it removes every other config file among `config.json`, `config.jsonc` and
+  `config.toml`, so a project never ends up with more than one after a save
 
 The saved file may also preserve a top-level `"$schema"` key as editor metadata: when a caller
 doesn't pass an explicit `schemaRef`, saving reuses whatever `$schema` the project's existing
-config file already had. That key does not participate in runtime config semantics.
+config file already had. Beyond the schema version it declares (see [Schema version](#schema-version)),
+the key has no runtime meaning.
 
 ## Env Loading and Precedence
 
@@ -186,7 +201,7 @@ The `ambient` source label just means the value came from `process.env`.
 
 ## Raw Config Loading
 
-`CliConfig` is loaded by parsing the TOML/JSON file and decoding it against `CliConfigSchema`.
+`CliConfig` is loaded by parsing the TOML/JSON(C) file and decoding it against `CliConfigSchema`.
 
 Before decoding, most string values matching `env(NAME)` are substituted automatically using the
 resolved `CliProjectEnvironment` — this is required so numeric and boolean fields don't crash the
@@ -374,7 +389,7 @@ one order (ADR 0032):
 1. an explicit flag
 2. shell environment
 3. project `.env*` files
-4. config: `config.json` when present, else `config.toml`, with the matched `[remotes.*]` block
+4. config: `config.json` or `config.jsonc` when present, else `config.toml`, with the matched `[remotes.*]` block
    over the base document
 5. the default
 
@@ -470,8 +485,10 @@ The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` enviro
 
 `@supabase/config/internal` exposes the stages the CLI composes in place of `loadCliConfig`:
 
-1. `parseCliConfigDocumentFile` reads `config.json` or `config.toml` without decoding, and fails
-   with `CliConfigRemovedKeyError` when the document uses a removed key.
+1. `parseCliConfigDocumentFile` reads `config.json`, `config.jsonc` or `config.toml` without decoding, and
+   fails with `CliConfigRemovedKeyError` when the document uses a removed key, or
+   `CliConfigFileConflictError` when both JSON files exist, or `CliConfigSchemaVersionError` when
+   the file declares a newer schema version.
 2. `mergeParsedCliConfig` applies the remote chosen by the `selectRemote` callback.
 3. The CLI overlays flag, env and default values onto the merged document.
 4. `decodeMergedCliConfig` expands `env()` references, then decodes and validates the overlaid
@@ -479,6 +496,44 @@ The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` enviro
 
 The result is the `materialized` config on the resolved config; `get(key)` also reports the tier a value
 came from.
+
+## Schema version
+
+A config file declares its schema version with `$schema` in `config.json`/`config.jsonc`, or with a
+leading `#:schema <url>` directive in `config.toml` (a top-level `"$schema"` key is the fallback;
+the directive wins). The directive must come before any other content; blank lines and comments
+may precede it, and surrounding spaces or tabs are ignored. A file with no declaration is v1.
+
+- `https://supabase.com/schemas/config/v<N>.json` declares version `N`.
+- The legacy `https://supabase.com/docs/cli/config.schema.json` and paths ending in
+  `node_modules/@supabase/config/schema.json` or `node_modules/@supabase/config/dist/schema.json`
+  read as v1.
+- Any other reference is unrecognized: the file is read as v1 and the CLI warns on stderr, naming
+  the current schema URL.
+- A file declaring a version newer than the package supports fails with
+  `CliConfigSchemaVersionError` and an upgrade message, in `loadCliConfig`, `loadCliConfigFile`,
+  `parseCliConfigDocumentFile` and `saveCliConfig` alike. A save also fails when the `$schema` it
+  would write, explicit or carried over, is newer than the package supports, and checks every
+  existing config file, including a
+  shadowed sibling it would remove. With an explicit `schemaRef`, a save overwrites an existing
+  file that does not parse unless that file declares a newer version; without one, the save reads
+  the existing `$schema` and fails with `CliConfigParseError` on a file that does not parse. For TOML the directive is checked before
+  parsing, so a newer file this version cannot parse still reports the upgrade error.
+
+## Unknown keys
+
+`findUnknownCliConfigKeys(document)` (`@supabase/config/internal`) returns the sorted key paths
+(segment arrays) of keys in a raw config document that `CliConfigSchema` does not accept, derived from the schema
+itself: the document is decoded with excess-property errors enabled and the unexpected-key issues
+are collected. A key a union member accepts is not reported. The top-level `$schema` key is
+ignored, and `[remotes.<name>]` blocks report under `["remotes", <name>, ...]`. An unknown table
+reports as the table, not its leaves. Pass the document after
+deprecated spellings are folded, as `parseCliConfigDocumentFile` exposes it in `rawDocument`.
+
+The loader still ignores unknown keys. The CLI prints one `WARN:` line on stderr per file listing
+them, so they can be checked for typos, removed, or read by a newer CLI. Key names and schema refs
+are printed with control characters escaped. The CLI's document-only keys (`db.password`,
+`db.root_key`, `auth.external_url`, `[auth.passkey]`, `[auth.webauthn]`) are never listed.
 
 ## CLI-owned Repo State
 
@@ -496,8 +551,8 @@ Neither is part of `@supabase/config`'s input.
 
 Important distinction:
 
-- `@supabase/config` discovers committed config only from `supabase/config.toml` or
-  `supabase/config.json`
+- `@supabase/config` discovers committed config only from `supabase/config.toml`,
+  `supabase/config.json` or `supabase/config.jsonc`
 - the CLI may still resolve a project root from the nearest `.supabase/project.json` when it needs
   to find local machine state for commands like `link`, `unlink`, `start`, `stop`, `status`,
   `stack list`, or `logs`

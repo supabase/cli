@@ -177,6 +177,7 @@ function generateStackApi(workdir: string) {
           ? Effect.succeed(database)
           : Effect.fail(new StackError({ operation: "get", message: "unknown instance" })),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: unusedStack },
     composition: {
       plan: () => Effect.succeed([]),

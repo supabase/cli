@@ -1,8 +1,17 @@
 // Pure diff-engine resolution shared by `db diff` and `db pull`. No Effect / service
 // dependencies — unit-tested directly.
 
-export const schemaPathsTransitionWarning =
-  "WARNING: [db.migrations].schema_paths no longer changes the migrations baseline used by db diff or migration-style db pull. These commands always compare local migrations with the selected database. `supabase db schema declarative sync` reads declarative_schema_path (default supabase/schemas), not schema_paths: move those files there or point declarative_schema_path at them. Only migra (--use-migra, --diff-engine migra, or [experimental.pgdelta] enabled = false) still reads schema_paths, and only for local targets.\n";
+import {
+  type ConfigFileRef,
+  configKey,
+  configSetting,
+  DEFAULT_CONFIG_FILE,
+} from "./config-advice.ts";
+
+export const schemaPathsTransitionWarning = (
+  configFile: ConfigFileRef = DEFAULT_CONFIG_FILE,
+): string =>
+  `WARNING: ${configKey(configFile.format, "db.migrations", "schema_paths")} no longer changes the migrations baseline used by db diff or migration-style db pull. These commands always compare local migrations with the selected database. \`supabase db schema declarative sync\` reads declarative_schema_path (default supabase/schemas), not schema_paths: move those files there or point declarative_schema_path at them. Only migra (--use-migra, --diff-engine migra, or ${configSetting(configFile.format, "experimental.pgdelta", "enabled", "false")}) still reads schema_paths, and only for local targets.\n`;
 
 /**
  * Reports whether `db diff` should run in pg-delta mode. A true `--use-migra` or `--use-pgadmin`

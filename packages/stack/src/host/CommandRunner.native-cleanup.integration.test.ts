@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Effect, FileSystem, Layer, Path, Stream } from "effect";
 import { systemError } from "effect/PlatformError";
@@ -84,7 +84,9 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
             const child = yield* delegate.spawn(command);
             if (
               !ChildProcess.isStandardCommand(command) ||
-              !command.args.some((argument) => argument.includes("native-launcher"))
+              !command.args.some(
+                (argument) => typeof argument === "string" && argument.includes("native-launcher"),
+              )
             )
               return child;
             return ChildProcessSpawner.makeHandle({
@@ -142,6 +144,10 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         expect(isRunningCalls).toBe(3);
         yield* runner.cleanup;
         expect(isRunningCalls).toBe(4);
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
 );

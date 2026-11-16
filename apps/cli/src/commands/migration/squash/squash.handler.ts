@@ -28,7 +28,7 @@ import {
   shadowRunInputFromLocalContainerInputs,
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { readDbToml, type DbTomlValues } from "../../../command-internal/db-config.toml-read.ts";
+import { readDbConfig, type DbConfigValues } from "../../../command-internal/db-config.read.ts";
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import {
@@ -82,7 +82,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
   migrations: ReadonlyArray<string>,
   targetPath: string,
   localInputs: LocalDbContainerInputs,
-  toml: DbTomlValues,
+  toml: DbConfigValues,
 ) {
   const stackBackend = (yield* currentStackBackend).kind === "stack";
   const resolvedShadowImage = stackBackend
@@ -315,7 +315,7 @@ const squashToVersion = Effect.fn("MigrationSquash.squashToVersion")(function* (
   migrations: ReadonlyArray<string>,
   local: string,
   localInputs: LocalDbContainerInputs,
-  toml: DbTomlValues,
+  toml: DbConfigValues,
 ) {
   const output = yield* Output;
   const rel = path.relative(workdir, local);
@@ -449,7 +449,7 @@ const runSquash = Effect.fnUntraced(function* (flags: MigrationSquashFlags) {
 
     // Reads the remote-merged config before resolving the connection (like `db diff --remote`);
     // read unconditionally since the shadow is provisioned locally either way.
-    const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const toml = yield* readDbConfig(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }

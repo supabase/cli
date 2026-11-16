@@ -1,0 +1,15 @@
+{
+  "columns": [
+    "name",
+    "total_size",
+    "heap_size",
+    "toast_size",
+    "toast_live_chunks",
+    "toast_dead_chunks",
+    "toast_dead_pct",
+    "last_autovacuum",
+    "last_vacuum"
+  ],
+  "typeOids": [25, 25, 25, 25, 20, 20, 1700, 25, 25],
+  "rows": [["public.documents", "4200 MB", "800 MB", "3400 MB", "250000", "18000", "6.7", "2026-04-23 12:00", ""]]
+}

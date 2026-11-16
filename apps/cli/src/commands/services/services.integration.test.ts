@@ -1,7 +1,7 @@
 import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { catalogPins, orioledbVersions } from "@supabase/stack/internal/artifacts";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { CliOutput, Command } from "effect/cli";
 import {
   Cause,
@@ -131,6 +131,7 @@ function setup(
           workdir: opts.workdir ?? defaultWorkdir.current,
           explicitWorkdir: false,
           userAgent: "SupabaseCLI/test",
+          apiMaxRetries: Option.none(),
         }),
       ),
       Layer.succeed(
@@ -270,6 +271,7 @@ describe("services", () => {
       const layer = Layer.mergeAll(
         cliConfigValuesTestLayer,
         BunServices.layer,
+        BunCrypto.layer,
         legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),

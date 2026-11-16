@@ -44,3 +44,15 @@ it.effect("gives Logflare's sources and events the default credentials a URL lea
     });
   }),
 );
+
+it.effect("caps Logflare's BEAM port table", () =>
+  Effect.gen(function* () {
+    const env = yield* makeSpec().env(
+      creation("postgresql://db.internal/_supabase"),
+      new Map(),
+      true,
+    );
+
+    expect(env).toMatchObject({ ERL_MAX_PORTS: "65536" });
+  }),
+);

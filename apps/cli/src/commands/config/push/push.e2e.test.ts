@@ -86,6 +86,8 @@ describe("supabase config push", () => {
                         max_rows: 500,
                         db_pool: null,
                         db_pool_acquisition_timeout: null,
+                        db_pool_max_lifetime: null,
+                        db_pool_max_idletime: null,
                       });
                     });
                   }

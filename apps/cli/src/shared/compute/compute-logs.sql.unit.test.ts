@@ -19,7 +19,7 @@ describe("computeLogsQuery", () => {
     expect(sql).toContain("log_attributes['subservice'] as stream");
     expect(sql).toContain("and log_attributes['subservice'] in (");
     expect(sql).not.toContain("log_attributes['source']");
-    // A bare `subservice` is not a column on an unenrolled source; it fails the query.
+
     expect(sql).not.toMatch(/(?<!\[')subservice/);
     expect(sql).not.toMatch(/(?:^|\s)where source =/);
     expect(sql).not.toMatch(/(?:^|\s)and source =/);

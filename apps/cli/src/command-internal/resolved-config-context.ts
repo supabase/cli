@@ -1,4 +1,4 @@
-import type { CliConfig } from "@supabase/config";
+import { CliConfigRemovedKeyError, type CliConfig } from "@supabase/config";
 import { Effect, Option, Predicate } from "effect";
 
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
@@ -68,6 +68,10 @@ export const resolvePasskeyWebauthn = Effect.fn("ResolvedConfigContext.passkeyWe
   return { passkeyEnabled, webauthn };
 });
 
+/** The remediation a config load failure carries, when it has one. */
+export const configLoadFailureSuggestion = (cause: unknown): string | undefined =>
+  cause instanceof CliConfigRemovedKeyError ? cause.suggestion : undefined;
+
 /** The failure text commands report when the resolved config cannot be loaded. */
 export const describeConfigLoadFailure = (cause: unknown): string =>
   Predicate.isTagged(cause, "CliConfigParseError") && "cause" in cause
@@ -79,7 +83,9 @@ export const describeConfigLoadFailure = (cause: unknown): string =>
           cause._tag === "CliConfigFlagConflictError" ||
           cause._tag === "CliConfigLoadError" ||
           cause._tag === "CliConfigRemovedKeyError" ||
-          cause._tag === "CliConfigRemovedEnvError") &&
+          cause._tag === "CliConfigRemovedEnvError" ||
+          cause._tag === "CliConfigFileConflictError" ||
+          cause._tag === "CliConfigSchemaVersionError") &&
         "message" in cause &&
         typeof cause.message === "string"
       ? cause.message

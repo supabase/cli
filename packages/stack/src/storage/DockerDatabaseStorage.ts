@@ -1,6 +1,5 @@
 import {
   Cause,
-  Crypto,
   Effect,
   Exit,
   Fiber,
@@ -13,6 +12,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcess } from "effect/process";
 import type {
   ChildProcessHandle,
@@ -145,7 +145,8 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
     readonly cacheRoot: string;
     readonly fs: FileSystem.FileSystem;
     readonly path: Path.Path;
-    readonly crypto: Crypto.Crypto;
+    readonly crypto: SecureRandom.SecureRandom["Service"];
+    readonly digest: Digest.Digest["Service"];
     readonly container: ContainerRuntime | undefined;
     readonly spawner: ChildProcessSpawnerService["Service"];
     readonly helpers?: DockerHelperRegistry;
@@ -168,12 +169,13 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       const stateRoot = options.path.dirname(options.path.dirname(options.root));
       const dataNamespace = `instance-${options.stackId}-${options.instanceId}`;
       const hash = (value: string) =>
-        options.crypto.digest("SHA-256", new TextEncoder().encode(value)).pipe(
-          Effect.map((bytes) =>
-            Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
-          ),
-          Effect.mapError((cause) => errorFor("identity", cause)),
-        );
+        options.digest
+          .digest(Digest.sha256, new TextEncoder().encode(value))
+          .pipe(
+            Effect.map((bytes) =>
+              Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+            ),
+          );
       const encodeMarker = Schema.encodeEffect(Schema.fromJsonString(Marker));
       const validateMarker = (marker: Marker) =>
         Effect.gen(function* () {
@@ -375,7 +377,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const engineCommand = Effect.fn("DockerDatabaseStorage.engineCommand")(
-        (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> =>
+        (
+          args: ReadonlyArray<string>,
+          output: "stdout" | "all" = "stdout",
+        ): Effect.Effect<string, DockerDatabaseStorageError> =>
           Effect.scoped(
             Effect.gen(function* () {
               yield* Effect.annotateCurrentSpan({
@@ -415,7 +420,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   "engine",
                   stderr.trim() || `Container engine exited with ${code}`,
                 );
-              return stdout.trim();
+              return output === "all"
+                ? [stdout.trim(), stderr.trim()].filter((part) => part !== "").join("\n")
+                : stdout.trim();
             }),
           ).pipe(Effect.mapError((cause) => errorFor("engine", cause))),
       );
@@ -638,6 +645,57 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           )
           .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
         const stderr = yield* stderrTail(child);
+        const diagnosticProbe = (command: Effect.Effect<string, DockerDatabaseStorageError>) =>
+          command.pipe(
+            Effect.map((output) => ({ outcome: "ok" as const, output })),
+            Effect.timeoutOrElse({
+              duration: "5 seconds",
+              orElse: () =>
+                Effect.succeed({
+                  outcome: "timeout" as const,
+                  output: "unavailable: timed out after 5 seconds",
+                }),
+            }),
+            Effect.catch((cause) =>
+              Effect.succeed({
+                outcome: "error" as const,
+                output: `unavailable: ${cause.message}`,
+              }),
+            ),
+          );
+        const stalledHelperState = Effect.fn("DockerDatabaseStorage.stalledHelperState")(
+          function* () {
+            const [inspected, logs] = yield* Effect.all(
+              [
+                diagnosticProbe(
+                  engineCommand([
+                    "inspect",
+                    "--format",
+                    "{{.State.Status}}\t{{.State.ExitCode}}\t{{.State.Error}}",
+                    name,
+                  ]),
+                ),
+                // `logs` relays the helper's stderr on the engine's own stderr.
+                diagnosticProbe(engineCommand(["logs", "--tail", "20", name], "all")),
+              ],
+              { concurrency: "unbounded" },
+            );
+            yield* Effect.annotateCurrentSpan({
+              "helper.inspect.outcome": inspected.outcome,
+              "helper.logs.outcome": logs.outcome,
+            });
+            let state = inspected.output;
+            if (inspected.outcome === "ok") {
+              const [status = "", exitCode = "", engineError = ""] = inspected.output.split("\t");
+              yield* Effect.annotateCurrentSpan({
+                "helper.status": status,
+                "helper.exit_code": Number(exitCode),
+              });
+              state = `${status} (exit ${exitCode})${engineError === "" ? "" : `: ${engineError}`}`;
+            }
+            return `helper state: ${state}\nhelper logs: ${logs.output || "(empty)"}`;
+          },
+        );
         return yield* child.stdout.pipe(
           Stream.decodeText,
           Stream.splitLines,
@@ -650,6 +708,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             exit.value.value === "supabase-helper-ready"
               ? Effect.succeed(name)
               : Effect.gen(function* () {
+                  const timedOut =
+                    Exit.isFailure(exit) &&
+                    Option.exists(Cause.findErrorOption(exit.cause), Cause.isTimeoutError);
+                  // Inspect before the kill: `--rm` removes the helper once its attach ends.
+                  const state = timedOut ? yield* stalledHelperState() : "";
                   yield* child
                     .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
                     .pipe(Effect.ignore);
@@ -659,7 +722,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   );
                   // Docker prints warnings such as a platform mismatch on `create`, so keep that
                   // output alongside what `start` wrote.
-                  const tail = [createTail, diagnostic.trim()]
+                  const tail = [createTail, diagnostic.trim(), state]
                     .filter((part) => part !== "")
                     .join("\n");
                   const reason = Exit.isFailure(exit)
@@ -749,9 +812,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   .prepareImage(image)
                   .pipe(Effect.mapError((cause) => errorFor("helper", cause))),
               );
-              const token = yield* options.crypto.randomUUIDv4.pipe(
-                Effect.mapError((cause) => errorFor("helper", cause)),
-              );
+              const token = yield* options.crypto.uuidV4();
               const name = `supabase-db-helper-${token}`;
               // Register the owned name before remote create so interrupted startup can remove it.
               yield* Ref.set(helperId, name);
@@ -1195,7 +1256,8 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, options.fs),
           Effect.provideService(Path.Path, options.path),
-          Effect.provideService(Crypto.Crypto, options.crypto),
+          Effect.provideService(SecureRandom.SecureRandom, options.crypto),
+          Effect.provideService(Digest.Digest, options.digest),
         );
       };
       const saveSnapshot = Effect.fn("DockerDatabaseStorage.saveSnapshot")(

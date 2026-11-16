@@ -75,7 +75,8 @@ routing/settings can read project configuration and profiles.
 
 Destruction releases this stack's rows in the per-user port registry at
 `<passwd home>/.supabase/ports.sqlite` (independent of `SUPABASE_HOME`, with no
-override) only once cleanup is confirmed complete; a destroy that fails
+override; WAL mode, with `ports.sqlite-wal` and `ports.sqlite-shm` alongside
+while open) only once cleanup is confirmed complete; a destroy that fails
 keeps the stack's automatic reservations, and those ports remain unavailable
 to other stacks until a later destroy succeeds; configured ports are released
 with their listeners. A reservation whose owning

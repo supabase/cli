@@ -204,13 +204,21 @@ describe("runWorkloadBench", () => {
         expect(report.base).toHaveLength(6);
         expect(report.branch).toHaveLength(6);
         const boots = calls.filter((call) => call.command === "boot");
-        expect(boots.map((call) => call.build)).toEqual(["base", "branch", "branch", "base"]);
-        expect(calls.filter((call) => call.command === "halt")).toHaveLength(4);
-        // One warmup plus five measured launches share the first block's stack.
+        expect(boots.map((call) => call.build)).toEqual([
+          "base",
+          "branch",
+          "branch",
+          "base",
+          "base",
+          "branch",
+        ]);
+        expect(calls.filter((call) => call.command === "halt")).toHaveLength(6);
+        expect(report.base.map((sample) => sample.block)).toEqual([0, 0, 1, 1, 2, 2]);
+        // One warmup plus two measured launches share the first block's stack.
         const firstBlock = calls.filter((call) => call.home === boots[0]?.home);
         expect(firstBlock.map((call) => call.command)).toEqual([
           "boot",
-          ...Array.from({ length: 6 }, () => "work"),
+          ...Array.from({ length: 3 }, () => "work"),
           "halt",
         ]);
       }),

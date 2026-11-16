@@ -1,4 +1,5 @@
-import { Crypto, Effect, Option, Record, Schema } from "effect";
+import { Effect, Option, Record, Schema } from "effect";
+import { Digest } from "effect/crypto";
 import { Headers, HttpClient, HttpClientRequest } from "effect/http";
 import {
   artifactSourceService,
@@ -154,17 +155,9 @@ const unexpectedStatus = (subject: Subject, url: string, status: number) =>
     status,
   });
 
-const sha256Hex = Effect.fnUntraced(function* (subject: Subject, url: string, bytes: Uint8Array) {
-  const crypto = yield* Crypto.Crypto;
-  return digestHex(
-    yield* crypto
-      .digest("SHA-256", bytes)
-      .pipe(
-        Effect.mapError((cause) =>
-          integrity(subject, url, `Unable to compute SHA-256: ${String(cause)}`),
-        ),
-      ),
-  );
+const sha256Hex = Effect.fnUntraced(function* (bytes: Uint8Array) {
+  const crypto = yield* Digest.Digest;
+  return digestHex(yield* crypto.digest(Digest.sha256, bytes));
 });
 
 const decodeJson = <S extends Schema.Decoder<unknown>>(
@@ -290,7 +283,7 @@ const verifyTarget = Effect.fnUntraced(function* (
   if (fetched.status === 404)
     return yield* integrity(subject, url, `Published release has no ${stem}.manifest.json`);
   if (!isOk(fetched.status)) return yield* unexpectedStatus(subject, url, fetched.status);
-  const actual = yield* sha256Hex(subject, url, fetched.bytes);
+  const actual = yield* sha256Hex(fetched.bytes);
   if (actual !== manifest)
     return yield* integrity(subject, url, "Manifest does not match SHA256SUMS", {
       expected: manifest,
@@ -327,7 +320,7 @@ const resolveUpstreamImage = Effect.fn("ReleaseResolver.resolveUpstreamImage")(f
     if (fetched.status === 404)
       return yield* integrity(subject, url, "Published release has no oci-provenance file");
     if (!isOk(fetched.status)) return yield* unexpectedStatus(subject, url, fetched.status);
-    const actual = yield* sha256Hex(subject, url, fetched.bytes);
+    const actual = yield* sha256Hex(fetched.bytes);
     if (actual !== expected)
       return yield* integrity(subject, url, "oci-provenance does not match SHA256SUMS", {
         expected,
@@ -385,7 +378,7 @@ const imageDigest = Effect.fn("ReleaseResolver.imageDigest")(function* (
   if (fetched.status === 404)
     return yield* integrity(subject, url, `Published release has no image ${repository}:${tag}`);
   if (!isOk(fetched.status)) return yield* unexpectedStatus(subject, url, fetched.status);
-  const actual = `sha256:${yield* sha256Hex(subject, url, fetched.bytes)}`;
+  const actual = `sha256:${yield* sha256Hex(fetched.bytes)}`;
   if (fetched.digestHeader !== undefined && fetched.digestHeader !== actual)
     return yield* integrity(subject, url, "Registry digest does not match the manifest body", {
       expected: fetched.digestHeader,

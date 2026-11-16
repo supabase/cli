@@ -35,7 +35,8 @@ import type { ConfigPullFlags } from "./pull.command.ts";
 
 /**
  * `config pull` writes a remote project or branch's configuration into `supabase/config.toml`/
- * `.json` (the config root, or an existing/new `[remotes.*]` block) after a confirmation prompt.
+ * `.json`/`.jsonc` (the config root, or an existing/new `[remotes.*]` block) after a confirmation
+ * prompt.
  * Its target resolution, fetch, and classify steps mirror `config diff`'s, up to the point where
  * the two commands diverge. The plan/apply run-core is hoisted to
  * `command-internal/config-pull-run.ts` so the `supabase pull` orchestrator can reuse it.

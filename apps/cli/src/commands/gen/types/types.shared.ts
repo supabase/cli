@@ -1,8 +1,5 @@
 import { Effect, Schema } from "effect";
 import { InvalidGenTypesDurationError } from "./types.errors.ts";
-import caProd2021 from "./templates/prod-ca-2021.ts";
-import caProd2025 from "./templates/prod-ca-2025.ts";
-import caStaging2021 from "./templates/staging-ca-2021.ts";
 
 // Local Docker resource ids are hoisted to `command-internal` so the declarative seam
 // can derive the same `supabase_db_<id>` name when checking the local stack.
@@ -24,9 +21,10 @@ const DURATION_PART_PATTERN = new RegExp(
   "g",
 );
 
-const DurationJson = Schema.fromJsonString(Schema.String);
+const JsonString = Schema.fromJsonString(Schema.String);
 
-const quoteDuration = (raw: string) => Schema.encodeEffect(DurationJson)(raw).pipe(Effect.orDie);
+export const quoteJsonString = (raw: string) =>
+  Schema.encodeEffect(JsonString)(raw).pipe(Effect.orDie);
 
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
@@ -39,7 +37,7 @@ export function parseQueryTimeoutMillis(
     const input = raw.trim();
     if (input.length === 0) {
       return yield* new InvalidGenTypesDurationError({
-        message: `invalid duration ${yield* quoteDuration(raw)}`,
+        message: `invalid duration ${yield* quoteJsonString(raw)}`,
       });
     }
 
@@ -58,7 +56,7 @@ export function parseQueryTimeoutMillis(
       }
       if (match.index !== consumed) {
         return yield* new InvalidGenTypesDurationError({
-          message: `invalid duration ${yield* quoteDuration(raw)}`,
+          message: `invalid duration ${yield* quoteJsonString(raw)}`,
         });
       }
       const amount = Number.parseFloat(rawNumber);
@@ -72,14 +70,10 @@ export function parseQueryTimeoutMillis(
 
     if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
       return yield* new InvalidGenTypesDurationError({
-        message: `invalid duration ${yield* quoteDuration(raw)}`,
+        message: `invalid duration ${yield* quoteJsonString(raw)}`,
       });
     }
 
     return totalMillis;
   });
-}
-
-export function rootCaBundle() {
-  return `${caStaging2021}${caProd2021}${caProd2025}`;
 }

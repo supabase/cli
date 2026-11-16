@@ -1,7 +1,7 @@
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
@@ -223,7 +223,7 @@ function faultyFsLayer(workdir: string, opts: FsFaultOpts): Layer.Layer<FileSyst
         },
       });
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -350,6 +350,7 @@ function fakeServices(workdir: string, opts: SetupOpts = {}) {
     // Listed first so every fake service layer below overrides it; Layer.mergeAll is
     // last-wins on a shared service.
     BunServices.layer,
+    BunCrypto.layer,
     cliConfigValuesTestLayer,
     opts.realLayers === true
       ? realDbConfigResolver({
@@ -449,7 +450,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
-    commandRuntimeLayer(["migration", "squash"]).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(["migration", "squash"]).pipe(
+      Layer.provide([BunServices.layer, BunCrypto.layer]),
+    ),
     mockTty({ stdinIsTty: interactive, stdoutIsTty: interactive }),
   );
 

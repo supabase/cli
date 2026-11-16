@@ -1,6 +1,6 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Path, Redacted } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { create as createStack, discover as discoverStacks } from "@supabase/stack/effect";
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
@@ -132,7 +132,10 @@ describe("supabase db diff (stack shadow baseline cache)", () => {
 
           const registered = yield* discoverStacks({ stateRoot: path.join(home, "stacks") });
           expect(registered.map(({ definition }) => definition.id)).toEqual([stack.id]);
-        }).pipe(Effect.scoped, Effect.provide([BunServices.layer, FetchHttpClient.layer])),
+        }).pipe(
+          Effect.scoped,
+          Effect.provide([Layer.merge(BunServices.layer, BunCrypto.layer), FetchHttpClient.layer]),
+        ),
       { timeout: TEST_TIMEOUT_MS },
     );
   }

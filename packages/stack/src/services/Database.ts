@@ -3,7 +3,6 @@ import { PgClient } from "@effect/sql-pg";
 import {
   Config,
   Context,
-  Crypto,
   Data,
   Effect,
   FileSystem,
@@ -18,6 +17,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
@@ -32,6 +32,7 @@ import {
 import {
   makeContainerRuntime,
   type ContainerProcess,
+  type ContainerResources,
   type ContainerRuntime,
   type EngineTarget,
   type HostGateway,
@@ -128,13 +129,19 @@ export interface DatabaseConfig extends Schema.Schema.Type<typeof DatabaseConfig
 /** A database's configuration with the artifact pin its creation selected. */
 export interface PinnedDatabaseConfig extends DatabaseConfig {
   readonly pin: ArtifactPin;
+  readonly container?: ContainerResources;
 }
 
-/** Joins a database creation's pin and configuration into what the component runs. */
+/** Joins a database creation's pin, container limits and configuration into what the component runs. */
 export const pinnedDatabaseConfig = (creation: {
   readonly pin: ArtifactPin;
   readonly config: DatabaseConfig;
-}): PinnedDatabaseConfig => ({ ...creation.config, pin: creation.pin });
+  readonly container?: ContainerResources;
+}): PinnedDatabaseConfig => ({
+  ...creation.config,
+  pin: creation.pin,
+  ...(creation.container === undefined ? {} : { container: creation.container }),
+});
 
 export const DatabaseEndpoints = Schema.Struct({ sql: Schema.optionalKey(EndpointIntent) });
 export interface DatabaseEndpoints extends Schema.Schema.Type<typeof DatabaseEndpoints> {}
@@ -566,7 +573,8 @@ export const makeDatabase = (
   DatabaseError,
   | FileSystem.FileSystem
   | Path.Path
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | ChildProcessSpawner.ChildProcessSpawner
   | HttpClient.HttpClient
   | Scope.Scope
@@ -574,7 +582,8 @@ export const makeDatabase = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const client = yield* HttpClient.HttpClient;
     const logs = yield* PubSub.sliding<LaunchOutput>(256);
@@ -614,6 +623,7 @@ export const makeDatabase = (
             fs,
             path,
             crypto,
+            digest,
             container,
             spawner,
             ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
@@ -628,7 +638,8 @@ export const makeDatabase = (
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
+        Effect.provideService(Digest.Digest, digest),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.mapError((cause) => errorFor("snapshot", cause)),
       );
@@ -730,7 +741,8 @@ export const makeDatabase = (
         return prepareNativeArtifact({ service: "database", pin }, options.cacheRoot).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+          Effect.provideService(Digest.Digest, digest),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, client),
           Effect.asVoid,
@@ -848,6 +860,7 @@ export const makeDatabase = (
             },
           ],
           ports: [5432],
+          ...(config.container === undefined ? {} : { resources: config.container }),
           // SIGTERM is PostgreSQL's smart shutdown, which waits for every client to disconnect.
           stopSignal: "SIGINT",
           ...(config.stopGraceSeconds === undefined
@@ -944,7 +957,7 @@ export const makeDatabase = (
             // replacing it, and its derived name lets recovery find a leftover without a journal.
             const runtimeRoot = yield* asRoot(acquireNativeRuntimeRoot());
             const socketPath = yield* nativeSocketDirectoryPath(
-              crypto,
+              digest,
               path,
               runtimeRoot,
               options.root,
@@ -998,7 +1011,8 @@ export const makeDatabase = (
               Scope.provide(launchScope),
               Effect.provideService(FileSystem.FileSystem, fs),
               Effect.provideService(Path.Path, path),
-              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.provideService(Digest.Digest, digest),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(HttpClient.HttpClient, client),
               Effect.mapError((cause) => errorFor("launch", cause)),
@@ -1111,7 +1125,7 @@ export const makeDatabase = (
         ? removeNativeSocketDirectory(options.root, options.instanceId).pipe(
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(Digest.Digest, digest),
             Effect.mapError((cause) => errorFor("destroy", cause)),
           )
         : Effect.void;

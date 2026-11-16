@@ -951,7 +951,10 @@ describe("native process group cleanup", () => {
               const child = yield* delegate.spawn(command);
               if (
                 !ChildProcess.isStandardCommand(command) ||
-                !command.args.some((argument) => argument.includes("native-launcher"))
+                !command.args.some(
+                  (argument) =>
+                    typeof argument === "string" && argument.includes("native-launcher"),
+                )
               )
                 return child;
               yield* child.stdout.pipe(

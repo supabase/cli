@@ -30,7 +30,7 @@ import type {
 } from "../../config/cli-config.errors.ts";
 import type { ProjectRefReadError } from "../../shared/config/legacy-project-state.service.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
-import { checkDbToml } from "../db-config.toml-read.ts";
+import { checkDbConfig } from "../db-config.read.ts";
 import { CLI_PROJECT_LABEL, localDbContainerId } from "../docker-ids.ts";
 import { DockerRun, type DockerRunOpts } from "../docker-run.service.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
@@ -45,7 +45,6 @@ import { resolvePinnedImage } from "./pinned-image.ts";
 import { COMPOSE_PROJECT_LABEL } from "./container-lifecycle.ts";
 import { REALTIME_TENANT_ID, buildRealtimeEnv } from "./realtime-env.ts";
 import { START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
-import { START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
 import { START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
 import { STACK_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { startInternalDbPassword, startInternalDbUrl } from "./internal-db-connection.ts";
@@ -169,7 +168,7 @@ function resolveDbSetupImages(
  *
  * The banner prints before `jwks` resolves, so a JWKS failure (an unreachable `third_party`
  * provider) surfaces after the banner instead of before it. The `majorVersion >= 15` gate means
- * JWKS's potential live HTTP request never runs at all on PG13/14, even with realtime enabled.
+ * JWKS's potential live HTTP request never runs at all on PG14, even with realtime enabled.
  */
 export const resolveDbSetupPrelude = <E>(setup: {
   readonly majorVersion: number;
@@ -207,7 +206,7 @@ export interface SetupDatabaseInput {
   readonly config: CliConfig;
   /** Effective `[experimental.webhooks].enabled`, including supported environment overrides. */
   readonly webhooksEnabled: boolean;
-  /** `db.major_version` (13-17), resolved by the caller once, ahead of the `db` container's own image tag selection. */
+  /** `db.major_version` (14-17), resolved by the caller once, ahead of the `db` container's own image tag selection. */
   readonly majorVersion: number;
   /**
    * The internal Docker-network address the PG15+ one-shot jobs connect through. The real local
@@ -338,11 +337,15 @@ export const initSchema14 = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   tmpDir: string,
-  majorVersion: number,
 ) {
-  const schemaSql =
-    majorVersion === 13 ? START_DB_INITIAL_SCHEMA_13_SQL : START_DB_INITIAL_SCHEMA_14_SQL;
-  yield* execSqlConstant(session, fs, path, tmpDir, "initial-schema.sql", schemaSql);
+  yield* execSqlConstant(
+    session,
+    fs,
+    path,
+    tmpDir,
+    "initial-schema.sql",
+    START_DB_INITIAL_SCHEMA_14_SQL,
+  );
 });
 
 /**
@@ -355,10 +358,9 @@ const startInitSchemaPre15 = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   tmpDir: string,
-  majorVersion: number,
 ) {
   yield* execSqlConstant(session, fs, path, tmpDir, "globals.sql", START_DB_GLOBALS_SQL);
-  yield* initSchema14(session, fs, path, tmpDir, majorVersion);
+  yield* initSchema14(session, fs, path, tmpDir);
 });
 
 /**
@@ -581,7 +583,7 @@ const startInitSchema = Effect.fn("DbSetup.initSchema")(function* (
 ) {
   yield* Effect.annotateCurrentSpan("db.major_version", input.majorVersion);
   if (input.majorVersion <= 14) {
-    yield* startInitSchemaPre15(input.session, input.fs, input.path, tmpDir, input.majorVersion);
+    yield* startInitSchemaPre15(input.session, input.fs, input.path, tmpDir);
     return;
   }
   yield* startInitSchema15(spawner, input);
@@ -851,10 +853,10 @@ export const startSetupLocalDatabase = (
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
 
-    // `warnOnUnresolvedEnv: false`: the caller's own handler already ran an earlier `checkDbToml`
+    // `warnOnUnresolvedEnv: false`: the caller's own handler already ran an earlier `checkDbConfig`
     // pass before reaching this fresh-volume setup, which already printed any unresolved-env
     // warning. Without this, this module's own duplicate config-load pass would print it twice.
-    const toml = yield* checkDbToml(fs, path, workdir, undefined, {
+    const toml = yield* checkDbConfig(fs, path, workdir, undefined, {
       warnOnUnresolvedEnv: false,
     });
 
@@ -874,6 +876,7 @@ export const startSetupLocalDatabase = (
       pgDeltaEnabled: toml.pgDelta.enabled,
       schemaPaths: toml.schemaPaths,
       localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+      configFile: toml.configFile,
     });
   });
 

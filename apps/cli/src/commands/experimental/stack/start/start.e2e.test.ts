@@ -557,6 +557,43 @@ describe("stack start (compiled e2e)", () => {
                 event.service === "database",
             ),
           ).toBe(true);
+          const unifiedHistory = yield* runSupabaseEffect(
+            [
+              "logs",
+              "--stack-id",
+              idText,
+              "--service",
+              "postgres",
+              "--since",
+              "start",
+              "--limit",
+              "1000",
+              "--output-format",
+              "json",
+            ],
+            stoppedOptions,
+          );
+          expect(
+            unifiedHistory.exitCode,
+            `stdout:\n${unifiedHistory.stdout}\nstderr:\n${unifiedHistory.stderr}`,
+          ).toBe(0);
+          const unifiedRecords = yield* Schema.decodeEffect(
+            Schema.fromJsonString(Schema.Array(Schema.JsonObject)),
+          )(unifiedHistory.stdout);
+          const retainedLine = unifiedRecords.find(
+            (record) =>
+              (record["kind"] === "stdout" || record["kind"] === "stderr") &&
+              typeof record["text"] === "string" &&
+              record["text"].length > 0,
+          );
+          expect(retainedLine).toMatchObject({
+            instanceId: databaseId,
+            service: "database",
+            launchId: expect.any(Number),
+            timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
+            text: expect.any(String),
+            position: { generation: expect.any(Number), byteOffset: expect.any(Number) },
+          });
           const stoppedFollow = yield* runSupabaseEffect(
             [...stoppedLogsArgs, "--follow"],
             stoppedOptions,

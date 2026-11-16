@@ -34,6 +34,7 @@ import {
 import {
   buildStartContainerCreateArgs,
   applyBitbucketStartContainerFilter,
+  applyHealthStartInterval,
   isDockerClientEnvKey,
   type StartContainerSpec,
 } from "./docker-create-args.ts";
@@ -125,6 +126,11 @@ export interface ContainerOpts {
   /** Passed in (rather than read via env here) so this module stays a pure effect orchestrator. */
   readonly isBitbucketPipeline: boolean;
   /**
+   * Whether the engine takes `--health-start-interval`, probed once per run by each command that
+   * reads Docker's health status. Shadow databases leave it unset: nothing reads theirs.
+   */
+  readonly healthStartInterval?: boolean;
+  /**
    * Stamped onto every created container as {@link CLI_WORKDIR_LABEL} so a later `stop` or
    * {@link rollbackStart} can find this directory from the container's own label alone, without
    * depending on the invoking cwd/`--workdir` matching `start`'s.
@@ -183,7 +189,7 @@ function portConflictSuggestion(hostPort: string, serviceLabel: string): string 
   return (
     `\nTry stopping the project or container already using ${hostPort} ` +
     "(`docker ps` lists what's bound to it, or `supabase stop` for another local Supabase project), " +
-    `or configure a different ${serviceLabel} port in supabase/config.toml.`
+    `or configure a different ${serviceLabel} port in your config file.`
   );
 }
 
@@ -716,7 +722,10 @@ export function createContainer(
       }
     }
 
-    const finalSpec = applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline);
+    const finalSpec = applyHealthStartInterval(
+      applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline),
+      opts.healthStartInterval === true,
+    );
 
     const createArgs = buildStartContainerCreateArgs(finalSpec);
     // `isDockerClientEnvKey` keys are already emitted inline as `-e KEY=value` above; see

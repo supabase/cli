@@ -226,20 +226,25 @@ commands retain their existing behavior.
 `functions serve` requires a running project stack. It attaches to the existing Functions member,
 waking it when needed. If Functions was excluded, it creates a temporary standalone Functions
 instance on the stack's API listener without changing the saved composition. Ctrl-C destroys that
-temporary instance; an existing member remains available. `--no-verify-jwt` and `--env-file` apply
-for the serving session and the previous configuration is restored on exit. Ordinary code edits
+temporary instance; an existing member remains available. On a running stack, any difference
+between the configuration serve resolves (env files, per-function `.env`, `[functions.<name>]`
+settings, `--env-file`, `--debug`, `--no-verify-jwt`) and the saved one restarts Functions for
+the serving session, and the saved configuration is restored on exit. Edits made while serving
+apply on the next `functions serve`, because the stack backend does not watch files. Ordinary code edits
 are picked up by the next invocation without a runtime restart. Import-map and inspector flags
-and multiline environment values are currently unsupported on this backend. Normal exit owns cleanup; forcibly killing the CLI
+are currently unsupported on this backend. Normal exit owns cleanup; forcibly killing the CLI
 cannot guarantee restoration or removal of its temporary instance. Concurrent override sessions
 for the same Functions instance are unsupported. Cleanup waits for submitted lifecycle operations;
 additional signals do not force it to abandon cleanup. Restoration restores configuration and keeps
 the service running; it does not return it to a sleeping state.
 
-Stack mode reads the shared `supabase/functions/.env` file when creating Functions; `--env-file`
-replaces those custom values for the session. A normal `start` applies changes to the shared file
-and restores default JWT verification on the same Functions instance. Per-function
-`.env` files are not loaded. Reserved
-`SUPABASE_*` values in these files are ignored because the runtime supplies them. With
+Stack mode resolves the Functions env like legacy `start` and `functions serve`: the shared
+`supabase/functions/.env` file overrides `[edge_runtime.secrets]`, and `functions serve` also
+reads each enabled function's own `.env` on every invocation; `--env-file` replaces those files
+for the session. Multiline values are supported. `start` applies changes to the shared file and
+restores default JWT verification only when it creates or replans the stack; a `start` against a
+running stack keeps the current Functions configuration. Reserved `SUPABASE_*`
+values in these files are skipped with a warning because the runtime supplies them. With
 `--output-format stream-json`, readiness emits a result containing the instance ID and URL,
 followed by live log events.
 
@@ -275,6 +280,31 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
+`supabase logs` reads retained stdout/stderr from composition members and `gateway`
+request lines from the shared API port. Interactive terminals open a browser; press `L`
+to load more records. Pipes and machine output perform one finite read and exit.
+
+Select `--stack <name>` or `--stack-id <id>`. Repeat `--service <kind>` to select
+services, use `--service postgres` for the database, or `--resource <instance-id>`
+for one instance. `--service gateway` reads only request lines. Reads work while
+the stack is stopped and never start an owner or service.
+
+`--limit N` (default 100, maximum 1000) selects the initial newest lines. `--since`
+accepts a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each service's
+latest launch. The default is the last hour. The requested lower bound stays fixed
+when you load newer logs, and the header shows the captured end of each successful
+load. Failed loads preserve the displayed rows and window.
+
+Use `--output-format json` for an array of retained records, or `stream-json` for
+`log-entry` and `log-marker` events. Each event's `data` preserves the retained
+record, including instance IDs, launch IDs, and positions. Missing stacks and
+unmatched services fail with status 1. Browser interruption exits 130.
+
+The deprecated `supabase stack logs` keeps its existing `--tail` and `--follow`
+behavior until removal in v4.
+
+### Legacy stack logs
+
 `supabase stack logs` prints the retained stdout/stderr of composition members, plus
 the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
 streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
@@ -296,6 +326,9 @@ prints the history as one array and does not accept `--follow`. Missing stacks,
 unmatched services, and `--follow` without an owner fail with status 1; interruption
 exits 130.
 
+The command emits a deprecation warning on stderr and remains available until v4.
+Stream JSON also includes a `data` object containing the original retained record.
+
 ## Data and configuration
 
 The backends own separate state and databases. Enabling the flag does not import, copy, seed from,
@@ -305,6 +338,20 @@ and seed configuration are separate from importing legacy database data.
 The flag is local CLI configuration in `supabase/config.toml` or `supabase/config.json` and is
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
+
+Stack mode rejects a `db.major_version` other than 15 or 17, a non-empty `experimental.s3_*` value
+while `db.orioledb_version` is set, an `edge_runtime.deno_version` other than 2 while Edge Runtime
+is enabled, and `analytics.backend = "bigquery"` or a non-empty `analytics.gcp_*` value while
+Analytics is enabled. The error names the setting.
+
+`[api.tls]` serves the API port over HTTPS, with plain HTTP only from loopback. The certificate must
+have an IP subject alternative name for `127.0.0.1` (for example `mkcert localhost 127.0.0.1`;
+bucket seeding and stack `storage` commands then also need
+`NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`), and
+containers must reach the host from loopback: on macOS, Docker Desktop, colima and Podman machine
+do; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta don't, so a start that
+serves the API over TLS fails there with `api.tls: unsupported networking`. The `stack start` side
+effects list its errors.
 
 Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
 uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions
@@ -352,8 +399,8 @@ format, or comes from a newer CLI always fails the start. The lock's JSON Schema
 `https://supabase.com/schemas/supabase-lock/v1.json`. A database with initialized data keeps
 its build: any change other than a new `-rN` revision of the same build (a different upstream build,
 release line or major) is refused. The refusal offers to keep the data by pinning the recorded build with
-`[local.services.database] version`, setting `[db] major_version` back when the major differs and removing any
-`[db] orioledb_version` when an OrioleDB build is requested, or to run `supabase stack destroy` and recreate it. `supabase link`
+`local.services.database.version` in your config file, setting `db.major_version` back when the major differs and removing any
+`db.orioledb_version` when an OrioleDB build is requested, or to run `supabase stack destroy` and recreate it. `supabase link`
 and `supabase stack update` warn when the versions they lock would be refused by an existing stack's
 data. A database that never initialized adopts the change. See the [`start` side
 effects](../src/commands/experimental/stack/start/SIDE_EFFECTS.md#service-versions-and-the-lock) for
@@ -416,15 +463,17 @@ unaffected by the flag either way.
 
 Under the stack backend, local Storage operations resolve their endpoint and credential from
 the selected composition rather than `[api]`/`[api.tls]`: the endpoint is the Storage member's
-observed HTTP binding plus `/storage/v1/...`, and the service-role JWT is generated from the
-primary database member's observed JWT secret. The stack is located by the project root
-(workdir realpath) through the `@supabase/stack` API, which reads stack state under
-`SUPABASE_HOME`.
+observed HTTP binding plus `/storage/v1/...`, and the service-role JWT is the one the stack saved
+with its credentials. The stack is located by the project root (workdir realpath) through the
+`@supabase/stack` API, which reads stack state under `SUPABASE_HOME`. A stack started with
+`[api.tls]` serves that endpoint over HTTPS, and Storage uses the certificate saved at start,
+not `config.toml`: a saved certificate with a self-signed root is the only trusted CA; a CA-issued
+one is verified against Bun's default trust store and `NODE_EXTRA_CA_CERTS`.
 Neither `storage` nor `seed buckets` ever creates a stack; the legacy `[api]`
 port/external-URL/TLS fields, their `SUPABASE_API_*` overrides, `SUPABASE_AUTH_JWT_SECRET`/
-`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_SERVICES_HOSTNAME`, the Docker daemon hostname, and
-the embedded Kong CA are all legacy-backend only and are not consulted on this path. The
-service-role JWT is never printed or logged.
+`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_SERVICES_HOSTNAME` and the Docker daemon hostname are
+legacy-backend only and are not consulted on this path. The service-role JWT is never printed or
+logged.
 
 Storage's capability state gates these operations:
 
@@ -441,7 +490,7 @@ unavailable fails with `StackStorageUnavailableError`, guiding the user to run `
 status`/`supabase stack restart`, or `supabase start` when the stack has never been configured.
 Missing Storage HTTP endpoints fail with `StackStorageCapabilityError`, as do other Storage
 capability failures. A stack-gateway 502/503 encountered while Storage activates is reported as
-`StackStorageCapabilityError` guiding the user to `supabase stack logs` then `supabase stack
+`StackStorageCapabilityError` guiding the user to `supabase logs --service storage` then `supabase stack
 restart`, not as a raw status body — but only for a local target; a `--remote` failure passes
 through unchanged. All of these failures exit `1` for
 `storage`/`seed buckets`, and no HTTP
@@ -456,8 +505,9 @@ states are observed directly by Storage operations, including `stack start`.
 
 **`stack start` seeds on first configured start.** When a `stack start` (or the top-level `start`
 under the flag) invocation runs the stack's first configured start (never when it resumes an existing one) and
-Storage is not `disabled`, it seeds `[storage.buckets]` against the stack before printing status,
-reusing the `seed buckets` core. A project with no `[storage.buckets]` or
+Storage is not `disabled`, it seeds `[storage.buckets]` and, while `storage.vector.enabled`,
+`[storage.vector.buckets]` against the stack before printing status, reusing the `seed buckets`
+core. A project with no `[storage.buckets]` or
 `[storage.vector.buckets]` configured resolves no credentials and prints nothing. Auto-confirm is
 safe here since a first-start stack has no pre-existing buckets. Any other unusable Storage state,
 a missing capability/endpoint, a gateway activation failure, or an invalid bucket entry fails the

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
@@ -18,18 +18,20 @@ const writeProjectEnv = (workdir: string, contents: string) =>
     const supabaseDir = path.join(workdir, "supabase");
     yield* fs.makeDirectory(supabaseDir, { recursive: true });
     yield* fs.writeFileString(path.join(supabaseDir, ".env"), contents);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 /** Runs against a shell environment of exactly `env`, with the real config service and an empty Docker config dir. */
 const layerWithShellEnv = (workdir: string, env: Readonly<Record<string, string>> = {}) =>
   Layer.fresh(
     Layer.mergeAll(
       BunServices.layer,
+      BunCrypto.layer,
       runtimeInfoLayer,
       cliConfigValuesLayer.pipe(
         Layer.provide(
           Layer.mergeAll(
             BunServices.layer,
+            BunCrypto.layer,
             mockOutput().layer,
             Layer.succeed(CliConfigFlagInputs, makeCliConfigFlagInputs()),
           ),

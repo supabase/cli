@@ -134,6 +134,7 @@ describe("resolveComputeSource", () => {
     // destination, and the project's config file is not that.
     { raw: "supabase/config.toml", reason: "supabase/config.toml" },
     { raw: "supabase/config.json", reason: "supabase/config.json" },
+    { raw: "supabase/config.jsonc", reason: "supabase/config.jsonc" },
   ])("refuses $raw", ({ raw, reason }) =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(

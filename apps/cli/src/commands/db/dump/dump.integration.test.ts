@@ -176,6 +176,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       get: () => Effect.succeed(database),
       list: Effect.succeed([database]),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: Effect.die("unused") },
     composition: {
       plan: () => Effect.succeed([]),

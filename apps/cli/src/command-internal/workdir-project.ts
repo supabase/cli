@@ -34,9 +34,9 @@ export function missingProjectConfigMessage(input: {
   readonly explicitWorkdir: boolean;
 }): string {
   if (!input.explicitWorkdir) {
-    return "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.";
+    return "failed to read supabase/config.toml, config.json or config.jsonc: file not found. Run `supabase init` to create one.";
   }
-  return `failed to read supabase/config.toml or supabase/config.json in ${sanitizeInlineName(input.workdir)}: file not found. --workdir/SUPABASE_WORKDIR is used exactly as given and no ancestor directory is searched, so it must name the directory that contains your supabase/ folder.`;
+  return `failed to read supabase/config.toml, config.json or config.jsonc in ${sanitizeInlineName(input.workdir)}: file not found. --workdir/SUPABASE_WORKDIR is used exactly as given and no ancestor directory is searched, so it must name the directory that contains your supabase/ folder.`;
 }
 
 /**

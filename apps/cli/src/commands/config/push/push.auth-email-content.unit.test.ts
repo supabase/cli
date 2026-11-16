@@ -21,6 +21,7 @@ const emptyEmail = {
   double_confirm_changes: true,
   enable_confirmations: false,
   secure_password_change: false,
+  require_current_password: false,
   max_frequency: "1s",
   otp_length: 6,
   otp_expiry: 3600,

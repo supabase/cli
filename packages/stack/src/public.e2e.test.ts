@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, expectTypeOf, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Redacted, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -371,7 +371,9 @@ it.live(
       );
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 180_000 },
 );
@@ -435,7 +437,9 @@ it.live(
       );
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 60_000 },
 );

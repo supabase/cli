@@ -1,9 +1,8 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   PlatformError,
   Context,
-  Crypto,
   Deferred,
   Effect,
   Exit,
@@ -17,6 +16,7 @@ import {
   Sink,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -193,7 +193,8 @@ describe("ProcessRecipe launch cleanup", () => {
           const dependencies = {
             fs: yield* FileSystem.FileSystem,
             path: yield* Path.Path,
-            crypto: yield* Crypto.Crypto,
+            crypto: yield* SecureRandom.SecureRandom,
+            digest: yield* Digest.Digest,
             client: yield* HttpClient.HttpClient,
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
@@ -221,7 +222,11 @@ describe("ProcessRecipe launch cleanup", () => {
           expect(yield* Ref.get(serviceLaunches)).toBe(1);
           expect(yield* Ref.get(active)).toBe(1);
           yield* service.stop;
-        }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+          ),
+        ),
       ),
     );
   }
@@ -231,7 +236,7 @@ describe("ProcessRecipe launch cleanup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const cleanupFailure = yield* Ref.make(true);
@@ -245,7 +250,7 @@ describe("ProcessRecipe launch cleanup", () => {
                 !command.args.some(
                   (argument) =>
                     argument === "__supabase_stack_native__" ||
-                    argument.endsWith("/native-launcher.ts"),
+                    (typeof argument === "string" && argument.endsWith("/native-launcher.ts")),
                 )
               )
                 return handle;
@@ -284,6 +289,7 @@ describe("ProcessRecipe launch cleanup", () => {
           fs,
           path,
           crypto,
+          digest: yield* Digest.Digest,
           client,
           spawner,
           container: undefined,
@@ -306,7 +312,11 @@ describe("ProcessRecipe launch cleanup", () => {
         yield* Ref.set(cleanupFailure, false);
         yield* service.stop;
         expect((yield* service.get).lifecycle).toBe("stopped");
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
   );
 
@@ -315,7 +325,7 @@ describe("ProcessRecipe launch cleanup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const testScope = yield* Scope.Scope;
@@ -396,6 +406,7 @@ describe("ProcessRecipe launch cleanup", () => {
           fs,
           path,
           crypto,
+          digest: yield* Digest.Digest,
           client,
           spawner,
           container: undefined,
@@ -420,7 +431,11 @@ describe("ProcessRecipe launch cleanup", () => {
           expect(port).toBeLessThan(nativePortBase + nativePortSpan);
         }
         yield* service.stop;
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
   );
 });
@@ -476,7 +491,8 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
       borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
       fs: yield* FileSystem.FileSystem,
       path: yield* Path.Path,
-      crypto: yield* Crypto.Crypto,
+      crypto: yield* SecureRandom.SecureRandom,
+      digest: yield* Digest.Digest,
       client: yield* HttpClient.HttpClient,
       spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
       container,
@@ -486,7 +502,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
   return yield* makeStandaloneService(recipe.definition, { id: "realtime", config: creation });
 });
 
-const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const platform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 const nativeFixtureArtifact = Effect.fn(function* (
   cacheRoot: string,
@@ -672,7 +688,7 @@ const nativeRestRecipe = Effect.fn(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const client = yield* HttpClient.HttpClient;
   const cacheRoot = path.join(root, "cache");
   yield* nativeRestArtifact(cacheRoot, program);
@@ -690,6 +706,7 @@ const nativeRestRecipe = Effect.fn(function* (
       fs,
       path,
       crypto,
+      digest: yield* Digest.Digest,
       client,
       spawner,
       container: undefined,
@@ -791,15 +808,15 @@ describe("process recipe startup", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-claim-" });
         const state = Context.get(
           yield* Layer.build(StackNamespace.layer({ root: `${root}/state` })),
           StackNamespace.Service,
         );
-        const owner = `recipe-claim-owner-${yield* crypto.randomUUIDv4}`;
-        const other = `recipe-claim-other-${yield* crypto.randomUUIDv4}`;
+        const owner = `recipe-claim-owner-${yield* crypto.uuidV4()}`;
+        const other = `recipe-claim-other-${yield* crypto.uuidV4()}`;
         for (const id of [owner, other])
           yield* state.save({
             id,
@@ -949,7 +966,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-race-" });
@@ -1034,6 +1051,7 @@ describe("process recipe startup", () => {
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: interceptingSpawner,
             container: undefined,
@@ -1078,7 +1096,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({
@@ -1113,6 +1131,7 @@ describe("process recipe startup", () => {
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches, true),
             container: undefined,
@@ -1165,7 +1184,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-deadline-" });
@@ -1252,6 +1271,7 @@ describe("process recipe startup", () => {
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: deadlineSpawner,
             container: undefined,
@@ -1286,7 +1306,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({
@@ -1321,6 +1341,7 @@ describe("process recipe startup", () => {
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches),
             container: undefined,
@@ -1356,7 +1377,7 @@ describe("process recipe startup", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-exit-failure-" });
@@ -1432,6 +1453,7 @@ describe("process recipe startup", () => {
             fs,
             path,
             crypto,
+            digest: yield* Digest.Digest,
             client,
             spawner: failingSpawner,
             container: undefined,

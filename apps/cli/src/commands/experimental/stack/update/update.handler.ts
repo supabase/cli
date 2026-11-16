@@ -5,7 +5,10 @@ import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api
 import { probeLinkedTarget } from "../../../../command-internal/hosted-versions.ts";
 import { readProjectLink } from "../../../../shared/config/project-link.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import {
+  loadStackConfig,
+  stackConfigSuggestion,
+} from "../../../../command-internal/stack-config.ts";
 import {
   LOCK_FILE,
   LockResolutionError,
@@ -15,7 +18,7 @@ import {
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { mapTargetError, rejectStackOutput } from "../stack.shared.ts";
+import { mapTargetError, rejectStackOutput } from "../../../../command-internal/stack-target.ts";
 import { StackCommandUpdateError } from "./update.errors.ts";
 import type { StackUpdateFlags } from "./update.command.ts";
 
@@ -108,6 +111,7 @@ export const stackUpdate = Effect.fn("experimental.stack.update")(function* (
           : new StackCommandUpdateError({
               reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
               message: error.message,
+              suggestion: stackConfigSuggestion(error),
               cause: error,
             }),
       ),
@@ -117,7 +121,8 @@ export const stackUpdate = Effect.fn("experimental.stack.update")(function* (
     if (result === undefined)
       return yield* new StackCommandUpdateError({
         reason: "invalid-config",
-        message: "No supabase/config.toml in this project, so there is no lock to update.",
+        message:
+          "No supabase/config.toml, config.json or config.jsonc in this project, so there is no lock to update.",
         suggestion: "Run supabase init, then supabase start to create supabase/supabase.lock.",
       });
 

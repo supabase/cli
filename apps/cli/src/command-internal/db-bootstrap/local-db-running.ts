@@ -1,6 +1,7 @@
 import http from "node:http";
 
-import { Context, Crypto, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Context, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Digest } from "effect/crypto";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
@@ -271,19 +272,19 @@ const inspectContainerOverSocket = (
 export const localDockerEngineLayer: Layer.Layer<
   LocalDockerEngine,
   never,
-  Crypto.Crypto | FileSystem.FileSystem | Path.Path | RuntimeInfo
+  Digest.Digest | FileSystem.FileSystem | Path.Path | RuntimeInfo
 > = Layer.effect(
   LocalDockerEngine,
   Effect.gen(function* () {
     const runtime = yield* RuntimeInfo;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const resolveEndpoint = resolveDockerDaemonEndpoint().pipe(
       Effect.provideService(RuntimeInfo, runtime),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(Digest.Digest, crypto),
       Effect.orElseSucceed(() => Option.none<string>()),
     );
     const debugLogger = yield* Effect.serviceOption(DebugLogger);
@@ -390,16 +391,14 @@ export function localDbState(
       if (!isContainerNotFoundMessage(stderr)) {
         // Surface the Docker install hint instead of raw stderr when the daemon is unreachable.
         const daemonDown = isDockerDaemonUnreachable(stderr);
-        return yield* Effect.fail(
-          new LocalDbRunningError({
-            message:
-              stderr.length > 0
-                ? `failed to inspect service: ${stderr}`
-                : "failed to inspect service",
-            daemonDown,
-            ...(daemonDown ? { suggestion: SUGGEST_DOCKER_INSTALL } : {}),
-          }),
-        );
+        return yield* new LocalDbRunningError({
+          message:
+            stderr.length > 0
+              ? `failed to inspect service: ${stderr}`
+              : "failed to inspect service",
+          daemonDown,
+          ...(daemonDown ? { suggestion: SUGGEST_DOCKER_INSTALL } : {}),
+        });
       }
       return { exists: false } satisfies LocalDbState;
     }),

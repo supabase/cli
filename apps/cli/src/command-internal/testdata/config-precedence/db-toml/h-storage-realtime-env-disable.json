@@ -12,6 +12,10 @@
       "storageEnabled": false,
       "vaultNames": []
     },
+    "configFile": {
+      "format": "toml",
+      "path": "supabase/config.toml"
+    },
     "denoVersion": 2,
     "exposedSchemas": [
       "public",

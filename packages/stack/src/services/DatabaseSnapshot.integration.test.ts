@@ -1,8 +1,7 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Clock,
-  Crypto,
   Data,
   Effect,
   Exit,
@@ -14,6 +13,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveArtifact } from "../Artifacts.ts";
 import { selection } from "../../tests/pins.ts";
@@ -40,7 +40,8 @@ class ShellError extends Data.TaggedError("ShellError")<{ readonly message: stri
 
 type Services =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | Scope.Scope;
@@ -74,7 +75,7 @@ const rewriting = (
 ): Spawner =>
   ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return spawner.spawn(command);
-    const replaced = rewrite(command.command, command.args);
+    const replaced = rewrite(command.command, command.args.map(String));
     if (replaced === undefined) return spawner.spawn(command);
     const [executable = "", ...args] = replaced;
     return spawner.spawn(ChildProcess.make(executable, args, command.options));
@@ -200,7 +201,7 @@ const StorageMarker = Schema.fromJsonString(
 const docker = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const services = yield* Effect.context<Services>();
   const scope = yield* Scope.Scope;
@@ -213,9 +214,7 @@ const docker = Effect.fnUntraced(function* () {
     target,
     root,
   });
-  const helpers = yield* makeDockerHelperRegistry(
-    `snapshot-contract-${yield* crypto.randomUUIDv4}`,
-  );
+  const helpers = yield* makeDockerHelperRegistry(`snapshot-contract-${yield* crypto.uuidV4()}`);
   const inspector = yield* Ref.make<string | undefined>(undefined);
   // The inspector mounts the store volume only after storage has created and labelled it.
   const inspect = (volume: string) =>
@@ -281,6 +280,7 @@ const docker = Effect.fnUntraced(function* () {
         fs: overrides.fs ?? fs,
         path,
         crypto,
+        digest: yield* Digest.Digest,
         container,
         spawner: overrides.partialCopy === true ? partialCopy : spawner,
         helpers,
@@ -368,7 +368,7 @@ const setup = <E>(make: () => Effect.Effect<Engine, E, Services>) =>
   });
 
 const live = <A, E>(effect: Effect.Effect<A, E, Services>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
+  Effect.scoped(effect).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 for (const { name, make } of engines)
   describe(`${name} database snapshots`, { timeout: 120_000 }, () => {

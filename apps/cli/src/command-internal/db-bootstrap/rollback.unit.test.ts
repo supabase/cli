@@ -33,7 +33,7 @@ function mockSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       const result = opts.respond?.(args) ?? opts;
 

@@ -457,6 +457,19 @@ describe("pickCliConfigKey failure text", () => {
     ).toBe('Invalid auth.jwt_expiry: "9007199254740993" is not a non-negative integer.');
   });
 
+  it("rejects a zero api.db_pool at the codec, naming its source", () => {
+    const dbPool = cliConfigRegistry.keyAt("api.db_pool");
+    if (dbPool === undefined) throw new Error("api.db_pool is not registered");
+
+    expect(failureOf(dbPool, { shell: { SUPABASE_API_DB_POOL: "0" } }).message).toBe(
+      'Invalid SUPABASE_API_DB_POOL="0" (sets api.db_pool): expected a positive integer.',
+    );
+    expect(failureOf(dbPool, { config: { "api.db_pool": 0 } }).message).toBe(
+      'Invalid api.db_pool: "0" is not a positive integer.',
+    );
+    expect(valueOf(dbPool, { shell: { SUPABASE_API_DB_POOL: "1" } }).value).toEqual(Option.some(1));
+  });
+
   it("lists the allowed values of an enum", () => {
     const backend = requiredCliConfigKey({
       path: "analytics.backend",

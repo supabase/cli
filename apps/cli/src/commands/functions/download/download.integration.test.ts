@@ -103,7 +103,7 @@ function mockDockerRunSpawnFailure() {
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       const cmd = ChildProcess.isStandardCommand(command) ? command.command : "";
-      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
       spawned.push({ command: cmd, args });
 
       if (args[0] === "run") {

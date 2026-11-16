@@ -5,7 +5,7 @@ import { inspectBaseLayer } from "../inspect.layers.ts";
 
 /**
  * The command-runtime path for a single `inspect db <leaf>` subcommand, appended to
- * `["inspect", "db"]` so each of the 25 leaves — and each deprecated alias — records its own
+ * `["inspect", "db"]` so each of the 26 leaves — and each deprecated alias — records its own
  * name in `cli_command_executed`, not a shared "inspect db" event.
  */
 export const inspectDbCommandPath = (leaf: string): ReadonlyArray<string> => [

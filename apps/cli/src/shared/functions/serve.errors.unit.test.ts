@@ -159,6 +159,31 @@ describe("DockerLogsStreamError suggestion", () => {
     expect(result.error_category).toBe(actionability.resourceLimit.error_category);
     expect(result.error_fingerprint).toBe("tag:DockerLogsStreamError:out_of_memory");
   });
+
+  it.each([
+    { containerExitCode: undefined, category: "unknown", fingerprint: ":engine_command_inspect" },
+    { containerExitCode: 137, category: "unknown", fingerprint: ":container_killed" },
+    { containerExitCode: 0, category: "unknown", fingerprint: ":runtime_stopped" },
+    { containerExitCode: 143, category: "unknown", fingerprint: ":runtime_stopped" },
+    { containerExitCode: 1, category: "runtime_crash", fingerprint: "" },
+  ])(
+    "fingerprints a reachable-daemon stream failure with container exit $containerExitCode",
+    ({ containerExitCode, category, fingerprint }) => {
+      const error = new DockerLogsStreamError({
+        message: "docker logs -f exited",
+        containerId: "abc123",
+        exitCode: 1,
+        stderr: "unexpected error",
+        daemonDown: false,
+        oomKilled: false,
+        containerExitCode,
+      });
+
+      const result = classifyCliErrorActionability(error);
+      expect(result.error_category).toBe(category);
+      expect(result.error_fingerprint).toBe(`tag:DockerLogsStreamError${fingerprint}`);
+    },
+  );
 });
 
 describe("EdgeRuntimeLogStreamLostError actionability", () => {

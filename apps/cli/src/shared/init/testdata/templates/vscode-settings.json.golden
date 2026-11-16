@@ -20,5 +20,8 @@
   ],
   "[typescript]": {
     "editor.defaultFormatter": "denoland.vscode-deno"
+  },
+  "json.schemaDownload.trustedDomains": {
+    "https://supabase.com/schemas/": true
   }
 }

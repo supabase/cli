@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices, NodeSocketServer } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -89,7 +89,9 @@ it.live(
       expect(yield* snapshotDescriptors(cacheRoot)).toEqual([]);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 240_000 },
 );
@@ -129,7 +131,9 @@ it.live(
       expect(failure.message).not.toContain("was reset without restoring checkpoint");
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 120_000 },
 );
@@ -169,7 +173,9 @@ it.live(
       expect(yield* sql(test.stack, databaseUrl, "SELECT 1")).toBe("1");
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 120_000 },
 );
@@ -221,7 +227,9 @@ it.live(
       expect((yield* fs.exists(data)) ? yield* fs.readDirectory(data) : []).toEqual([]);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 120_000 },
 );
@@ -256,7 +264,9 @@ it.live(
       expect(yield* discover({ stateRoot })).toEqual([]);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 120_000 },
 );
@@ -278,7 +288,9 @@ it.live(
       expect(yield* discover({ stateRoot })).toEqual([]);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 120_000 },
 );
@@ -302,7 +314,9 @@ it.live("rejects an unknown SUPABASE_STACK_TEST_RUNTIME before creating a stack"
     expect(yield* discover({ stateRoot })).toEqual([]);
   }).pipe(
     Effect.scoped,
-    Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
   ),
 );
 
@@ -332,7 +346,9 @@ it.live(
       expect(yield* databaseVersion(pinned)).toMatch(/^15\./);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
   { timeout: 240_000 },
 );
@@ -357,6 +373,8 @@ it.live(
       expect(yield* discover({ stateRoot })).toEqual([]);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
     ),
 );

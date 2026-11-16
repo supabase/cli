@@ -151,7 +151,12 @@ describe("buildKongContainerSpec", () => {
       expect(spec.networkId).toBe("supabase_network_proj");
       expect(spec.networkAliases).toEqual(["kong", "api.supabase.internal"]);
       expect(spec.labels).toEqual({});
-      expect(spec.healthcheck).toBeUndefined();
+      expect(spec.healthcheck).toEqual({
+        test: ["CMD-SHELL", "kong health"],
+        intervalSeconds: 10,
+        timeoutSeconds: 10,
+        retries: 10,
+      });
     }).pipe(Effect.provide(BunPath.layer));
   });
 

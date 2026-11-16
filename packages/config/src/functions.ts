@@ -1,6 +1,7 @@
 import dedent from "dedent";
 import { Effect, Schema } from "effect";
 import { env } from "./lib/env.ts";
+import { withRecordValueDecodingDefault } from "./lib/schema.ts";
 
 const tags = ["functions"];
 
@@ -83,7 +84,7 @@ const func = Schema.Struct({
       links,
     })
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultEnv }))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultFunction })));
+}).pipe(withRecordValueDecodingDefault(Effect.succeed({ ...defaultFunction })));
 
 export const functions = Schema.Record(functionName, func)
   .annotate({

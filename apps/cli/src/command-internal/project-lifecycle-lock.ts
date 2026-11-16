@@ -5,17 +5,8 @@ import {
   isLockBusy,
   type NamespaceError,
 } from "@supabase/stack/effect";
-import {
-  Clock,
-  Crypto,
-  Data,
-  Duration,
-  Effect,
-  FileSystem,
-  Option,
-  Path,
-  type Scope,
-} from "effect";
+import { Clock, Data, Duration, Effect, FileSystem, Option, Path, type Scope } from "effect";
+import { Digest } from "effect/crypto";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -65,7 +56,7 @@ export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(f
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const output = yield* Output;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const debugLogger = yield* Effect.serviceOption(DebugLogger);
 
   const allProjects = projectId.length === 0;
@@ -115,7 +106,7 @@ export const holdProjectLifecycleLock = Effect.fn("ProjectLifecycleLock.hold")(f
     }
 
     const digest = yield* crypto.digest(
-      "SHA-256",
+      Digest.sha256,
       new TextEncoder().encode(cliProjectFilterValue(projectId)),
     );
     const key = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");

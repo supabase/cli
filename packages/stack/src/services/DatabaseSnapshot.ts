@@ -2,7 +2,6 @@
 import { DatabaseSync } from "node:sqlite";
 import {
   Clock,
-  Crypto,
   Data,
   Effect,
   Exit,
@@ -13,6 +12,7 @@ import {
   Schedule,
   Schema,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import type { PlatformError } from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 import type { ArtifactPin } from "../Artifacts.ts";
@@ -174,7 +174,8 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const hasher = yield* Digest.Digest;
   const { backends, runtime, version } = options;
   const { Adopt, Clear, Copy, Ensure, Expect, ExpectEmpty, ExpectText } = SnapshotStep;
   const { Prune, Read, Recover, Remove, Rename, Touch, Write } = SnapshotStep;
@@ -197,7 +198,9 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
       const bytes = yield* Schema.encodeEffect(Schema.fromJsonString(SnapshotIdentity))(
         identity,
       ).pipe(
-        Effect.flatMap((encoded) => crypto.digest("SHA-256", new TextEncoder().encode(encoded))),
+        Effect.flatMap((encoded) =>
+          hasher.digest(Digest.sha256, new TextEncoder().encode(encoded)),
+        ),
       );
       const keyDigest = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
       const descriptor = yield* Schema.encodeEffect(Schema.fromJsonString(SnapshotDescriptor))({
@@ -214,7 +217,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
       "lock",
       fs.makeDirectory(path.dirname(backend.lockFile), { recursive: true, mode: 0o700 }),
     ).pipe(Effect.andThen(withStoreLock(backend.lockFile, effect)));
-  const token = mapError("stage", crypto.randomUUIDv4);
+  const token = crypto.uuidV4();
   // Compensation also runs after an interrupt; a failed compensation must not hide the
   // failure it follows.
   const compensate =

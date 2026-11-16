@@ -58,7 +58,10 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.body ?? PROVIDER },
   });
 
-  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    apiMaxRetries: Option.some(0),
+  });
   const layer = buildTestRuntime({
     out,
     api,
@@ -378,6 +381,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const cliSettings = mockCommandSettings({
       workdir: tempRoot.current,
       projectId: Option.none(),
+      apiMaxRetries: Option.some(0),
     });
     const layer = buildTestRuntime({
       out,

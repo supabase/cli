@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Ref, Scope } from "effect";
 import { StackError } from "@supabase/stack/effect";
@@ -8,7 +8,11 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import * as StackNamespace from "../../../../../../../packages/stack/src/StackNamespace.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { stackStop } from "./stop.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
@@ -17,7 +21,7 @@ const flags = (id?: string) => ({
   stack: Option.none<string>(),
   stackId: Option.fromUndefinedOr(id),
 });
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 const fixture = Effect.fn("StackStopTest.fixture")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

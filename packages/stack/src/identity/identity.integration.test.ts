@@ -1,12 +1,13 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Effect, Exit, FileSystem, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path } from "effect";
+import { Digest } from "effect/crypto";
 import { InvalidStackIdentityError } from "./Errors.ts";
 import type { StackId } from "./StackId.ts";
 import { GitSetupError, runGit } from "../../tests/helpers/git.ts";
 import { deriveStackId, resolveStackIdentity, type StackIdentity } from "./Identity.ts";
 
-const platformLayer = NodeServices.layer;
+const platformLayer = Layer.merge(NodeServices.layer, NodeCrypto.layer);
 
 const makeGitWorkspace = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -25,7 +26,7 @@ const makeGitWorkspace = Effect.gen(function* () {
 
 const stackId = (
   identity: StackIdentity,
-): Effect.Effect<StackId, InvalidStackIdentityError, Crypto.Crypto> => deriveStackId(identity);
+): Effect.Effect<StackId, InvalidStackIdentityError, Digest.Digest> => deriveStackId(identity);
 
 const withScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(platformLayer));

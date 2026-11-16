@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices, NodeStream } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices, NodeStream } from "@effect/platform-node";
 import {
   Context,
   Data,
@@ -153,7 +153,7 @@ const launcher = Effect.scoped(
 );
 
 try {
-  const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+  const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
   if (mode === "launcher") await Effect.runPromise(launcher.pipe(Effect.provide(layer)));
   else await Effect.runPromise(owner.pipe(Effect.provide(layer)));
 } catch (cause) {

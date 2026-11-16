@@ -14,7 +14,7 @@ import {
 } from "../stack-summary.ts";
 import { gray } from "../../../../command-internal/colors.ts";
 import { currentShellPlatform } from "../../../../command-internal/shell-quote.ts";
-import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
+import { withProjectFunctionsConfig } from "../../../../command-internal/stack-functions-env.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
 import {
   automaticRuntimeNotice,
@@ -23,6 +23,7 @@ import {
   type StackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import type { ConfigFormat } from "@supabase/config/effect";
 import { Effect, FileSystem, Fiber, Match, Option, Path, Redacted, Ref, Schema } from "effect";
 import {
   apiRoute,
@@ -38,12 +39,18 @@ import {
 import { Output } from "../../../../shared/output/output.service.ts";
 import { MachineErrorContext } from "../../../../shared/output/machine-error-context.service.ts";
 import {
+  DebugFlag,
   OutputFlag,
   resolveExperimentalWithProjectEnv,
 } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { readDbToml } from "../../../../command-internal/db-config.toml-read.ts";
+import {
+  type ConfigFileRef,
+  DEFAULT_CONFIG_FILE,
+} from "../../../../command-internal/config-advice.ts";
+import { loadConfigFileRef } from "../../../../command-internal/config-file-ref.ts";
+import { readDbConfig } from "../../../../command-internal/db-config.read.ts";
 import { catalogDatabaseServices } from "../../../../command-internal/stack-catalog-setup.ts";
 import {
   applyStackWebhooksOnly,
@@ -64,6 +71,7 @@ import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
 import type { CliConfigMaterialized } from "../../../../config/cli-config-values.service.ts";
 import {
   loadStackConfig,
+  stackConfigSuggestion,
   stackEndpointKey,
   stackMajorVersionKey,
   stackUploadsDir,
@@ -83,7 +91,7 @@ import {
   mapTargetError,
   rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
+} from "../../../../command-internal/stack-target.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
@@ -122,7 +130,8 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 const portConflictSuggestion = (
   conflict: StackError["conflict"],
   requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }>,
-  portSaved = false,
+  portSaved: boolean,
+  configFile: ConfigFileRef,
 ): string | undefined => {
   if (conflict === undefined) return undefined;
   const settings = new Map<string, StackEndpointKey>();
@@ -136,23 +145,28 @@ const portConflictSuggestion = (
   }
   const [setting, ...rest] = settings.values();
   if (setting === undefined || rest.length > 0) return undefined;
-  const choice = `Set \`${setting.path}\` in supabase/config.toml (or ${setting.env[0]}) to a free port.`;
+  const choice = `Set \`${setting.path}\` in ${configFile.path} (or ${setting.env[0]}) to a free port.`;
   return portSaved
     ? `${choice} The stack already saved this port (any previous automatic port is released), so the next start uses it once it is free.`
     : choice;
 };
 
+interface StackErrorOptions {
+  readonly portSaved?: boolean;
+  readonly configFile?: ConfigFileRef;
+}
+
 const stackError = (
   cause: { readonly message: string } & Partial<Pick<StackError, "outcomes" | "conflict">>,
   members: ReadonlyArray<{ readonly id?: string; readonly service: string }> = [],
   requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }> = [],
-  portSaved = false,
+  { portSaved = false, configFile = DEFAULT_CONFIG_FILE }: StackErrorOptions = {},
 ) => {
   const detail = failedOutcomesDetail(cause, (id) => {
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
-  const suggestion = portConflictSuggestion(cause.conflict, requested, portSaved);
+  const suggestion = portConflictSuggestion(cause.conflict, requested, portSaved, configFile);
   return new StackCommandStartError({
     reason: "stack",
     message: cause.message,
@@ -184,14 +198,13 @@ const stackAcquireError = (
     readonly creating: boolean;
     /** The creations the owner's startup re-plans, already saved when its claim fails. */
     readonly replanned?: ReadonlyArray<ServiceCreationInput>;
+    readonly configFile: ConfigFileRef;
   },
 ) => {
-  const base = stackError(
-    cause,
-    [],
-    runtimeContext.replanned,
-    runtimeContext.replanned !== undefined,
-  );
+  const base = stackError(cause, [], runtimeContext.replanned, {
+    portSaved: runtimeContext.replanned !== undefined,
+    configFile: runtimeContext.configFile,
+  });
   const { selectedRuntime } = runtimeContext;
   if (cause.reason !== "runtime-unavailable" || selectedRuntime === "native") return base;
   return new StackCommandStartError({
@@ -221,8 +234,10 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
       publishesLock: true,
     });
     const keys = yield* config.keys;
-    const toml = yield* readDbToml(fs, path, projectRoot);
-    return { config, keys, toml };
+    const toml = yield* readDbConfig(fs, path, projectRoot);
+    /* The pair is read and checked here, before a stack or owner exists. */
+    const apiTls = yield* config.apiTls;
+    return { config, keys, toml, apiTls };
   },
   Effect.mapError(
     (error) =>
@@ -231,6 +246,7 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
           ? { reason: "lock" as const }
           : { reason: "invalid-config" as const, configIssue: "project-config" as const }),
         message: error.message,
+        suggestion: stackConfigSuggestion(error),
         cause: error,
       }),
   ),
@@ -274,8 +290,9 @@ const majorVersionOf = (version: string): string => version.split(".")[0] ?? ver
 const orioledbVersionOf = (version: string): string =>
   isOrioledbVersion(version) ? orioledbConfigVersion(version) : "unset";
 
-/** Renders a dotted config key as its `config.toml` section/key pair, e.g. `[db] major_version`. */
-const formatConfigPath = (path: string): string => {
+/** Renders a dotted config key as its TOML section/key pair, e.g. `[db] major_version`; JSON keeps the dotted path. */
+const formatConfigPath = (path: string, format: ConfigFormat): string => {
+  if (format === "json") return path;
   const segments = path.split(".");
   const key = segments.pop();
   return `[${segments.join(".")}] ${key}`;
@@ -285,17 +302,18 @@ const formatConfigPath = (path: string): string => {
 const settingKeyLabel = (
   setting: StackEndpointKey,
   originAt: CliConfigMaterialized["originAt"],
+  format: ConfigFormat,
 ): string => {
   const { tier } = originAt(setting.path);
   return tier === "shell" || tier === "projectEnv"
-    ? (setting.env[0] ?? formatConfigPath(setting.path))
-    : formatConfigPath(setting.path);
+    ? (setting.env[0] ?? formatConfigPath(setting.path, format))
+    : formatConfigPath(setting.path, format);
 };
 
 /**
  * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's
  * `stack_changes` entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
- * `config.toml` key or env var the user can revert, or plain wording otherwise.
+ * config key or env var the user can revert, or plain wording otherwise.
  */
 interface StructuredSettingChange {
   readonly service: string;
@@ -313,6 +331,7 @@ const describeSettingChange = (
   requestedCreation: ServiceCreationInput | undefined,
   originAt: CliConfigMaterialized["originAt"],
   databaseFromServices: boolean,
+  format: ConfigFormat,
 ): StructuredSettingChange | ReadonlyArray<StructuredSettingChange> => {
   if (service === "database" && path === "pin") {
     const savedVersion = databaseVersionOf(savedCreation);
@@ -326,7 +345,7 @@ const describeSettingChange = (
         {
           service,
           path,
-          key: "[local.services.database] version",
+          key: formatConfigPath("local.services.database.version", format),
           saved: databaseReleaseOf(savedCreation),
           requested: databaseReleaseOf(requestedCreation),
           editable: true,
@@ -337,7 +356,7 @@ const describeSettingChange = (
       changes.push({
         service,
         path,
-        key: settingKeyLabel(stackMajorVersionKey, originAt),
+        key: settingKeyLabel(stackMajorVersionKey, originAt, format),
         saved: savedMajor,
         requested: requestedMajor,
         editable: true,
@@ -346,7 +365,7 @@ const describeSettingChange = (
       changes.push({
         service,
         path,
-        key: settingKeyLabel(CliConfigKeys.db.orioledbVersion, originAt),
+        key: settingKeyLabel(CliConfigKeys.db.orioledbVersion, originAt, format),
         saved: savedOrioledb,
         requested: requestedOrioledb,
         // A catalog upgrade can retire the saved build, which the config then rejects.
@@ -360,12 +379,12 @@ const describeSettingChange = (
     return {
       service,
       path,
-      key: settingKeyLabel(setting, originAt),
+      key: settingKeyLabel(setting, originAt, format),
       saved: endpointPortLabel(savedCreation?.endpoints, endpointName),
       requested: endpointPortLabel(requestedCreation?.endpoints, endpointName),
       editable: true,
     };
-  // No config.toml key or env var covers this path: name it plainly instead of implying a
+  // No config key or env var covers this path: name it plainly instead of implying a
   // setting the user could edit.
   return {
     service,
@@ -391,6 +410,7 @@ const incompatibleSettingChanges = (
   requested: ReadonlyArray<ServiceCreationInput>,
   originAt: CliConfigMaterialized["originAt"],
   databaseFromServices: boolean,
+  format: ConfigFormat,
 ): ReadonlyArray<StructuredSettingChange> =>
   planned
     .filter((entry) => entry.member && entry.change === "incompatible")
@@ -405,6 +425,7 @@ const incompatibleSettingChanges = (
               requested.find((creation) => creation.service === entry.service),
               originAt,
               databaseFromServices,
+              format,
             ),
           )
         : [],
@@ -450,6 +471,7 @@ const incompatibleChange = (
   requested: ReadonlyArray<ServiceCreationInput>,
   originAt: CliConfigMaterialized["originAt"],
   databaseFromServices: boolean,
+  format: ConfigFormat,
   stackIdentity: { readonly id: string; readonly name?: string },
   ownerLive: boolean,
 ):
@@ -466,6 +488,7 @@ const incompatibleChange = (
     requested,
     originAt,
     databaseFromServices,
+    format,
   );
   if (changes.length === 0) return undefined;
   const lines = settingChangeLines(changes);
@@ -559,6 +582,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolver = yield* StackTargetResolver;
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
+    const debug = yield* DebugFlag;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* rejectStackOutput(outputFlag).pipe(
@@ -577,6 +601,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         runtime: flags.runtime,
       })
       .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))));
+    const configFile = yield* loadConfigFileRef(target.projectRoot);
     const runtime = yield* RuntimeInfo;
     const selectedRuntime = yield* selectStackRuntime(target.runtime).pipe(
       Effect.mapError(
@@ -617,6 +642,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolveRequested = (
       stackId: string,
       config: Effect.Success<ReturnType<typeof loadStartConfig>>["config"],
+      warn = true,
     ) =>
       Effect.gen(function* () {
         const creations = yield* config.creations(stackId).pipe(
@@ -630,9 +656,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               }),
           ),
         );
-        return yield* Effect.forEach(
-          selectedCreations(creations, exclusions),
-          withProjectFunctionsEnv,
+        return yield* Effect.forEach(selectedCreations(creations, exclusions), (creation) =>
+          withProjectFunctionsConfig(creation, { warn, debug }),
         ).pipe(
           Effect.mapError(
             (cause) =>
@@ -655,7 +680,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolveForReplan = (stackId: string) =>
       Effect.gen(function* () {
         const loaded = yield* startConfig;
-        return yield* resolveRequested(stackId, loaded.config);
+        /* A running owner ignores these creations, so this resolve stays silent. A start that
+           applies the env under that owner resolves it again below and warns there. */
+        return yield* resolveRequested(stackId, loaded.config, !target.hostRunning);
       });
     const requestedForReplan =
       target.id === undefined
@@ -707,6 +734,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           selectedRuntime,
           runtime,
           creating: target.id === undefined,
+          configFile,
           ...(requestedForReplan === undefined ? {} : { replanned: requestedForReplan }),
         }),
       ),
@@ -854,10 +882,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "A standalone database exists outside the saved stack composition",
         suggestion: "Destroy the standalone database before starting this stack.",
       });
-    const { config, keys, toml } = yield* startConfig;
-    // Reuses the creations already resolved for the re-plan above instead of reading the
-    // Functions dotenv a second time; only a new or already-running stack has none yet.
-    const requested = requestedForReplan ?? (yield* resolveRequested(stack.id, config));
+    const { config, keys, toml, apiTls } = yield* startConfig;
+    // Reuses the creations resolved for a fresh owner's re-plan above instead of reading the
+    // Functions dotenv a second time. A new stack has none yet, and a live owner's were resolved
+    // silently, so both resolve here with warnings.
+    const requested =
+      requestedForReplan === undefined || target.hostRunning
+        ? yield* resolveRequested(stack.id, config)
+        : requestedForReplan;
     if (studioNeedsRest(requested))
       return yield* new StackCommandStartError({
         reason: "flags",
@@ -934,6 +966,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       requested,
       config.originAt,
       databasePublishedBy(config.source),
+      configFile.format,
       stackIdentity,
       target.hostRunning,
     );
@@ -989,11 +1022,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       .supabase(requested, {
         keys,
         eager: flags.eager,
+        ...(apiTls === undefined ? {} : { apiTls }),
         ...(reuseIds.length === 0 ? {} : { reuseIds }),
       })
       .pipe(
         Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError((error) => stackError(error, requested, requested)),
+        Effect.mapError((error) => stackError(error, requested, requested, { configFile })),
       );
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
@@ -1074,8 +1108,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           databaseServices: catalogDatabaseServices(requested),
           selection: config.selection,
         },
-        overlay: projectCatalogOverlay(toml, target.projectRoot),
-        ...(migrations === undefined ? {} : { migrations }),
+        ...(migrations === undefined
+          ? {}
+          : { overlay: projectCatalogOverlay(toml, target.projectRoot), migrations }),
       }).pipe(
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(stackError),
@@ -1104,9 +1139,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             Effect.tapError((error) => starting.fail(error.message)),
             Effect.mapError(stackError),
           );
+          const apiTls = yield* stack.apiTls.get.pipe(Effect.mapError(stackError));
           const credentials = yield* stackStorageCredentialsFor(
             storage,
             stackCredentials.serviceRoleKey,
+            apiTls?.cert,
           ).pipe(Effect.mapError(stackError));
           yield* seedBucketsRun({
             projectRef: "",
@@ -1119,13 +1156,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             resolvedConfig: { config: context.config, document: context.document },
             projectEnvValues: toml.projectEnv,
             workdir: target.projectRoot,
+            configFile,
           }).pipe(Effect.mapError(stackError));
         }
       }
     }
     yield* stack.composition.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
-      Effect.mapError((error) => stackError(error, members, requested)),
+      Effect.mapError((error) => stackError(error, members, requested, { configFile })),
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(startupComplete, true);

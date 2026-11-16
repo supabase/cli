@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Path, Ref } from "effect";
 import { TestClock } from "effect/testing";
@@ -129,7 +129,11 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         expect(error.message).toContain(`jwt=${credentials.jwtSecret}`);
         expect(error.message).toContain(`keys=${credentials.gotrueJwtKeys}`);
         expect(error.message.length).toBeLessThan(45_000);
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
 );
 
@@ -172,7 +176,11 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
 
         expect(result.exitCode).toBe(0);
         expect(output.join("")).toContain("selected pin ran");
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
 );
 
@@ -228,7 +236,11 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         expect((yield* run(newer)).exitCode).toBe(0);
 
         expect(output.join("")).toBe("ran newer\nran newer\n");
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
 );
 
@@ -287,7 +299,11 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         const jobs = yield* fs.readDirectory(path.join(root, "jobs"));
         expect(childStillRunning).toBe(false);
         expect(jobs).toHaveLength(0);
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
 );
 
@@ -347,6 +363,10 @@ it.effect.skipIf(target === undefined || process.platform === "win32")(
           }
         });
         expect(childStillRunning).toBe(false);
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
     ),
 );

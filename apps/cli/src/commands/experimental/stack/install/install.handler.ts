@@ -3,7 +3,10 @@ import type { PreparedRelease } from "@supabase/stack/internal/artifacts";
 import { Effect, Path, Ref, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import {
+  loadStackConfig,
+  stackConfigSuggestion,
+} from "../../../../command-internal/stack-config.ts";
 import {
   LockResolutionError,
   lockedResolution,
@@ -18,7 +21,7 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { mapTargetError, rejectStackOutput } from "../stack.shared.ts";
+import { mapTargetError, rejectStackOutput } from "../../../../command-internal/stack-target.ts";
 import type { StackInstallFlags } from "./install.command.ts";
 import {
   StackCommandInstallError,
@@ -51,7 +54,7 @@ const render = (
 ) => {
   const lock =
     resolution === undefined
-      ? "No supabase/config.toml: using the versions bundled with the CLI; no lock written."
+      ? "No supabase/config.toml, config.json or config.jsonc: using the versions bundled with the CLI; no lock written."
       : resolution.written
         ? `Wrote ${LOCK_FILE}.`
         : `${LOCK_FILE} is up to date.`;
@@ -103,6 +106,7 @@ export const stackInstall = Effect.fn("experimental.stack.install")(function* (
           : new StackCommandInstallError({
               reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
               message: error.message,
+              suggestion: stackConfigSuggestion(error),
               cause: error,
             }),
       ),

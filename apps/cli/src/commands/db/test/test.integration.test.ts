@@ -5,7 +5,7 @@
  * behavior: end-to-end delegation, telemetry recording `"db test"` (not `"test db"`) as the
  * invoked path, and the non-text `onRunFailure` branch.
  */
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -256,8 +256,9 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(OutputFlag, Option.none()),
     mockTty(),
     Stdio.layerTest({ args: Effect.succeed(args) }),
-    commandRuntimeLayer(["db", "test"]).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(["db", "test"]).pipe(Layer.provide([BunServices.layer, BunCrypto.layer])),
     BunServices.layer,
+    BunCrypto.layer,
   );
   return { layer, out, analytics, processControl, connection, docker };
 }
@@ -335,6 +336,7 @@ describe("db test (alias) integration", () => {
         cliConfigValuesTestLayer,
         unusedStackServices,
         BunServices.layer,
+        BunCrypto.layer,
         mockRuntimeInfo(),
         mockTty(),
         mockProcessControl().layer,

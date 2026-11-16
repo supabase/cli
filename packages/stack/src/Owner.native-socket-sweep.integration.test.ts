@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { createHash } from "node:crypto";
 import {
@@ -107,7 +107,7 @@ const ownerFor = (arrangement: Arrangement, fileSystem?: Layer.Layer<FileSystem.
 const inRuntimeRoot = (arrangement: Arrangement) =>
   Effect.provideService(NativeRuntimeRootBase, arrangement.runtimeRootBase);
 
-const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const platform = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 it.live("destroy removes the socket directory a killed owner left behind", () =>
   Effect.scoped(

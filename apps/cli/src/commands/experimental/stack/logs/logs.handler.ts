@@ -1,7 +1,6 @@
-import { Clock, Effect, Option, Path, Stream } from "effect";
+import { Clock, Effect, Option, Path, Schema, Stream } from "effect";
 import {
   gatewayLog,
-  sharesApiEndpoint,
   streamStackLogs,
   type SavedStack,
   type StackLogRecord,
@@ -15,20 +14,28 @@ import {
   StackApi,
   mapTargetError,
   StackTargetResolver,
-  rejectStackOutput,
   validateStackTarget,
-} from "../stack.shared.ts";
+  rejectStackOutput,
+} from "../../../../command-internal/stack-target.ts";
 import { StackCommandLogsError } from "./logs.errors.ts";
-import type { StackLogsFlags } from "./logs.command.ts";
+import { makeTextFormatter, truncationFooter } from "./logs.format.ts";
 import {
   isAfter,
   isFromLaunch,
   makeHistoryCollector,
-  makeTextFormatter,
-  parseSince,
-  truncationFooter,
-} from "./logs.format.ts";
+} from "../../../../command-internal/logs/local-history.ts";
+import { parseSince } from "../../../../command-internal/logs/since.ts";
+import { hasGatewayLogs } from "../../../../command-internal/logs/local-sources.ts";
 import { logEvent, type LogSource } from "../../../../command-internal/stack-log-events.ts";
+
+export interface StackLogsFlags {
+  readonly stack: Option.Option<string>;
+  readonly stackId: Option.Option<string>;
+  readonly service: ReadonlyArray<string>;
+  readonly follow: boolean;
+  readonly tail: number;
+  readonly since: Option.Option<string>;
+}
 
 const targetError = mapTargetError((props) => new StackCommandLogsError(props));
 const logsError = (cause: { readonly message: string }) =>
@@ -53,10 +60,7 @@ const select = (
     service: creation.service,
   });
   const members = new Set(definition.composition.members.map(({ id }) => id));
-  // The owner records the shared API listener's requests when a member is served on it.
-  const gateway: ReadonlyArray<Selected> = definition.instances.some(
-    ({ id, creation }) => members.has(id) && sharesApiEndpoint(creation),
-  )
+  const gateway: ReadonlyArray<Selected> = hasGatewayLogs(definition)
     ? [{ id: gatewayLog.instanceId, service: gatewayLog.service }]
     : [];
   if (requested.length === 0) {
@@ -165,12 +169,14 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
 
     if (output.format === "json")
       return yield* output.result(window.records.map((record) => logEvent(record, "history")));
-    // Colour follows the terminal only when stdout is one, so piped logs stay plain.
     const terminal = output.interactive;
     const text = makeTextFormatter(selected, terminal ? process.stdout : {});
     const emit = (record: StackLogRecord, source: LogSource) =>
       output.format === "stream-json"
-        ? output.event(logEvent(record, source))
+        ? Effect.gen(function* () {
+            const data = yield* Schema.decodeEffect(Schema.JsonObject)(record);
+            yield* output.event({ ...logEvent(record, source), data });
+          })
         : output.raw(text(record));
     yield* Effect.forEach(window.records, (record) => emit(record, "history"), { discard: true });
     if (output.format === "text" && flags.tail > 0) {
@@ -212,7 +218,6 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
             id === gatewayLog.instanceId ? stack.gateway.readLogs : handles.get(id)?.readLogs;
           if (readLogs === undefined) return [];
           const from = printed.get(id);
-          // Without history, the owner pins the start at its end under the writer's lock.
           const start = flags.tail === 0 ? { tail: 0 } : from === undefined ? {} : { from };
           return [
             readLogs({ follow: true, ...start, ...sinceTime }).pipe(

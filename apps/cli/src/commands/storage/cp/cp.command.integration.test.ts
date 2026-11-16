@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
@@ -33,6 +33,7 @@ function setup(args: ReadonlyArray<string>) {
   const out = mockOutput({ format: "text" });
   const layer = Layer.mergeAll(
     BunServices.layer,
+    BunCrypto.layer,
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
     commandTargetLayer.pipe(Layer.provide(out.layer)),

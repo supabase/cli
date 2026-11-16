@@ -1,4 +1,5 @@
-import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import { Digest } from "effect/crypto";
 import type { PlatformError } from "effect/PlatformError";
 import { InvalidProjectRootError, InvalidStackIdentityError } from "./Errors.ts";
 import { StackIdSchema } from "./StackId.ts";
@@ -41,28 +42,18 @@ const encodeTuple = (identity: StackIdentity): Uint8Array => {
 export const deriveStackId = Effect.fn("Identity.deriveStackId")(function* (
   identity: StackIdentity,
 ) {
-  return yield* Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const digest = yield* crypto.digest("SHA-256", encodeTuple(identity));
-    let hexadecimal = "";
-    for (const byte of digest) {
-      hexadecimal += byte.toString(16).padStart(2, "0");
-    }
-    return yield* Schema.decodeEffect(StackIdSchema)(hexadecimal).pipe(
-      Effect.mapError(
-        (error) =>
-          new InvalidStackIdentityError({
-            message: `SHA-256 digest did not produce a valid StackId: ${String(error)}`,
-          }),
-      ),
-    );
-  }).pipe(
-    Effect.catchTag("PlatformError", (error: PlatformError) =>
-      Effect.fail(
+  const crypto = yield* Digest.Digest;
+  const digest = yield* crypto.digest(Digest.sha256, encodeTuple(identity));
+  let hexadecimal = "";
+  for (const byte of digest) {
+    hexadecimal += byte.toString(16).padStart(2, "0");
+  }
+  return yield* Schema.decodeEffect(StackIdSchema)(hexadecimal).pipe(
+    Effect.mapError(
+      (error) =>
         new InvalidStackIdentityError({
-          message: `Unable to derive StackId: ${error.message}`,
+          message: `SHA-256 digest did not produce a valid StackId: ${String(error)}`,
         }),
-      ),
     ),
   );
 });

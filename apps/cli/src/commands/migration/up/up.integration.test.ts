@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
@@ -182,9 +182,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
-    commandRuntimeLayer(["migration", "up"]).pipe(Layer.provide(BunServices.layer)),
+    commandRuntimeLayer(["migration", "up"]).pipe(
+      Layer.provide([BunServices.layer, BunCrypto.layer]),
+    ),
     branchApi.layer,
     BunServices.layer,
+    BunCrypto.layer,
   );
   return {
     layer,

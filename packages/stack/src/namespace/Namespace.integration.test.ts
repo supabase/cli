@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
@@ -47,7 +47,11 @@ const initial: StackNamespace.SavedStack = {
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
-const stackLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const stackLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NodeHttpClient.layerNodeHttp,
+);
 
 describe("durable registry", () => {
   it.live("reopens saved state and serializes concurrent read-modify-write operations", () =>

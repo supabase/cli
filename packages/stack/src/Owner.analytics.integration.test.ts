@@ -1,9 +1,8 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { expect, it } from "@effect/vitest";
 import {
   Context,
-  Crypto,
   Data,
   DateTime,
   Effect,
@@ -17,6 +16,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { tmpdir } from "node:os";
 import { logflareEvent, logflareSources } from "./host/LogflareEvents.ts";
@@ -96,9 +96,9 @@ const startStack = (
 ) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const client = yield* HttpClient.HttpClient;
-    const stackId = `${name}-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+    const stackId = `${name}-${(yield* crypto.uuidV4()).slice(0, 8)}`;
     const root = yield* makeDockerDatabaseRoot(`stack-${name}-`, stackId);
     const saved: SavedStack = {
       id: stackId,
@@ -314,7 +314,11 @@ it.live(
         expect(shippedAt).toBeGreaterThanOrEqual(raisedAt);
         expect(shippedAt).toBeLessThanOrEqual(wakeRequestedAt);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 600_000 },
 );
 
@@ -323,7 +327,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const client = yield* HttpClient.HttpClient;
         const { owner, idOf, analyticsUrl, wakeAnalytics, keepAwake } = yield* startStack(
           "owner-logflare",
@@ -338,7 +342,7 @@ it.live(
         // No composed service ships to this source, so only this test's posts reach its batches.
         const source = logflareSources.realtime;
         const event = Effect.fnUntraced(function* (message: string) {
-          const id = yield* crypto.randomUUIDv4;
+          const id = yield* crypto.uuidV4();
           const timestamp = DateTime.formatIso(yield* DateTime.now);
           return { id, ...logflareEvent("realtime", timestamp, message) };
         });
@@ -392,6 +396,10 @@ it.live(
 
         expect(yield* storedIds([first.id, ...added.map(({ id }) => id)])).toEqual([first.id]);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 600_000 },
 );

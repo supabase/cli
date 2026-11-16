@@ -1,4 +1,4 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Fiber, Layer, Option, Sink, Stream } from "effect";
 import { TestClock } from "effect/testing";
@@ -44,7 +44,7 @@ const fakeEngine = (options: {
     });
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
-    const args = [...command.args];
+    const args = command.args.map(String);
     commands.push(args);
     const ref = args.at(-1) ?? "";
     // Resolved once before any container is created; this stand-in always reports one so launch
@@ -95,7 +95,7 @@ describe("container image mirror", () => {
         ["pull", mirror],
       ]);
       expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(mirror);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.live("tries each mirror in order until one pull succeeds", () => {
@@ -114,7 +114,7 @@ describe("container image mirror", () => {
         ["pull", secondMirror],
       ]);
       expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(secondMirror);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.live("launches the primary again once it pulls after an earlier mirror rescue", () => {
@@ -131,7 +131,7 @@ describe("container image mirror", () => {
       yield* runtime.prepare(primary);
       yield* launchImage(runtime);
       expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(primary);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.live("launches the primary again once it is present after an earlier mirror rescue", () => {
@@ -148,7 +148,7 @@ describe("container image mirror", () => {
       yield* runtime.prepare(primary);
       yield* launchImage(runtime);
       expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(primary);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.live("reports the primary pull failure when the mirror also fails", () => {
@@ -166,7 +166,7 @@ describe("container image mirror", () => {
       expect(error?.message).toContain(`denied: ${primary}`);
       yield* launchImage(runtime);
       expect(engine.commands.find((args) => args[0] === "create")?.at(-1)).toBe(primary);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.live("never contacts the mirror when the primary pull succeeds", () => {
@@ -180,7 +180,7 @@ describe("container image mirror", () => {
       yield* runtime.prepare(primary);
       yield* launchImage(runtime);
       expect(engine.commands.flat()).not.toContain(mirror);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.effect("retries a rate-limited pull with backoff until the registry accepts it", () => {
@@ -195,7 +195,7 @@ describe("container image mirror", () => {
       yield* Fiber.join(prepared);
       expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(3);
       expect(engine.local.has(primary)).toBe(true);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.effect("retries a pull after a transient registry transport failure", () => {
@@ -215,7 +215,7 @@ describe("container image mirror", () => {
       yield* Fiber.join(prepared);
       expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(2);
       expect(engine.local.has(primary)).toBe(true);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   const permanentPullFailures = [
@@ -241,7 +241,7 @@ describe("container image mirror", () => {
           : undefined;
         expect(error?.message).toContain(message);
         expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(1);
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
     });
   }
 
@@ -260,7 +260,7 @@ describe("container image mirror", () => {
         : undefined;
       expect(error?.message).toContain("toomanyrequests");
       expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(5);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.effect("stops pulling once a concurrent prepare lands the image during backoff", () => {
@@ -276,7 +276,7 @@ describe("container image mirror", () => {
       yield* TestClock.adjust("1 minute");
       yield* Fiber.join(throttled);
       expect(engine.commands.filter((args) => args[0] === "pull")).toHaveLength(2);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 
   it.effect("falls back to a mirror before backing off on a rate-limited primary", () => {
@@ -292,6 +292,6 @@ describe("container image mirror", () => {
         ["pull", primary],
         ["pull", mirror],
       ]);
-    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
   });
 });

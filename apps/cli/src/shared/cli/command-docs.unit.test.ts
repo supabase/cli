@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Command } from "effect/cli";
-import { collectCommands, findCommand } from "./command-docs.ts";
+import { findCommand } from "./command-docs.ts";
 
 function makeTree() {
   const login = Command.make("login").pipe(Command.withDescription("Log in to Supabase"));
@@ -56,46 +56,5 @@ describe("findCommand", () => {
     const { root } = makeDeepTree();
     const result = findCommand(root, ["unknown", "branch"]);
     expect(result).toBeUndefined();
-  });
-});
-
-describe("collectCommands", () => {
-  it("includes the root command itself", () => {
-    const { root } = makeTree();
-    const results = collectCommands(root, ["supabase"]);
-    expect(results[0]).toMatchObject({ commandPath: ["supabase"] });
-    expect(results[0]?.command.name).toBe("supabase");
-  });
-
-  it("returns all commands in a flat list", () => {
-    const { root } = makeTree();
-    const results = collectCommands(root, ["supabase"]);
-    expect(results).toHaveLength(3);
-    const names = results.map((r) => r.command.name);
-    expect(names).toContain("supabase");
-    expect(names).toContain("login");
-    expect(names).toContain("logout");
-  });
-
-  it("builds correct commandPath for each entry", () => {
-    const { root } = makeTree();
-    const results = collectCommands(root, ["supabase"]);
-    const loginEntry = results.find((r) => r.command.name === "login");
-    expect(loginEntry?.commandPath).toEqual(["supabase", "login"]);
-  });
-
-  it("collects deeply nested commands with correct paths", () => {
-    const { root } = makeDeepTree();
-    const results = collectCommands(root, ["supabase"]);
-    expect(results).toHaveLength(3);
-    const branchEntry = results.find((r) => r.command.name === "branch");
-    expect(branchEntry?.commandPath).toEqual(["supabase", "db", "branch"]);
-  });
-
-  it("returns only the root when there are no subcommands", () => {
-    const leaf = Command.make("leaf").pipe(Command.withDescription("Leaf command"));
-    const results = collectCommands(leaf, ["leaf"]);
-    expect(results).toHaveLength(1);
-    expect(results[0]?.command.name).toBe("leaf");
   });
 });

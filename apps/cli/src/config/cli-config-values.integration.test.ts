@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { CliConfig } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/internal";
@@ -13,10 +13,15 @@ import {
 } from "../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
+import { describeConfigLoadFailure } from "../command-internal/resolved-config-context.ts";
 import { loadStackConfig } from "../command-internal/stack-config.ts";
 import { CliEnvNameSource } from "../shared/config/cli-config-provider.layer.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../telemetry/command-telemetry-attributes.ts";
 import {
   CliConfigFlagInputs,
   makeCliConfigFlagInputs,
@@ -450,6 +455,380 @@ describe("CliConfigValues deprecated keys", () => {
       expect(output.stderrText.includes("\u001b")).toBe(false);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
+});
+
+describe("CliConfigValues JSON config files", () => {
+  const load = (root: string) =>
+    CliConfigValues.use((values) => values.load({ workdir: root, projectRef: Option.none() }));
+
+  const writeSupabaseFile = (root: string, name: string, content: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(root, "supabase", name), content);
+    });
+
+  it.live("warns once that config.toml is ignored and reads values from config.jsonc", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db]\nport = 54111\n");
+      yield* writeSupabaseFile(
+        root,
+        "config.jsonc",
+        '{\n  // wins\n  "db": { "port": 54222, },\n}\n',
+      );
+      const output = mockOutput();
+
+      const first = yield* Effect.gen(function* () {
+        const loaded = yield* load(root);
+        yield* load(root);
+        return loaded;
+      }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(first.materialized.config.db.port).toBe(54222);
+      expect(output.messages).toEqual([
+        {
+          type: "warn",
+          message:
+            "Ignoring supabase/config.toml because supabase/config.jsonc takes precedence. Delete the file you don't use.",
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("warns that config.toml is ignored when a strict config.json shadows it", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db]\nport = 54111\n");
+      yield* writeSupabaseFile(root, "config.json", '{"db": {"port": 54333}}');
+      const output = mockOutput();
+
+      const loaded = yield* load(root).pipe(
+        Effect.provide(configValuesLayer({ output: output.layer })),
+      );
+
+      expect(loaded.materialized.config.db.port).toBe(54333);
+      expect(output.messages).toEqual([
+        {
+          type: "warn",
+          message:
+            "Ignoring supabase/config.toml because supabase/config.json takes precedence. Delete the file you don't use.",
+        },
+      ]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("prints no ignored-file warning when only config.toml exists", () =>
+    Effect.gen(function* () {
+      const root = yield* project("[db]\nport = 54111\n");
+      const output = mockOutput();
+
+      yield* load(root).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(output.messages).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("resolves a value from a commented config.jsonc-only project", () =>
+    Effect.gen(function* () {
+      const root = yield* project("");
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.remove(path.join(root, "supabase", "config.toml"));
+      yield* writeSupabaseFile(
+        root,
+        "config.jsonc",
+        '{\n  /* local port */\n  "db": { "port": 54444, },\n}\n',
+      );
+      const output = mockOutput();
+
+      const loaded = yield* load(root).pipe(
+        Effect.provide(configValuesLayer({ output: output.layer })),
+      );
+
+      expect(loaded.materialized.config.db.port).toBe(54444);
+      expect(output.messages).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live(
+    "fails with CliConfigFileConflictError when config.json and config.jsonc both exist",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* project("");
+        yield* writeSupabaseFile(root, "config.json", "{}");
+        yield* writeSupabaseFile(root, "config.jsonc", "{}");
+
+        const failure = yield* load(root).pipe(Effect.flip, Effect.provide(configValuesLayer()));
+
+        expect(failure).toMatchObject({ _tag: "CliConfigFileConflictError" });
+        expect(failure.message).toBe(
+          "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
+        );
+      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+});
+
+describe("CliConfigValues schema declaration", () => {
+  const V2 = "https://supabase.com/schemas/config/v2.json";
+  const V1 = "https://supabase.com/schemas/config/v1.json";
+
+  const load = (root: string) =>
+    CliConfigValues.use((values) => values.load({ workdir: root, projectRef: Option.none() }));
+
+  const loadLinked = (root: string) =>
+    CliConfigValues.use((values) =>
+      values.load({ workdir: root, projectRef: Option.some(LINKED) }),
+    );
+
+  const writeConfig = (root: string, name: string, content: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.remove(path.join(root, "supabase", "config.toml"), { force: true });
+      yield* fs.writeFileString(path.join(root, "supabase", name), content);
+    });
+
+  const warningsFor = (file: string, content: string) =>
+    Effect.gen(function* () {
+      const root = yield* project("");
+      yield* writeConfig(root, file, content);
+      const output = mockOutput();
+      yield* load(root).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+      return { messages: output.messages, stderr: output.stderrText, stdout: output.stdoutText };
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect));
+
+  it.live("warns once that an unrecognized schema URL is read as v1", () =>
+    Effect.gen(function* () {
+      const root = yield* project("");
+      yield* writeConfig(
+        root,
+        "config.json",
+        '{"$schema": "https://example.com/x.json", "db": {"port": 54777}}',
+      );
+      const output = mockOutput();
+
+      const loaded = yield* Effect.gen(function* () {
+        const first = yield* load(root);
+        yield* loadLinked(root);
+        return first;
+      }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(loaded.materialized.config.db.port).toBe(54777);
+      expect(output.stderrText).toBe(
+        "WARN: supabase/config.json declares schema https://example.com/x.json, which is not the Supabase CLI config schema, so it is read as v1. Set it to https://supabase.com/schemas/config/v1.json to remove this warning.\n",
+      );
+      expect(output.stdoutText).toBe("");
+      expect(output.messages).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  const silent: ReadonlyArray<readonly [string, string, string]> = [
+    ["v1 JSON", "config.json", `{"$schema": "${V1}"}`],
+    ["an undeclared JSON file", "config.json", "{}"],
+    ["a v1 TOML directive", "config.toml", `#:schema ${V1}\n[db]\nport = 54111\n`],
+    ["an undeclared TOML file", "config.toml", "[db]\nport = 54111\n"],
+    [
+      "the legacy docs URL",
+      "config.json",
+      '{"$schema": "https://supabase.com/docs/cli/config.schema.json"}',
+    ],
+    [
+      "the built dist/schema.json path",
+      "config.json",
+      '{"$schema": "../node_modules/@supabase/config/dist/schema.json"}',
+    ],
+    [
+      "the legacy node_modules path",
+      "config.jsonc",
+      '{"$schema": "./node_modules/@supabase/config/schema.json"}',
+    ],
+  ];
+
+  for (const [name, file, content] of silent) {
+    it.live(`prints no warning for ${name}`, () =>
+      Effect.gen(function* () {
+        expect(yield* warningsFor(file, content)).toEqual({ messages: [], stderr: "", stdout: "" });
+      }).pipe(Effect.scoped),
+    );
+  }
+
+  it.live("warns once with the sorted unknown keys of the file", () =>
+    Effect.gen(function* () {
+      const root = yield* project("bogus = 1\n[api]\nfoo = 2\n");
+      const output = mockOutput();
+
+      yield* Effect.gen(function* () {
+        yield* load(root);
+        yield* loadLinked(root);
+      }).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
+
+      expect(output.stderrText).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: api.foo, bogus. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+      expect(output.stdoutText).toBe("");
+      expect(output.messages).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("lists unknown keys under a remote with the remote name", () =>
+    Effect.gen(function* () {
+      const messages = yield* warningsFor(
+        "config.toml",
+        '[remotes.staging]\nproject_id = "stagingrefstagingref"\n[remotes.staging.api]\nfoo = 1\n',
+      );
+
+      expect(messages.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: remotes.staging.api.foo. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+      expect(messages.messages).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "never lists the document-only db.password and db.root_key, at the root or in a remote",
+    () =>
+      Effect.gen(function* () {
+        const messages = yield* warningsFor(
+          "config.toml",
+          [
+            "[db]",
+            'password = "pw"',
+            'root_key = "rk"',
+            "oops = 1",
+            "[remotes.staging]",
+            'project_id = "stagingrefstagingref"',
+            "[remotes.staging.db]",
+            'password = "pw"',
+            'root_key = "rk"',
+            "",
+          ].join("\n"),
+        );
+
+        expect(messages.stderr).toBe(
+          "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: db.oops. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+        );
+        expect(messages.messages).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "never lists the document-only auth.passkey and auth.webauthn tables, at the root or in a remote",
+    () =>
+      Effect.gen(function* () {
+        const warnings = yield* warningsFor(
+          "config.toml",
+          [
+            "[auth.passkey]",
+            "enabled = true",
+            "[auth.webauthn]",
+            'rp_id = "x"',
+            "[remotes.staging]",
+            'project_id = "stagingrefstagingref"',
+            "[remotes.staging.auth.passkey]",
+            "enabled = true",
+            "[remotes.staging.auth.webauthn]",
+            'rp_id = "x"',
+            "",
+          ].join("\n"),
+        );
+
+        expect(warnings).toEqual({ messages: [], stderr: "", stdout: "" });
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("never lists a custom auth.external provider table, at the root or in a remote", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.toml",
+        [
+          "[auth.external.my_oidc]",
+          "enabled = true",
+          'client_id = "id"',
+          "[remotes.staging]",
+          'project_id = "stagingrefstagingref"',
+          "[remotes.staging.auth.external.my_oidc]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+
+      expect(warnings).toEqual({ messages: [], stderr: "", stdout: "" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("still lists a non-table value under auth.external", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor("config.toml", '[auth.external]\nmy_oidc = "x"\n');
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: auth.external.my_oidc. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("still lists an unknown key written beside the document-only auth tables", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.toml",
+        "[auth.passkey]\nenabled = true\n[auth.passkeys]\nenabled = true\n",
+      );
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: auth.passkeys. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "prints an unknown key containing an escape sequence with the control characters escaped",
+    () =>
+      Effect.gen(function* () {
+        const warnings = yield* warningsFor("config.toml", '"bad\\u001b[31m" = 1\n');
+
+        expect(warnings.stderr).toBe(
+          "WARN: supabase/config.toml has keys this version of the Supabase CLI does not recognize and ignores: bad\\u001b[31m. Check them for typos, remove keys older CLI versions used, or upgrade the CLI if they come from a newer version.\n",
+        );
+        expect(warnings.stderr.includes("\u001b")).toBe(false);
+        expect(warnings.stdout).toBe("");
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("prints an unrecognized $schema containing an escape sequence escaped", () =>
+    Effect.gen(function* () {
+      const warnings = yield* warningsFor(
+        "config.json",
+        '{"$schema": "https://example.com/\\u001b[31mx.json"}',
+      );
+
+      expect(warnings.stderr).toBe(
+        "WARN: supabase/config.json declares schema https://example.com/\\u001b[31mx.json, which is not the Supabase CLI config schema, so it is read as v1. Set it to https://supabase.com/schemas/config/v1.json to remove this warning.\n",
+      );
+      expect(warnings.stderr.includes("\u001b")).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
+  const tooNew: ReadonlyArray<readonly [string, string, string]> = [
+    ["config.json", `{"$schema": "${V2}"}`, "supabase/config.json"],
+    ["config.jsonc", `{\n// c\n"$schema": "${V2}",\n}`, "supabase/config.jsonc"],
+    ["config.toml", `#:schema ${V2}\n[db\nbroken = = 1\n`, "supabase/config.toml"],
+    ["config.toml", `  # note\n\t#:schema ${V2} \t\n[db]\n`, "supabase/config.toml"],
+  ];
+
+  for (const [file, content, shown] of tooNew) {
+    it.live(`fails CliConfigValues.load with the upgrade message for a v2 ${file}`, () =>
+      Effect.gen(function* () {
+        const root = yield* project("");
+        yield* writeConfig(root, file, content);
+
+        const failure = yield* load(root).pipe(Effect.flip, Effect.provide(configValuesLayer()));
+
+        expect(failure).toMatchObject({ _tag: "CliConfigSchemaVersionError" });
+        expect(failure.message).toBe(
+          `${shown} declares config schema v2, but this version of the Supabase CLI only reads up to v1. Upgrade the Supabase CLI to use this config.`,
+        );
+        expect(describeConfigLoadFailure(failure)).toBe(failure.message);
+      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    );
+  }
 });
 
 describe("CliConfigValues memoisation", () => {
@@ -1347,7 +1726,11 @@ policy = "per_worker"
       });
       expect(originAt("auth.email.smtp.port")).toMatchObject({ tier: "config" });
       expect(originAt("db.password")).toEqual({ tier: "default" });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      (effect) => withShell({}, effect),
+      Effect.scoped,
+    ),
   );
 
   it.live("agrees with the stack config overlay for a matched remote and shell overrides", () =>
@@ -1383,7 +1766,7 @@ major_version = 15
       expect(originAt("auth.site_url")).toMatchObject({ tier: "config", remote: "staging" });
       expect(originAt("api.schemas")).toMatchObject({ tier: "shell" });
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
       (effect) => withShell({ SUPABASE_API_SCHEMAS: "public,shell_api" }, effect),
       Effect.scoped,
     ),
@@ -1868,8 +2251,8 @@ enabled = false
       expect(failure).toMatchObject({
         _tag: "CliConfigRemovedKeyError",
         removedKeys: [
-          { key: "[inbucket]", replacement: "[local_smtp]" },
-          { key: "[auth.external.slack]", replacement: "[auth.external.slack_oidc]" },
+          { key: "inbucket", replacement: "local_smtp" },
+          { key: "auth.external.slack", replacement: "auth.external.slack_oidc" },
         ],
       });
       expect(loaded.materialized.config.local_smtp.enabled).toBe(true);
@@ -2025,5 +2408,202 @@ project_id = "${OTHER}"
       expect(resolvedConfig.appliedRemote).toEqual(Option.some("staging"));
       expect(resolvedConfig.materialized.config.auth.captcha?.secret).toBe("value");
     }).pipe(Effect.provide(BunServices.layer), Effect.scoped),
+  );
+});
+
+describe("CliConfigValues failure telemetry", () => {
+  const withCommandRun = <A, E, R>(
+    body: (telemetry: {
+      readonly records: ReadonlyArray<CommandTelemetryAttributeValues>;
+      readonly configKey: () => string | undefined;
+    }) => Effect.Effect<A, E, R>,
+  ) => {
+    const records: Array<CommandTelemetryAttributeValues> = [];
+    let attributes: CommandTelemetryAttributeValues = {};
+    const sink = {
+      record: (values: CommandTelemetryAttributeValues) =>
+        Effect.sync(() => {
+          if ("config_key" in values) records.push(values);
+          attributes = { ...attributes, ...values };
+        }),
+    };
+    return body({ records, configKey: () => attributes.config_key }).pipe(
+      Effect.provide(configValuesLayer()),
+      Effect.provideService(CommandTelemetryAttributes, sink),
+    );
+  };
+
+  const load = (workdir: string) =>
+    CliConfigValues.use((values) => values.load({ workdir, projectRef: Option.none() }));
+
+  const loadTolerating = (workdir: string) =>
+    CliConfigValues.use((values) =>
+      values.load({ workdir, projectRef: Option.none(), tolerateInvalid: true }),
+    );
+
+  it.live("records nothing for a successful load and lookup with no earlier failure", () =>
+    withCommandRun(({ records }) =>
+      Effect.gen(function* () {
+        const root = yield* project("[db]\nport = 54400\n");
+
+        const resolvedConfig = yield* load(root);
+        const port = yield* resolvedConfig.get(CliConfigKeys.db.port);
+
+        expect(port.value).toBe(54400);
+        expect(records).toEqual([]);
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("records the key of a tolerated invalid value when it is read", () =>
+    withCommandRun(({ records }) =>
+      Effect.gen(function* () {
+        const root = yield* project('[db]\nport = "not-a-port"\n');
+
+        const resolvedConfig = yield* loadTolerating(root);
+        expect(records).toEqual([]);
+
+        const error = yield* resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
+        expect(records).toEqual([{ config_key: "db.port" }]);
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("records no key when the load failure names no config key", () =>
+    withCommandRun(({ records }) =>
+      Effect.gen(function* () {
+        const root = yield* project("[db\nport = ");
+
+        const error = yield* load(root).pipe(Effect.flip);
+
+        expect(error._tag).toBe("CliConfigParseError");
+        expect(records).toEqual([]);
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("records no key for a keyless load failure after a recovered keyed lookup failure", () =>
+    withCommandRun(({ configKey }) =>
+      Effect.gen(function* () {
+        const invalid = yield* project('[db]\nport = "not-a-port"\n');
+        const malformed = yield* project("[db\nport = ");
+
+        const resolvedConfig = yield* loadTolerating(invalid);
+        const lookup = yield* resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip);
+        expect(lookup).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
+        expect(configKey()).toBe("db.port");
+
+        const error = yield* load(malformed).pipe(Effect.flip);
+
+        expect(error._tag).toBe("CliConfigParseError");
+        expect(configKey()).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("clears the key of a recovered lookup failure when a later load succeeds", () =>
+    withCommandRun(({ configKey }) =>
+      Effect.gen(function* () {
+        const invalid = yield* project('[db]\nport = "not-a-port"\n');
+        const valid = yield* project("[db]\nport = 54400\n");
+
+        const resolvedConfig = yield* loadTolerating(invalid);
+        const lookup = yield* resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip);
+        expect(lookup).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
+        expect(configKey()).toBe("db.port");
+
+        yield* load(valid);
+
+        expect(configKey()).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("clears the key of a recovered lookup failure when a later lookup succeeds", () =>
+    withCommandRun(({ configKey }) =>
+      Effect.gen(function* () {
+        const root = yield* project('[db]\nport = "not-a-port"\n');
+
+        const resolvedConfig = yield* loadTolerating(root);
+        yield* resolvedConfig.get(CliConfigKeys.db.port).pipe(Effect.flip);
+        expect(configKey()).toBe("db.port");
+
+        yield* resolvedConfig.get(CliConfigKeys.db.majorVersion);
+
+        expect(configKey()).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+});
+
+describe("CliConfigValues config format telemetry", () => {
+  const loadRecordingFormat = (root: string) =>
+    Effect.gen(function* () {
+      let format: CommandTelemetryAttributeValues["config_format"];
+      const exit = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(
+        Effect.provide(configValuesLayer()),
+        Effect.provideService(CommandTelemetryAttributes, {
+          record: (values) =>
+            Effect.sync(() => {
+              if ("config_format" in values) format = values.config_format;
+            }),
+        }),
+        Effect.exit,
+      );
+      return { exit, format };
+    });
+
+  const projectWith = (name: string, content: string) =>
+    Effect.gen(function* () {
+      const root = yield* project("");
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.remove(path.join(root, "supabase", "config.toml"));
+      yield* fs.writeFileString(path.join(root, "supabase", name), content);
+      return root;
+    });
+
+  it.live.each([
+    { name: "config.toml", content: "[db]\nport = 54400\n", expected: "toml" },
+    { name: "config.json", content: '{"db": {"port": 54400}}', expected: "json" },
+    {
+      name: "config.jsonc",
+      content: '{\n  // port\n  "db": { "port": 54400, },\n}\n',
+      expected: "jsonc",
+    },
+  ])("records $expected for a project with $name", ({ name, content, expected }) =>
+    Effect.gen(function* () {
+      const root = yield* projectWith(name, content);
+
+      const { exit, format } = yield* loadRecordingFormat(root);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(format).toBe(expected);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("records the format of a config file that fails to parse", () =>
+    Effect.gen(function* () {
+      const root = yield* projectWith("config.jsonc", '{ "db": { "port": ');
+
+      const { exit, format } = yield* loadRecordingFormat(root);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(format).toBe("jsonc");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("records no format when the project has no config file", () =>
+    Effect.gen(function* () {
+      const root = yield* projectWith("unrelated.txt", "");
+
+      const { format } = yield* loadRecordingFormat(root);
+
+      expect(format).toBeUndefined();
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });

@@ -168,11 +168,13 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
       // source or entry left, and pointing at `push` there would be a dead end.
       const kept = [
         ...(keptSource === undefined ? [] : [keptSource]),
-        ...(keptEntry ? ["its supabase/config.toml entry"] : []),
+        ...(keptEntry
+          ? [`its ${displayPath(path, project.projectRoot, project.configPath)} entry`]
+          : []),
       ];
       if (kept.length > 0) {
         yield* output.raw(renderComputeDetails([["Kept", kept.join(", ")]]));
-        // Only when the source is still there: a retained `config.toml` entry
+        // Only when the source is still there: a retained config entry
         // alone is not enough to redeploy from, so `push` would fail on the very
         // command this line recommends.
         if (keptSource !== undefined) {

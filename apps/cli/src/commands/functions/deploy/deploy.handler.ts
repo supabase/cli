@@ -28,6 +28,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
 
   yield* deployFunctions(flags, {
     api,
+    apiMaxRetries: cliSettings.apiMaxRetries,
     cwd: cliSettings.workdir,
     flagCwd: runtimeInfo.cwd,
     projectRoot: cliSettings.workdir,

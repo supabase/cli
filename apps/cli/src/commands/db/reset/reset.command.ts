@@ -26,7 +26,7 @@ const config = {
   sqlPaths: CliConfigKeys.db.seed.sqlPaths.flag({
     name: "sql-paths",
     description:
-      "Override [db.seed].sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.",
+      "Override db.seed.sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.",
     also: [[CliConfigKeys.db.seed.enabled, true]],
   }),
   version: Flag.String("version").pipe(

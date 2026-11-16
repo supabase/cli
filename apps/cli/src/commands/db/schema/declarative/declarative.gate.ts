@@ -1,6 +1,8 @@
+import type { ConfigFormat } from "@supabase/config/effect";
 import { Effect } from "effect";
 
 import { aqua, bold } from "../../../../command-internal/colors.ts";
+import { configSetting } from "../../../../command-internal/config-advice.ts";
 import { DeclarativeNotEnabledError } from "./declarative.errors.ts";
 
 /**
@@ -13,12 +15,12 @@ export function isPgDeltaEnabled(experimental: boolean, pgDeltaEnabled: boolean)
 }
 
 /**
- * The suggestion shown when the gate is closed. `configPath` is `supabase/config.toml`;
+ * The suggestion shown when the gate is closed. `configPath` is the project config file;
  * `aqua`/`bold` render plain when stderr is not a TTY.
  */
-export function pgDeltaSuggestion(configPath: string): string {
+export function pgDeltaSuggestion(configPath: string, configFormat: ConfigFormat = "toml"): string {
   return `Pass ${aqua("--experimental")} to run declarative commands while ${aqua(
-    "[experimental.pgdelta] enabled = false",
+    configSetting(configFormat, "experimental.pgdelta", "enabled", "false"),
   )} is set in ${bold(configPath)}`;
 }
 
@@ -31,10 +33,11 @@ export const requirePgDelta = Effect.fnUntraced(function* (opts: {
   readonly experimental: boolean;
   readonly pgDeltaEnabled: boolean;
   readonly configPath: string;
+  readonly configFormat?: ConfigFormat;
 }) {
   if (isPgDeltaEnabled(opts.experimental, opts.pgDeltaEnabled)) return;
   return yield* new DeclarativeNotEnabledError({
     message: "declarative commands require --experimental flag or pg-delta enabled in config",
-    suggestion: pgDeltaSuggestion(opts.configPath),
+    suggestion: pgDeltaSuggestion(opts.configPath, opts.configFormat),
   });
 });

@@ -22,19 +22,21 @@ const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
   const path = yield* Path.Path;
   const supabaseDir = path.join(root, "supabase");
   const jsonPath = path.join(supabaseDir, "config.json");
+  const jsoncPath = path.join(supabaseDir, "config.jsonc");
   const tomlPath = path.join(supabaseDir, "config.toml");
 
   const jsonExists = yield* probeExists(fs.exists(jsonPath));
+  const jsoncExists = yield* probeExists(fs.exists(jsoncPath));
   const tomlExists = yield* probeExists(fs.exists(tomlPath));
 
-  if (!jsonExists && !tomlExists) {
+  if (!jsonExists && !jsoncExists && !tomlExists) {
     return null;
   }
 
   return {
     projectRoot: root,
     supabaseDir,
-    configPath: jsonExists ? jsonPath : tomlPath,
+    configPath: jsonExists ? jsonPath : jsoncExists ? jsoncPath : tomlPath,
     envPath: path.join(supabaseDir, ".env"),
     envLocalPath: path.join(supabaseDir, ".env.local"),
   } satisfies CliProjectPaths;

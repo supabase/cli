@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { StackError } from "@supabase/stack/effect";
@@ -9,11 +9,15 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { stackDestroy } from "./destroy.handler.ts";
 import { StackCommandDestroyError } from "./destroy.errors.ts";
 
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 
 /**
  * A real registration whose `destroy` fails the way the stack owner reports an unreachable engine:

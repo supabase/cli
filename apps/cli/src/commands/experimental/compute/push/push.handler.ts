@@ -1,3 +1,4 @@
+import { cliConfigFormatForPath } from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path, type Schedule } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
@@ -9,6 +10,7 @@ import {
   computeRemoteSuffix,
 } from "../compute.output.ts";
 import { aqua } from "../../../../command-internal/colors.ts";
+import { type ConfigFileRef, configSetting } from "../../../../command-internal/config-advice.ts";
 import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { classifyComputeDir } from "../../../../shared/compute/compute-classify.ts";
@@ -32,12 +34,18 @@ import {
   COMPUTE_RUNTIMES,
   COMPUTE_SIZES,
   type ComputeExposure,
+  COMPUTE_SECRETS_SCOPE,
+  parseComputeSecretsScope,
+  DEFAULT_COMPUTE_SECRETS_SCOPE,
+  formatSecretsScope,
+  type ComputeSecretsScope,
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { computeUrl } from "../../../../shared/compute/compute-url.ts";
 import {
   awaitComputeBuild,
   createComputeUpload,
   deployCompute,
+  parseComputeSecretsScopeToAPIFormat,
   uploadBuildContext,
   type ComputeDeploySpec,
 } from "../../../../shared/compute/compute-api.ts";
@@ -49,6 +57,7 @@ import {
   ComputeBuildFailedError,
   ComputeSourceMissingError,
   MissingComputeExposureError,
+  UnknownComputeSecretsScopeError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
 import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
@@ -71,7 +80,14 @@ import type { ComputePushFlags } from "./push.command.ts";
  * by default; `--no-wait` returns once the deploy is accepted.
  */
 
+const entryRef = ({ format }: ConfigFileRef, name: string): string =>
+  format === "toml" ? `[compute.${name}]` : `compute.${name}`;
+
+const settingRef = ({ format }: ConfigFileRef, name: string, key: string): string =>
+  format === "toml" ? `[compute.${name}] ${key}` : `compute.${name}.${key}`;
+
 const resolveRuntime = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
   readonly name: string;
   readonly recorded: string | undefined;
   readonly sourceDir: string;
@@ -80,8 +96,8 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
     const recorded = parseComputeRuntime(options.recorded);
     if (recorded === undefined) {
       return yield* new UnknownComputeRuntimeError({
-        detail: `supabase/config.toml records an unknown runtime "${options.recorded}" for "${options.name}".`,
-        suggestion: `Set [compute.${options.name}] runtime to one of: ${COMPUTE_RUNTIMES.join(", ")}.`,
+        detail: `${options.config.path} records an unknown runtime "${options.recorded}" for "${options.name}".`,
+        suggestion: `Set ${settingRef(options.config, options.name, "runtime")} to one of: ${COMPUTE_RUNTIMES.join(", ")}.`,
       });
     }
     return recorded;
@@ -93,13 +109,14 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
   // payload stdout is carrying.
   yield* output.raw(
     `No runtime configured for ${options.name}: guessed ${classified.runtime} (${classified.reason}). ` +
-      `Set [compute.${options.name}] runtime = "${classified.runtime}" in supabase/config.toml.\n`,
+      `Set ${configSetting(options.config.format, `compute.${options.name}`, "runtime", `"${classified.runtime}"`)} in ${options.config.path}.\n`,
     "stderr",
   );
   return classified.runtime;
 });
 
 const resolveSize = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
   readonly name: string;
   readonly recorded: string | undefined;
 }) {
@@ -109,8 +126,8 @@ const resolveSize = Effect.fnUntraced(function* (options: {
   const recorded = parseComputeSize(options.recorded);
   if (recorded === undefined) {
     return yield* new UnknownComputeSizeError({
-      detail: `supabase/config.toml records an unknown size "${options.recorded}" for "${options.name}".`,
-      suggestion: `Set [compute.${options.name}] size to one of: ${COMPUTE_SIZES.join(", ")}.`,
+      detail: `${options.config.path} records an unknown size "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set ${settingRef(options.config, options.name, "size")} to one of: ${COMPUTE_SIZES.join(", ")}.`,
     });
   }
   return recorded;
@@ -137,6 +154,7 @@ function resolveInstances(options: {
  * otherwise revert it.
  */
 const resolveExposure = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
   readonly name: string;
   readonly recorded: string | undefined;
   readonly configured: boolean;
@@ -155,12 +173,12 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
       // unguarded by format, like the runtime nudge: a CI run is exactly where
       // a one-deploy exposure quietly reverting matters most.
       const message = options.configured
-        ? `--exposure ${chosen} applies to this deploy only: supabase/config.toml ${
+        ? `--exposure ${chosen} applies to this deploy only: ${options.config.path} ${
             options.recorded === undefined
               ? `records no exposure for ${options.name}`
               : `records exposure = "${options.recorded}"`
-          }, so the next bare push will not use ${chosen}. Set [compute.${options.name}] exposure = "${chosen}" in supabase/config.toml.\n`
-        : `--exposure ${chosen} is required for an unconfigured source directory. Record it under [compute.${options.name}] exposure for future pushes.\n`;
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "exposure", `"${chosen}"`)} in ${options.config.path}.\n`
+        : `--exposure ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "exposure")} for future pushes.\n`;
       yield* output.raw(message, "stderr");
     }
     return chosen;
@@ -176,11 +194,64 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
       // there and says nothing.
       detail:
         options.recorded.trim() === ""
-          ? `supabase/config.toml records a blank exposure for "${options.name}".`
-          : `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
-      suggestion: `Set [compute.${options.name}] exposure to one of: ${COMPUTE_EXPOSURES.join(", ")}.`,
+          ? `${options.config.path} records a blank exposure for "${options.name}".`
+          : `${options.config.path} records an unknown exposure "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set ${settingRef(options.config, options.name, "exposure")} to one of: ${COMPUTE_EXPOSURES.join(", ")}.`,
     });
   }
+  return recorded;
+});
+
+const resolveSecretsScope = Effect.fnUntraced(function* (options: {
+  readonly config: ConfigFileRef;
+  readonly name: string;
+  readonly recorded: string | readonly string[] | undefined;
+  readonly configured: boolean;
+  readonly override: Option.Option<ComputeSecretsScope>;
+}) {
+  if (Option.isSome(options.override)) {
+    const chosen = options.override.value;
+    const withoutTheFlag =
+      options.recorded === undefined
+        ? DEFAULT_COMPUTE_SECRETS_SCOPE
+        : parseComputeSecretsScope(options.recorded as string | string[]);
+
+    const isCustom = Array.isArray(chosen);
+    const isChosenEquals =
+      isCustom && Array.isArray(withoutTheFlag)
+        ? withoutTheFlag.length === chosen.length && chosen.every((v) => withoutTheFlag.includes(v))
+        : withoutTheFlag === chosen;
+
+    if (!options.configured || !isChosenEquals) {
+      const flagName = `--secrets-scope${isCustom ? ":custom" : ""}`;
+      const output = yield* Output;
+
+      const applyFormat = (v: string | string[] | readonly string[]) =>
+        Array.isArray(v) ? `[${formatSecretsScope(v.map((i) => `"${i}"`))}]` : `"${v}"`;
+
+      const message = options.configured
+        ? `${flagName} ${chosen} applies to this deploy only: ${options.config.path} ${
+            options.recorded === undefined
+              ? `records no secrets_scope for ${options.name}`
+              : `records secrets_scope = ${applyFormat(options.recorded)}`
+          }, so the next bare push will not use ${chosen}. Set ${configSetting(options.config.format, `compute.${options.name}`, "secrets_scope", applyFormat(chosen))} in ${options.config.path}.\n`
+        : `${flagName} ${chosen} is required for an unconfigured source directory. Record it under ${settingRef(options.config, options.name, "secrets_scope")} for future pushes.\n`;
+      yield* output.raw(message, "stderr");
+    }
+    return chosen;
+  }
+
+  if (options.recorded === undefined) {
+    return DEFAULT_COMPUTE_SECRETS_SCOPE;
+  }
+  const recorded = parseComputeSecretsScope(options.recorded as string | string[]);
+  if (recorded === undefined) {
+    return yield* new UnknownComputeSecretsScopeError({
+      detail: `${options.config.path} records an unknown secrets scope "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set ${settingRef(options.config, options.name, "secrets_scope")} to one of: ${COMPUTE_SECRETS_SCOPE.join(", ")}.`,
+    });
+  }
+
   return recorded;
 });
 
@@ -194,14 +265,14 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 function missingSourceSuggestion(input: {
   readonly name: string;
   readonly sourceDisplay: string;
-  readonly configPath: string;
+  readonly config: ConfigFileRef;
   readonly entry: ComputeEntry | undefined;
 }): string {
   if (input.entry === undefined) {
     return `Scaffold it with \`supabase compute new ${input.name}\`.`;
   }
   if (input.entry.source !== undefined) {
-    return `Create ${input.sourceDisplay}, or correct \`source\` under [compute.${input.name}] in ${input.configPath}.`;
+    return `Create ${input.sourceDisplay}, or correct \`source\` under ${entryRef(input.config, input.name)} in ${input.config.path}.`;
   }
   return `Create ${input.sourceDisplay} and add your compute's code, then run this command again.`;
 }
@@ -229,6 +300,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   readonly refSuffix: string;
   readonly instances: Option.Option<number>;
   readonly exposure: Option.Option<ComputeExposure>;
+  readonly secretsScope: Option.Option<ComputeSecretsScope>;
   /** `--no-wait`: return once the deploy is accepted instead of blocking on the build. */
   readonly noWait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
@@ -246,6 +318,10 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   const compute = yield* describeCompute(project, name);
 
   const sourceDisplay = displayPath(path, project.projectRoot, compute.sourceDir);
+  const config: ConfigFileRef = {
+    format: cliConfigFormatForPath(project.configPath),
+    path: displayPath(path, project.projectRoot, project.configPath),
+  };
 
   // Checked before the runtime is resolved: without this, an unrecorded runtime
   // would be classified and announced for a path that doesn't exist.
@@ -255,7 +331,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
       suggestion: missingSourceSuggestion({
         name,
         sourceDisplay,
-        configPath: displayPath(path, project.projectRoot, project.configPath),
+        config,
         entry: compute.entry,
       }),
     });
@@ -289,6 +365,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   }
 
   const runtime = yield* resolveRuntime({
+    config,
     name,
     recorded: compute.entry?.runtime,
     sourceDir: compute.sourceDir,
@@ -298,7 +375,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   // default. Never left unset, because a compute that is actually running always
   // has some concrete size — and never silently coerced, because a size the CLI
   // does not recognize is a config mistake worth naming.
-  const size = yield* resolveSize({ name, recorded: compute.entry?.size });
+  const size = yield* resolveSize({ config, name, recorded: compute.entry?.size });
 
   const instances = resolveInstances({
     recorded: compute.entry?.instances,
@@ -308,10 +385,19 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   // Resolved before anything is packaged or uploaded, so an unrecognized
   // exposure is refused while the refusal is still free.
   const exposure = yield* resolveExposure({
+    config,
     name,
     recorded: compute.entry?.exposure,
     configured: compute.entry !== undefined,
     override: input.exposure,
+  });
+
+  const secretsScope = yield* resolveSecretsScope({
+    config,
+    name,
+    recorded: compute.entry?.secrets_scope,
+    configured: compute.entry !== undefined,
+    override: input.secretsScope,
   });
 
   // Same reason, and the same place: a pattern the CLI cannot read is a config mistake, and
@@ -323,6 +409,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     "compute.size": size,
     "compute.exposure": exposure,
     "compute.instances": instances,
+    "compute.secrets_scope": secretsScope,
   });
 
   let contextUploadId: string;
@@ -359,10 +446,10 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
       const excludedSomething = packaged.excludedCount > 0;
       return yield* new ComputeSourceMissingError({
         detail: excludedSomething
-          ? `Every file in ${sourceDisplay} is matched by [compute.${name}] exclude, so there is nothing to deploy.`
+          ? `Every file in ${sourceDisplay} is matched by ${settingRef(config, name, "exclude")}, so there is nothing to deploy.`
           : `${sourceDisplay} holds no files to deploy, only empty directories.`,
         suggestion: excludedSomething
-          ? `Narrow [compute.${name}] exclude in supabase/config.toml so the files the build needs are packaged.`
+          ? `Narrow ${settingRef(config, name, "exclude")} in ${config.path} so the files the build needs are packaged.`
           : addYourCode(sourceDisplay),
       });
     }
@@ -383,6 +470,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     ...(runtime === "dockerfile" ? {} : { runtime }),
     size: apiSizeFor(size),
     exposure,
+    secrets_scope: parseComputeSecretsScopeToAPIFormat(secretsScope),
     instances,
   };
 
@@ -445,6 +533,11 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   // one. Only reachable under `--no-wait` — the default polls until it settles.
   const imageVersion = settled.buildState === "building" ? undefined : settled.imageVersion;
 
+  const settledSecretsScope =
+    typeof settled.spec.secrets_scope === "string"
+      ? (settled.spec.secrets_scope as string)
+      : settled.spec.secrets_scope?.map(({ secret_name }) => secret_name);
+
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
@@ -465,6 +558,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
         // empty-valued row.
         ["Image", imageVersion ?? ""],
         ["Access", settled.spec.exposure],
+        ["Secrets Scope", formatSecretsScope(settledSecretsScope ?? "")],
         ["URL", url ?? ""],
       ]),
     );
@@ -485,6 +579,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     runtime,
     size: settled.spec.size,
     exposure: settled.spec.exposure,
+    secrets_scope: settledSecretsScope,
     instances: settled.spec.instances,
     // Omitted rather than present-and-undefined: `-o toml` hands this to
     // smol-toml, which can't represent undefined and would throw after the
@@ -612,6 +707,7 @@ export const computePush = Effect.fn("compute.push")(function* (
           "stderr",
         );
       }
+
       const compute = yield* deployOneCompute({
         project,
         name,
@@ -619,6 +715,7 @@ export const computePush = Effect.fn("compute.push")(function* (
         refSuffix,
         instances: flags.instances,
         exposure: flags.exposure,
+        secretsScope: flags.secretsScope.pipe(Option.orElse(() => flags.secretsScopeCustom)),
         noWait: flags.noWait,
         machineOutput,
         ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),

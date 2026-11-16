@@ -1,7 +1,6 @@
 import {
   Cause,
   Config,
-  Crypto,
   Duration,
   Effect,
   Exit,
@@ -15,12 +14,13 @@ import {
   Redacted,
   Scope,
   Stdio,
-  Stream,
   Tracer,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { Headers, HttpTraceContext } from "effect/http";
 import { CLI_VERSION } from "../cli/version.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
+import { writeStdio } from "../output/output.layer.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
 import { detectCi } from "./runtime.layer.ts";
@@ -33,10 +33,7 @@ const OTLP_TRACES_PATH = "/v1/traces";
 /** Tracing never stops a command: a setup problem prints one warning and the run continues untraced. */
 const warnTracingDisabled = (reason: string) =>
   Effect.flatMap(Stdio.Stdio, (stdio) =>
-    Stream.make(`Warning: tracing disabled: ${reason}\n`).pipe(
-      Stream.run(stdio.stderr()),
-      Effect.ignore,
-    ),
+    writeStdio(stdio, "stderr", `Warning: tracing disabled: ${reason}\n`).pipe(Effect.ignore),
   );
 
 type TraceSink =
@@ -226,7 +223,7 @@ const debugConsoleTracer = Effect.fnUntraced(function* (
 ) {
   const stdio = yield* Stdio.Stdio;
   const exportSpan = makeDebugConsoleExporter(
-    (line) => Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.asVoid),
+    (line) => writeStdio(stdio, "stderr", line),
     yield* makeTraceSanitizer,
     root,
   );
@@ -250,7 +247,7 @@ const debugConsoleTracer = Effect.fnUntraced(function* (
 
 const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
   const runtimeInfo = yield* RuntimeInfo;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const sinkModule = yield* Effect.promise(() => import("./otlp-trace-sink.ts"));
   const resource = {
     serviceVersion: CLI_VERSION,
@@ -258,7 +255,7 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
       os: runtimeInfo.platform,
       arch: runtimeInfo.arch,
       is_ci: yield* detectCi,
-      "service.instance.id": yield* Effect.orDie(crypto.randomUUIDv4),
+      "service.instance.id": yield* crypto.uuidV4(),
     },
   };
   const make = (url: string, headers: Redacted.Redacted<Readonly<Record<string, string>>>) =>
@@ -280,7 +277,7 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
  */
 export const withDebugConsole = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R | CliSettings | Crypto.Crypto | Stdio.Stdio> =>
+): Effect.Effect<A, E, R | CliSettings | SecureRandom.SecureRandom | Stdio.Stdio> =>
   Effect.gen(function* () {
     const settings = yield* CliSettings;
     const enabled =
@@ -310,7 +307,11 @@ export const withTraceExport =
   (settings: TraceSettings, attributes: Readonly<Record<string, unknown>>) =>
   <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R | Crypto.Crypto | FileSystem.FileSystem | RuntimeInfo | Stdio.Stdio> => {
+  ): Effect.Effect<
+    A,
+    E,
+    R | SecureRandom.SecureRandom | FileSystem.FileSystem | RuntimeInfo | Stdio.Stdio
+  > => {
     const untraced = effect.pipe(Effect.withTracerEnabled(false));
     if (Option.isNone(settings.sink)) return untraced;
     const sink = settings.sink.value;

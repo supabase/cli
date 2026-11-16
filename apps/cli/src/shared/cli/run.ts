@@ -1,10 +1,9 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { CliConfigStore } from "@supabase/config/effect";
 import {
   Cause,
   Config,
   Console,
-  Crypto,
   Effect,
   Exit,
   FileSystem,
@@ -17,6 +16,7 @@ import {
   Scope,
   Stdio,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { CliError, CliOutput, Command } from "effect/cli";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -95,7 +95,8 @@ export type AllowedRunCliServices =
   | CliSettings
   | CommandRuntime
   | FileSystem.FileSystem
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
+  | Digest.Digest
   | LegacyProjectState
   | Path.Path
   | ProcessControl
@@ -391,12 +392,15 @@ export function shouldUseGlobalSignalInterrupt(args: ReadonlyArray<string>): boo
   );
 }
 
-function formatterLayerFor(
+function suggestionContextFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
-  format: OutputFormat,
-) {
-  const context = { rootCommand, args };
+  stackRootCommand: Command.Command.Any | undefined,
+): CliErrorSuggestionContext {
+  return { rootCommand, args, ...(stackRootCommand ? { stackRootCommand } : {}) };
+}
+
+function formatterLayerFor(context: CliErrorSuggestionContext, format: OutputFormat) {
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter(context))
     : CliOutput.layer(textCliOutputFormatter(context));
@@ -611,10 +615,12 @@ export interface RunCliOptions<BeforeParseError = never> {
   readonly beforeParse?: Effect.Effect<void, BeforeParseError, FileSystem.FileSystem | Path.Path>;
   /** The selected root's agent default, applied to failures `runCli` renders itself. */
   readonly agentDefaultOutputFormat: OutputFormat;
+  /** The root the stack opt-in would select, so a rejected stack-only flag can name the opt-in. */
+  readonly stackRootCommand?: Command.Command.Any;
   readonly analyticsLayer: Layer.Layer<
     Analytics,
     Config.ConfigError | PlatformError.PlatformError,
-    CliSettings | Crypto.Crypto | FileSystem.FileSystem | Path.Path | RuntimeInfo | Tty
+    CliSettings | SecureRandom.SecureRandom | FileSystem.FileSystem | Path.Path | RuntimeInfo | Tty
   >;
   /**
    * Runs just before the process exits on any invocation that exits 0 — the seam for the CLI's
@@ -664,9 +670,10 @@ export function cliProgramFor<
     ),
   );
   const commandProgram = options.beforeParse ?? Effect.void;
-  const commandLayer = formatterLayerFor(rootCommand, args, outputFormat).pipe(
-    Layer.provideMerge(options.analyticsLayer),
-  );
+  const commandLayer = formatterLayerFor(
+    suggestionContextFor(rootCommand, args, options.stackRootCommand),
+    outputFormat,
+  ).pipe(Layer.provideMerge(options.analyticsLayer));
   const cliProgramLayer = telemetryRuntimeLayer.pipe(
     Layer.provideMerge(cliSettingsLayerFor(runtimeLayer)),
     Layer.provideMerge(cliProjectHomeLayerFor(runtimeLayer)),
@@ -676,7 +683,9 @@ export function cliProgramFor<
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
     Layer.provideMerge(cliArgsLayer(cliArgs)),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(BunServices.layer, BunCrypto.layerSecureRandom, BunCrypto.layerDigest),
+    ),
   );
   return withoutParseErrorHelpDump(
     commandProgram.pipe(
@@ -720,7 +729,7 @@ export const runCli = Effect.fnUntraced(function* <
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
-  const suggestionContext = { rootCommand, args };
+  const suggestionContext = suggestionContextFor(rootCommand, args, options.stackRootCommand);
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
   const outputFormat = yield* Effect.gen(function* () {
     const aiTool = yield* AiTool;
@@ -777,6 +786,7 @@ export const runCli = Effect.fnUntraced(function* <
   const handledProgramLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),
     Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(BunCrypto.layerSecureRandom),
     Layer.provideMerge(cliConfigProviderLayer),
   );
 

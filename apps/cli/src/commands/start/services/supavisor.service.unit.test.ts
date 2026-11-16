@@ -101,6 +101,7 @@ describe("buildSupavisorContainerSpec", () => {
       REGION: "local",
       RUN_JANITOR: "true",
       ERL_AFLAGS: "-proto_dist inet_tcp",
+      ERL_MAX_PORTS: "65536",
       RLIMIT_NOFILE: "",
     });
   });

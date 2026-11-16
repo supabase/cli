@@ -64,7 +64,8 @@ export interface StackCatalogSetupInput {
     readonly databaseServices: ReadonlyArray<DatabaseService>;
     readonly selection: ArtifactSelection;
   };
-  readonly overlay: StackCatalogOverlay;
+  /** Project SQL for a first setup; omitted when only the catalog changes. */
+  readonly overlay?: StackCatalogOverlay;
 }
 
 const catalogError = (cause: unknown): StackCatalogSetupError =>
@@ -185,12 +186,18 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         .makeTempDirectoryScoped({ prefix: "supabase-stack-catalog-sql-" })
         .pipe(Effect.mapError(catalogError));
       yield* ensureStackWebhookSchema(session, fs, path, sqlPath);
-      yield* applyDatabaseOverlay(session, fs, path, input.overlay.workdir, {
-        webhooksEnabled: input.overlay.webhooksEnabled,
-        apiAutoExposeNewTables: input.overlay.apiAutoExposeNewTables,
-        vault: input.overlay.vault,
-        webhooks: input.overlay.webhooks,
-        announceRoles: input.overlay.announceRoles,
+      const { overlay } = input;
+      if (overlay === undefined) return;
+      const projectSession = yield* dbConn.connect(
+        { ...connection, user: "postgres" },
+        { isLocal: true, dnsResolver: "native" },
+      );
+      yield* applyDatabaseOverlay(projectSession, fs, path, overlay.workdir, {
+        webhooksEnabled: overlay.webhooksEnabled,
+        apiAutoExposeNewTables: overlay.apiAutoExposeNewTables,
+        vault: overlay.vault,
+        webhooks: overlay.webhooks,
+        announceRoles: overlay.announceRoles,
       }).pipe(Effect.withSpan("StackCatalogSetup.applyOverlay"));
     }),
   );

@@ -36,7 +36,7 @@ const config = {
   ),
   force: Flag.Boolean("force").pipe(
     Flag.withDescription(
-      "Write even when supabase/config.toml (or config.json), supabase/migrations, or supabase/functions has uncommitted or untracked changes in git.",
+      "Write even when the project config file, supabase/migrations, or supabase/functions has uncommitted or untracked changes in git.",
     ),
     Flag.withDefault(false),
   ),
@@ -70,7 +70,7 @@ export const pullHandler = (flags: PullFlags) =>
 
 export const pullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into supabase/config.toml, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Asks for confirmation (default No) before writing, because the database step records the migration in the remote migration history table: an interactive terminal is prompted, and --output-format json|stream-json or a non-interactive run needs --yes (or SUPABASE_YES in the shell environment) — use --dry-run to preview first.",
+    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into the project config file, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Asks for confirmation (default No) before writing, because the database step records the migration in the remote migration history table: an interactive terminal is prompted, and --output-format json|stream-json or a non-interactive run needs --yes (or SUPABASE_YES in the shell environment) — use --dry-run to preview first.",
   ),
   Command.withShortDescription("Pull remote project state into the local checkout"),
   Command.withExamples([

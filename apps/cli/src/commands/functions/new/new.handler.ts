@@ -1,3 +1,9 @@
+import {
+  applyConfigEdits,
+  parseCliConfigDocumentFile,
+  type ParsedCliConfigDocument,
+  writeCliConfigDocumentText,
+} from "@supabase/config/internal";
 import { defaultPublishableKey } from "../../../shared/stack-constants.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 
@@ -13,6 +19,7 @@ import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
+import { configDisplayPath } from "../../../command-internal/config-advice.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsNewFlags } from "./new.command.ts";
@@ -54,6 +61,22 @@ function hasFunctionConfigDeclaration(contents: string, slug: string): boolean {
   return pattern.test(contents);
 }
 
+const locateJsonConfig = Effect.fnUntraced(function* (workdir: string) {
+  const parsed = yield* parseCliConfigDocumentFile(workdir, { search: false }).pipe(Effect.option);
+  return Option.isSome(parsed) && parsed.value !== null && parsed.value.format === "json"
+    ? parsed.value
+    : undefined;
+});
+
+function jsonDeclaredFunctionSlugs(document: ParsedCliConfigDocument): ReadonlySet<string> {
+  const functions = document.rawDocument?.["functions"];
+  return new Set(
+    typeof functions === "object" && functions !== null && !Array.isArray(functions)
+      ? Object.keys(functions)
+      : [],
+  );
+}
+
 const listExistingFunctionSlugs = Effect.fn("functions.new.listExistingSlugs")(function* (
   workdir: string,
 ) {
@@ -76,11 +99,18 @@ const listExistingFunctionSlugs = Effect.fn("functions.new.listExistingSlugs")(f
     }
   }
 
-  const configPath = path.join(workdir, "supabase", "config.toml");
-  const configContents = yield* fs.readFileString(configPath).pipe(Effect.option);
-  if (Option.isSome(configContents)) {
-    for (const slug of readDeclaredFunctionSlugs(configContents.value)) {
+  const jsonConfig = yield* locateJsonConfig(workdir);
+  if (jsonConfig !== undefined) {
+    for (const slug of jsonDeclaredFunctionSlugs(jsonConfig)) {
       slugs.add(slug);
+    }
+  } else {
+    const configPath = path.join(workdir, "supabase", "config.toml");
+    const configContents = yield* fs.readFileString(configPath).pipe(Effect.option);
+    if (Option.isSome(configContents)) {
+      for (const slug of readDeclaredFunctionSlugs(configContents.value)) {
+        slugs.add(slug);
+      }
     }
   }
 
@@ -131,6 +161,50 @@ const promptForIdeSettings = Effect.fn("functions.new.promptIdeSettings")(functi
   }
 });
 
+const writeJsonFunctionConfig = Effect.fn("functions.new.writeJsonConfig")(function* (
+  workdir: string,
+  document: ParsedCliConfigDocument,
+  slug: string,
+  verifyJwt: boolean,
+) {
+  const path = yield* Path.Path;
+  const output = yield* Output;
+  const relPath = configDisplayPath(path, workdir, document.path);
+
+  if (jsonDeclaredFunctionSlugs(document).has(slug)) {
+    yield* output.raw(`functions.${slug} is already declared in ${bold(relPath)}\n`, "stderr");
+    return;
+  }
+
+  const outcome = applyConfigEdits(document.rawText, "json", [
+    {
+      path: ["functions", slug],
+      value: {
+        enabled: true,
+        verify_jwt: verifyJwt,
+        import_map: `./functions/${slug}/deno.json`,
+        entrypoint: `./functions/${slug}/index.ts`,
+      },
+    },
+  ]);
+  if (outcome.kind === "refused") {
+    return yield* new FunctionsNewWriteError({
+      path: relPath,
+      message: `failed to update config: ${outcome.refusal.detail}`,
+    });
+  }
+
+  yield* writeCliConfigDocumentText(document.path, outcome.text).pipe(
+    Effect.mapError(
+      (cause) =>
+        new FunctionsNewWriteError({
+          path: relPath,
+          message: `failed to update config: ${cause.message}`,
+        }),
+    ),
+  );
+});
+
 const appendFunctionConfig = Effect.fnUntraced(function* (
   workdir: string,
   slug: string,
@@ -139,6 +213,12 @@ const appendFunctionConfig = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const output = yield* Output;
+
+  const jsonConfig = yield* locateJsonConfig(workdir);
+  if (jsonConfig !== undefined) {
+    return yield* writeJsonFunctionConfig(workdir, jsonConfig, slug, verifyJwt);
+  }
+
   const relPath = path.join("supabase", "config.toml");
   const configPath = path.join(workdir, relPath);
   const existing = yield* fs.readFileString(configPath).pipe(Effect.option);

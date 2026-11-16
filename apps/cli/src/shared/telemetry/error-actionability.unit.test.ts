@@ -147,6 +147,20 @@ describe("classifyCliErrorActionability", () => {
     expect(statusCodeActionability(undefined).error_category).toBe("network");
   });
 
+  it("classifies a status error carrying a plan-gate entitlement as plan_limit", () => {
+    const gated = Object.assign(new DeclaredStatusError({ status: 402 }), {
+      entitlement: {
+        feature: "project_restore_size",
+        upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+      },
+    });
+    expect(classifyCliErrorActionability(gated)).toMatchObject({
+      error_category: "plan_limit",
+      error_fingerprint: "tag:DeclaredStatusError:plan_limit",
+      suggestion_type: "upgrade_plan",
+    });
+  });
+
   it("rejects malformed declarations and arbitrary remediation text", () => {
     class InvalidDeclaration extends Data.Error {
       get [ErrorActionabilityId]() {

@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { systemError } from "effect/PlatformError";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the current process's own uid/gid make the chown calls below harmless no-ops.
 import { userInfo } from "node:os";
 import {
@@ -9,6 +10,7 @@ import {
   NativeRuntimeRootBase,
   nativeRuntimeRootPath,
   type PasswdEntry,
+  restrictDirectoryToOwner,
 } from "./postgres-user.ts";
 
 /**
@@ -137,6 +139,55 @@ describe("acquireNativeRuntimeRoot", () => {
         expect(yield* fs.exists(nativeRuntimeRootPath(path, base, process.getuid?.() ?? 0))).toBe(
           false,
         );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+// Windows has no POSIX mode bits.
+describe.skipIf(process.platform === "win32")("restrictDirectoryToOwner", () => {
+  it.live("keeps a traverse grant another process adds after the mode was read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "restrict-owner-race-" });
+        yield* fs.chmod(directory, 0o700);
+        const grantAfterStat: FileSystem.FileSystem = {
+          ...fs,
+          stat: (target) => fs.stat(target).pipe(Effect.tap(() => fs.chmod(directory, 0o701))),
+        };
+
+        yield* restrictDirectoryToOwner(grantAfterStat, directory);
+
+        expect((yield* fs.stat(directory)).mode & 0o777).toBe(0o701);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("still rejects a restricted directory another user owns", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "restrict-owner-foreign-" });
+        yield* fs.chmod(directory, 0o701);
+        const ownedByAnotherUser: FileSystem.FileSystem = {
+          ...fs,
+          stat: (target) =>
+            fs.stat(target).pipe(Effect.map((info) => ({ ...info, uid: Option.some(-1) }))),
+          chmod: () =>
+            Effect.fail(
+              systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "chmod",
+                description: "not the owner",
+              }),
+            ),
+        };
+
+        const exit = yield* Effect.exit(restrictDirectoryToOwner(ownedByAnotherUser, directory));
+
+        expect(Exit.isFailure(exit)).toBe(true);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

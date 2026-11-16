@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -64,6 +64,7 @@ import { functionsLocalConfigLoader } from "../../../command-internal/functions-
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionImportMapSyntaxError,
+  FunctionsDeployFailedError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "../../../shared/functions/deploy.errors.ts";
@@ -125,7 +126,16 @@ const deployedFunction = (slug: string) => ({
 const removeTempRoot = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   yield* fs.remove(tempRoot.current, { recursive: true, force: true });
-}).pipe(Effect.provide(BunServices.layer), Effect.orDie);
+}).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]), Effect.orDie);
+
+// Each sleep advances the test clock itself, so retry backoff costs no real time.
+const withAdvancingClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.flatMap(TestClock.testClockWith(Effect.succeed), (clock) =>
+    Effect.provideService(effect, Clock.Clock, {
+      ...clock,
+      sleep: (duration) => clock.adjust(duration),
+    }),
+  );
 
 const writeCliConfig = Effect.fnUntraced(function* (
   cwd: string,
@@ -179,7 +189,7 @@ function mockDockerBundleSpawner() {
       const outputPath = resolveDockerOutputPath(record.args);
       yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
       yield* fs.writeFileString(outputPath, "eszip-test-output");
-    }).pipe(Effect.provide(BunServices.layer), Effect.orDie);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]), Effect.orDie);
   return mockChildProcessSpawner(spawnerOpts);
 }
 
@@ -475,7 +485,9 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunServices.layer)),
+        commandRuntimeLayer(["functions", "deploy"]).pipe(
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
+        ),
         approvedHostedMutation,
         cliArgsLayer(prepareCliArgs(rootCommandForFeatures(), args)).pipe(
           Layer.provideMerge(Stdio.layerTest({ args: Effect.succeed(args) })),
@@ -763,9 +775,13 @@ describe("functions deploy", () => {
     handler: ApiHandler,
     args: ReadonlyArray<string> = ["functions", "deploy", "hello-world", "--use-api"],
     rateLimitNotices?: Queue.Enqueue<string>,
+    apiMaxRetries = Option.none<number>(),
   ) {
     const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({ handler });
+    const api = mockCommandPlatformApi({
+      handler,
+      clientMaxRetries: Option.getOrElse(apiMaxRetries, () => 0),
+    });
     const layer = Layer.mergeAll(
       cliConfigValuesTestLayer,
       buildTestRuntime({
@@ -795,7 +811,7 @@ describe("functions deploy", () => {
                 ).pipe(Layer.provide(out.layer)),
               },
         api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current, apiMaxRetries }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       approvedHostedMutation,
@@ -838,7 +854,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.effect("reports a malformed deno.json with the schema decoder's message", () => {
+  it.effect("reports a malformed deno.json with the parse reason and position", () => {
     const { api, layer } = apiDeployHarness(deployedHelloWorld);
 
     return Effect.gen(function* () {
@@ -854,7 +870,10 @@ describe("functions deploy", () => {
       const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(FunctionImportMapSyntaxError);
-      expect(error).toMatchObject({ name: "SyntaxError", message: "Expected a valid JSON string" });
+      expect(error).toMatchObject({
+        name: "SyntaxError",
+        message: "Close brace expected (line 1, column 2)",
+      });
       expect(api.requests.some((request) => request.method === "POST")).toBe(false);
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
@@ -982,6 +1001,49 @@ describe("functions deploy", () => {
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
     );
+
+    it.effect("uploads the files a commented deno.jsonc import map points at", () => {
+      const uploaded: Array<{ importMapPath: string; fileNames: Array<string> }> = [];
+      const { layer } = apiDeployHarness((request, recorded) => {
+        if (Predicate.isTagged(request.body, "FormData")) {
+          const metadata = request.body.formData.get("metadata");
+          if (typeof metadata === "string") {
+            uploaded.push({
+              importMapPath: JSON.parse(metadata).import_map_path,
+              fileNames: request.body.formData
+                .getAll("file")
+                .flatMap((part) => (part instanceof File ? [part.name] : [])),
+            });
+          }
+        }
+        return deployedHelloWorld(request, recorded);
+      });
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* fs.remove(`${functionDir("hello-world")}/deno.json`);
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase/shared`, { recursive: true });
+        yield* fs.writeFileString(`${tempRoot.current}/supabase/shared/helper.ts`, "export {}\n");
+        yield* fs.writeFileString(
+          `${functionDir("hello-world")}/deno.jsonc`,
+          `{
+  // shared helper
+  "imports": {
+    "helper": "../../shared/helper.ts", /* trailing comma follows */
+  },
+}
+`,
+        );
+
+        yield* functionsDeploy(baseFlags);
+
+        expect(uploaded).toHaveLength(1);
+        expect(uploaded[0]?.importMapPath).toBe("supabase/functions/hello-world/deno.jsonc");
+        expect(uploaded[0]?.fileNames).toContain("supabase/shared/helper.ts");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.effect("deploys with deno.json when the function directory has both files", () => {
       const { importMapPaths, layer } = harnessRecordingImportMapPaths();
@@ -1218,6 +1280,112 @@ describe("functions deploy", () => {
       yield* functionsDeploy(baseFlags);
 
       expect(api.requests.filter((request) => request.method === "POST")).toHaveLength(2);
+      expect(out.stderrText).toContain("Rate limit exceeded while deploying function hello-world.");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.effect("caps a failed function list at SUPABASE_API_MAX_RETRIES", () => {
+    const { layer, api } = apiDeployHarness(
+      (request) => Effect.succeed(jsonResponse(request, 500, { message: "boom" })),
+      undefined,
+      undefined,
+      Option.some(2),
+    );
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      const error = yield* functionsDeploy(baseFlags).pipe(withAdvancingClock, Effect.flip);
+
+      expect(error).toMatchObject({ status: 500 });
+      expect(
+        api.requests.filter((request) => request.url.endsWith(`/${VALID_REF}/functions`)),
+      ).toHaveLength(3);
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.effect("caps the prune function list at SUPABASE_API_MAX_RETRIES", () => {
+    const { layer, api } = apiDeployHarness(
+      (request) => Effect.succeed(jsonResponse(request, 500, { message: "boom" })),
+      ["functions", "deploy", "hello-world", "--use-api", "--no-verify-jwt", "--prune"],
+      undefined,
+      Option.some(2),
+    );
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      const error = yield* functionsDeploy({ ...baseFlags, noVerifyJwt: true, prune: true }).pipe(
+        withAdvancingClock,
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({ status: 500 });
+      expect(
+        api.requests.filter((request) => request.url.endsWith(`/${VALID_REF}/functions`)),
+      ).toHaveLength(3);
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.effect(
+    "waits out a long rate limit on the function list when SUPABASE_API_MAX_RETRIES is set",
+    () => {
+      const { layer, api, out } = apiDeployHarness(
+        (request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("{}", { status: 429, headers: { "retry-after": "30" } }),
+            ),
+          ),
+        undefined,
+        undefined,
+        Option.some(1),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const error = yield* functionsDeploy(baseFlags).pipe(withAdvancingClock, Effect.flip);
+
+        expect(error).toMatchObject({ status: 429 });
+        expect(
+          api.requests.filter((request) => request.url.endsWith(`/${VALID_REF}/functions`)),
+        ).toHaveLength(2);
+        expect(out.stderrText).toContain(
+          "Rate limit exceeded while listing functions. Retrying in 30s.",
+        );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
+
+  it.effect("caps a rate-limited deploy at SUPABASE_API_MAX_RETRIES", () => {
+    const { layer, api, out } = apiDeployHarness(
+      (request) =>
+        Effect.succeed(
+          request.method === "GET"
+            ? jsonResponse(request, 200, [])
+            : HttpClientResponse.fromWeb(
+                request,
+                new Response("{}", { status: 429, headers: { "retry-after": "0" } }),
+              ),
+        ),
+      undefined,
+      undefined,
+      Option.some(2),
+    );
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ status: 429 });
+      expect(api.requests.filter((request) => request.method === "POST")).toHaveLength(3);
       expect(out.stderrText).toContain("Rate limit exceeded while deploying function hello-world.");
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
@@ -1883,6 +2051,7 @@ describe("functions deploy", () => {
       readonly deployStatuses: ReadonlyArray<number>;
       readonly bulkStatuses?: ReadonlyArray<number>;
       readonly functionStatuses?: Readonly<Record<string, string>>;
+      readonly apiMaxRetries?: Option.Option<number>;
     }) {
       const out = mockOutput({ format: "text" });
       let deployCalls = 0;
@@ -1934,7 +2103,10 @@ describe("functions deploy", () => {
         buildTestRuntime({
           out,
           api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({
+            workdir: tempRoot.current,
+            apiMaxRetries: opts.apiMaxRetries,
+          }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         approvedHostedMutation,
@@ -1958,7 +2130,7 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
-        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
         expect(error).toMatchObject({
           message: 'unexpected deploy status 409: {"message":"rejected bye-world"}',
         });
@@ -1979,6 +2151,31 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
+    it.effect("caps a failed bulk update at SUPABASE_API_MAX_RETRIES", () => {
+      const { api, layer } = setupBulkDeploy({
+        deployStatuses: [201, 201],
+        bulkStatuses: [500, 500, 200],
+        apiMaxRetries: Option.some(1),
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(withAdvancingClock, Effect.flip);
+
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
+        expect(error).toMatchObject({
+          message: 'unexpected bulk update status 500: {"message":"bulk update rejected"}',
+        });
+        expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(2);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
     it.effect("skips the bulk update entirely when every upload fails", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [409, 400] });
 
@@ -1992,6 +2189,7 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
+        expect(error).toBeInstanceOf(FunctionsDeployFailedError);
         expect(error).toMatchObject({
           message: [
             'unexpected deploy status 409: {"message":"rejected hello-world"}',
@@ -2374,6 +2572,7 @@ describe("functions deploy", () => {
           { ...baseFlags, functionNames: [] },
           {
             api: platformApi,
+            apiMaxRetries: Option.none(),
             cwd: tempRoot.current,
             flagCwd: tempRoot.current,
             projectRoot: tempRoot.current,
@@ -2578,6 +2777,122 @@ describe("functions deploy", () => {
           );
         },
       });
+    }
+
+    function setupDockerRetries(handler: ApiHandler, apiMaxRetries: number) {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({ handler, clientMaxRetries: apiMaxRetries });
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({
+            workdir: tempRoot.current,
+            apiMaxRetries: Option.some(apiMaxRetries),
+          }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        approvedHostedMutation,
+        mockDockerBundleSpawner().layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+      const writes = () =>
+        api.requests.filter((request) => request.method !== "GET").map((request) => request.method);
+      const gets = () =>
+        api.requests.filter((request) => request.url.endsWith(`/${VALID_REF}/functions`));
+      return { layer, writes, gets, out };
+    }
+
+    const deployThroughDocker = Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+      return yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }).pipe(
+        withAdvancingClock,
+        Effect.flip,
+      );
+    });
+
+    it.effect("updates a duplicated function once when SUPABASE_API_MAX_RETRIES is 0", () => {
+      const { layer, writes } = setupDockerRetries(
+        (request) =>
+          Effect.succeed(
+            request.method === "GET"
+              ? jsonResponse(request, 200, [])
+              : request.method === "POST"
+                ? jsonResponse(request, 400, { message: "Duplicated function slug" })
+                : jsonResponse(request, 500, { message: "boom" }),
+          ),
+        0,
+      );
+
+      return Effect.gen(function* () {
+        expect(yield* deployThroughDocker).toMatchObject({ status: 500 });
+        expect(writes()).toEqual(["POST", "PATCH"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("caps a rate-limited create at SUPABASE_API_MAX_RETRIES", () => {
+      const { layer, writes, out } = setupDockerRetries(
+        (request) =>
+          Effect.succeed(
+            request.method === "GET"
+              ? jsonResponse(request, 200, [])
+              : HttpClientResponse.fromWeb(
+                  request,
+                  new Response("{}", { status: 429, headers: { "x-ratelimit-reset": "30" } }),
+                ),
+          ),
+        2,
+      );
+
+      return Effect.gen(function* () {
+        expect(yield* deployThroughDocker).toMatchObject({ status: 429 });
+        expect(writes()).toEqual(["POST", "POST", "POST"]);
+        expect(out.stderrText).toContain(
+          "Rate limit exceeded while creating function hello-world. Retrying in 30s.",
+        );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("caps the docker function list at SUPABASE_API_MAX_RETRIES", () => {
+      const { layer, gets } = setupDockerRetries(
+        (request) => Effect.succeed(jsonResponse(request, 500, { message: "boom" })),
+        2,
+      );
+
+      return Effect.gen(function* () {
+        expect(yield* deployThroughDocker).toMatchObject({ status: 500 });
+        expect(gets()).toHaveLength(3);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    for (const [apiMaxRetries, posts] of [
+      [0, 1],
+      [1, 2],
+      [5, 4],
+    ] as const) {
+      it.effect(
+        `sends a failing create ${posts} times when SUPABASE_API_MAX_RETRIES is ${apiMaxRetries}`,
+        () => {
+          const { layer, writes } = setupDockerRetries(
+            (request) =>
+              Effect.succeed(
+                request.method === "GET"
+                  ? jsonResponse(request, 200, [])
+                  : jsonResponse(request, 502, { message: "bad gateway" }),
+              ),
+            apiMaxRetries,
+          );
+
+          return Effect.gen(function* () {
+            expect(yield* deployThroughDocker).toMatchObject({ status: 502 });
+            expect(writes()).toEqual(Array.from({ length: posts }, () => "POST"));
+          }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+        },
+      );
     }
 
     it.live(
@@ -3106,6 +3421,7 @@ describe("functions deploy", () => {
           { ...baseFlags, useApi: false, useDocker: true },
           {
             api: platformApi,
+            apiMaxRetries: Option.none(),
             cwd: tempRoot.current,
             flagCwd: tempRoot.current,
             projectRoot: tempRoot.current,

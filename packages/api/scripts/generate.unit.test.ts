@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 
 import type { OpenApiDocument, OpenApiOperation } from "./generate.ts";
 import {
+  expandSchemaShorthands,
   extractOperations,
   normalizeNullableJsonSchema,
   normalizeQueryParameterSchema,
@@ -145,18 +146,19 @@ describe("generate", () => {
     });
   });
 
-  test("drops content annotations from binary strings without touching a property named contentEncoding", () => {
+  test("reduces binary strings to their format, keeping nullability, without touching a property named contentEncoding", () => {
     expect(
       renderOpenApiSchema({
         type: "object",
         additionalProperties: false,
         properties: {
           eszip: { type: "string", format: "binary", contentEncoding: "binary" },
+          described: { type: "string", format: "binary", description: "Raw ESZIP", nullable: true },
           contentEncoding: { type: "string", contentMediaType: "text/plain" },
         },
       }),
     ).toBe(
-      'Schema.Struct({ "eszip": Schema.optionalKey(Schema.String.annotate({ "format": "binary" })), "contentEncoding": Schema.optionalKey(Schema.String) })',
+      'Schema.Struct({ "eszip": Schema.optionalKey(Schema.String.annotate({ "format": "binary" })), "described": Schema.optionalKey(Schema.Union([Schema.String.annotate({ "format": "binary" }), Schema.Null])), "contentEncoding": Schema.optionalKey(Schema.String) })',
     );
   });
 
@@ -270,9 +272,7 @@ describe("generate", () => {
         anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
         nullable: true,
       }),
-    ).toBe(
-      'Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite().annotate({ "expected": "a finite number" })), Schema.Boolean, Schema.Null])',
-    );
+    ).toBe("Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null])");
   });
 
   test("accepts booleans for string-encoded boolean query parameters", () => {
@@ -437,5 +437,23 @@ describe("generate", () => {
     expect(source).toContain('"v2ListOrganizationMembers": {');
     expect(source).toContain('  "v1-list-organization-members": "v1ListOrganizationMembers",');
     expect(source).toContain('  "v2-list-organization-members": "v2ListOrganizationMembers",');
+  });
+});
+
+describe("expandSchemaShorthands", () => {
+  test("expands shorthands in code but leaves string literals and comments intact", () => {
+    const code = [
+      "const a = Schema.Int;",
+      "const b = Schema.Literal(\"Schema.Int\", 'Schema.Finite', `Schema.Int`);",
+      "// Schema.Finite stays",
+      "const c = Schema.Finite;",
+    ].join("\n");
+
+    const out = expandSchemaShorthands(code);
+
+    expect(out).toContain("Schema.Literal(\"Schema.Int\", 'Schema.Finite', `Schema.Int`)");
+    expect(out).toContain("// Schema.Finite stays");
+    expect(out).toContain("const a = Schema.Number.check(Schema.isInt()");
+    expect(out).toContain("const c = Schema.Number.check(Schema.isFinite()");
   });
 });

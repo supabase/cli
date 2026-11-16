@@ -174,6 +174,28 @@ describe("Edge Runtime request-time function resolver", () => {
       expect(explicit?.entrypointPath).toBe(path.join(canonicalRoot, "hello", "custom.ts"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  it.live("merges the global default env beneath each function's own env", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const nodeFileSystem = makeNodeFileSystem(fs);
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-functions-resolver-env-" });
+      for (const slug of ["hello", "plain"]) {
+        yield* fs.makeDirectory(path.join(root, slug), { recursive: true });
+        yield* fs.writeFileString(path.join(root, slug, "index.ts"), "export default 1");
+      }
+      const overrides = {
+        $default: { env: { SHARED: "first\nsecond", LOCAL: "global" } },
+        hello: { env: { LOCAL: "function" } },
+      };
+      const env = (slug: string) =>
+        resolveFunctionConfig({ root, slug, overrides, fs: nodeFileSystem }).pipe(
+          Effect.map((config) => config?.env),
+        );
+      expect(yield* env("hello")).toEqual({ SHARED: "first\nsecond", LOCAL: "function" });
+      expect(yield* env("plain")).toEqual({ SHARED: "first\nsecond", LOCAL: "global" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.live("accepts an absolute entrypoint inside the functions root without a slug directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -76,6 +76,7 @@ const bootstrapConfig = Effect.runSync(
     const read = <A>(config: Config.Config<A>) => config.pipe(Config.option);
     return {
       hostPort: yield* read(Config.String("SUPABASE_INTERNAL_HOST_PORT")),
+      hostUrl: yield* read(Config.String("SUPABASE_INTERNAL_HOST_URL")),
       functionsRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
       filesRoot: yield* read(Config.String("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
       jwtSecret: yield* read(Config.String("SUPABASE_INTERNAL_JWT_SECRET")),
@@ -97,6 +98,8 @@ const bootstrapConfig = Effect.runSync(
 const valueOr = (value: Option.Option<string>, fallback = "") =>
   Option.getOrElse(value, () => fallback);
 const HOST_PORT = valueOr(bootstrapConfig.hostPort, "8081");
+/* The host's HTTPS API origin when the stack serves TLS, otherwise plain loopback on its port. */
+const HOST_URL = valueOr(bootstrapConfig.hostUrl, `http://127.0.0.1:${HOST_PORT}`);
 const FUNCTIONS_ROOT = valueOr(bootstrapConfig.functionsRoot);
 const JWT_SECRET = valueOr(bootstrapConfig.jwtSecret);
 const SUPABASE_URL = valueOr(bootstrapConfig.supabaseUrl, "http://127.0.0.1:54321");
@@ -208,10 +211,17 @@ const getResponse = (
   return new Response(body, { status, headers });
 };
 
+/** Lets browsers read router errors on requests that skip the preflight; preflights still fail. */
+const ERROR_CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey",
+  "Access-Control-Expose-Headers": "sb-error-code",
+};
+
 const getAuthErrorResponse = ({ code, message = "Invalid JWT" }: AuthFailure) =>
   getResponse({ code, message, msg: message }, STATUS_CODE.Unauthorized, {
+    ...ERROR_CORS_HEADERS,
     "sb-error-code": code,
-    "Access-Control-Expose-Headers": "sb-error-code",
   });
 
 const getWorkerErrorResponse = (error: unknown) => {
@@ -223,6 +233,7 @@ const getWorkerErrorResponse = (error: unknown) => {
           message: SB_SPECIFIC_ERROR_REASON[sbCode],
         },
         sbCode,
+        ERROR_CORS_HEADERS,
       );
     }
   }
@@ -232,6 +243,7 @@ const getWorkerErrorResponse = (error: unknown) => {
       message: "Request failed due to an internal server error",
     },
     STATUS_CODE.InternalServerError,
+    ERROR_CORS_HEADERS,
   );
 };
 
@@ -423,9 +435,11 @@ Deno.serve({
         if (pathname === "/_internal/metric")
           return Response.json(yield* foreign(() => EdgeRuntime.getRuntimeMetrics()));
         const functionName = pathname.split("/")[1];
-        if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (!functionName)
+          return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
         const config = yield* functionConfig(functionName);
-        if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (!config)
+          return getResponse("Function not found", STATUS_CODE.NotFound, ERROR_CORS_HEADERS);
         yield* warnPlainDenoConfig(functionName, config);
         if (request.method !== "OPTIONS" && config.verifyJWT) {
           const token = getAuthToken(request);
@@ -505,12 +519,10 @@ Deno.serve({
     }),
   onListen: () => {
     const names = Object.keys(configured);
-    const examples = names
-      .slice(0, 5)
-      .map((name) => ` - http://127.0.0.1:${HOST_PORT}/functions/v1/${name}`);
+    const examples = names.slice(0, 5).map((name) => ` - ${HOST_URL}/functions/v1/${name}`);
     Effect.runSync(
       Console.log(
-        `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
+        `Serving functions on ${HOST_URL}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
       ),
     );
   },
@@ -521,5 +533,6 @@ Deno.serve({
         message: "Request failed due to an internal server error",
       },
       500,
+      ERROR_CORS_HEADERS,
     ),
 });

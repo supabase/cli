@@ -147,7 +147,7 @@ function localGatewayHint(port: string): string {
   return (
     "The local Supabase API gateway did not return a valid HTTP response. " +
     `Another process may be listening on the configured API port ${port}. ` +
-    `Check the port with \`lsof -nP -iTCP:${port} -sTCP:LISTEN\`, then stop the conflicting process or set a different \`api.port\` in supabase/config.toml.`
+    `Check the port with \`lsof -nP -iTCP:${port} -sTCP:LISTEN\`, then stop the conflicting process or set a different \`api.port\` in your config file.`
   );
 }
 

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, FileSystem, Layer, Option, Path, Predicate, Stdio } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -162,6 +162,7 @@ function notebookMetadata(options: { readonly id: string; readonly name: string 
       updated_at: "2026-01-01T00:00:00Z",
       owner: null,
       updated_by: null,
+      url: `https://supabase.com/dashboard/project/${NOTEBOOKS_PROJECT_REF}/notebooks/${options.id}`,
     },
   };
 }
@@ -342,7 +343,9 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
       linkedProjectCache,
       analytics.layer,
       process.layer,
-      commandRuntimeLayer(["notebooks", command]).pipe(Layer.provide(BunServices.layer)),
+      commandRuntimeLayer(["notebooks", command]).pipe(
+        Layer.provide([BunServices.layer, BunCrypto.layer]),
+      ),
       Layer.succeed(
         OutputFlag,
         options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),

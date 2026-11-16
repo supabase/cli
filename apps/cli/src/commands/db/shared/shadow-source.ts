@@ -16,8 +16,8 @@ import { bold } from "../../../command-internal/colors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import {
   resolveDeclarativeDir,
-  type PgDeltaTomlConfig,
-} from "../../../command-internal/db-config.toml-read.ts";
+  type PgDeltaConfig,
+} from "../../../command-internal/db-config.read.ts";
 import { resolveSeedSqlPath } from "../../../shared/config/seed-path.ts";
 import {
   resolveUnderWorkdir,
@@ -54,7 +54,7 @@ export interface PrepareShadowSourceInput<E> extends ShadowSetupInput<E> {
   readonly migrationMode?: "legacy" | "pgdelta-next";
   /** `db.migrations.schema_paths`, unresolved (raw config value). */
   readonly schemaPaths: ReadonlyArray<string>;
-  readonly pgDelta: PgDeltaTomlConfig;
+  readonly pgDelta: PgDeltaConfig;
 }
 
 /** Every failure {@link prepareShadowSource} can produce, beyond its own `E` (JWKS resolution). */
@@ -290,7 +290,7 @@ export const loadDeclaredSchemas = Effect.fn("ShadowSource.loadDeclaredSchemas")
   path: Path.Path,
   workdir: string,
   schemaPaths: ReadonlyArray<string>,
-  pgDelta: PgDeltaTomlConfig,
+  pgDelta: PgDeltaConfig,
 ): Effect.fn.Return<ReadonlyArray<string>, DeclarativeShadowDbError> {
   if (schemaPaths.length > 0) {
     return yield* globDeclaredSchemaPaths(fs, path, workdir, schemaPaths);

@@ -14,18 +14,27 @@ import {
 
 const unused = (what: string) => () => Effect.die(`${what} is not part of this test`);
 
-/** A connection whose every introspection query returns no rows: a valid, empty database. */
-const emptyDatabase = Layer.succeed(DbConnection, {
-  connect: () =>
-    Effect.succeed<DbSession>({
-      exec: unused("exec"),
-      execBatch: unused("execBatch"),
-      query: () => Effect.succeed([]),
-      queryRaw: unused("queryRaw"),
-      extensionExists: unused("extensionExists"),
-      copyToCsv: unused("copyToCsv"),
-    }),
-});
+/** Typegen's schemas query is the only introspection query that joins `pg_roles u`. */
+const isSchemasQuery = (sql: string) => sql.includes("pg_roles u");
+
+/** A connection whose introspection finds only `schemas`, each empty. */
+const databaseRecording = (issued: string[], schemas: readonly string[]) =>
+  Layer.succeed(DbConnection, {
+    connect: () =>
+      Effect.succeed<DbSession>({
+        exec: unused("exec"),
+        execBatch: unused("execBatch"),
+        query: (sql) => {
+          issued.push(sql);
+          return Effect.succeed(
+            isSchemasQuery(sql) ? schemas.map((name, id) => ({ id, name, owner: "postgres" })) : [],
+          );
+        },
+        queryRaw: unused("queryRaw"),
+        extensionExists: unused("extensionExists"),
+        copyToCsv: unused("copyToCsv"),
+      }),
+  });
 
 const runtimeIn = (cwd: string) =>
   Layer.succeed(RuntimeInfo, {
@@ -38,15 +47,20 @@ const runtimeIn = (cwd: string) =>
   });
 
 /** The generator layer as the command wires it, with the environment the layer reads through Config. */
-const layerIn = (cwd: string, env: Record<string, string>) =>
+const layerIn = (
+  cwd: string,
+  env: Record<string, string>,
+  issued: string[] = [],
+  schemas: readonly string[] = [],
+) =>
   genTypesGeneratorLayer.pipe(
-    Layer.provide(emptyDatabase),
+    Layer.provide(databaseRecording(issued, schemas)),
     Layer.provide(runtimeIn(cwd)),
     Layer.provide(BunServices.layer),
     Layer.provide(Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord(env))),
   );
 
-const input = (lang: string): GenTypesGenerateInput => ({
+const input = (lang: string, extraSearchPath: readonly string[] = []): GenTypesGenerateInput => ({
   conn: {
     host: "127.0.0.1",
     port: 5432,
@@ -58,13 +72,15 @@ const input = (lang: string): GenTypesGenerateInput => ({
   dnsResolver: "native",
   lang,
   includedSchemas: ["public"],
+  requestedSchemas: [],
+  extraSearchPath,
   options: {},
 });
 
-const generate = (lang: string) =>
+const generate = (lang: string, extraSearchPath: readonly string[] = []) =>
   Effect.gen(function* () {
     const generator = yield* GenTypesGenerator;
-    return yield* Effect.scoped(generator.generate(input(lang)));
+    return yield* Effect.scoped(generator.generate(input(lang, extraSearchPath)));
   });
 
 /** A stand-in `dart`: fails like the real tool when `.fail` sits in its cwd, else echoes its stdin. */
@@ -102,10 +118,10 @@ describe.skipIf(process.platform === "win32")(
         generate("dart").pipe(
           Effect.tap((output) =>
             Effect.sync(() => {
-              expect(output).toContain("args: run supabase_typegen --output -\n");
-              expect(output).toContain(`cwd: ${cwd}\n`);
-              expect(output).toContain('"schemas":[]');
-              expect(output).toContain('"version":1');
+              expect(output.source).toContain("args: run supabase_typegen --output -\n");
+              expect(output.source).toContain(`cwd: ${cwd}\n`);
+              expect(output.source).toContain('"schemas":[]');
+              expect(output.source).toContain('"version":1');
             }),
           ),
           Effect.provide(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` })),
@@ -145,16 +161,56 @@ describe.skipIf(process.platform === "win32")(
       ),
     );
 
+    it.effect("introspects views in the extra search path schemas", () =>
+      withFakeDart(({ cwd }) =>
+        Effect.gen(function* () {
+          const withoutExtra: string[] = [];
+          yield* generate("typescript").pipe(
+            Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, withoutExtra)),
+          );
+          const withExtra: string[] = [];
+          yield* generate("typescript", ["extensions_extra"]).pipe(
+            Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, withExtra)),
+          );
+          expect(withoutExtra.some((sql) => sql.includes("'extensions_extra'"))).toBe(false);
+          expect(withExtra.some((sql) => sql.includes("'extensions_extra'"))).toBe(true);
+        }),
+      ),
+    );
+
     it.effect("still generates in-process languages without spawning anything", () =>
       withFakeDart(({ cwd }) =>
         generate("typescript").pipe(
           Effect.tap((output) =>
             Effect.sync(() => {
-              expect(output).toContain("export type Database");
+              expect(output.source).toContain("export type Database");
             }),
           ),
           Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" })),
         ),
+      ),
+    );
+
+    it.effect("reports missing requested schemas once", () =>
+      withFakeDart(({ cwd }) =>
+        Effect.gen(function* () {
+          const issued: string[] = [];
+          const output = yield* Effect.gen(function* () {
+            const generator = yield* GenTypesGenerator;
+            return yield* Effect.scoped(
+              generator.generate({
+                ...input("typescript"),
+                includedSchemas: ["public", "nope", "graphql_public"],
+                requestedSchemas: ["public", "nope", "nope"],
+              }),
+            );
+          }).pipe(Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin" }, issued, ["public"])));
+          expect(
+            issued.some(isSchemasQuery),
+            "typegen's schemas query no longer joins `pg_roles u`",
+          ).toBe(true);
+          expect(output.missingSchemas).toEqual(["nope"]);
+        }),
       ),
     );
   },

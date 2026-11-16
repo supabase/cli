@@ -16,7 +16,7 @@ export interface PgDeltaContext {
    * forwarded to the edge-runtime container so migra runs under the configured Deno image.
    */
   readonly denoVersion: number;
-  /** The project's parsed `supabase/.env` (`readDbToml`'s `projectEnv`). */
+  /** The project's parsed `supabase/.env` (`readDbConfig`'s `projectEnv`). */
   readonly projectEnv: Readonly<Record<string, string>>;
 }
 

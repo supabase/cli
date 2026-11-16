@@ -1,7 +1,6 @@
 import {
   Cause,
   Context,
-  Crypto,
   Deferred,
   Effect,
   Exit,
@@ -18,6 +17,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { RpcClientError } from "effect/rpc/RpcClientError";
@@ -78,6 +78,7 @@ import type {
 export { initialization, postgres } from "./Commands.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { apiRoute, sharesApiEndpoint } from "./host/Endpoints.ts";
+export { apiTlsContext } from "./HttpProxy.ts";
 export { gatewayLog };
 export { StackError } from "./Rpc.ts";
 /** Atomically writes a file so readers only ever see the prior or the complete new content. */
@@ -299,6 +300,10 @@ export interface Stack {
   readonly credentials: {
     readonly get: Effect.Effect<StackCredentials | undefined, StackError>;
   };
+  /** The certificate the API port serves HTTPS with since the last start, for host clients. */
+  readonly apiTls: {
+    readonly get: Effect.Effect<{ readonly cert: string } | undefined, StackError>;
+  };
   readonly composition: {
     readonly supabase: (
       services: ReadonlyArray<ServiceCreationInput>,
@@ -390,12 +395,13 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       | HttpClient.HttpClient
       | FileSystem.FileSystem
       | Path.Path
-      | Crypto.Crypto
+      | SecureRandom.SecureRandom
+      | Digest.Digest
       | ChildProcessSpawner.ChildProcessSpawner
       | Scope.Scope
     >(),
   );
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const handleScope = yield* Scope.Scope;
@@ -717,9 +723,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           Effect.mapError((cause) => failure("command", cause)),
         );
         const { rpc } = current;
-        const attachmentId = yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError((cause) => failure("command", cause)),
-        );
+        const attachmentId = yield* crypto.uuidV4();
         const scope = yield* Scope.Scope;
         const inputFailure = yield* Deferred.make<never, E | StackError>();
         const result = yield* Ref.make<{ jobId: string; exitCode: number } | undefined>(undefined);
@@ -862,6 +866,14 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         Effect.mapError((cause) => failure("credentials", cause)),
       ),
     },
+    apiTls: {
+      get: state.read(saved.id).pipe(
+        Effect.map((current) =>
+          current?.apiTls === undefined ? undefined : { cert: current.apiTls.cert },
+        ),
+        Effect.mapError((cause) => failure("apiTls", cause)),
+      ),
+    },
     composition: {
       supabase: (
         services: ReadonlyArray<ServiceCreationInput>,
@@ -876,6 +888,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             ...(options?.retainMembers === undefined
               ? {}
               : { retainMembers: options.retainMembers }),
+            ...(options?.apiTls === undefined ? {} : { apiTls: options.apiTls }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
       plan: Effect.fn("Stack.plan")(function* (
@@ -1184,6 +1197,8 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
 
 /** Selects the persisted logs of a stack; its owner does not need to run. */
 export interface StreamStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
+  /** Inclusive record positions by instance id; missing generations emit lost before retained records. */
+  readonly from?: ReadonlyMap<string, LogPosition>;
   readonly stackId: string;
   /** Instance ids to read; every instance with persisted logs by default. */
   readonly instances?: ReadonlyArray<string>;
@@ -1206,6 +1221,7 @@ export const streamStackLogs = (
       const root = StackNamespace.stackLogsRoot(path, options.stateRoot, options.stackId);
       return streamPersistedLogs({
         root,
+        ...(options.from === undefined ? {} : { from: options.from }),
         ...(options.instances === undefined ? {} : { instances: options.instances }),
         ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
       });

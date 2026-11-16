@@ -64,6 +64,7 @@
             "notification": {},
             "otp_expiry": 3600,
             "otp_length": 6,
+            "require_current_password": false,
             "secure_password_change": false,
             "template": {}
           },
@@ -319,6 +320,7 @@
         "notification": {},
         "otp_expiry": 3600,
         "otp_length": 6,
+        "require_current_password": false,
         "secure_password_change": false,
         "smtp": {
           "enabled": false

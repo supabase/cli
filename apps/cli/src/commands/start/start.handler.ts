@@ -38,15 +38,17 @@ import {
   resolveApiTlsPath,
   resolveEmailTemplateContentPath,
 } from "../../command-internal/config-validate.ts";
-import { isContainerNotFoundMessage } from "../../command-internal/container-cli.ts";
-import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
+import {
+  dockerSupportsHealthStartInterval,
+  isContainerNotFoundMessage,
+} from "../../command-internal/container-cli.ts";
+import { checkDbConfig } from "../../command-internal/db-config.read.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import {
   resolveStorageCredentials,
   withStorageGatewayFetch,
 } from "../../command-internal/storage-credentials.ts";
 import { decryptSecretMap } from "../../shared/config/vault-decrypt.ts";
-import { parseDuration } from "../../command-internal/duration.ts";
 import { configureLoopbackProxyBypass } from "../../command-internal/hostname.ts";
 import {
   cliProjectFilterValue,
@@ -82,18 +84,21 @@ import {
   resolveGotrueSessions,
   resolveGotrueWeb3,
   resolveLocalConfigValues,
+  resolveStartAuthDurations,
   resolveLocalJwks,
   resolveThirdPartyProviders,
   type LocalConfigValues,
   type ResolvedAuthEmail,
 } from "../../command-internal/local-config-values.ts";
 import {
+  configLoadFailureSuggestion,
   describeConfigLoadFailure,
   loadLocalResolvedConfigContext,
   type LocalResolvedConfigContext,
 } from "../../command-internal/resolved-config-context.ts";
 import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
+import { configFileRefOf } from "../../command-internal/config-advice.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import {
@@ -133,6 +138,7 @@ import {
   rollbackStart,
 } from "../../command-internal/db-bootstrap/rollback.ts";
 import { resolveDbBootstrapConfig } from "../../command-internal/db-bootstrap/bootstrap-config.ts";
+import { warnIfPostgres14Deprecated } from "../../command-internal/db-image.ts";
 import { startDatabase } from "../../command-internal/db-bootstrap/start-database.ts";
 import { START_SERVICES } from "./start.services.ts";
 import {
@@ -142,6 +148,7 @@ import {
 import { ensureImagesCached } from "../../command-internal/db-bootstrap/image-prepull.ts";
 import {
   awaitDockerHealthSettled,
+  HealthCheckTimeoutSeconds,
   healthCheckExecUnavailableWarning,
   waitForHealthyServices,
   type ExecFallbackProbe,
@@ -183,6 +190,9 @@ import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
 
+/** Multiplies the service health budget when Logflare or Vector start; see SIDE_EFFECTS.md. */
+const ANALYTICS_HEALTH_TIMEOUT_FACTOR = 2;
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return Predicate.isObject(value) ? value : undefined;
 }
@@ -201,7 +211,10 @@ const startConfigFailure = (cause: unknown) =>
     ? new StartInvalidConfigError({
         message: `invalid config for ${cause.path}: ${cause.message}`,
       })
-    : new StartConfigLoadError({ message: describeConfigLoadFailure(cause) });
+    : new StartConfigLoadError({
+        message: describeConfigLoadFailure(cause),
+        suggestion: configLoadFailureSuggestion(cause),
+      });
 
 /**
  * Wraps a synchronous config resolver that throws on a malformed value into a typed
@@ -441,8 +454,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       context.hostname,
       cliSettings.workdir,
       context.document,
+      context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
     ).pipe(Effect.mapError(startConfigError));
     const { config, projectId, projectEnvValues } = context;
+    const configFile = configFileRefOf(path, cliSettings.workdir, context.resolvedConfig);
     // Resolved here (project `.env` aware) so it can be threaded through to `startDatabase`'s
     // own `setup.experimental` below.
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
@@ -460,19 +475,17 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       cliSettings.workdir,
       fs,
     );
-    // Duration fields (duration syntax) are otherwise only parsed inside GoTrue's own env
-    // builder, which never runs when auth is disabled or `gotrue` is excluded — so a malformed
-    // value must be validated eagerly here or it would be silently accepted.
-    const gotrueSessionsForValidation = resolveGotrueSessions(config.auth.sessions);
-    yield* wrapConfigOverride("auth.email.max_frequency", () =>
-      parseDuration(resolvedEmail.max_frequency),
-    );
+    // Durations are otherwise only parsed inside GoTrue's env builder, which never runs when
+    // auth is disabled or `gotrue` is excluded.
+    yield* resolveStartAuthDurations(
+      config,
+      cliSettings.workdir,
+      context.document,
+      context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
+    ).pipe(Effect.mapError(startConfigError));
     // `resolveLocalConfigValues`'s own SMS validation only runs when auth is enabled, so this is
     // the only place a malformed `auth.sms.*` override is caught when auth is disabled.
     const smsForValidation = yield* tryStartConfig(() => resolveAuthSms(config.auth.sms));
-    yield* wrapConfigOverride("auth.sms.max_frequency", () =>
-      parseDuration(smsForValidation.max_frequency),
-    );
     // `resolveAuthSms` already downgrades `enable_signup` when no provider is enabled; this only
     // detects whether that branch fired, to print the matching warning.
     if (
@@ -485,19 +498,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     ) {
       yield* output.raw("WARN: no SMS provider is enabled. Disabling phone login\n", "stderr");
     }
-    const sessionsTimebox = gotrueSessionsForValidation?.timebox;
-    if (sessionsTimebox !== undefined) {
-      yield* wrapConfigOverride("auth.sessions.timebox", () => parseDuration(sessionsTimebox));
-    }
-    const sessionsInactivityTimeout = gotrueSessionsForValidation?.inactivity_timeout;
-    if (sessionsInactivityTimeout !== undefined) {
-      yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
-        parseDuration(sessionsInactivityTimeout),
-      );
-    }
-    yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
-      parseDuration(resolveAuthMfa(config.auth.mfa).phone.max_frequency),
-    );
     // These GoTrue overrides must validate unconditionally too, regardless of
     // `auth.enabled`/`--exclude gotrue`. The resolvers already throw internally on a bad
     // override, so calling each once here is simpler than re-deriving every field individually.
@@ -534,9 +534,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // `SUPABASE_DB_SEED_ENABLED` or an undecryptable `[db.vault]` secret would go unvalidated
     // whenever `start` reuses an existing volume instead of provisioning a fresh one.
     // `startSetupLocalDatabase` still resolves its own fresh-setup values independently when it runs.
-    const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir).pipe(
+    const dbTomlValues = yield* checkDbConfig(fs, path, cliSettings.workdir).pipe(
       Effect.withSpan("start.validateDbConfig"),
     );
+    yield* warnIfPostgres14Deprecated(config.db.major_version);
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);
@@ -562,6 +563,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         cliSettings.workdir,
         context.projectEnvValues,
         context.document,
+        context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
         precomputedLocal,
       ).pipe(Effect.mapError((cause) => new StatusInvalidConfigError({ message: cause.message })));
       const containerIds = statusContainerIds(projectId);
@@ -734,7 +736,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             projectId,
             cliSettings.workdir,
             `${cliSettings.workdir}/supabase`,
-            { configDeclaredFunctions, configFunctions, rawConfigFunctions },
+            {
+              configDeclaredFunctions,
+              configFunctions,
+              rawConfigFunctions,
+              configPath: context.resolvedConfig.hasConfigFile
+                ? context.resolvedConfig.loaded.path
+                : undefined,
+            },
             Option.none(),
             Option.none(),
             cliSettings.workdir,
@@ -796,6 +805,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const startOpts: ContainerOpts = {
       projectId,
       isBitbucketPipeline: inBitbucketPipeline,
+      healthStartInterval: yield* dockerSupportsHealthStartInterval(spawner),
       workdir: cliSettings.workdir,
       extraHosts,
     };
@@ -862,6 +872,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const apiSchemas = config.api.schemas;
     const apiExtraSearchPath = config.api.extra_search_path;
     const apiMaxRows = config.api.max_rows;
+    const apiDbPool = config.api.db_pool;
 
     // `smtp_port`/`pop3_port` have no TOML default, so `?? 0` preserves the "unconfigured" signal
     // `mailpit.service.ts`'s `!== 0` publish guard checks.
@@ -1031,6 +1042,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               schemas: apiSchemas,
               extraSearchPath: apiExtraSearchPath,
               maxRows: apiMaxRows,
+              dbPool: apiDbPool,
               dbUrl: values.dbUrl,
               jwks,
             }),
@@ -1111,7 +1123,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                   apiSchemas: apiSchemas,
                   apiExtraSearchPath: apiExtraSearchPath,
                   apiMaxRows: apiMaxRows,
-                  analyticsEnabled: values.analyticsEnabled,
+                  analyticsEnabled: gates.logflare,
                   analyticsBackend: values.analyticsBackend,
                 },
               },
@@ -1308,7 +1320,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // Runtime container receives plaintext. `toPlainEdgeRuntimeConfig` only interpolates
           // `env()` and unwraps `Redacted` — it never decrypts a dotenvx `encrypted:` value, so
           // without this step the literal ciphertext would reach the container's env file.
-          // `checkDbToml` already validates every secret is decryptable, but discards the
+          // `checkDbConfig` already validates every secret is decryptable, but discards the
           // decrypted plaintext there.
           const decryptedEdgeRuntimeSecrets = decryptSecretMap(
             toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets,
@@ -1334,6 +1346,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             configDeclaredFunctions,
             configFunctions,
             rawConfigFunctions,
+            configPath: context.resolvedConfig.hasConfigFile
+              ? context.resolvedConfig.loaded.path
+              : undefined,
             authArtifacts: {
               publishableKey: values.publishableKey,
               secretKey: values.secretKey,
@@ -1481,8 +1496,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // `rollbackStart` calls would miss a pure fiber interrupt between steps (see the `bringUp`
       // pipe's comment for why `onError`, not `tapError`, is required).
       yield* Effect.gen(function* () {
-        // 9. Bulk health check over every non-Postgres started container, at
-        // the generic 30s service timeout.
+        // 9. Bulk health check over every non-Postgres started container, at the service
+        // timeout (doubled when Logflare or Vector start; see SIDE_EFFECTS.md).
         if (output.format === "text") {
           yield* output.raw(START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
         }
@@ -1516,8 +1531,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           localKongCa === undefined ? effect : effect.pipe(withStorageGatewayFetch(localKongCa));
         // Keep the synthetic value out of project dotenv resolution and container environments.
         configureLoopbackProxyBypass();
+        // Logflare runs its migrations before serving `/health`, and Vector waits on Logflare, so
+        // their readiness needs a longer budget than the other services.
+        const serviceTimeoutSeconds = yield* HealthCheckTimeoutSeconds;
+        const healthTimeoutSeconds =
+          started.has(logflareContainerName) || started.has(vectorContainerName)
+            ? serviceTimeoutSeconds * ANALYTICS_HEALTH_TIMEOUT_FACTOR
+            : serviceTimeoutSeconds;
         const healthResult = yield* withLocalKongCa(
           waitForHealthyServices(spawner, [...started.keys()], {
+            timeoutSeconds: healthTimeoutSeconds,
             postgrest: postgrestGateway,
             edgeRuntime: edgeRuntimeGateway,
             images: started,
@@ -1554,6 +1577,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                   },
                   credentials: storageCredentials,
                   projectEnvValues,
+                  configFile,
                 }).pipe(Effect.withSpan("start.seedBuckets"), Effect.result);
                 if (Result.isFailure(seedResult)) {
                   // No manual `rollbackStart` here — the outer
@@ -1606,6 +1630,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             },
             credentials: storageCredentials,
             projectEnvValues,
+            configFile,
           }).pipe(Effect.withSpan("start.seedBuckets"));
         }
 

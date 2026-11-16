@@ -35,6 +35,7 @@ import {
   configIsRecord,
   configPathKey,
 } from "../commands/config/config.paths.ts";
+import { configFileName } from "./config-advice.ts";
 import { loadDeclaredFileConfig, relativeConfigPath } from "../commands/config/config.load.ts";
 import {
   CONFIG_CLASS_LABELS,
@@ -833,10 +834,10 @@ function writtenCount(plan: ConfigPullPlan, outcome: ConfigPullOutcome): number 
   return outcome.dryRun || outcome.declined ? 0 : plan.writes.length;
 }
 
-function renderLocal(local: unknown, declared: boolean): string {
+function renderLocal(local: unknown, declared: boolean, configPath: string): string {
   const value = configRenderValue(local, "(unset)");
   return local !== undefined && !declared
-    ? `${value} (schema default — not declared in config.toml)`
+    ? `${value} (schema default — not declared in ${configFileName(configPath)})`
     : value;
 }
 
@@ -942,7 +943,7 @@ export function renderConfigPullText(
       change.envVariables === undefined
         ? ""
         : ` (from env ${sanitizeInlineName(change.envVariables.join(", "))})`;
-    lines.push(`  local:  ${renderLocal(change.local, change.declared)}${env}`);
+    lines.push(`  local:  ${renderLocal(change.local, change.declared, configPath)}${env}`);
     lines.push(`  remote: ${configRenderValue(change.remote, "(not returned)")}`);
     lines.push("");
   }

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
@@ -17,6 +17,8 @@ import { renderCliConfigTemplate } from "../../../shared/init/project-init.templ
 
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
+import { KONG_LOCAL_TLS_CERT, KONG_LOCAL_TLS_KEY } from "../../start/templates/kong-local-tls.ts";
+import { generateKeyPairSync } from "node:crypto";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 import {
   CommandTelemetryAttributes,
@@ -30,6 +32,7 @@ const load = (projectRoot: string) =>
     Effect.provide(
       Layer.mergeAll(
         BunServices.layer,
+        BunCrypto.layer,
         runtimeInfoLayer,
         mockCommandSettings({ workdir: projectRoot }),
         cliConfigValuesTestLayer,
@@ -39,7 +42,14 @@ const load = (projectRoot: string) =>
 
 const project = (contents: string, options: Parameters<typeof createStackConfigProject>[1] = {}) =>
   createStackConfigProject(contents, options).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        BunCrypto.layer,
+        runtimeInfoLayer,
+        cliConfigValuesTestLayer,
+      ),
+    ),
   );
 
 const publicJwkSchema = Schema.Struct({
@@ -166,7 +176,7 @@ enabled = true
       });
       expect(recipes.has("pgmeta")).toBe(true);
       expect(recipes.has("imgproxy")).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("hands Studio the API settings it mirrors and its snippets folder", () =>
@@ -186,7 +196,25 @@ max_rows = 250
         apiMaxRows: 250,
         cliVersion: CLI_VERSION,
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("hands REST [api] db_pool only when set", () =>
+    Effect.gen(function* () {
+      const restConfig = (name: string, apiSection: string) =>
+        Effect.gen(function* () {
+          const config = yield* load(yield* project(`project_id = "${name}"\n${apiSection}`));
+          const rest = byService(yield* config.creations(name)).get("rest");
+          return rest?.service === "rest" ? rest.config : undefined;
+        });
+
+      expect(yield* restConfig("stack-config-pool", "[api]\ndb_pool = 10\n")).toMatchObject({
+        dbPool: 10,
+      });
+      const unset = yield* restConfig("stack-config-no-pool", "");
+      expect(unset).toMatchObject({ maxRows: 1000 });
+      expect(unset).not.toHaveProperty("dbPool");
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
@@ -197,7 +225,7 @@ max_rows = 250
       expect(services.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });
       expect(services.get("rest")?.endpoints).toEqual({ http: { port: "auto" } });
       expect(services.get("pooler")).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("keeps the shared API port when REST is disabled", () =>
@@ -212,19 +240,219 @@ port = 55431
       expect(recipes.has("rest")).toBe(false);
       expect(recipes.get("auth")?.endpoints).toEqual({ http: { port: 55431 } });
       expect(recipes.get("storage")?.endpoints).toEqual({ http: { port: 55431 } });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("rejects Auth email template content paths deferred by the stack", () =>
+  it.effect("resolves Auth template and enabled notification files for the stack", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* project(`project_id = "stack-config-auth-template"
 [auth.email.template.invite]
-content_path = "./templates/invite.html"
+subject = "Join us"
+content_path = "./supabase/templates/invite.html"
+[auth.email.notification.password_changed]
+enabled = true
+subject = "Changed"
+content_path = "./templates/password_changed.txt"
+[auth.email.notification.email_changed]
+enabled = false
+content_path = "./supabase/templates/disabled.html"
 `);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.email");
-    }).pipe(Effect.provide(BunServices.layer)),
+      const templates = path.join(root, "supabase", "templates");
+      yield* fs.makeDirectory(templates);
+      yield* fs.writeFileString(path.join(templates, "invite.html"), "invite");
+      yield* fs.writeFileString(path.join(templates, "password_changed.txt"), "changed");
+
+      const config = yield* load(root);
+      const auth = byService(yield* config.creations("stack-auth-template")).get("auth");
+      if (auth?.service !== "auth") return yield* Effect.die("Auth creation missing");
+
+      expect(auth.config.templates).toEqual([
+        { id: "invite", path: path.join(templates, "invite.html"), root },
+        {
+          id: "password_changed_notification",
+          path: path.join(templates, "password_changed.txt"),
+          root,
+        },
+      ]);
+      expect(auth.config.settings?.email?.template.invite?.subject).toBe("Join us");
+      expect(auth.config.settings?.email?.notification.password_changed?.subject).toBe("Changed");
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "keeps an in-root symlinked Auth template, refuses an escaping one, and leaves a missing one to the start check",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const missing = yield* project(`project_id = "stack-config-auth-template-missing"
+[auth.email.template.invite]
+content_path = "./supabase/templates/missing.html"
+`);
+        const unread = byService(yield* (yield* load(missing)).creations("stack-auth-missing"));
+        expect(unread.get("auth")).toMatchObject({
+          config: { templates: [{ id: "invite" }] },
+        });
+
+        const linked = yield* project(`project_id = "stack-config-auth-template-link"
+[auth.email.template.invite]
+content_path = "./supabase/templates/invite.html"
+`);
+        yield* fs.makeDirectory(path.join(linked, "supabase", "templates"));
+        yield* fs.writeFileString(path.join(linked, "shared.html"), "shared");
+        yield* fs.writeFileString(path.join(linked, "retargeted.html"), "retargeted");
+        const link = path.join(linked, "supabase", "templates", "invite.html");
+        yield* fs.symlink("../../shared.html", link);
+        const kept = byService(yield* (yield* load(linked)).creations("stack-auth-link"));
+        expect(kept.get("auth")).toMatchObject({
+          config: { templates: [{ id: "invite", path: link, root: linked }] },
+        });
+        /* The stack reads the configured path per fetch, so a retargeted link serves its new file. */
+        yield* fs.remove(link);
+        yield* fs.symlink("../../retargeted.html", link);
+        const auth = kept.get("auth");
+        const served = auth?.service === "auth" ? auth.config.templates?.[0]?.path : undefined;
+        expect(yield* fs.readFileString(served ?? "")).toBe("retargeted");
+
+        const escaping = yield* project(`project_id = "stack-config-auth-template-escape"
+[auth.email.notification.password_changed]
+enabled = true
+content_path = "./supabase/link.html"
+`);
+        const outside = path.join(yield* fs.makeTempDirectoryScoped(), "outside.html");
+        yield* fs.writeFileString(outside, "outside");
+        yield* fs.symlink(outside, path.join(escaping, "supabase", "link.html"));
+        const config = yield* load(escaping);
+        const failure = yield* Effect.flip(config.creations("stack-auth-template-escape"));
+        expect(failure.message).toContain("resolves outside the project root");
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("ignores Auth template files while Auth is disabled", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-auth-template-disabled"
+[auth]
+enabled = false
+[auth.email.template.invite]
+content_path = "./supabase/templates/missing.html"
+`);
+      const config = yield* load(root);
+      expect(byService(yield* config.creations("stack-auth-disabled")).has("auth")).toBe(false);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("serves api.tls with legacy's embedded pair or the configured one, like legacy", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const plain = yield* project(`project_id = "stack-config-tls-off"\n`);
+      expect(yield* (yield* load(plain)).apiTls).toBeUndefined();
+
+      const embedded = yield* project(`project_id = "stack-config-tls-embedded"
+[api.tls]
+enabled = true
+`);
+      expect(yield* (yield* load(embedded)).apiTls).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+
+      /* Without PostgREST the API port still serves https, on the embedded pair. */
+      const apiOff = yield* project(`project_id = "stack-config-tls-api-off"
+[api]
+enabled = false
+[api.tls]
+enabled = true
+cert_path = "certs/missing.crt"
+`);
+      expect(yield* (yield* load(apiOff)).apiTls).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+
+      const custom = yield* project(`project_id = "stack-config-tls-custom"
+[api.tls]
+enabled = true
+cert_path = "certs/local.crt"
+key_path = "certs/local.key"
+`);
+      const certs = path.join(custom, "supabase", "certs");
+      yield* fs.makeDirectory(certs);
+      yield* fs.writeFileString(path.join(certs, "local.crt"), KONG_LOCAL_TLS_CERT);
+      yield* fs.writeFileString(path.join(certs, "local.key"), KONG_LOCAL_TLS_KEY);
+      expect(yield* (yield* load(custom)).apiTls).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+      const other = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey;
+      for (const key of [other.export({ type: "pkcs8", format: "pem" }).toString(), "not a pem"]) {
+        yield* fs.writeFileString(path.join(certs, "local.key"), key);
+        expect((yield* Effect.flip((yield* load(custom)).apiTls)).message).toMatch(
+          /^Invalid config for api\.tls: failed to load TLS key pair from \S+certs\/local\.crt and \S+certs\/local\.key: /u,
+        );
+      }
+      /* An empty file still builds a secure context, which then serves no certificate. */
+      for (const [cert, key] of [
+        ["", KONG_LOCAL_TLS_KEY],
+        [KONG_LOCAL_TLS_CERT, ""],
+      ]) {
+        yield* fs.writeFileString(path.join(certs, "local.crt"), cert ?? "");
+        yield* fs.writeFileString(path.join(certs, "local.key"), key ?? "");
+        expect((yield* Effect.flip((yield* load(custom)).apiTls)).message).toMatch(
+          /^Invalid config for api\.tls: failed to load TLS key pair from \S+certs\/local\.crt and \S+certs\/local\.key: /u,
+        );
+      }
+
+      /* A matching pair whose certificate names localhost, and 127.0.0.1 only by CN, not by IP SAN. */
+      const stackCerts = path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "..",
+        "..",
+        "..",
+        "..",
+        "packages",
+        "stack",
+        "tests",
+        "certs",
+      );
+      yield* fs.writeFileString(
+        path.join(certs, "local.crt"),
+        yield* fs.readFileString(path.join(stackCerts, "dns-only.crt")),
+      );
+      yield* fs.writeFileString(
+        path.join(certs, "local.key"),
+        yield* fs.readFileString(path.join(stackCerts, "localhost.key")),
+      );
+      expect((yield* Effect.flip((yield* load(custom)).apiTls)).message).toMatch(
+        /^Invalid config for api\.tls: failed to load TLS key pair from \S+certs\/local\.crt and \S+certs\/local\.key: the certificate has no IP subject alternative name for 127\.0\.0\.1 \(for example `mkcert localhost 127\.0\.0\.1`\)$/u,
+      );
+
+      const halfPair = yield* project(`project_id = "stack-config-tls-half"
+[api.tls]
+enabled = true
+cert_path = "certs/local.crt"
+`);
+      expect((yield* Effect.flip((yield* load(halfPair)).apiTls)).message).toContain(
+        "api.tls.key_path",
+      );
+
+      const unreadable = yield* project(`project_id = "stack-config-tls-missing"
+[api.tls]
+enabled = true
+cert_path = "certs/missing.crt"
+key_path = "certs/missing.key"
+`);
+      /* Only the start applying TLS reads the files; every other command loads and composes. */
+      const missingFiles = yield* load(unreadable);
+      expect(yield* missingFiles.creations("stack-config-tls-missing")).not.toHaveLength(0);
+      expect((yield* Effect.flip(missingFiles.apiTls)).message).toContain(
+        "failed to read TLS cert",
+      );
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("validates enabled Auth third-party providers", () =>
@@ -237,7 +465,7 @@ project_id = ""
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.third_party");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("loads an empty signing-key file and skips it when Auth is disabled", () =>
@@ -289,7 +517,7 @@ signing_keys_path = "./missing-keys.json"
       expect(envKeys.publicSigningKeys).toBe(disabledKeys.publicSigningKeys);
       expect(envKeys.anonKey).toBeDefined();
       expect(envKeys.serviceRoleKey).toBeDefined();
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fetches third-party JWKS while Auth is disabled", () =>
@@ -337,7 +565,7 @@ issuer_url = ""
       const emptyIssuerKeys = yield* (yield* load(emptyIssuer)).keys;
       expect(emptyIssuerKeys.remoteJwks).toBeUndefined();
       expect(paths).toEqual(["/.well-known/openid-configuration", "/jwks"]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects an analytics backend the stack cannot represent", () =>
@@ -351,7 +579,21 @@ backend = "bigquery"
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain("analytics.backend must be postgres");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("accepts storage analytics and declared vector buckets", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-storage-buckets"
+[storage.analytics]
+enabled = true
+[storage.analytics.buckets.my-warehouse]
+[storage.vector.buckets.documents-openai]
+`);
+      const services = yield* (yield* load(root)).creations("stack-storage-buckets");
+      const storage = byService(services).get("storage");
+      expect(storage?.service === "storage" && storage.config.vectorEnabled).toBe(true);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects unsupported database versions before creating recipes", () =>
@@ -364,7 +606,7 @@ major_version = 14
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain("db.major_version must be 15 or 17");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("ignores unresolved experimental S3 env placeholders", () => {
@@ -381,7 +623,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
       const config = yield* load(root);
       const services = yield* config.creations("stack-s3-placeholder");
       expect(services.some((service) => service.service === "database")).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
   });
 
   it.effect(
@@ -419,7 +661,7 @@ s3_host = "s3.example.test"
           expect(String(orioledbS3Exit.cause)).toContain(
             "experimental.s3_host is unsupported by the experimental stack",
           );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("rejects the removed experimental.orioledb_version key and its env var", () =>
@@ -446,7 +688,7 @@ orioledb_version = "17.0.0.000"
         expect(String(envExit.cause)).toContain(
           "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION (set in the shell environment) is no longer supported. Use SUPABASE_DB_ORIOLEDB_VERSION instead.",
         );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("records OrioleDB selection on the command event before rejecting it", () =>
@@ -475,6 +717,6 @@ orioledb_version = "15.1.1.14"
       const accepted = yield* loadRecordingOrioleDb(standard);
       expect(Exit.isSuccess(accepted.exit)).toBe(true);
       expect(accepted.orioledb).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });

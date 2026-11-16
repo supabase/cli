@@ -69,6 +69,7 @@ function oauthTokenResponse(
     refresh_token: "refresh-token",
     expires_in: 3600,
     token_type: "Bearer",
+    project_refs: null,
   });
 }
 
@@ -1349,6 +1350,8 @@ describe("makeSupabaseApiClient", () => {
                         db_extra_search_path: "",
                         max_rows: 1000,
                         db_pool_acquisition_timeout: 0,
+                        db_pool_max_lifetime: 0,
+                        db_pool_max_idletime: 0,
                         db_pool: null,
                       },
                       realtime: {

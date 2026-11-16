@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/cli";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
@@ -25,7 +25,7 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { GLOBAL_FLAGS, WorkdirFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
-import { StackApi, StackTargetResolver } from "../stack.shared.ts";
+import { StackApi, StackTargetResolver } from "../../../../command-internal/stack-target.ts";
 import { stackStatusCommand } from "../status/status.command.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
@@ -95,6 +95,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
       get: () => Effect.succeed(databaseInstance),
       list: Effect.succeed([databaseInstance]),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: Effect.succeed(credentials) },
     composition: {
       plan: () => Effect.die("unused"),
@@ -208,6 +209,7 @@ const runStatusEnv = (input: {
           explicitWorkdir: Option.isSome(workdirFlag),
           workdirEnvValue: Option.none(),
           userAgent: "SupabaseCLI/pointer-test",
+          apiMaxRetries: Option.none(),
         });
       }),
     );
@@ -231,6 +233,7 @@ const runStatusEnv = (input: {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          BunCrypto.layer,
           CliOutput.layer(textCliOutputFormatter()),
           output.layer,
           analytics.layer,
@@ -247,7 +250,7 @@ const runStatusEnv = (input: {
     return yield* Schema.decodeEffect(
       Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
     )(output.rawChunks.map(({ text }) => text).join(""));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 describe("stack start export pointer", () => {
   it.effect(

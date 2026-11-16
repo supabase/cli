@@ -1,14 +1,31 @@
+import {
+  applyEdits as applyJsonEditsToText,
+  findNodeAtLocation,
+  modify,
+  parseTree,
+  type FormattingOptions,
+} from "jsonc-parser";
 import * as SmolToml from "smol-toml";
 import type { ConfigFormat } from "./config-format.ts";
+import { parseJsonc } from "./jsonc.ts";
+import {
+  scanTomlDocument,
+  skipInlineWhitespace,
+  type TomlHeaderToken,
+  type TomlKeyToken,
+  type TomlScanResult,
+  type TomlToken,
+} from "./toml-scan.ts";
 
 /**
- * Format-preserving surgical editor for `supabase/config.{toml,json}`. Pure and synchronous:
+ * Format-preserving surgical editor for `supabase/config.{toml,json,jsonc}`. Pure and synchronous:
  * callers own reading the current file text and writing the returned text back out atomically.
  * Every edited document is re-parsed and deep-compared against the original before being
  * returned; any mismatch refuses rather than shipping wrong bytes. An edit either replaces an
  * existing value's span in place or inserts a new line/table — nothing else is touched, so
- * untouched comments, spacing, and quoting survive byte-for-byte. See ADR 0023 for the design
- * rationale and rejected alternatives.
+ * untouched comments, spacing, and quoting survive byte-for-byte. JSON/JSONC documents are
+ * span-edited through `jsonc-parser`'s `modify`, keeping comments and trailing commas. See ADR
+ * 0023 for the design rationale and rejected alternatives.
  */
 
 export type ConfigEditValue =
@@ -63,12 +80,11 @@ function isRemotesLabelRoot(path: ReadonlyArray<string>): boolean {
   return path.length === 2 && path[0] === REMOTES_TABLE_NAME;
 }
 
-// Duplicated from `lib/env.ts` rather than imported: this module is restricted to `smol-toml`
-// as its only import, so it stays independently embeddable without pulling in this package's
-// wider env-resolution graph.
+// Duplicated from `lib/env.ts` rather than imported so this module avoids pulling in this
+// package's wider env-resolution graph.
 const ENV_CAPTURE_REGEX = /^env\((.*)\)$/;
 
-function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+export function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -141,7 +157,7 @@ function isEnvReferenceValue(value: unknown): boolean {
  * round-trip-faithful `toISOString()`, since two distinct instances of "the same" TOML
  * date/time are never `===`). Used both for mandatory re-parse verification and for
  * detecting a no-op edit. */
-function deepEqualValue(a: unknown, b: unknown): boolean {
+export function deepEqualValue(a: unknown, b: unknown): boolean {
   if (a === b) {
     return true;
   }
@@ -180,26 +196,14 @@ function deepSetOne(root: unknown, path: ReadonlyArray<string>, value: unknown):
   return { ...base, [head]: deepSetOne(existingChild, rest, value) };
 }
 
-/** Applies one `path`/`value` pair per entry on top of `root`, immutably. Shared by `deepSet`
- * (the verification oracle, built from the original un-flattened edits) and the JSON arm's
- * actual per-leaf mutation (built from `flattenEdits`'s output) — the two intentionally use
- * different entry sets so an object-valued edit's write only touches leaves it mentions, while
- * verification still catches a dropped sibling. */
-function applyPathEntries(
-  root: unknown,
-  entries: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly value: unknown }>,
-): unknown {
-  return entries.reduce<unknown>(
-    (accumulator, entry) => deepSetOne(accumulator, entry.path, entry.value),
-    root,
-  );
-}
-
 /** Applies every edit's `path`/`value` on top of `root`, immutably, replacing the whole
  * destination subtree for an object-valued edit. This is the expected-value side of mandatory
- * verification for both formats — see `applyPathEntries` for the actual per-leaf mutation. */
+ * verification for both formats. */
 function deepSet(root: unknown, edits: ReadonlyArray<ConfigEdit>): unknown {
-  return applyPathEntries(root, edits);
+  return edits.reduce<unknown>(
+    (accumulator, edit) => deepSetOne(accumulator, edit.path, edit.value),
+    root,
+  );
 }
 
 function describeError(cause: unknown): string {
@@ -308,450 +312,6 @@ function isLeafArrayValue(
 
 function renderLeafValue(value: ConfigEditLeafValue): string {
   return isLeafArrayValue(value) ? `[${value.map(renderScalar).join(", ")}]` : renderScalar(value);
-}
-
-// Character-level TOML scanner. Produces top-level tokens in document order: blank lines,
-// comments, table headers, and key-value lines (multi-line arrays/strings scanned as single
-// opaque spans). Never throws — an unrecognized construct yields an `{ error }` result instead.
-
-interface TomlHeaderToken {
-  readonly kind: "header";
-  readonly start: number;
-  readonly end: number;
-  readonly path: ReadonlyArray<string>;
-  readonly isArrayOfTables: boolean;
-}
-
-interface TomlKeyToken {
-  readonly kind: "kv";
-  readonly start: number;
-  readonly end: number;
-  /** Fully qualified: the enclosing table's path plus this key's own (possibly dotted) segments. */
-  readonly path: ReadonlyArray<string>;
-  readonly tableIndex: number;
-  readonly valueStart: number;
-  readonly valueEnd: number;
-  /** True when this key's OWN value is an inline table (`{ ... }`) — see `findInlineTableOnPath`. */
-  readonly insideInlineTable: boolean;
-}
-
-interface TomlBlankToken {
-  readonly kind: "blank";
-  readonly start: number;
-  readonly end: number;
-}
-
-interface TomlCommentToken {
-  readonly kind: "comment";
-  readonly start: number;
-  readonly end: number;
-}
-
-type TomlToken = TomlHeaderToken | TomlKeyToken | TomlBlankToken | TomlCommentToken;
-
-interface TomlScanResult {
-  readonly source: string;
-  readonly tokens: ReadonlyArray<TomlToken>;
-  readonly headers: ReadonlyArray<TomlHeaderToken>;
-  readonly newline: "\n" | "\r\n";
-  readonly endsWithNewline: boolean;
-}
-
-interface TomlScanError {
-  readonly error: string;
-}
-
-function charAt(source: string, pos: number): string {
-  const ch = source[pos];
-  return ch ?? "";
-}
-
-function skipInlineWhitespace(source: string, pos: number): number {
-  let cursor = pos;
-  while (cursor < source.length && (source[cursor] === " " || source[cursor] === "\t")) {
-    cursor++;
-  }
-  return cursor;
-}
-
-function skipToEndOfLine(source: string, pos: number): number {
-  let cursor = pos;
-  while (cursor < source.length && source[cursor] !== "\n" && source[cursor] !== "\r") {
-    cursor++;
-  }
-  return cursor;
-}
-
-function advancePastNewline(source: string, pos: number): number {
-  if (source[pos] === "\r" && source[pos + 1] === "\n") {
-    return pos + 2;
-  }
-  if (source[pos] === "\n" || source[pos] === "\r") {
-    return pos + 1;
-  }
-  return pos;
-}
-
-function scanBasicString(source: string, pos: number): number | null {
-  let cursor = pos;
-  while (cursor < source.length) {
-    const ch = source[cursor];
-    if (ch === "\\") {
-      cursor += 2;
-      continue;
-    }
-    if (ch === '"') {
-      return cursor + 1;
-    }
-    if (ch === "\n" || ch === "\r") {
-      return null;
-    }
-    cursor++;
-  }
-  return null;
-}
-
-function scanLiteralString(source: string, pos: number): number | null {
-  let cursor = pos;
-  while (cursor < source.length) {
-    const ch = source[cursor];
-    if (ch === "'") {
-      return cursor + 1;
-    }
-    if (ch === "\n" || ch === "\r") {
-      return null;
-    }
-    cursor++;
-  }
-  return null;
-}
-
-function scanMultilineBasicString(source: string, pos: number): number | null {
-  let cursor = pos;
-  while (cursor < source.length) {
-    const ch = source[cursor];
-    if (ch === "\\") {
-      cursor += 2;
-      continue;
-    }
-    if (ch === '"' && source.startsWith('"""', cursor)) {
-      cursor += 3;
-      let extra = 0;
-      while (extra < 2 && source[cursor] === '"') {
-        cursor++;
-        extra++;
-      }
-      return cursor;
-    }
-    cursor++;
-  }
-  return null;
-}
-
-function scanMultilineLiteralString(source: string, pos: number): number | null {
-  let cursor = pos;
-  while (cursor < source.length) {
-    if (source[cursor] === "'" && source.startsWith("'''", cursor)) {
-      cursor += 3;
-      let extra = 0;
-      while (extra < 2 && source[cursor] === "'") {
-        cursor++;
-        extra++;
-      }
-      return cursor;
-    }
-    cursor++;
-  }
-  return null;
-}
-
-function scanBareValue(source: string, pos: number): number {
-  let cursor = pos;
-  while (cursor < source.length) {
-    const ch = source[cursor];
-    if (ch === "#" || ch === "\n" || ch === "\r") {
-      break;
-    }
-    cursor++;
-  }
-  // Trailing inline whitespace before a `#` comment (or EOL) belongs to the comment/line-ending,
-  // not the value: without this, replacing a value would fold that space into the replaced span
-  // and eat it.
-  while (cursor > pos && (source[cursor - 1] === " " || source[cursor - 1] === "\t")) {
-    cursor--;
-  }
-  return cursor;
-}
-
-/** Scans a bracketed value (array or inline table), tracking nested strings/brackets so an
- * unrelated `]`/`}`/`#` inside a string never terminates the scan early. `openChar`/`closeChar`
- * select array (`[`/`]`) or inline-table (`{`/`}`) matching; comments (`#...`) are only
- * meaningful — and skippable — inside an array, never an inline table. */
-function scanBracketedValue(
-  source: string,
-  pos: number,
-  openChar: string,
-  closeChar: string,
-  allowComments: boolean,
-): number | null {
-  let cursor = pos;
-  let depth = 1;
-  while (cursor < source.length) {
-    const ch = source[cursor];
-    if (ch === '"') {
-      const next = source.startsWith('"""', cursor)
-        ? scanMultilineBasicString(source, cursor + 3)
-        : scanBasicString(source, cursor + 1);
-      if (next === null) {
-        return null;
-      }
-      cursor = next;
-      continue;
-    }
-    if (ch === "'") {
-      const next = source.startsWith("'''", cursor)
-        ? scanMultilineLiteralString(source, cursor + 3)
-        : scanLiteralString(source, cursor + 1);
-      if (next === null) {
-        return null;
-      }
-      cursor = next;
-      continue;
-    }
-    if (allowComments && ch === "#") {
-      cursor = advancePastNewline(source, skipToEndOfLine(source, cursor));
-      continue;
-    }
-    if (ch === openChar) {
-      depth++;
-      cursor++;
-      continue;
-    }
-    if (ch === closeChar) {
-      depth--;
-      cursor++;
-      if (depth === 0) {
-        return cursor;
-      }
-      continue;
-    }
-    cursor++;
-  }
-  return null;
-}
-
-function scanValue(source: string, start: number): number | null {
-  const ch = charAt(source, start);
-  if (ch === '"') {
-    return source.startsWith('"""', start)
-      ? scanMultilineBasicString(source, start + 3)
-      : scanBasicString(source, start + 1);
-  }
-  if (ch === "'") {
-    return source.startsWith("'''", start)
-      ? scanMultilineLiteralString(source, start + 3)
-      : scanLiteralString(source, start + 1);
-  }
-  if (ch === "[") {
-    return scanBracketedValue(source, start + 1, "[", "]", true);
-  }
-  if (ch === "{") {
-    return scanBracketedValue(source, start + 1, "{", "}", false);
-  }
-  if (ch === "") {
-    return null;
-  }
-  return scanBareValue(source, start);
-}
-
-const BARE_KEY_CHAR = /^[A-Za-z0-9_-]$/;
-
-function unescapeBasicString(raw: string): string {
-  let result = "";
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
-    if (ch !== "\\") {
-      result += ch ?? "";
-      continue;
-    }
-    const next = raw[i + 1];
-    if (next === "\\" || next === '"') {
-      result += next;
-      i++;
-    } else if (next === "b") {
-      result += "\b";
-      i++;
-    } else if (next === "f") {
-      result += "\f";
-      i++;
-    } else if (next === "n") {
-      result += "\n";
-      i++;
-    } else if (next === "r") {
-      result += "\r";
-      i++;
-    } else if (next === "t") {
-      result += "\t";
-      i++;
-    } else if (next === "u") {
-      result += String.fromCodePoint(Number.parseInt(raw.slice(i + 2, i + 6), 16));
-      i += 5;
-    } else if (next === "U") {
-      result += String.fromCodePoint(Number.parseInt(raw.slice(i + 2, i + 10), 16));
-      i += 9;
-    } else {
-      result += next ?? "";
-      i++;
-    }
-  }
-  return result;
-}
-
-interface DottedKeyScan {
-  readonly segments: ReadonlyArray<string>;
-  readonly end: number;
-}
-
-/** Parses one or more dot-separated key segments (bare, basic-quoted, or literal-quoted),
- * used for both table headers (`[a."b.c"]`) and key-value lines (`a."b.c" = 1`). Stops as soon
- * as no further `.`-continuation is found; the caller checks for the expected terminator
- * (`]` or `=`) itself. */
-function scanDottedKeyPath(source: string, pos: number): DottedKeyScan | null {
-  const segments: Array<string> = [];
-  let cursor = pos;
-  for (;;) {
-    cursor = skipInlineWhitespace(source, cursor);
-    const ch = charAt(source, cursor);
-    if (ch === '"') {
-      const strEnd = scanBasicString(source, cursor + 1);
-      if (strEnd === null) {
-        return null;
-      }
-      segments.push(unescapeBasicString(source.slice(cursor + 1, strEnd - 1)));
-      cursor = strEnd;
-    } else if (ch === "'") {
-      const strEnd = scanLiteralString(source, cursor + 1);
-      if (strEnd === null) {
-        return null;
-      }
-      segments.push(source.slice(cursor + 1, strEnd - 1));
-      cursor = strEnd;
-    } else if (BARE_KEY_CHAR.test(ch)) {
-      let bareEnd = cursor;
-      while (BARE_KEY_CHAR.test(charAt(source, bareEnd))) {
-        bareEnd++;
-      }
-      segments.push(source.slice(cursor, bareEnd));
-      cursor = bareEnd;
-    } else {
-      return null;
-    }
-    const afterSegment = skipInlineWhitespace(source, cursor);
-    if (charAt(source, afterSegment) === ".") {
-      cursor = afterSegment + 1;
-      continue;
-    }
-    cursor = afterSegment;
-    break;
-  }
-  return { segments, end: cursor };
-}
-
-function scanTomlDocument(source: string): TomlScanResult | TomlScanError {
-  const tokens: Array<TomlToken> = [];
-  const headers: Array<TomlHeaderToken> = [];
-  const length = source.length;
-  let pos = 0;
-  let currentTableIndex = -1;
-  let currentTablePath: ReadonlyArray<string> = [];
-
-  while (pos < length) {
-    const lineStart = pos;
-    const firstNonWhitespace = skipInlineWhitespace(source, pos);
-    const ch = charAt(source, firstNonWhitespace);
-
-    if (ch === "" || ch === "\n" || ch === "\r") {
-      const end = advancePastNewline(source, firstNonWhitespace);
-      tokens.push({ kind: "blank", start: lineStart, end });
-      pos = end === firstNonWhitespace ? length : end;
-      continue;
-    }
-
-    if (ch === "#") {
-      const end = advancePastNewline(source, skipToEndOfLine(source, firstNonWhitespace));
-      tokens.push({ kind: "comment", start: lineStart, end });
-      pos = end;
-      continue;
-    }
-
-    if (ch === "[") {
-      const isArrayOfTables = charAt(source, firstNonWhitespace + 1) === "[";
-      const keyStart = firstNonWhitespace + (isArrayOfTables ? 2 : 1);
-      const parsedPath = scanDottedKeyPath(source, keyStart);
-      if (parsedPath === null || parsedPath.segments.length === 0) {
-        return { error: `malformed table header at offset ${lineStart}` };
-      }
-      let closeCursor = parsedPath.end;
-      if (charAt(source, closeCursor) !== "]") {
-        return { error: `malformed table header at offset ${lineStart}` };
-      }
-      closeCursor += 1;
-      if (isArrayOfTables) {
-        if (charAt(source, closeCursor) !== "]") {
-          return { error: `malformed array-of-tables header at offset ${lineStart}` };
-        }
-        closeCursor += 1;
-      }
-      const end = advancePastNewline(source, skipToEndOfLine(source, closeCursor));
-      const headerToken: TomlHeaderToken = {
-        kind: "header",
-        start: lineStart,
-        end,
-        path: parsedPath.segments,
-        isArrayOfTables,
-      };
-      headers.push(headerToken);
-      tokens.push(headerToken);
-      currentTableIndex = headers.length - 1;
-      currentTablePath = parsedPath.segments;
-      pos = end;
-      continue;
-    }
-
-    const parsedKey = scanDottedKeyPath(source, firstNonWhitespace);
-    if (parsedKey === null || parsedKey.segments.length === 0) {
-      return { error: `malformed key-value line at offset ${lineStart}` };
-    }
-    const afterKey = skipInlineWhitespace(source, parsedKey.end);
-    if (charAt(source, afterKey) !== "=") {
-      return { error: `malformed key-value line at offset ${lineStart}` };
-    }
-    const valueStart = skipInlineWhitespace(source, afterKey + 1);
-    const valueEndRaw = scanValue(source, valueStart);
-    if (valueEndRaw === null) {
-      return { error: `unterminated value at offset ${valueStart}` };
-    }
-    const end = advancePastNewline(source, skipToEndOfLine(source, valueEndRaw));
-    const fullPath = [...currentTablePath, ...parsedKey.segments];
-    const rawValueText = source.slice(valueStart, valueEndRaw);
-    tokens.push({
-      kind: "kv",
-      start: lineStart,
-      end,
-      path: fullPath,
-      tableIndex: currentTableIndex,
-      valueStart,
-      valueEnd: valueEndRaw,
-      insideInlineTable: rawValueText.startsWith("{"),
-    });
-    pos = end;
-  }
-
-  const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  // A mixed-EOL file may be detected as CRLF overall (because some earlier line uses it) while
-  // its final line ends in a bare `\n`; checking for `"\n"` alone (rather than the detected
-  // flavor) covers both terminators, since a `"\r\n"`-ending string always also ends in `"\n"`.
-  return { source, tokens, headers, newline, endsWithNewline: source.endsWith("\n") };
 }
 
 interface Splice {
@@ -1085,7 +645,7 @@ function planTomlSplices(scan: TomlScanResult, leaves: ReadonlyArray<LeafEdit>):
 function applyTomlEdits(source: string, edits: ReadonlyArray<ConfigEdit>): ConfigEditOutcome {
   const scan = scanTomlDocument(source);
   if ("error" in scan) {
-    return refused("parse_error", [], scan.error);
+    return refused("parse_error", [], `${scan.error} at offset ${scan.offset}`);
   }
 
   const duplicate = findDuplicateTableHeader(scan.headers);
@@ -1193,19 +753,177 @@ function detectJsonNewline(source: string): "\n" | "\r\n" {
   return source.includes("\r\n") ? "\r\n" : "\n";
 }
 
-function detectJsonIndent(source: string): string | number {
+function detectJsonFormatting(source: string): FormattingOptions {
   const match = /\n([ \t]+)\S/.exec(source);
-  if (match === null) {
-    return 2;
+  const indent = match?.[1] ?? "  ";
+  const usesTabs = indent.includes("\t");
+  return {
+    insertSpaces: !usesTabs,
+    tabSize: usesTabs ? 1 : indent.length,
+    eol: detectJsonNewline(source),
+  };
+}
+
+function lineEndAfterTrailer(
+  text: string,
+  from: number,
+): { end: number; hadComma: boolean } | null {
+  let pos = from;
+  let hadComma = false;
+  for (;;) {
+    const ch = text[pos];
+    if (ch === " " || ch === "\t") {
+      pos++;
+    } else if (ch === "," && !hadComma) {
+      hadComma = true;
+      pos++;
+    } else if (ch === "/" && text[pos + 1] === "*") {
+      const close = text.indexOf("*/", pos + 2);
+      if (close === -1 || /[\r\n]/.test(text.slice(pos, close))) {
+        return null;
+      }
+      pos = close + 2;
+    } else if (ch === "/" && text[pos + 1] === "/") {
+      while (pos < text.length && text[pos] !== "\r" && text[pos] !== "\n") {
+        pos++;
+      }
+    } else if (ch === undefined || ch === "\r" || ch === "\n") {
+      return { end: pos, hadComma };
+    } else {
+      return null;
+    }
   }
-  const indent = match[1] ?? "";
-  return indent.includes("\t") ? "\t" : indent.length;
+}
+
+/** `modify` inserts right after the previous value and reformats that line, which moves a
+ * same-line trailing comment onto the new key; this appends after the line instead. */
+function insertAfterLastProperty(
+  text: string,
+  leaf: { readonly path: ReadonlyArray<string>; readonly value: unknown },
+  formatting: FormattingOptions,
+): string | undefined {
+  const root = parseTree(text, undefined, { allowTrailingComma: true });
+  if (root === undefined) {
+    return undefined;
+  }
+  let depth = leaf.path.length;
+  let parent = findNodeAtLocation(root, [...leaf.path]);
+  while (parent === undefined && depth > 0) {
+    depth--;
+    parent = findNodeAtLocation(root, leaf.path.slice(0, depth));
+  }
+  const prev = parent?.children?.[parent.children.length - 1];
+  if (parent?.type !== "object" || depth === leaf.path.length || prev === undefined) {
+    return undefined;
+  }
+  const prevEnd = prev.offset + prev.length;
+  const trailer = lineEndAfterTrailer(text, prevEnd);
+  if (trailer === null) {
+    return undefined;
+  }
+  const eol = formatting.eol ?? "\n";
+  const lineStart = Math.max(text.lastIndexOf("\n", prev.offset), -1) + 1;
+  const baseIndent = /^[ \t]*/.exec(text.slice(lineStart))?.[0] ?? "";
+  const [key, ...rest] = leaf.path.slice(depth);
+  const nested = rest.reduceRight<unknown>((value, segment) => ({ [segment]: value }), leaf.value);
+  const indentUnit = formatting.insertSpaces ? " ".repeat(formatting.tabSize ?? 2) : "\t";
+  const rendered = JSON.stringify(nested, null, indentUnit).split("\n").join(`${eol}${baseIndent}`);
+  const insertion = `${eol}${baseIndent}${JSON.stringify(key)}: ${rendered}${trailer.hadComma ? "," : ""}`;
+  return (
+    text.slice(0, prevEnd) +
+    (trailer.hadComma ? "" : ",") +
+    text.slice(prevEnd, trailer.end) +
+    insertion +
+    text.slice(trailer.end)
+  );
+}
+
+/** Edits `source` towards `target` with minimal span edits so comments survive; undefined when
+ * the result cannot be verified. */
+export function updateJsonDocument(source: string, target: unknown): string | undefined {
+  try {
+    const current = parseJsonc(source);
+    if (!isPlainRecord(current) || !isPlainRecord(target)) {
+      return undefined;
+    }
+    const formattingOptions = detectJsonFormatting(source);
+    let text = source;
+    const sync = (
+      path: ReadonlyArray<string>,
+      from: Readonly<Record<string, unknown>>,
+      to: Readonly<Record<string, unknown>>,
+    ): void => {
+      for (const key of Object.keys(from)) {
+        if (!Object.hasOwn(to, key)) {
+          text =
+            removeProperty(text, [...path, key]) ??
+            applyJsonEditsToText(
+              text,
+              modify(text, [...path, key], undefined, { formattingOptions }),
+            );
+        }
+      }
+      for (const [key, value] of Object.entries(to)) {
+        const keyPath = [...path, key];
+        const existing = Object.hasOwn(from, key) ? from[key] : undefined;
+        if (!Object.hasOwn(from, key)) {
+          text =
+            insertAfterLastProperty(text, { path: keyPath, value }, formattingOptions) ??
+            applyJsonEditsToText(text, modify(text, keyPath, value, { formattingOptions }));
+        } else if (isPlainRecord(existing) && isPlainRecord(value)) {
+          sync(keyPath, existing, value);
+        } else if (!deepEqualValue(existing, value)) {
+          text = applyJsonEditsToText(text, modify(text, keyPath, value, { formattingOptions }));
+        }
+      }
+    };
+    sync([], current, target);
+    return deepEqualValue(parseJsonc(text), target) ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `modify` removes from the end of the previous value, which moves a trailing comment onto the
+ * wrong key; this removes the property's own line and keeps the previous key's separator strict. */
+function removeProperty(text: string, path: ReadonlyArray<string>): string | undefined {
+  const root = parseTree(text, undefined, { allowTrailingComma: true });
+  const property = root === undefined ? undefined : findNodeAtLocation(root, [...path])?.parent;
+  const object = property?.parent;
+  if (property?.type !== "property" || object?.type !== "object" || object.children === undefined) {
+    return undefined;
+  }
+  const lineStart = text.lastIndexOf("\n", property.offset - 1) + 1;
+  if (!/^[ \t]*$/.test(text.slice(lineStart, property.offset))) {
+    return undefined;
+  }
+  const trailer = lineEndAfterTrailer(text, property.offset + property.length);
+  if (trailer === null) {
+    return undefined;
+  }
+  const eolLength = text.startsWith("\r\n", trailer.end) ? 2 : text[trailer.end] === "\n" ? 1 : 0;
+  const removed = text.slice(0, lineStart) + text.slice(trailer.end + eolLength);
+  const prev = object.children[object.children.length - 2];
+  if (
+    object.children[object.children.length - 1] !== property ||
+    trailer.hadComma ||
+    prev === undefined
+  ) {
+    return removed;
+  }
+  let commaPos = prev.offset + prev.length;
+  while (text[commaPos] === " " || text[commaPos] === "\t") {
+    commaPos++;
+  }
+  return text[commaPos] === ","
+    ? removed.slice(0, commaPos) + removed.slice(commaPos + 1)
+    : undefined;
 }
 
 function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): ConfigEditOutcome {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(source);
+    parsed = parseJsonc(source);
   } catch (cause) {
     return refused("parse_error", [], describeError(cause));
   }
@@ -1229,24 +947,29 @@ function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
     }
   }
 
-  const indent = detectJsonIndent(source);
-  const nextValue = applyPathEntries(parsed, leaves);
-  const rendered = JSON.stringify(nextValue, null, indent);
-  // `JSON.stringify` always renders `\n`, so a CRLF source needs its newline flavor restored
-  // post-render — otherwise every edit to a CRLF JSON config would silently flip it to LF.
-  const newline = detectJsonNewline(source);
-  const withNewlineFlavor = newline === "\r\n" ? rendered.replaceAll("\n", "\r\n") : rendered;
-  const nextText = source.endsWith("\n") ? `${withNewlineFlavor}${newline}` : withNewlineFlavor;
+  const formattingOptions = detectJsonFormatting(source);
+  let nextText = source;
+  for (const leaf of leaves) {
+    try {
+      nextText =
+        insertAfterLastProperty(nextText, leaf, formattingOptions) ??
+        applyJsonEditsToText(
+          nextText,
+          modify(nextText, [...leaf.path], leaf.value, { formattingOptions }),
+        );
+    } catch (cause) {
+      return refused("verification_mismatch", leaf.path, describeError(cause));
+    }
+  }
 
   let reparsed: unknown;
   try {
-    reparsed = JSON.parse(nextText);
+    reparsed = parseJsonc(nextText);
   } catch {
     return refused("verification_mismatch", [], "edited document failed to re-parse");
   }
-  // Verified against `deepSet` (the original, un-flattened `edits`), not `nextValue` (the
-  // flattened per-leaf mutation) — comparing against the mutation would be tautological, so a
-  // sibling an object-valued edit silently drops would never surface as a mismatch.
+  // Verified against `deepSet` (the original, un-flattened `edits`) so a sibling an object-valued
+  // edit would silently drop surfaces as a mismatch.
   const expected = deepSet(parsed, edits);
   if (!deepEqualValue(reparsed, expected)) {
     return refused(

@@ -58,6 +58,7 @@ import {
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
+import { rootCaBundle } from "../../command-internal/supabase-tls.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { TemplateService, type StarterTemplate } from "./bootstrap.templates.ts";
@@ -768,6 +769,10 @@ describe("bootstrap integration", () => {
         expect(s.pushConnectCalls[0]?.user).toBe("postgres");
         expect(s.pushConnectCalls[0]?.database).toBe("postgres");
         expect(s.pushConnectCalls[0]?.password).toBe("s3cret");
+        expect(s.pushConnectCalls[0]).toMatchObject({
+          sslmode: "require",
+          sslrootcertInline: rootCaBundle(),
+        });
         expect(s.out.stdoutText).toContain("Remote database is up to date.");
       }).pipe(Effect.provide(BunServices.layer)),
   );

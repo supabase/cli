@@ -39,13 +39,11 @@ const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
  * Fingerprints unique to each transcribed SQL constant, with no trailing `;` (`splitAndTrim`
  * strips it before `session.exec` sees it).
  *
- * `GLOBALS`/`SCHEMA_13`/`REVOKE_PRIVILEGES` are checked as substrings, since each is embedded in
+ * `GLOBALS`/`REVOKE_PRIVILEGES` are checked as substrings, since each is embedded in
  * a larger executed block. `SCHEMA_14` is checked with `.endsWith` instead: a substring check
  * would also match 14.sql's unrelated `graphql_public` schema statement.
  */
 const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
-const SCHEMA_13_FINGERPRINT =
-  "CREATE USER supabase_functions_admin NOINHERIT CREATEROLE LOGIN NOREPLICATION";
 const SCHEMA_14_FINGERPRINT_SUFFIX = "CREATE SCHEMA IF NOT EXISTS graphql";
 const REVOKE_PRIVILEGES_FINGERPRINT =
   "revoke execute on functions from anon, authenticated, service_role";
@@ -249,24 +247,6 @@ describe("startSetupLocalDatabase", () => {
         const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
         expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(true);
         expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(true);
-        expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(false);
-        expect(docker.runs.length).toBe(0);
-        yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
-    });
-
-    it.effect("PG13: execs globals + the PG13 initial schema, not the PG14 one", () => {
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const workdir = yield* makeWorkdir();
-        const { session, calls } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        yield* run(baseInput(workdir, session, { majorVersion: 13 }), out, docker);
-        const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-        expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(true);
-        expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(true);
-        expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(false);
         expect(docker.runs.length).toBe(0);
         yield* fs.remove(workdir, { recursive: true, force: true });
       }).pipe(Effect.provide(BunServices.layer));
@@ -282,7 +262,6 @@ describe("startSetupLocalDatabase", () => {
         yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
         const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
         expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(false);
-        expect(execSql.some((sql) => sql.includes(SCHEMA_13_FINGERPRINT))).toBe(false);
         expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(false);
         // Default config: realtime, storage, and auth are all enabled.
         expect(docker.runs.length).toBe(3);

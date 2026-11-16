@@ -64,6 +64,7 @@ export function v2ProjectConfigResponse(
       mailer_secure_email_change_enabled: true,
       mailer_autoconfirm: true,
       security_update_password_require_reauthentication: false,
+      security_update_password_require_current_password: false,
       mailer_otp_length: 6,
       mailer_otp_exp: 3600,
       smtp_max_frequency: 1,

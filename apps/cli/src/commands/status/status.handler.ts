@@ -169,6 +169,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
       cliSettings.workdir,
       context.projectEnvValues,
       context.resolvedConfig.loaded.document,
+      context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
     ).pipe(
       Effect.mapError((cause) =>
         cause instanceof CliConfigValueError

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer } from "effect";
 import type { ServiceCreationInput } from "@supabase/stack/effect";
@@ -17,13 +17,14 @@ const project = (
   createStackConfigProject(config, {
     prefix: "supabase-stack-config-env-",
     ...options,
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
     Effect.provide(
       Layer.mergeAll(
         BunServices.layer,
+        BunCrypto.layer,
         runtimeInfoLayer,
         mockCommandSettings({ workdir: projectRoot }),
         cliConfigValuesTestLayer,
@@ -50,7 +51,7 @@ describe("loadStackConfig environment overrides", () => {
       const config = yield* load(root);
       const creations = yield* config.creations("functions-env-malformed");
       expect(service(creations, "database")?.service).toBe("database");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("uses shell > supabase dotenv > project-root dotenv precedence", () =>

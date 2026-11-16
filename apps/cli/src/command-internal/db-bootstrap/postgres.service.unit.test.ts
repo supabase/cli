@@ -295,11 +295,11 @@ describe("buildPostgresStartContainerSpec", () => {
     ]);
   });
 
-  test("--from-backup: converts a Windows-style host path through toDockerMountPath for the backup bind", () => {
+  test("--from-backup: keeps the Windows drive in the backup bind source", () => {
     const spec = buildPostgresStartContainerSpec(
       baseInput({ fromBackup: "C:\\Users\\me\\backup.sql" }),
     );
-    expect(spec.binds).toContain("/Users/me/backup.sql:/etc/backup.sql:ro");
+    expect(spec.binds).toContain("C:\\Users\\me\\backup.sql:/etc/backup.sql:ro");
   });
 
   test("no --from-backup: binds only the data volume, matching the pre-existing behavior", () => {

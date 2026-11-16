@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { Command } from "effect/cli";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -49,6 +49,7 @@ describe("completion zsh", () => {
         out.layer,
         mockAnalytics().layer,
         BunServices.layer,
+        BunCrypto.layer,
         processControlLayer,
       );
       return Effect.gen(function* () {
@@ -65,6 +66,7 @@ describe("completion zsh", () => {
       out.layer,
       analytics.layer,
       BunServices.layer,
+      BunCrypto.layer,
       processControlLayer,
     );
     return Effect.gen(function* () {

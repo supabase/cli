@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -197,7 +197,7 @@ describe("project lifecycle lock", () => {
         yield* Fiber.join(stopping);
         expect(docker.containerNames()).toEqual([]);
         expect(docker.networkNames()).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     10_000,
   );
 
@@ -229,7 +229,7 @@ describe("project lifecycle lock", () => {
         yield* Fiber.join(stopping);
         expect(docker.containerNames()).toEqual([]);
         expect(docker.networkNames()).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     10_000,
   );
 
@@ -263,7 +263,7 @@ describe("project lifecycle lock", () => {
         yield* Fiber.join(stopping);
         yield* Fiber.join(starting);
         expect(docker.networkNames()).toEqual([NETWORK]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     10_000,
   );
 
@@ -296,7 +296,7 @@ describe("project lifecycle lock", () => {
         yield* Fiber.join(startingBeta);
         expect(docker.containerNames()).toContain("supabase_db_alpha");
         expect(docker.networkNames()).toEqual(["supabase_network_alpha", "supabase_network_beta"]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     10_000,
   );
 
@@ -337,7 +337,7 @@ describe("project lifecycle lock", () => {
         yield* Fiber.join(secondStarting);
         expect(docker.networkNames()).toEqual([NETWORK]);
         expect(docker.containerNames()).toContain("supabase_auth_demo");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     10_000,
   );
 
@@ -370,7 +370,7 @@ describe("project lifecycle lock", () => {
         yield* Fiber.join(yield* runStop(stopper));
         expect(docker.containerNames()).toEqual([]);
         expect(docker.networkNames()).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     10_000,
   );
 
@@ -402,7 +402,7 @@ describe("project lifecycle lock", () => {
 
       expect(yield* Fiber.join(blocked)).toBeInstanceOf(ProjectLifecycleLockBusyError);
       expect(docker.networkNames()).toEqual([NETWORK]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   for (const format of ["json", "stream-json"] as const) {
@@ -428,7 +428,7 @@ describe("project lifecycle lock", () => {
 
         expect(yield* Fiber.join(blocked)).toBeInstanceOf(ProjectLifecycleLockBusyError);
         expect(waiter.out.rawChunks).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   }
 
@@ -451,7 +451,7 @@ describe("project lifecycle lock", () => {
 
         expect(docker.containerNames()).toContain("supabase_db_demo");
         expect(cli.out.stderrText).not.toContain("Waiting for another Supabase CLI command");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
     it.effect("stops the stack without the lock", () =>
@@ -468,7 +468,7 @@ describe("project lifecycle lock", () => {
 
         expect(docker.containerNames()).toEqual([]);
         expect(docker.networkNames()).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   });
 });

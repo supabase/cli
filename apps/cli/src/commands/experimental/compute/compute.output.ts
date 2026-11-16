@@ -63,22 +63,6 @@ export const computeMachineOutputRequested = Effect.fnUntraced(function* () {
 });
 
 /**
- * The format a run actually renders in, with `-o` given priority over
- * `--output-format`.
- *
- * `-o pretty|table|csv` fall through to text, so branching on `output.format`
- * alone would wrongly emit JSON for `-o pretty --output-format json`.
- * `-o json|yaml|toml|env` are excluded because `emitComputeMachineOutput`
- * already owns those and their stdout.
- */
-export const computeRenderFormat = Effect.fnUntraced(function* () {
-  const output = yield* Output;
-  const outputFlagFormat = Option.getOrUndefined(yield* OutputFlag);
-  const forcesText = outputFlagFormat !== undefined && !emitsPayloadFor(outputFlagFormat);
-  return forcesText ? ("text" as const) : output.format;
-});
-
-/**
  * Refuses `-o env` before the command does anything.
  *
  * Every compute payload has structure a flat `KEY=value` list cannot hold.
@@ -106,3 +90,10 @@ export const computeRemoteSuffix = (flags: ProjectTargetFlagValues, ref: string)
   Option.isSome(flags.projectRef) || Option.exists(flags.remote, (value) => value._tag !== "Linked")
     ? ` --remote=${ref}`
     : "";
+
+export const computeRenderFormat = Effect.fnUntraced(function* () {
+  const output = yield* Output;
+  const outputFlagFormat = Option.getOrUndefined(yield* OutputFlag);
+  const forcesText = outputFlagFormat !== undefined && !emitsPayloadFor(outputFlagFormat);
+  return forcesText ? ("text" as const) : output.format;
+});

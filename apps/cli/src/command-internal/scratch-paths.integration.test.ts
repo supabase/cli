@@ -1,6 +1,6 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 
 import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { pgdeltaScratchDir, scratchDir } from "./scratch-paths.ts";
@@ -12,7 +12,7 @@ const resolve = (kind: "legacy" | "stack", workdir: string) =>
     pgdelta: pgdeltaScratchDir(workdir),
   }).pipe(
     Effect.provide([
-      BunServices.layer,
+      Layer.merge(BunServices.layer, BunCrypto.layer),
       mockCommandSettings({ workdir, supabaseHome: "/home/.supabase" }),
       stackBackendLayer(kind),
     ]),

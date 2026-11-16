@@ -7,6 +7,8 @@ import type {
   SaveCliConfigOptions,
 } from "./config-document.ts";
 import type {
+  CliConfigFileConflictError,
+  CliConfigSchemaVersionError,
   CliConfigParseError,
   CliConfigRemovedKeyError,
   CliProjectEnvParseError,
@@ -23,6 +25,8 @@ import type {
  * consumer (`@supabase/config/io`) can distinguish these via `instanceof`.
  */
 type CliConfigStoreError =
+  | CliConfigFileConflictError
+  | CliConfigSchemaVersionError
   | CliConfigParseError
   | CliConfigRemovedKeyError
   | DuplicateRemoteProjectIdError

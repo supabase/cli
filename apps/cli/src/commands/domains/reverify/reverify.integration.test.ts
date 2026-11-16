@@ -83,7 +83,7 @@ const baseFlags = {
 };
 
 describe("domains reverify integration", () => {
-  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("fails with the entitlement_required envelope's entitlement on 400", () => {
     const { layer, out, analytics, api } = setup({
       status: 400,
       response: {
@@ -97,17 +97,16 @@ describe("domains reverify integration", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(domainsReverify(baseFlags));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(api.requests).toHaveLength(1);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "custom_domain", org_slug: "env-org" },
+      const error = yield* Effect.flip(domainsReverify(baseFlags));
+      expect(error).toMatchObject({
+        entitlement: {
+          feature: "custom_domain",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
         },
-      ]);
+      });
+      expect(api.requests).toHaveLength(1);
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

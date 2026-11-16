@@ -1,4 +1,5 @@
 AccessTokenRequiredError
+ApiMaxRetriesError
 BackupListNetworkError
 BackupListUnexpectedStatusError
 BackupRestoreNetworkError
@@ -37,11 +38,14 @@ BranchesUnpauseNetworkError
 BranchesUnpauseUnexpectedStatusError
 BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
+CliConfigConvertError
+CliConfigFileConflictError
 CliConfigFlagConflictError
 CliConfigLoadError
 CliConfigParseError
 CliConfigRemovedEnvError
 CliConfigRemovedKeyError
+CliConfigSchemaVersionError
 CliConfigValueError
 CliConfigWriteError
 CliProjectEnvParseError
@@ -56,7 +60,6 @@ ComputeConfigWriteUnsafeError
 ComputeDirectoryExistsError
 ComputeEnvNotSupportedError
 ComputeFollowNotSupportedError
-ComputeJsonConfigUnsupportedError
 ComputeLogsQueryFailedError
 ComputeLogsRateLimitedError
 ComputeLogsUsageExceededError
@@ -69,6 +72,13 @@ ComputeSourceMissingError
 ComputeStacksValidationError
 ComputeUnavailableError
 ComputeUploadFailedError
+ConfigConvertAlreadyJsonError
+ConfigConvertFileChangedError
+ConfigConvertLoadConfigError
+ConfigConvertOutputFlagUnsupportedError
+ConfigConvertUnsupportedError
+ConfigConvertWorkdirError
+ConfigConvertWriteError
 ConfigDiffLoadConfigError
 ConfigDiffOutputFlagUnsupportedError
 ConfigDiffReadNetworkError
@@ -108,6 +118,10 @@ ConfigPushSslEnforcementUpdateStatusError
 ConfigPushStorageUpdateNetworkError
 ConfigPushStorageUpdateStatusError
 ConfigPushWorkdirError
+ConfigValidateLoadError
+ConfigValidateOutputFlagUnsupportedError
+ConfigValidateProblemsError
+ConfigValidateWorkdirError
 ConflictingFunctionDeployFlagsError
 ConflictingFunctionDownloadFlagsError
 ContainerCreateError
@@ -132,6 +146,7 @@ DbConfigLibpqEnvError
 DbConfigListBansNetworkError
 DbConfigListBansStatusError
 DbConfigLoadError
+DbConfigLoginRoleMissingPrivilegedRoleError
 DbConfigLoginRoleNetworkError
 DbConfigLoginRoleStatusError
 DbConfigParseUrlError
@@ -237,6 +252,7 @@ FunctionImportNotDirectoryError
 FunctionNotFoundError
 FunctionsApiStatusError
 FunctionsApiTransportError
+FunctionsEnvError
 FunctionsEnvNotSupportedError
 FunctionsListNetworkError
 FunctionsListUnexpectedStatusError
@@ -283,6 +299,7 @@ InitConfigExistsError
 InitParseSettingsError
 InspectCsvqError
 InspectReportMkdirError
+InspectReportOutputFlagUnsupportedError
 InspectReportWriteError
 InvalidAccessTokenError
 InvalidComputeExcludeError
@@ -321,6 +338,9 @@ LoginMissingTokenError
 LoginSaveTokenError
 LoginVerificationError
 LogoutCancelledError
+LogsApiError
+LogsClipboardError
+LogsInputError
 MigraDiffError
 MigraSchemaLoadError
 MigrationApplyError
@@ -496,7 +516,6 @@ StackArtifactSelectionError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError
-StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError
 StackRuntimeSelectionError
@@ -561,6 +580,7 @@ TestNewInvalidNameError
 TestNewWriteError
 UnknownComputeExposureError
 UnknownComputeRuntimeError
+UnknownComputeSecretsScopeError
 UnknownComputeSizeError
 UnlinkRefReadError
 UnlinkTempRemovalError

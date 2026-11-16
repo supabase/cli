@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { Data, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import {
   runHostProcessIfDispatched,
@@ -46,6 +46,7 @@ if (!(await runHostProcessIfDispatched(argv)) && !(await runNativeProcessIfDispa
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           NodeHttpClient.layerNodeHttp,
           StackNamespace.layer({ root: stateRoot }).pipe(Layer.provide(NodeServices.layer)),
         ),

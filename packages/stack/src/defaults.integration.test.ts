@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
@@ -8,7 +8,11 @@ import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 import { selection } from "../tests/pins.ts";
 
 const artifactCacheRoot = testArtifactCacheRoot;
-const effectLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const effectLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NodeHttpClient.layerNodeHttp,
+);
 
 const effectDatabaseConfig = {
   databasePassword: Redacted.make("defaults-test-password"),

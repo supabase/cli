@@ -67,6 +67,7 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
     },
     {
       transformClient,
+      retry: { maxRetries: Option.getOrUndefined(cliSettings.apiMaxRetries) },
     },
   );
 }).pipe(Effect.withSpan("CommandPlatformApi.build"));

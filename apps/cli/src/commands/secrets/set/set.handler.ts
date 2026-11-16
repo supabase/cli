@@ -18,7 +18,9 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { DEFAULT_CONFIG_FILE } from "../../../command-internal/config-advice.ts";
 import { mapHttpError, sanitizeInlineName } from "../../../command-internal/http-errors.ts";
+import { relativeConfigPath } from "../../../command-internal/workdir-project.ts";
 import {
   InvalidSecretPairError,
   SecretsEnvFileOpenError,
@@ -111,12 +113,12 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
   const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
-    // Source 1: `[edge_runtime.secrets]` from `supabase/config.toml`. Only resolved values are
+    // Source 1: `[edge_runtime.secrets]` from the project config file. Only resolved values are
     // sent: `resolveCliSubtree` wraps every resolved secret leaf in `Redacted<string>`,
     // while unresolved `env(VAR)` references stay plain strings, so `Redacted.isRedacted`
     // distinguishes them.
     const merged = new Map<string, string>();
-    // A malformed config.toml (or sibling .env/.env.local) is swallowed here (logged, not
+    // A malformed config file (or sibling .env/.env.local) is swallowed here (logged, not
     // fatal) and proceeds with empty config-sourced secrets — env-file and positional-arg
     // secrets still work. An invalid value in an unrelated key is left out of the resolved config
     // rather than failing it.
@@ -144,7 +146,11 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
               loadedResolvedConfig.invalid.length === 0
                 ? Effect.void
                 : debugLogger.debug(
-                    "failed to parse supabase/config.toml: schema validation failed",
+                    `failed to parse ${
+                      loadedResolvedConfig.hasConfigFile
+                        ? relativeConfigPath(cliSettings.workdir, loadedResolvedConfig.loaded.path)
+                        : DEFAULT_CONFIG_FILE.path
+                    }: schema validation failed`,
                   ),
             ),
             Effect.as<ConfigSecretSource>({
@@ -168,7 +174,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
             // that order.
             return reportRemote(cause.appliedRemote).pipe(
               Effect.andThen(
-                debugLogger.debug(`failed to parse supabase/config.toml: ${shortMessage}`),
+                debugLogger.debug(
+                  `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${shortMessage}`,
+                ),
               ),
               Effect.as<ConfigSecretSource>({
                 edgeRuntime: recoverEdgeRuntimeConfig(cause)?.edge_runtime,

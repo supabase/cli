@@ -122,4 +122,13 @@ describe("resolveGroups", () => {
       [GroupProject]: "ctx-ref",
     });
   });
+
+  it("keys a project-only context group, taking the org from a matching linked project", () => {
+    expect(
+      resolveGroups({ groups: { project: "proj-ref" } }, Option.some(linkedCacheValue())),
+    ).toEqual({ [GroupOrganization]: "org-id-123", [GroupProject]: "proj-ref" });
+    expect(
+      resolveGroups({ groups: { project: "other-ref" } }, Option.some(linkedCacheValue())),
+    ).toEqual({ [GroupProject]: "other-ref" });
+  });
 });

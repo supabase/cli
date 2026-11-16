@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
 import {
@@ -30,13 +30,17 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { stackDestroyCommand } from "./destroy.command.ts";
 import { stackDestroy } from "./destroy.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 import { stackUploadsDir } from "../../../../command-internal/stack-config.ts";
 
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 const refuseDestroy = (
   api: StackApi["Service"],
   ids: ReadonlyArray<string>,
@@ -80,7 +84,7 @@ const refuseUploadsRemoval = Layer.effect(
           )
         : fs.remove(target, options),
   })),
-).pipe(Layer.provide(BunServices.layer));
+).pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
 const runDestroy = <A, E, R>(layer: Layer.Layer<A, E, R>, argv: ReadonlyArray<string>) =>
   Command.runWith(stackDestroyCommand.pipe(Command.provide(layer)), { version: "0.0.0-test" })(
     argv,

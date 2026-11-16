@@ -32,6 +32,7 @@ describe("buildRealtimeEnv", () => {
       DB_ENC_KEY: "supabaserealtime",
       APP_NAME: "realtime",
       SECRET_KEY_BASE: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+      ERL_MAX_PORTS: "65536",
       DNS_NODES: "''",
       RLIMIT_NOFILE: "",
       SEED_SELF_HOST: "true",

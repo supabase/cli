@@ -11,6 +11,7 @@
  */
 
 import {
+  DEFAULT_ERL_MAX_PORTS,
   DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE,
   DEFAULT_POOLER_VAULT_ENCRYPTION_KEY,
 } from "@supabase/stack/defaults";
@@ -120,6 +121,7 @@ export function buildSupavisorContainerSpec(
       REGION: "local",
       RUN_JANITOR: "true",
       ERL_AFLAGS: "-proto_dist inet_tcp",
+      ERL_MAX_PORTS: DEFAULT_ERL_MAX_PORTS,
       RLIMIT_NOFILE: "",
     },
     cmd: buildSupavisorStartCmd(),

@@ -8,7 +8,6 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
-import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import type { DomainsActivateFlags } from "./activate.command.ts";
 
 const mapActivateError = mapDomainsHttpError("activate");
@@ -33,7 +32,7 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
       output.format === "text" ? yield* output.task("Activating custom hostname...") : undefined;
     const response = yield* api.v1.activateCustomHostname({ ref }).pipe(
       Effect.tapError(() => activating?.fail() ?? Effect.void),
-      Effect.catch(gateMapError({ projectRef: ref }, mapActivateError)),
+      Effect.catch(mapActivateError),
     );
     yield* activating?.clear ?? Effect.void;
 

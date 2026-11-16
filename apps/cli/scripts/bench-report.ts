@@ -29,7 +29,12 @@ export interface TimingSummary {
   readonly min: number;
   readonly max: number;
   readonly p90: number;
+  readonly iqr: number;
 }
+
+/** Interquartile range by nearest rank, so one extreme value at either end cannot move it. */
+const iqr = (values: ReadonlyArray<number>): number =>
+  percentile(values, 75) - percentile(values, 25);
 
 export function summarizeTimings(values: ReadonlyArray<number>): TimingSummary {
   const sorted = [...values].sort((a, b) => a - b);
@@ -38,6 +43,7 @@ export function summarizeTimings(values: ReadonlyArray<number>): TimingSummary {
     min: round(sorted[0] ?? 0),
     max: round(sorted[sorted.length - 1] ?? 0),
     p90: round(percentile(sorted, 90)),
+    iqr: round(iqr(sorted)),
   };
 }
 
@@ -289,6 +295,8 @@ const TraceSample = Schema.Struct({
 
 const RunSample = Schema.Struct({
   wallMs: Schema.Finite,
+  /** Block index of a launch from a block-scoped workload; absent for run-scoped launches. */
+  block: Schema.optionalKey(Schema.Finite),
   exitCode: Schema.Finite,
   /** Exit code of the traced launch, recorded even when no spans could be decoded. */
   tracedExitCode: Schema.optionalKey(Schema.Finite),
@@ -345,27 +353,88 @@ export const encodeBenchReport = Schema.encodeEffect(BenchReportJson);
 export const VERDICT_MIN_PCT = 5;
 export const VERDICT_MIN_MS = 5;
 export const VERDICT_MIN_SAMPLES = 5;
+/** Paired blocks needed before the block, not the launch, is the unit of evidence for a verdict. */
+export const VERDICT_MIN_BLOCKS = 3;
+export const VERDICT_IQR_FACTOR = 1.5;
 export const PHASE_ROWS = 3;
 
 export type TimingVerdict = "slower" | "faster" | "within noise" | "not comparable";
 
+/** Median wall time of one block for each build, paired by block index. */
+export interface BlockPair {
+  readonly base: number;
+  readonly branch: number;
+}
+
+const exceedsFloor = (delta: Delta): boolean =>
+  Math.abs(delta.pct) >= VERDICT_MIN_PCT && Math.abs(delta.ms) >= VERDICT_MIN_MS;
+
 /**
- * "slower" or "faster" only when the branch median is outside the base min-max range and the
- * change is at least {@link VERDICT_MIN_PCT} percent and {@link VERDICT_MIN_MS} ms.
+ * "slower" or "faster" only when the median change passes the {@link VERDICT_MIN_PCT} percent and
+ * {@link VERDICT_MIN_MS} ms floor and is larger than {@link VERDICT_IQR_FACTOR} times the wider
+ * build's interquartile range, so one extreme sample cannot fake a change. Run-scoped timings
+ * also need the branch median beyond the base range; with at least {@link VERDICT_MIN_BLOCKS}
+ * paired blocks the spread test runs on block medians instead, and a strict majority of blocks
+ * must pass the floor in the same direction.
  */
 export function timingVerdict(
   base: TimingSummary,
   branch: TimingSummary,
-  context: { readonly comparable: boolean; readonly samples: number },
+  context: {
+    readonly comparable: boolean;
+    readonly samples: number;
+    readonly blocks?: ReadonlyArray<BlockPair>;
+  },
 ): TimingVerdict {
   if (!context.comparable || context.samples < VERDICT_MIN_SAMPLES) return "not comparable";
+  const blocks = context.blocks;
+  if (blocks !== undefined && blocks.length >= VERDICT_MIN_BLOCKS) {
+    const baseMedians = blocks.map((block) => block.base);
+    const branchMedians = blocks.map((block) => block.branch);
+    const reference = median(baseMedians);
+    const ms = median(blocks.map((block) => block.branch - block.base));
+    const pct = reference === 0 ? 0 : (ms / reference) * 100;
+    if (!exceedsFloor({ ms: round(ms), pct: round(pct) })) return "within noise";
+    const agreeing = blocks.filter((block) => {
+      const blockDelta = deltaOf(block.base, block.branch);
+      return exceedsFloor(blockDelta) && blockDelta.ms > 0 === ms > 0;
+    }).length;
+    if (agreeing * 2 <= blocks.length) return "within noise";
+    if (Math.abs(ms) <= VERDICT_IQR_FACTOR * Math.max(iqr(baseMedians), iqr(branchMedians))) {
+      return "within noise";
+    }
+    return ms > 0 ? "slower" : "faster";
+  }
   const delta = deltaOf(base.median, branch.median);
-  if (Math.abs(delta.pct) < VERDICT_MIN_PCT || Math.abs(delta.ms) < VERDICT_MIN_MS) {
+  if (!exceedsFloor(delta)) return "within noise";
+  const outsideRange = delta.ms > 0 ? branch.median > base.max : branch.median < base.min;
+  if (!outsideRange) return "within noise";
+  if (Math.abs(delta.ms) <= VERDICT_IQR_FACTOR * Math.max(base.iqr, branch.iqr)) {
     return "within noise";
   }
-  if (branch.median > base.max) return "slower";
-  if (branch.median < base.min) return "faster";
-  return "within noise";
+  return delta.ms > 0 ? "slower" : "faster";
+}
+
+/** Pairs the per-block medians of both builds; empty unless every sample carries a block index. */
+export function pairBlocks(
+  base: ReadonlyArray<RunSample>,
+  branch: ReadonlyArray<RunSample>,
+): ReadonlyArray<BlockPair> {
+  const group = (samples: ReadonlyArray<RunSample>): Map<number, Array<number>> | undefined => {
+    const blocks = new Map<number, Array<number>>();
+    for (const sample of samples) {
+      if (sample.block === undefined) return undefined;
+      blocks.set(sample.block, [...(blocks.get(sample.block) ?? []), sample.wallMs]);
+    }
+    return blocks;
+  };
+  const baseBlocks = group(base);
+  const branchBlocks = group(branch);
+  if (baseBlocks === undefined || branchBlocks === undefined) return [];
+  return [...baseBlocks.entries()].flatMap(([block, values]) => {
+    const other = branchBlocks.get(block);
+    return other === undefined ? [] : [{ base: median(values), branch: median(other) }];
+  });
 }
 
 export interface ApiSummary {
@@ -559,6 +628,7 @@ export function analyzeWorkload(workload: WorkloadReport, traced: boolean): Work
   const verdict = timingVerdict(base.timing, branch.timing, {
     comparable: !differ && runsCleanly(base) && runsCleanly(branch),
     samples: Math.min(base.samples, branch.samples),
+    blocks: pairBlocks(workload.base, workload.branch),
   });
   const spans =
     base.spans === undefined || branch.spans === undefined

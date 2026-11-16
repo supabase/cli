@@ -110,7 +110,7 @@ function mockSpawner() {
   const encoder = new TextEncoder();
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
       // `ensureNetwork` probes with `network inspect` first; report it as missing so
       // `createShadowDatabase` actually reaches `network create` instead of short-circuiting.

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/cli";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
@@ -12,6 +12,7 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
+import { legacyProjectStateLayer } from "../../../shared/config/legacy-project-state.layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
@@ -28,7 +29,7 @@ import {
 } from "../../../shared/telemetry/event-catalog.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { stackCommand } from "./stack.command.ts";
-import { stackStopAliasCommand } from "../../../cli/root.ts";
+import { rootCommandForFeatures, stackStopAliasCommand } from "../../../cli/root.ts";
 
 const setup = () =>
   Effect.gen(function* () {
@@ -44,6 +45,7 @@ const setup = () =>
       output,
       layer: Layer.mergeAll(
         BunServices.layer,
+        legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
         CliOutput.layer(textCliOutputFormatter()),
         output.layer,
         analytics.layer,
@@ -87,7 +89,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommandRunId]).toEqual(expect.any(String));
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -116,7 +118,7 @@ describe("stack command telemetry", () => {
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -136,23 +138,26 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommand]).toBe("stack destroy");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
   it.effect("records the logs command identity when no stack exists", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
-        const command = stackCommand.pipe(Command.provide(fixture.layer));
+        const command = rootCommandForFeatures({ stackBackend: "stack" }).pipe(
+          Command.provide(mockTty({ stdinIsTty: true, stdoutIsTty: false })),
+          Command.provide(fixture.layer),
+        );
         return Effect.gen(function* () {
           yield* Command.runWith(command, { version: "0.0.0-test" })(["logs"]).pipe(Effect.flip);
           const event = fixture.analytics.captured.find(
             (candidate) => candidate.event === EventCommandExecuted,
           );
-          expect(event?.properties[PropCommand]).toBe("stack logs");
+          expect(event?.properties[PropCommand]).toBe("logs");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 
@@ -172,7 +177,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommand]).toBe("stack restart");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
     );
   });
 });

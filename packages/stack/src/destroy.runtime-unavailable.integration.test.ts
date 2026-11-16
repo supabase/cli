@@ -1,9 +1,9 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { create, discover } from "./effect.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
 // Strips the pinned `--host <endpoint>` prefix every invocation now carries, so a shim's own
 // `"$1"` checks see the real command unchanged; `DOCKER_HOST` below makes that prefix constant.

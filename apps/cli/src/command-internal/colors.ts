@@ -93,3 +93,7 @@ export function blue(text: string, stream: ColorStream = process.stderr): string
 export function dim(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("dim", text, { validateStream: false }) : text;
 }
+
+export function inverse(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("inverse", text, { validateStream: false }) : text;
+}

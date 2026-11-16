@@ -151,15 +151,13 @@ describe("services shared", () => {
     ]);
   });
 
-  test("resolves PG13/14/15 from the Dockerfile's pg15/pg14 stages, regardless of the slim flag", () => {
+  test("resolves PG14/15 from the Dockerfile's pg15/pg14 stages, regardless of the slim flag", () => {
     const pg15 = dockerfileServiceImageRaw("pg15");
     const pg14 = dockerfileServiceImageRaw("pg14");
-    expect(postgresImageForDbMajorVersion(13)).toBe(pg15);
     expect(postgresImageForDbMajorVersion(15)).toBe(pg15);
     expect(postgresImageForDbMajorVersion(14)).toBe(pg14);
     // Always the raw docker.io reference; slim translation is a separate, downstream concern
     // (`toSlimImage`/`slimImageForCurrentPin`), so this function itself doesn't read the flag.
-    expect(postgresImageForDbMajorVersion(13)).toBe(pg15);
     expect(postgresImageForDbMajorVersion(15)).toBe(pg15);
     expect(postgresImageForDbMajorVersion(14)).toBe(pg14);
   });

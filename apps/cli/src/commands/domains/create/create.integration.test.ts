@@ -151,7 +151,7 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
+  it.effect("fails with the entitlement_required envelope's entitlement on 400", () => {
     const { layer, out, analytics, api } = setup({
       apiStatus: 400,
       apiResponse: {
@@ -165,19 +165,18 @@ describe("domains create integration", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(domainsCreate(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
+      const error = yield* Effect.flip(domainsCreate(flags()));
+      expect(error).toMatchObject({
+        entitlement: {
+          feature: "custom_domain",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        },
+      });
       expect(api.requests).toHaveLength(2);
       expect(postedToInitialize(api)).toBe(true);
       assertPermissionDrift({ command: "domains create", requests: api.requests });
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "custom_domain", org_slug: "env-org" },
-        },
-      ]);
+      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

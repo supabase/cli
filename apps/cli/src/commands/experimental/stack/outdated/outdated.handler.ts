@@ -1,7 +1,10 @@
 import { defaultArtifactSelection } from "@supabase/stack/defaults";
 import { Effect, Ref, Schema } from "effect";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import {
+  loadStackConfig,
+  stackConfigSuggestion,
+} from "../../../../command-internal/stack-config.ts";
 import {
   LockResolutionError,
   outdatedServices,
@@ -12,7 +15,7 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { renderGlamourTable } from "../../../../output/glamour-table.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { mapTargetError, rejectStackOutput } from "../stack.shared.ts";
+import { mapTargetError, rejectStackOutput } from "../../../../command-internal/stack-target.ts";
 import { StackCommandOutdatedError } from "./outdated.errors.ts";
 
 const status = (row: OutdatedService) =>
@@ -79,6 +82,7 @@ export const stackOutdated = Effect.fn("experimental.stack.outdated")(function* 
           new StackCommandOutdatedError({
             reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
             message: error.message,
+            suggestion: stackConfigSuggestion(error),
             cause: error,
           }),
       ),
@@ -88,7 +92,8 @@ export const stackOutdated = Effect.fn("experimental.stack.outdated")(function* 
     if (rows === undefined)
       return yield* new StackCommandOutdatedError({
         reason: "invalid-config",
-        message: "No supabase/config.toml in this project, so there is no lock to inspect.",
+        message:
+          "No supabase/config.toml, config.json or config.jsonc in this project, so there is no lock to inspect.",
         suggestion: "Run supabase init, then supabase start to create supabase/supabase.lock.",
       });
 

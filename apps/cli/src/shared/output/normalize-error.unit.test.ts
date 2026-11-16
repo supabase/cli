@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
 import { CliError, Command } from "effect/cli";
 import { CliConfigParseError, CliProjectEnvParseError } from "@supabase/config";
+import { JsoncSyntaxError } from "@supabase/config/internal";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
 import { ssoCommand } from "../../commands/sso/sso.command.ts";
@@ -51,6 +52,19 @@ describe("normalizeCliError", () => {
       code: "CliConfigParseError",
       message:
         'failed to parse supabase/config.json: JSON Parse error: Unexpected identifier "<redacted>"',
+    });
+  });
+
+  test("CliConfigParseError with a JSONC syntax cause names the reason, line and column", () => {
+    const error = new CliConfigParseError({
+      path: "supabase/config.jsonc",
+      format: "json",
+      cause: new JsoncSyntaxError("Value expected", 3, 17),
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "CliConfigParseError",
+      message: "failed to parse supabase/config.jsonc: Value expected (line 3, column 17)",
     });
   });
 

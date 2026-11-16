@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
+import type { SecureRandom } from "effect/crypto";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -8,7 +9,7 @@ import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "../../../command-internal/global-flags.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
-import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { readDbConfig } from "../../../command-internal/db-config.read.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
 import { imageDigest, imageTag, isSlimImageRef } from "../../../shared/services/slim-images.ts";
@@ -83,7 +84,7 @@ export const declarativeSeamLayer = Layer.effect(
     const cliArgs = yield* CliArgs;
     const stackCatalogSetup = yield* StackCatalogSetup;
     const cliConfigValues = yield* CliConfigValues;
-    const context = yield* Effect.context<StartLocalDatabaseDeps>();
+    const context = yield* Effect.context<StartLocalDatabaseDeps | SecureRandom.SecureRandom>();
 
     return DeclarativeSeam.of({
       ensureLocalDatabaseStarted: Effect.gen(function* () {
@@ -143,7 +144,7 @@ export const declarativeSeamLayer = Layer.effect(
         if (backend.kind === "stack") return;
         return yield* Effect.scoped(
           Effect.gen(function* () {
-            const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
+            const toml = yield* readDbConfig(fs, path, cliSettings.workdir).pipe(
               Effect.provideService(CliConfigValues, cliConfigValues),
               Effect.mapError(
                 (error) =>

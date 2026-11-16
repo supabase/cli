@@ -1,16 +1,5 @@
-import {
-  Context,
-  Crypto,
-  Data,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Path,
-  Sink,
-  Stream,
-  Ref,
-} from "effect";
+import { Context, Data, Effect, Exit, FileSystem, Layer, Path, Sink, Stream, Ref } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
 import { ChildProcessSpawner } from "effect/process";
@@ -82,7 +71,8 @@ const makeCommandRunner = (options: {
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const http = yield* HttpClient.HttpClient;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     if (!isSafeId(options.stackId)) return yield* failure("Invalid stack identity");
@@ -146,7 +136,7 @@ const makeCommandRunner = (options: {
       yield* fs
         .makeDirectory(jobsRoot, { recursive: true, mode: 0o700 })
         .pipe(Effect.mapError(failure));
-      const jobId = yield* crypto.randomUUIDv4.pipe(Effect.mapError(failure));
+      const jobId = yield* crypto.uuidV4();
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const command = input.command;
@@ -202,7 +192,8 @@ const makeCommandRunner = (options: {
               ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Path.Path, path),
-                Effect.provideService(Crypto.Crypto, crypto),
+                Effect.provideService(SecureRandom.SecureRandom, crypto),
+                Effect.provideService(Digest.Digest, digest),
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                 Effect.provideService(HttpClient.HttpClient, http),
               );

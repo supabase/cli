@@ -28,6 +28,11 @@ describe("isDockerDaemonUnreachable", () => {
         "error during connect: in the default daemon configuration on Windows, the docker client must be run with elevated privileges to connect: open //./pipe/docker_engine: Access is denied.",
       ),
     ).toBe(true);
+    expect(
+      isDockerDaemonUnreachable(
+        "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory",
+      ),
+    ).toBe(true);
   });
 
   it("does not flag an unrelated inspect failure", () => {

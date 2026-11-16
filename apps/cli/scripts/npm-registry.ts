@@ -2,7 +2,7 @@ import { Data, Effect, Ref, Schedule, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 const POLL_INTERVAL = "10 seconds";
-const POLL_BUDGET = "15 minutes";
+const POLL_BUDGET = "30 minutes";
 const PROBE_TIMEOUT = "30 seconds";
 const RETRYABLE_CLIENT_STATUSES = new Set([404, 408, 429]);
 

@@ -96,7 +96,7 @@ export const linkCommand = Command.make("link", config).pipe(
             operationId: "v1-get-a-branch-config",
             kind: "best-effort",
             context:
-              "stack mode, supabase/config.toml exists, and the project lookup returns 404 (the ref is a branch)",
+              "stack mode, a project config file exists, and the project lookup returns 404 (the ref is a branch)",
           },
           {
             operationId: "v1-list-all-branches",

@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
@@ -41,6 +41,10 @@ describe("studio recipe", () => {
           const failure = yield* studio.start.pipe(Effect.flip);
           expect(failure.message).toContain("resolves inside the owned data root");
         }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+        ),
+      ),
   );
 });

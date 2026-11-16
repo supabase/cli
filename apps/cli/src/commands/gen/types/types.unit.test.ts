@@ -3,7 +3,6 @@ import { Effect, Exit } from "effect";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import {
   defaultSchemas,
-  rootCaBundle,
   localDbContainerId,
   localNetworkId,
   parseQueryTimeoutMillis,
@@ -85,9 +84,5 @@ describe("schema and id helpers", () => {
   it("truncates an over-long project id to 40 characters", () => {
     const longId = "a".repeat(60);
     expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
-  });
-
-  it("bundles the staging and production CA certificates", () => {
-    expect(rootCaBundle().length).toBeGreaterThan(0);
   });
 });

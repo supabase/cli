@@ -21,13 +21,17 @@ const parsed = <E, T>(parse: (input: E) => T | undefined) =>
       : Effect.succeed(value);
   });
 
-const parseUintUpTo = (max: bigint) => (raw: string) => {
-  const value = parseBase0Bigint(raw);
-  return value === undefined || value > max ? undefined : Number(value);
-};
+const parseUintUpTo =
+  (max: bigint, min = 0n) =>
+  (raw: string) => {
+    const value = parseBase0Bigint(raw);
+    return value === undefined || value < min || value > max ? undefined : Number(value);
+  };
 
-const integerUpTo = (max: number) => (value: number) =>
-  Number.isInteger(value) && value >= 0 && value <= max ? value : undefined;
+const integerUpTo =
+  (max: number, min = 0) =>
+  (value: number) =>
+    Number.isInteger(value) && value >= min && value <= max ? value : undefined;
 
 const parsePort = (raw: string) =>
   /^0[0-9_]/.test(raw) ? undefined : parseUintUpTo(BigInt(MAX_PORT))(raw);
@@ -40,10 +44,10 @@ const integerFromString = (parse: (raw: string) => number | undefined) =>
     }),
   );
 
-const integerFromNumber = (max: number) =>
+const integerFromNumber = (max: number, min: number) =>
   Schema.Finite.pipe(
     Schema.decodeTo(Schema.Finite, {
-      decode: parsed(integerUpTo(max)),
+      decode: parsed(integerUpTo(max, min)),
       encode: SchemaGetter.passthrough(),
     }),
   );
@@ -51,11 +55,12 @@ const integerFromNumber = (max: number) =>
 const integerSchemas = (
   parse: (raw: string) => number | undefined,
   max: number,
+  min = 0,
 ): CliConfigCodecSchemas<number> => {
   const fromString = integerFromString(parse);
   return {
     fromString,
-    fromDocument: Schema.Union([fromString, integerFromNumber(max)]),
+    fromDocument: Schema.Union([fromString, integerFromNumber(max, min)]),
   };
 };
 
@@ -81,7 +86,30 @@ export const boolSchemas: CliConfigCodecSchemas<boolean> = {
 
 export const uintSchemas = integerSchemas(parseUintUpTo(MAX_UINT), Number.MAX_SAFE_INTEGER);
 
+export const positiveIntSchemas = integerSchemas(
+  parseUintUpTo(MAX_UINT, 1n),
+  Number.MAX_SAFE_INTEGER,
+  1,
+);
+
 export const portSchemas = integerSchemas(parsePort, MAX_PORT);
+
+const parseFloatText = (raw: string) => {
+  const value = Number(raw);
+  return raw.trim() === "" || !Number.isFinite(value) ? undefined : value;
+};
+
+const floatFromString = Schema.String.pipe(
+  Schema.decodeTo(Schema.Finite, {
+    decode: parsed(parseFloatText),
+    encode: SchemaGetter.transform((value: number) => String(value)),
+  }),
+);
+
+export const floatSchemas: CliConfigCodecSchemas<number> = {
+  fromString: floatFromString,
+  fromDocument: Schema.Union([floatFromString, Schema.Finite]),
+};
 
 export const stringSchemas: CliConfigCodecSchemas<string> = {
   fromString: Schema.String,

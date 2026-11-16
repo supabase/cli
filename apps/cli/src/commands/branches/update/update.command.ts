@@ -6,7 +6,6 @@ import { compose } from "../../../command-internal/command-permissions/model.ts"
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { branchPrompt } from "../branches.prompt.ts";
 import { branchRef } from "../../../command-internal/branch-ref.resolver.ts";
-import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -66,7 +65,6 @@ export const branchesUpdateCommand = Command.make("update", config).pipe(
       projectRefPicker,
       branchPrompt,
       branchRef,
-      upgradeSuggestion,
       linkedProjectCache,
     ),
   ),

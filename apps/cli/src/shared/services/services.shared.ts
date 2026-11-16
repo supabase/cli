@@ -139,7 +139,7 @@ export function localServiceImagesFromDockerfile(
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
 /**
- * Resolves PG13/14/15 against the Dockerfile's `pg15`/`pg14` stages — the single version table,
+ * Resolves PG14/15 against the Dockerfile's `pg15`/`pg14` stages — the single version table,
  * generated (`pg15`) or hand-pinned (`pg14`, no slim build) from the stack catalog. Always the
  * raw docker.io reference; slim translation happens downstream via the same `toSlimImage("pg",
  * …)` path every other slim-capable service uses, since a slim-capable service's Dockerfile tag
@@ -147,7 +147,6 @@ const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages
  */
 export function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
   switch (majorVersion) {
-    case 13:
     case 15:
       return dockerfileServiceImageRaw("pg15");
     case 14:
@@ -267,6 +266,7 @@ export interface ServiceFetchConfig {
   readonly headers?: Readonly<Record<string, string | undefined>>;
   readonly api?: ApiClient;
   readonly tenantBaseUrlOverride?: string;
+  readonly maxRetries?: number;
 }
 
 /** @public */
@@ -445,12 +445,15 @@ const makeConfiguredApiClient = Effect.fn("Services.buildApiClient")(function* (
 ) {
   return (
     input.api ??
-    (yield* makeApiClient({
-      baseUrl: input.apiUrl,
-      accessToken: input.accessToken,
-      userAgent: input.userAgent,
-      headers: input.headers,
-    }))
+    (yield* makeApiClient(
+      {
+        baseUrl: input.apiUrl,
+        accessToken: input.accessToken,
+        userAgent: input.userAgent,
+        headers: input.headers,
+      },
+      { retry: { maxRetries: input.maxRetries } },
+    ))
   );
 });
 

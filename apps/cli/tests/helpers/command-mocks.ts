@@ -1,6 +1,6 @@
 import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 
-import { BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
 import {
   type ApiClient,
   makeApiClient,
@@ -427,6 +427,7 @@ export function mockCommandSettings(opts: {
   readonly userAgent?: string;
   readonly supabaseHome?: string;
   readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
+  readonly apiMaxRetries?: Option.Option<number>;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
     githubToken: opts.githubToken ?? Option.none(),
@@ -444,6 +445,7 @@ export function mockCommandSettings(opts: {
     workdirEnvValue:
       opts.workdirEnvValue === undefined ? Option.none() : Option.some(opts.workdirEnvValue),
     userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
+    apiMaxRetries: opts.apiMaxRetries ?? Option.none(),
   });
 }
 
@@ -538,6 +540,7 @@ export interface MockCommandPlatformApiOpts {
   readonly apiUrl?: string;
   readonly userAgent?: string;
   readonly accessToken?: string;
+  readonly clientMaxRetries?: number;
 }
 
 export interface MockCommandPlatformApiResult {
@@ -609,7 +612,7 @@ export function mockCommandPlatformApi(
         accessToken: opts.accessToken ?? VALID_TOKEN,
         userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
       },
-      { retry: { maxRetries: 0 } },
+      { retry: { maxRetries: opts.clientMaxRetries ?? 0 } },
     ),
   ).pipe(Layer.provide(httpClientLayer));
 
@@ -1014,7 +1017,7 @@ export function mockShadowContainerCliSpawner(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const args = command._tag === "StandardCommand" ? command.args : [];
+        const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
         spawned.push({ args });
         if (command._tag !== "StandardCommand") {
           return yield* new PlatformError(
@@ -1274,7 +1277,7 @@ export function mockDockerDaemonCliSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push(args);
 
       let exitCode = 0;
@@ -1478,8 +1481,8 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const httpClient = opts.api.httpClientLayer;
   const platform =
     opts.fileSystem === undefined
-      ? BunServices.layer
-      : Layer.merge(BunServices.layer, opts.fileSystem);
+      ? Layer.merge(BunServices.layer, BunCrypto.layer)
+      : Layer.mergeAll(BunServices.layer, BunCrypto.layer, opts.fileSystem);
 
   // When the caller doesn't expose an HttpClient layer, use a stub that fails
   // loudly if any code path tries to consume it. Always wiring HttpClient at
@@ -1525,7 +1528,9 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     opts.commandPath === undefined
       ? Layer.empty
-      : commandRuntimeLayer(opts.commandPath).pipe(Layer.provide(BunServices.layer)),
+      : commandRuntimeLayer(opts.commandPath).pipe(
+          Layer.provide([BunServices.layer, BunCrypto.layer]),
+        ),
     linkedProjectCache,
     telemetry,
     analytics,

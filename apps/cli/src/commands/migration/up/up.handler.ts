@@ -4,7 +4,7 @@ import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { readDbConfig } from "../../../command-internal/db-config.read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import {
@@ -54,7 +54,7 @@ const runUp = Effect.fnUntraced(function* (flags: MigrationUpFlags) {
       networkBanRemoval: yield* hostedMutationPreapproval,
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
-    const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
+    const toml = yield* readDbConfig(fs, path, cliSettings.workdir, ref);
     yield* Effect.annotateCurrentSpan({
       "db.conn_type": target.kind,
       "db.is_local": cfg.isLocal,

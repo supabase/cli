@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
 import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
@@ -8,7 +8,11 @@ import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import { stackRestart } from "./restart.handler.ts";
 import { destroyTestStack } from "../../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../../tests/helpers/stack-artifacts.ts";
@@ -16,7 +20,7 @@ import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const live = Layer.provideMerge(
   stackApiLayer,
-  Layer.merge(BunServices.layer, FetchHttpClient.layer),
+  Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
 );
 const MailpitInfo = Schema.Struct({ RuntimeStats: Schema.Struct({ SMTPAccepted: Schema.Finite }) });
 

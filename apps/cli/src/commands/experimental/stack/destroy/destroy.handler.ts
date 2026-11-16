@@ -15,7 +15,7 @@ import {
   StackTargetResolver,
   mapTargetError,
   validateStackTarget,
-} from "../stack.shared.ts";
+} from "../../../../command-internal/stack-target.ts";
 import type { StackDestroyFlags } from "./destroy.command.ts";
 import { StackCommandDestroyError } from "./destroy.errors.ts";
 

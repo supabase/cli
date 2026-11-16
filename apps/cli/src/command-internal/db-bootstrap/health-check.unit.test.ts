@@ -79,7 +79,7 @@ function mockHealthSpawner(
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       const binary = command._tag === "StandardCommand" ? command.command : "";
       // Mirrors a host where only one runtime is installed: `spawnContainerCli`
       // tries `docker` first and falls back to `podman` when the spawn fails.

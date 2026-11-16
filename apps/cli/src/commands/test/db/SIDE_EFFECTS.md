@@ -125,8 +125,9 @@ command (exit 1).
   (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`); remote (`--remote`)
   connections honor the URL's `sslmode` —
   `disable` → plaintext, `verify-ca` / `verify-full` → TLS **with** certificate
-  verification, and everything else (`prefer` / `require` / unset) → TLS **without**
-  verification (non-TLS fallbacks stripped).
+  verification, `require` → TLS **without** verification, and `prefer` / unset → TLS **without**
+  verification, retried in plaintext when the server declines TLS, the handshake fails, or
+  `pg_hba` rejects the TLS connection.
 - `--remote=<url>` accepts a WHATWG `postgres(ql)://…` URL; the deprecated `--db-url` also accepts the libpq
   keyword/value DSN form (`host=… dbname=… user=…`, incl. unix-socket paths), following libpq parsing. The `sslmode` and libpq `options` (Supavisor
   `?options=reference=<ref>`) parameters are preserved on both forms. A malformed URL or

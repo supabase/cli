@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Data, Effect, FileSystem, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -9,7 +9,7 @@ import { StackError } from "./Rpc.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { open as openEffect } from "./effect.ts";
 
-const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 class FixtureError extends Data.TaggedError("ShutdownFixtureError")<{ readonly message: string }> {}
 const fixturePath = fileURLToPath(new URL("../tests/host-process-fixture.ts", import.meta.url));
 

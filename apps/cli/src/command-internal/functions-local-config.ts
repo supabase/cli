@@ -26,6 +26,7 @@ export const functionsLocalConfigLoader: FunctionsLocalConfigLoader = {
         context.hostname,
         projectRoot,
         context.resolvedConfig.loaded.document,
+        context.resolvedConfig.hasConfigFile ? context.resolvedConfig.loaded.path : undefined,
       ).pipe(Effect.mapError(toError));
       return {
         loaded: { config: context.config, document: context.resolvedConfig.loaded.document },
@@ -35,7 +36,7 @@ export const functionsLocalConfigLoader: FunctionsLocalConfigLoader = {
           : undefined,
         projectEnvValues: context.projectEnvValues,
         // `context.projectId` is the id built for Docker naming/labels; `validated.projectId`
-        // exists only to feed `validateResolvedConfig`'s emptiness check.
+        // exists only to feed the `project_id` config check unit's emptiness check.
         projectId: context.projectId,
         denoVersion: validated.edgeRuntimeDenoVersion,
       };

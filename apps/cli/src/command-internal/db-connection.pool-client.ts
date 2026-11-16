@@ -30,6 +30,7 @@ export const makePoolSqlClient = (
 ): Effect.Effect<SqlClient.SqlClient, never, Reactivity.Reactivity> =>
   SqlClient.make({
     acquirer: Effect.succeed(new PoolConnection(pool)),
+    driver: "pg",
     compiler: PgClient.makeCompiler(),
     spanAttributes: [
       ["db.system.name", "postgresql"],

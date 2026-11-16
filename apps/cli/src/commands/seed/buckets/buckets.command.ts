@@ -19,8 +19,8 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 export type BucketsFlags = TargetFlagValues;
 
 export const bucketsCommand = Command.make("buckets").pipe(
-  Command.withDescription("Seed buckets declared in [storage.buckets]."),
-  Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
+  Command.withDescription("Seed buckets declared in storage.buckets."),
+  Command.withShortDescription("Seed buckets declared in storage.buckets"),
   withPermissions(storagePermissions([])),
   Command.withHandler(() =>
     Effect.gen(function* () {

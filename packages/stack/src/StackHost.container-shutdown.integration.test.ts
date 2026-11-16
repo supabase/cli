@@ -1,18 +1,8 @@
 import { PgClient } from "@effect/sql-pg";
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import {
-  Context,
-  Crypto,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Path,
-  Redacted,
-  Schedule,
-  Stream,
-} from "effect";
+import { Context, Effect, Exit, FileSystem, Layer, Path, Redacted, Schedule, Stream } from "effect";
+import { SecureRandom } from "effect/crypto";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- holds a raw TCP connection open across the owner stop.
@@ -120,9 +110,9 @@ it.live.skipIf(process.platform === "win32")(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-root-shutdown-" });
-        const stackId = `shared-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const stackId = `shared-${(yield* crypto.uuidV4()).replaceAll("-", "")}`;
         const dataA = yield* makeDockerDatabaseRoot("stack-root-shutdown-a-", stackId).pipe(
           Effect.flatMap(fs.realPath),
         );
@@ -344,7 +334,11 @@ it.live.skipIf(process.platform === "win32")(
         activeB = undefined;
         expect(yield* containers(stackId, dataB), "destroy removes B containers").toEqual([]);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -355,9 +349,9 @@ it.live.skipIf(process.platform === "win32")(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-registration-lost-" });
-        const stackId = `registration-lost-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const stackId = `registration-lost-${(yield* crypto.uuidV4()).replaceAll("-", "")}`;
         const dataRoot = yield* makeDockerDatabaseRoot(
           "stack-registration-lost-data-",
           stackId,
@@ -430,7 +424,11 @@ it.live.skipIf(process.platform === "win32")(
           "the data root is left in place for a successor or `destroy`",
         ).toBe(true);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -491,9 +489,9 @@ const losesRegistrationWhileStopRuns = (trigger: StopTrigger) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-registration-lost-gated-" });
-      const stackId = `registration-lost-gated-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+      const stackId = `registration-lost-gated-${(yield* crypto.uuidV4()).replaceAll("-", "")}`;
       const dataRoot = yield* makeDockerDatabaseRoot(
         "stack-registration-lost-gated-data-",
         stackId,
@@ -584,7 +582,11 @@ const losesRegistrationWhileStopRuns = (trigger: StopTrigger) =>
       ).toBe(true);
       expect(yield* containers(stackId, dataRoot), "the held stop still completed").toEqual([]);
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)));
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  );
 
 it.live.skipIf(process.platform === "win32")(
   "finishes a signal-driven stop and exits when the registration disappears mid-stop",
@@ -605,9 +607,9 @@ it.live.skipIf(process.platform === "win32")(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-root-lost-" });
-        const stackId = `state-root-lost-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const stackId = `state-root-lost-${(yield* crypto.uuidV4()).replaceAll("-", "")}`;
         const dataRoot = yield* makeDockerDatabaseRoot("stack-state-root-lost-data-", stackId).pipe(
           Effect.flatMap(fs.realPath),
         );
@@ -679,7 +681,7 @@ it.live.skipIf(process.platform === "win32")(
         const reclaimedBase = yield* fs.makeTempDirectoryScoped({
           prefix: "stack-state-root-lost-reclaim-",
         });
-        const reclaimedStackId = `state-root-lost-reclaim-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const reclaimedStackId = `state-root-lost-reclaim-${(yield* crypto.uuidV4()).replaceAll("-", "")}`;
         const reclaimedDataRoot = yield* makeDockerDatabaseRoot(
           "stack-state-root-lost-reclaim-data-",
           reclaimedStackId,
@@ -712,7 +714,11 @@ it.live.skipIf(process.platform === "win32")(
           Effect.timeout("15 seconds"),
         );
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );
 
@@ -723,9 +729,9 @@ it.live.skipIf(process.platform === "win32")(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-pinned-postgres-" });
-        const stackId = `pinned-postgres-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const stackId = `pinned-postgres-${(yield* crypto.uuidV4()).replaceAll("-", "")}`;
         const dataRoot = yield* makeDockerDatabaseRoot("stack-pinned-postgres-data-", stackId).pipe(
           Effect.flatMap(fs.realPath),
         );
@@ -802,6 +808,10 @@ it.live.skipIf(process.platform === "win32")(
         const cut = yield* sql.unsafe("SELECT 1").pipe(Effect.timeout("5 seconds"), Effect.exit);
         expect(Exit.isFailure(cut), "the pinned connection is gone with the owner").toBe(true);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+      ),
+    ),
   { timeout: 180_000 },
 );

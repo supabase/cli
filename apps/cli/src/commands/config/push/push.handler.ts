@@ -12,7 +12,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { withAnnouncedTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { assertDecryptableSecrets } from "../../../command-internal/db-config.toml-read.ts";
+import { assertDecryptableSecrets } from "../../../command-internal/db-config.read.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import {
   sanitizeInlineName,
@@ -240,7 +240,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // call); the matching `[remotes.<name>]` overlay merges before decode in the same call.
     //
     // Needs the fully decoded document and value origins, which the tolerant
-    // `db-config.toml-read.ts` subtree reader does not produce.
+    // `db-config.read.ts` subtree reader does not produce.
     const { loaded, lookup, dotenvPrivateKeys, originFor } = yield* loadPushConfig(
       cliSettings,
       ref,
@@ -253,6 +253,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       );
     }
     const config = loaded.config;
+    const configPath = relativeConfigPath(cliSettings.workdir, loaded.path);
 
     // 3. Assert every `encrypted:` value in the document can be decrypted, even fields `config
     // push` never itself pushes — this must run before the cost matrix or any service is touched.
@@ -547,6 +548,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
             extras: encoded.extras,
             forced: encoded.forced,
             originFor,
+            configPath,
           }),
           "stderr",
         );
@@ -672,6 +674,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         ? []
         : secrets.filter((secret) => secret.status === "not_set").map((secret) => secret.path),
       remoteOnly: plan.remoteOnly,
+      configPath,
     });
     if (notes !== "") {
       yield* output.raw(notes, "stderr");

@@ -13,6 +13,7 @@ import {
 } from "../command-internal/global-flags.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import {
+  PropConfigKey,
   PropErrorCategory,
   PropErrorFingerprint,
   PropErrorKind,
@@ -24,8 +25,11 @@ import {
   PropWorkflow,
 } from "../shared/telemetry/event-catalog.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
+import { BranchesCreateUnexpectedStatusError } from "../commands/branches/branches.errors.ts";
 import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
+import { CliConfigValueError } from "../config/cli-config.errors.ts";
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
+import { DbConfigLoginRoleMissingPrivilegedRoleError } from "../command-internal/db-config.errors.ts";
 import { StdoutClosedError } from "../shared/output/errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
@@ -200,6 +204,95 @@ describe("withCommandTelemetry", () => {
           expect(properties?.[PropOrioleDb]).toBe(true);
         }),
       ),
+    );
+  });
+
+  describe("config_key", () => {
+    const capturedEvent = (body: Effect.Effect<unknown, CliConfigValueError | DbDumpRunError>) => {
+      const analytics = mockContextualAnalytics();
+
+      return body.pipe(
+        withCommandTelemetry(),
+        Effect.provide(
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--local"]) }),
+            commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
+        ),
+        Effect.exit,
+        Effect.map((exit) => ({ exit, properties: analytics.captured[0]?.properties })),
+      );
+    };
+
+    it.live("emits the recorded config key on an invalid_config failure", () =>
+      Effect.gen(function* () {
+        const { exit, properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port" }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new CliConfigValueError({ path: "db.port", tier: "config", message: "invalid" }),
+              ),
+            ),
+          ),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(properties).toMatchObject({
+          exit_code: 1,
+          error_category: "invalid_config",
+          [PropConfigKey]: "db.port",
+        });
+      }),
+    );
+
+    it.live("omits a config key that a later config outcome cleared", () =>
+      Effect.gen(function* () {
+        const { properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port" }).pipe(
+            Effect.andThen(recordCommandTelemetry({ [PropConfigKey]: undefined })),
+            Effect.andThen(
+              Effect.fail(
+                new CliConfigValueError({ path: "db.port", tier: "config", message: "invalid" }),
+              ),
+            ),
+          ),
+        );
+
+        expect(properties).toMatchObject({ exit_code: 1, error_category: "invalid_config" });
+        expect(properties).not.toHaveProperty(PropConfigKey);
+      }),
+    );
+
+    it.live("omits the recorded config key from a failure in another category", () =>
+      Effect.gen(function* () {
+        const { properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port", [PropOrioleDb]: true }).pipe(
+            Effect.andThen(Effect.fail(new DbDumpRunError({ message: "dump failed" }))),
+          ),
+        );
+
+        expect(properties).toMatchObject({
+          exit_code: 1,
+          error_category: "db_connection",
+          [PropOrioleDb]: true,
+        });
+        expect(properties).not.toHaveProperty(PropConfigKey);
+      }),
+    );
+
+    it.live("omits the recorded config key from a successful run", () =>
+      Effect.gen(function* () {
+        const { exit, properties } = yield* capturedEvent(
+          recordCommandTelemetry({ [PropConfigKey]: "db.port", [PropOrioleDb]: true }),
+        );
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(properties).toMatchObject({ exit_code: 0, [PropOrioleDb]: true });
+        expect(properties).not.toHaveProperty(PropConfigKey);
+      }),
     );
   });
 
@@ -388,9 +481,9 @@ describe("withCommandTelemetry", () => {
             mockProcessControl().layer,
             mockOutput({ format: "text" }).layer,
             Stdio.layerTest({
-              args: Effect.succeed(["stack", "logs", "-f", "--service", "database"]),
+              args: Effect.succeed(["fixture", "watch", "-f", "--service", "database"]),
             }),
-            commandRuntimeLayer(["stack", "logs"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["fixture", "watch"]).pipe(Layer.provide(BunCrypto.layer)),
           ),
         ),
         Effect.tap(() =>
@@ -995,6 +1088,38 @@ describe("withCommandTelemetry", () => {
     );
   });
 
+  it.live("attributes a failure that names its project to that project group", () => {
+    const analytics = mockContextualAnalytics();
+    const failure = new DbConfigLoginRoleMissingPrivilegedRoleError({
+      message: "missing role",
+      suggestion: "use a password",
+      projectRef: "abcdefghijklmnopqrst",
+    });
+
+    return Effect.fail(failure).pipe(
+      withCommandTelemetry(),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["migration", "list"]) }),
+          commandRuntimeLayer(["migration", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
+      Effect.exit,
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            groups: { project: "abcdefghijklmnopqrst" },
+            [PropErrorFingerprint]: "tag:DbConfigLoginRoleMissingPrivilegedRoleError",
+          });
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
   it.live("preserves the command failure when telemetry capture defects", () => {
     const failure = new DbDumpRunError({ message: "command failure" });
 
@@ -1078,6 +1203,37 @@ describe("withCommandTelemetry", () => {
             error_fingerprint: "tag:DbLintFailOnError",
             has_suggestion: false,
             suggestion_type: "none",
+          });
+        }),
+      ),
+    );
+  });
+
+  it.live("classifies a config validate run that reports problems as a config error", () => {
+    const analytics = mockContextualAnalytics();
+    const processControl = mockProcessControl();
+
+    return Effect.gen(function* () {
+      const pc = yield* ProcessControl;
+      yield* pc.setExitCode(1);
+    }).pipe(
+      withCommandTelemetry(),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["config", "validate"]) }),
+          commandRuntimeLayer(["config", "validate"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "invalid_config",
+            error_fingerprint: "tag:ConfigValidateProblemsError",
           });
         }),
       ),
@@ -1291,6 +1447,56 @@ describe("withCommandTelemetry", () => {
         }),
       ),
       Effect.asVoid,
+    );
+  });
+
+  describe("plan-gated denials", () => {
+    const gatedFailure = new BranchesCreateUnexpectedStatusError({
+      status: 402,
+      body: "{}",
+      message: "unexpected create branch status 402",
+      entitlement: {
+        feature: "branching_limit",
+        upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+      },
+    });
+    const runGated = () => {
+      const analytics = mockContextualAnalytics();
+      return Effect.fail(gatedFailure).pipe(
+        withCommandTelemetry(),
+        Effect.provide(
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "json" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["branches", "create"]) }),
+            commandRuntimeLayer(["branches", "create"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
+        ),
+        Effect.exit,
+        Effect.map(() => analytics.captured),
+      );
+    };
+
+    it.live("fires cli_upgrade_suggested once, before cli_command_executed", () =>
+      runGated().pipe(
+        Effect.tap((captured) =>
+          Effect.sync(() => {
+            expect(captured.map((event) => event.event)).toEqual([
+              "cli_upgrade_suggested",
+              "cli_command_executed",
+            ]);
+            expect(captured[0]?.properties).toMatchObject({
+              feature_key: "branching_limit",
+              org_slug: "env-org",
+            });
+            expect(captured[1]?.properties).toMatchObject({
+              exit_code: 1,
+              error_category: "plan_limit",
+            });
+          }),
+        ),
+      ),
     );
   });
 

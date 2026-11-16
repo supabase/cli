@@ -7,7 +7,7 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { bold } from "./colors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { DbConnection } from "./db-connection.service.ts";
-import { loadProjectEnvValues } from "./db-config.toml-read.ts";
+import { loadProjectEnvValues } from "./db-config.read.ts";
 import { announcedTarget, hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
 import { readMigrationTable } from "./migration-history.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";

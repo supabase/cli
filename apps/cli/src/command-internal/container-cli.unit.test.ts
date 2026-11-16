@@ -6,6 +6,7 @@ import {
   containerCliExitCode,
   containerRuntimeNotFoundMessage,
   describeContainerCliFailure,
+  dockerSupportsHealthStartInterval,
   dockerSupportsVolumePruneAllFlag,
   isContainerNotFoundMessage,
   spawnContainerCli,
@@ -17,7 +18,11 @@ function mockSpawner(
     readonly bothMissing?: boolean;
     readonly exitCode?: number;
     readonly stdout?: string;
-    readonly apiVersions?: { readonly client: string; readonly server: string };
+    readonly apiVersions?: {
+      readonly clientDefault?: string;
+      readonly client: string;
+      readonly server: string;
+    };
   } = {},
 ) {
   const spawned: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
@@ -25,7 +30,7 @@ function mockSpawner(
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       const cmd = command._tag === "StandardCommand" ? command.command : "";
-      const args = command._tag === "StandardCommand" ? command.args : [];
+      const args = command._tag === "StandardCommand" ? command.args.map(String) : [];
       spawned.push({ command: cmd, args });
 
       if ((opts.dockerMissing && cmd === "docker") || opts.bothMissing === true) {
@@ -40,6 +45,10 @@ function mockSpawner(
       const stdout =
         opts.apiVersions !== undefined && args[0] === "version"
           ? (args[args.indexOf("--format") + 1] ?? "")
+              .replaceAll(
+                "{{.Client.DefaultAPIVersion}}",
+                opts.apiVersions.clientDefault ?? opts.apiVersions.client,
+              )
               .replaceAll("{{.Client.APIVersion}}", opts.apiVersions.client)
               .replaceAll("{{.Server.APIVersion}}", opts.apiVersions.server)
           : opts.stdout;
@@ -229,6 +238,57 @@ describe("container CLI process spans", () => {
   );
 });
 
+describe("dockerSupportsHealthStartInterval", () => {
+  it.live.each([
+    { name: "both ends at the 1.44 minimum", client: "1.44", server: "1.44" },
+    { name: "a new client against a newer daemon", client: "1.47", server: "1.56" },
+    { name: "a three-part API version", client: "1.44.0", server: "1.44.0" },
+  ])("returns true for $name", ({ client, server }) => {
+    const mock = mockSpawner({ apiVersions: { client, server } });
+    return dockerSupportsHealthStartInterval(mock.spawner).pipe(
+      Effect.map((supported) => {
+        expect(supported).toBe(true);
+      }),
+    );
+  });
+
+  it.live.each([
+    {
+      name: "a client below API 1.44",
+      options: { apiVersions: { client: "1.43", server: "1.56" } },
+    },
+    {
+      name: "an old client with DOCKER_API_VERSION forced up",
+      options: { apiVersions: { clientDefault: "1.43", client: "1.44", server: "1.56" } },
+    },
+    {
+      name: "a daemon below API 1.44",
+      options: { apiVersions: { client: "1.56", server: "1.43" } },
+    },
+    {
+      name: "a docker shim printing Podman's own version",
+      options: { apiVersions: { client: "6.1.3", server: "6.1.3" } },
+    },
+    {
+      name: "a shim whose major starts with a 1",
+      options: { apiVersions: { client: "10.1.0", server: "10.1.0" } },
+    },
+    { name: "fewer than three versions", options: { stdout: "1.56 1.56" } },
+    {
+      name: "the version command exiting non-zero",
+      options: { exitCode: 1, stdout: "1.56 1.56 1.56" },
+    },
+    { name: "docker not being installed", options: { dockerMissing: true } },
+  ])("returns false for $name", ({ options }) => {
+    const mock = mockSpawner(options);
+    return dockerSupportsHealthStartInterval(mock.spawner).pipe(
+      Effect.map((supported) => {
+        expect(supported).toBe(false);
+      }),
+    );
+  });
+});
+
 describe("dockerSupportsVolumePruneAllFlag", () => {
   it.live(
     "returns true when the client and daemon both report an API version at or above 1.42",
@@ -240,7 +300,11 @@ describe("dockerSupportsVolumePruneAllFlag", () => {
           expect(mock.spawned).toEqual([
             {
               command: "docker",
-              args: ["version", "--format", "{{.Client.APIVersion}} {{.Server.APIVersion}}"],
+              args: [
+                "version",
+                "--format",
+                "{{.Client.DefaultAPIVersion}} {{.Client.APIVersion}} {{.Server.APIVersion}}",
+              ],
             },
           ]);
         }),
@@ -266,8 +330,8 @@ describe("dockerSupportsVolumePruneAllFlag", () => {
       name: "versions that only compare above 1.42 lexicographically",
       options: { apiVersions: { client: "1.9", server: "1.9" } },
     },
-    { name: "a single version instead of a client and daemon pair", options: { stdout: "1.51" } },
-    { name: "more than two versions", options: { stdout: "1.51 1.51 1.51" } },
+    { name: "a single version", options: { stdout: "1.51" } },
+    { name: "more than three versions", options: { stdout: "1.51 1.51 1.51 1.51" } },
     { name: "empty output", options: { stdout: "" } },
   ])("returns false for $name", ({ options }) => {
     const mock = mockSpawner(options);

@@ -3,6 +3,7 @@ import { projectConfigApiBlockKeys } from "@supabase/config/internal";
 
 import type { CliConfigKeyOrigin } from "../../config/cli-config-key.ts";
 import { BRANCH_UUID_PATTERN } from "../../command-internal/ref-patterns.ts";
+import { configFileName, DEFAULT_CONFIG_FILE } from "../../command-internal/config-advice.ts";
 import { sanitizeInlineName } from "../../command-internal/http-errors.ts";
 
 /**
@@ -175,13 +176,13 @@ export function configChangePayloadEntry(
   };
 }
 
-function renderLocalChangeValue(change: ConfigChange): string {
+function renderLocalChangeValue(change: ConfigChange, configPath: string): string {
   const value = configRenderValue(change.local, "(unset)");
   // A populated value on an undeclared path is the schema default a `config push` would write.
   // Say so, or "[remote-only]" reads as "exists only remotely", which is false when a schema
   // default exists.
   return change.local !== undefined && !change.declared
-    ? `${value} (schema default — not declared in config.toml)`
+    ? `${value} (schema default — not declared in ${configFileName(configPath)})`
     : value;
 }
 
@@ -193,6 +194,7 @@ function renderLocalChangeValue(change: ConfigChange): string {
 export function configRenderChangeLines(
   changes: ReadonlyArray<ConfigChange>,
   originFor?: ConfigEnvOriginLookup,
+  configPath = DEFAULT_CONFIG_FILE.path,
 ): string {
   return changes
     .map((change) => {
@@ -205,7 +207,7 @@ export function configRenderChangeLines(
             : ` (from env ${sanitizeInlineName(change.envVariables.join(", "))})`;
       const block = [
         `${configRenderPath(change.path)} [${CONFIG_CLASS_LABELS[change.class]}]`,
-        `  local:  ${renderLocalChangeValue(change)}${env}`,
+        `  local:  ${renderLocalChangeValue(change, configPath)}${env}`,
         `  remote: ${configRenderValue(change.remote, "(not returned)")}`,
       ].join("\n");
       return `${block}\n\n`;

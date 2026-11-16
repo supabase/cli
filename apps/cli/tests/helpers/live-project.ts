@@ -19,6 +19,8 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { getDomain } from "tldts";
 
+import { kongAuthHeaders } from "../../src/command-internal/kong-auth.ts";
+import { extractServiceKeys } from "../../src/command-internal/tenant-keys.ts";
 import {
   deriveLiveProjectHost,
   keepLiveProject,
@@ -37,7 +39,6 @@ const POLL_TIMEOUT = "5 minutes";
 
 type Project = OperationOutput<"v1GetProject">;
 type Organization = OperationOutput<"v1ListAllOrganizations">[number];
-type ApiKey = OperationOutput<"v1GetProjectApiKeys">[number];
 export type PoolerConfig = OperationOutput<"v1GetPoolerConfig">[number];
 type LiveApi = Effect.Success<ReturnType<typeof makeApiClient>>;
 type Region =
@@ -386,18 +387,12 @@ function keysReadiness(
   return api.v1.getProjectApiKeys({ ref, reveal: true }).pipe(
     Effect.mapError((cause) => classifyPollError("project API keys", cause)),
     Effect.flatMap((keys) => {
-      const keyValue = (key: ApiKey): string | undefined => key.api_key ?? undefined;
-      const anonKey = keys.find((key) => key.name === "anon");
-      const serviceRoleKey =
-        keys.find((key) => key.name === "service_role") ??
-        keys.find((key) => key.api_key?.startsWith("sb_secret_"));
-      const anon = anonKey === undefined ? undefined : keyValue(anonKey);
-      const service = serviceRoleKey === undefined ? undefined : keyValue(serviceRoleKey);
-      return anon === undefined || service === undefined
+      const { anon, serviceRole } = extractServiceKeys(keys);
+      return anon === "" || serviceRole === ""
         ? Effect.fail(
             new LiveTransientPoll({ phase: "project API keys", cause: "keys incomplete" }),
           )
-        : Effect.succeed({ anonKey: anon, serviceRoleKey: service });
+        : Effect.succeed({ anonKey: anon, serviceRoleKey: serviceRole });
     }),
   );
 }
@@ -495,7 +490,7 @@ function createStorageBucket(
         `https://${ref}.${host}/storage/v1/bucket`,
       ).pipe(
         HttpClientRequest.setHeaders({
-          Authorization: `Bearer ${serviceRoleKey}`,
+          ...kongAuthHeaders(serviceRoleKey),
           "Content-Type": "application/json",
         }),
         HttpClientRequest.bodyJson({ id: bucket, name: bucket, public: false }),

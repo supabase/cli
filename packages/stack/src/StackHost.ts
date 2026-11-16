@@ -1,4 +1,5 @@
 import {
+  NodeCrypto,
   NodeHttpClient,
   NodeHttpServer,
   NodeHttpServerRequest,
@@ -7,7 +8,6 @@ import {
 import {
   Context,
   Cause,
-  Crypto,
   Data,
   DateTime,
   Deferred,
@@ -24,6 +24,7 @@ import {
   Semaphore,
   Path,
 } from "effect";
+import { SecureRandom } from "effect/crypto";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as NetAddress from "effect/net/NetAddress";
@@ -576,7 +577,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
             port: control.port,
             release: options.release ?? (yield* currentRelease),
           };
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const secret = Array.from(yield* crypto.randomBytes(32), (byte) =>
             byte.toString(16).padStart(2, "0"),
           ).join("");
@@ -662,8 +663,10 @@ export const runStackHost = Effect.fn("StackHost.run")(
       }),
     ).pipe(
       Effect.provide(
-        Layer.merge(
+        Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layerSecureRandom,
+          NodeCrypto.layerDigest,
           // Idle sockets close before the 5 s keep-alive of the stack's shortest-lived upstream.
           Layer.provide(
             NodeHttpClient.layerNodeHttpNoAgent,

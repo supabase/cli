@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { readLock } from "@supabase/stack/effect";
 import {
@@ -133,7 +133,7 @@ describe("experimental stack update", () => {
       expect(output.stdoutText).toContain("1 changed, 11 unchanged");
       expect(host.requests.filter((path) => path.includes("/releases/rest-"))).toEqual([]);
       expect(host.requests.filter((path) => path.endsWith(".tar.zst"))).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live(
@@ -178,7 +178,7 @@ describe("experimental stack update", () => {
             ],
           },
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("rewrites the lock under CI, which does not freeze an explicit update", () =>
@@ -192,7 +192,7 @@ describe("experimental stack update", () => {
       yield* update(root, host, ["auth"], { ci: true }).run;
 
       expect((yield* readServices(root)).auth.resolved.revision).toBe(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("resolves every service when the project has no lock yet", () =>
@@ -210,7 +210,7 @@ describe("experimental stack update", () => {
       expect(yield* fs.readFileString(`${root}/supabase/.gitignore`)).toContain(
         ".supabase.lock.lease",
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("leaves the lock byte for byte alone when every entry already answers the config", () =>
@@ -233,7 +233,7 @@ describe("experimental stack update", () => {
       expect(result?.type === "success" ? result.data : undefined).toMatchObject({
         lock: { written: false, changed: [], stale: [] },
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   describe("a service whose specifier changed since the lock was written", () => {
@@ -262,7 +262,7 @@ describe("experimental stack update", () => {
         expect((yield* readServices(root)).rest.resolved.revision).toBe(1);
         expect(output.stdoutText).toContain(`${UPSTREAM}-r0 → ${UPSTREAM}-r1`);
         expect(output.stdoutText).not.toContain("is stale");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
 
     it.live("is reported and left as written when another service is named", () =>
@@ -285,7 +285,7 @@ describe("experimental stack update", () => {
         expect(lock).toEqual({
           lock: expect.objectContaining({ unchanged: expect.not.arrayContaining(["rest"]) }),
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   });
 
@@ -310,7 +310,7 @@ describe("experimental stack update", () => {
       expect(error).toMatchObject({ reason: "invalid-config" });
       expect(error.message).toContain("must remain within the project directory");
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails on an unknown service naming the valid ones, and writes nothing", () =>
@@ -331,7 +331,7 @@ describe("experimental stack update", () => {
       expect(error.message).toContain(artifactServiceKinds().join(", "));
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       expect(host.requests).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });
 
@@ -375,10 +375,10 @@ describe("experimental stack update and saved stack data", () => {
         yield* run;
 
         expect(stackWarnings(output)).toEqual([
-          `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data was initialized by stock PostgreSQL build ${OLDER_BUILD}, but stock PostgreSQL build ${BUILT} was requested; keep this data by pinning \`[local.services.database] version = "${OLDER_BUILD}"\` in supabase/config.toml, or ${destroy(stackId)}`,
+          `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data was initialized by stock PostgreSQL build ${OLDER_BUILD}, but stock PostgreSQL build ${BUILT} was requested; keep this data by pinning \`local.services.database.version\` to \`"${OLDER_BUILD}"\` in your config file, or ${destroy(stackId)}`,
         ]);
         expect((yield* readServices(root)).database.resolved.upstreamVersion).toBe(BUILT);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("stays quiet when only a revision of the build that initialized the data moves", () =>
@@ -402,7 +402,7 @@ describe("experimental stack update and saved stack data", () => {
       expect((yield* readServices(root)).database.resolved.revision).toBe(
         selection.database.revision,
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("stays quiet when the lock is already up to date", () =>
@@ -421,7 +421,7 @@ describe("experimental stack update and saved stack data", () => {
 
       expect(output.stdoutText).toContain("already up to date");
       expect(stackWarnings(output)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("still updates the lock when the saved stacks cannot be read", () =>
@@ -438,6 +438,6 @@ describe("experimental stack update and saved stack data", () => {
 
       expect(stackWarnings(output)).toEqual([]);
       expect((yield* readServices(root)).database.resolved.upstreamVersion).toBe(BUILT);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });

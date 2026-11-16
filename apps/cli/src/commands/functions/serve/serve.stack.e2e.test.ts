@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   create as createStack,
@@ -72,6 +72,9 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
       databaseUrl: Deno.env.get("SUPABASE_DB_URL") ?? null,
     }));`,
   );
+  /* serve re-reads this file, so it must hold the member's saved env. */
+  if (included)
+    yield* fs.writeFileString(path.join(functionsRoot, ".env"), "CUSTOM_VALUE=original\n");
   yield* fs.writeFileString(path.join(root, "override.env"), "CUSTOM_VALUE=overridden\n");
   yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
   yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
@@ -109,6 +112,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
               functionsRoot,
               jwtSecret,
               verifyJwt: true,
+              functions: {},
               env: { CUSTOM_VALUE: "original" },
             },
             endpoints: { http: { port: "auto" as const } },
@@ -129,9 +133,10 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
   if (rest === undefined || database === undefined)
     return yield* Effect.die("fixture services missing");
   const apiUrl = (yield* rest.credentials()).apiUrl;
-  const databaseUrl = (yield* database.credentials({ from: "runtime" })).databaseUrl;
-  if (apiUrl === undefined || databaseUrl === undefined)
+  const { databaseUrl, functionsDatabaseUrl } = yield* database.credentials({ from: "runtime" });
+  if (apiUrl === undefined || databaseUrl === undefined || functionsDatabaseUrl === undefined)
     return yield* Effect.die("fixture URLs missing");
+  expect(new URL(functionsDatabaseUrl).username).toBe("postgres");
   if (!included) {
     const httpPort = (yield* rest.status).endpoints.find(({ name }) => name === "http")?.port;
     if (httpPort === undefined) return yield* Effect.die("API port missing");
@@ -147,7 +152,15 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
       endpoints: { http: { port: httpPort } },
     });
   }
-  return { root, home, stack, services: yield* stack.services.list, apiUrl, databaseUrl };
+  return {
+    root,
+    home,
+    stack,
+    services: yield* stack.services.list,
+    apiUrl,
+    databaseUrl,
+    functionsDatabaseUrl,
+  };
 });
 
 const serve = Effect.fn("FunctionsServeE2e.serve")(function* (
@@ -200,7 +213,7 @@ const payload = Effect.fn("FunctionsServeE2e.payload")(function* (
   return yield* Schema.decodeUnknownEffect(Payload)(yield* response.json);
 });
 
-const layer = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
+const layer = Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer);
 
 /**
  * Follows a service's statuses from the first one it delivers and returns a fiber that resolves
@@ -245,7 +258,7 @@ describe("functions serve (stack e2e)", () => {
       `attaches and restores temporary overrides on the ${runtime} Functions member`,
       () =>
         Effect.gen(function* () {
-          const { root, home, stack, services, apiUrl, databaseUrl } = yield* fixture(
+          const { root, home, stack, services, apiUrl, functionsDatabaseUrl } = yield* fixture(
             runtime,
             true,
           );
@@ -272,7 +285,7 @@ describe("functions serve (stack e2e)", () => {
             value: "original",
             anon: true,
             service: true,
-            databaseUrl,
+            databaseUrl: functionsDatabaseUrl,
           });
           const fs = yield* FileSystem.FileSystem;
           const sourcePath = `${root}/supabase/functions/hello/index.ts`;
@@ -299,7 +312,7 @@ describe("functions serve (stack e2e)", () => {
             value: "overridden",
             anon: true,
             service: true,
-            databaseUrl,
+            databaseUrl: functionsDatabaseUrl,
           });
           yield* interrupt(overridden);
           // The override's own restart is the only launch before its configuration is running.
@@ -324,10 +337,8 @@ describe("functions serve (stack e2e)", () => {
       `removes temporary ${runtime} Functions and keeps it excluded on Ctrl-C`,
       () =>
         Effect.gen(function* () {
-          const { root, home, stack, services, apiUrl, databaseUrl } = yield* fixture(
-            runtime,
-            false,
-          );
+          const { root, home, stack, services, apiUrl, databaseUrl, functionsDatabaseUrl } =
+            yield* fixture(runtime, false);
           const composition = yield* stack.composition.describe;
           const startedAt = yield* postmasterStartTime(stack, databaseUrl);
           const child = yield* serve(root, home);
@@ -335,7 +346,7 @@ describe("functions serve (stack e2e)", () => {
             value: null,
             anon: true,
             service: true,
-            databaseUrl,
+            databaseUrl: functionsDatabaseUrl,
           });
           expect(yield* stack.composition.describe).toEqual(composition);
           expect(yield* stack.services.list).toHaveLength(services.length + 1);

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { holdLock, readLock, writeLock } from "@supabase/stack/effect";
 import { catalogPins, type ServiceKind } from "@supabase/stack/internal/artifacts";
@@ -130,7 +130,7 @@ describe("experimental stack outdated", () => {
         expect(yield* fs.readFileString(lockPath(root))).toBe(written);
         expect(host.requests.filter((path) => path.endsWith(".tar.zst"))).toEqual([]);
         expect(host.requests.filter((path) => path.includes("/releases/rest-"))).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("reports a transient release failure on its row and still succeeds", () =>
@@ -149,7 +149,7 @@ describe("experimental stack outdated", () => {
       expect(output.stdoutText).toContain("probe failed");
       expect(output.stdoutText).toContain("auth:");
       expect(output.stdoutText).toContain(`${UPSTREAM}-r1`);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("reports a release outage on a linked entry as a failed probe and keeps its pin", () =>
@@ -200,7 +200,7 @@ describe("experimental stack outdated", () => {
         ]),
       });
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.live("fails with guidance when the project has no lock yet", () =>
@@ -215,6 +215,6 @@ describe("experimental stack outdated", () => {
       expect(error).toMatchObject({ reason: "lock" });
       expect(yield* fs.exists(lockPath(root))).toBe(false);
       expect(yield* fs.exists(leasePath(root))).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 });

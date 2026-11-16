@@ -33,8 +33,8 @@ export interface PgConnInput {
   readonly runtimeParams?: Readonly<Record<string, string>>;
   /**
    * libpq `sslmode`, parsed from a `--db-url` query string. Controls whether the driver layer
-   * negotiates TLS and verifies the server certificate. Absent → TLS without certificate
-   * verification (libpq's `prefer`/`require` default).
+   * negotiates TLS and verifies the server certificate. Absent → TLS first, then plaintext if
+   * that fails (libpq's `prefer` default).
    */
   readonly sslmode?: string;
   /**

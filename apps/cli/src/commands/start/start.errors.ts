@@ -25,6 +25,7 @@ export class StartWorkdirError extends Data.TaggedError("StartWorkdirError")<{
 /** Loading `config.toml` failed for a reason other than the file being absent (malformed TOML). */
 export class StartConfigLoadError extends Data.TaggedError("StartConfigLoadError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;

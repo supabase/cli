@@ -171,7 +171,14 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
         yield* withAnnouncedTarget(configDiffPayload(changeSet, scope, context, originFor)),
       );
     } else {
-      yield* output.raw(renderConfigDiffText(changeSet, scope, originFor));
+      yield* output.raw(
+        renderConfigDiffText(
+          changeSet,
+          scope,
+          originFor,
+          relativeConfigPath(cliSettings.workdir, loaded.path),
+        ),
+      );
     }
 
     // `--exit-code` sets exit 2 for drift, distinct from the 1 every other failure uses, so a

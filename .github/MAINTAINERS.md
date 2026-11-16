@@ -187,6 +187,7 @@ Fast-forward PRs are the deploy PR (`develop` → `main`), the major cut
 (`next` → `develop`), and the two sync PRs.
 
 **Dispatch guards.** `release.yml` refuses `channel=next` off `next`,
+`channel=next` while `next` has no commits beyond `develop`,
 `channel=maintenance` off `v<N>.x`, `beta`/`stable` on `next` or `v<N>.x`, a
 non-dry-run `stable` outside `main`, and a `version` that is not
 `X.Y.Z[-prerelease]`.

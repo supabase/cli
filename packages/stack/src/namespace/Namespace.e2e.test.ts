@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Context,
@@ -48,7 +48,11 @@ const lockFixture = fileURLToPath(
   new URL("../../tests/namespace-lock-fixture.ts", import.meta.url),
 );
 
-const testLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const testLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NodeHttpClient.layerNodeHttp,
+);
 
 const savedStack = (root: string, id: string): StackNamespace.SavedStack => ({
   id,

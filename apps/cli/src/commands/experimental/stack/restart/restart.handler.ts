@@ -11,7 +11,7 @@ import {
   rejectStackOutput,
   validateStackTarget,
   mapTargetError,
-} from "../stack.shared.ts";
+} from "../../../../command-internal/stack-target.ts";
 import { StackCommandRestartError } from "./restart.errors.ts";
 import type { StackRestartFlags } from "./restart.command.ts";
 

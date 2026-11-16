@@ -34,7 +34,7 @@ function mockDockerSpawner(
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
       const standard = ChildProcess.isStandardCommand(command);
-      const args = standard ? command.args : [];
+      const args = standard ? command.args.map(String) : [];
       calls.push({
         args,
         stdin: standard ? command.options.stdin : undefined,

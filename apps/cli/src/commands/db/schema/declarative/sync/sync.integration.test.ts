@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -176,6 +176,7 @@ function syncStackApi(workdir: string, port: number) {
           ? Effect.succeed(database)
           : Effect.fail(new StackError({ operation: "get", message: "unknown instance" })),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: unusedSync },
     composition: {
       plan: () => Effect.succeed([]),
@@ -376,7 +377,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
                 ? undefined
                 : { ...opts.removals, extensions: remainingExtensions },
           };
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     }),
   );
   const recorder = recordingFileSystem();
@@ -416,6 +417,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
     }),
     BunServices.layer,
+    BunCrypto.layer,
     recorder.layer,
     // `child.layer` must be listed after `BunServices.layer` — `Layer.mergeAll` resolves a
     // duplicate service tag to whichever layer is listed last, so this mock overrides Bun's
@@ -1595,7 +1597,7 @@ describe("db schema declarative sync permissions through the real resolver", () 
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });

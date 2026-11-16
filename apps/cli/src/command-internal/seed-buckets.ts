@@ -18,6 +18,7 @@ import {
   type StorageCredentials,
 } from "./storage-credentials.ts";
 import { currentStackBackend } from "./stack-backend.ts";
+import { type ConfigFileRef, configFileRefOf, DEFAULT_CONFIG_FILE } from "./config-advice.ts";
 import { withStackStorageGuidance } from "./stack-storage.ts";
 import { parseFileSizeLimit, resolveBucketProps } from "./storage-bucket-config.ts";
 import {
@@ -39,7 +40,6 @@ import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
 // same tag `seedBucketsRun` itself fails with, without importing across command boundaries.
 export { SeedConfigLoadError };
 
-const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
 
 /** Whether `[storage.buckets]` or `[storage.vector.buckets]` declares anything to seed. */
@@ -150,6 +150,8 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
   readonly credentials?: StorageCredentials;
   /** Explicit project root for config/env loading and `objects_path` resolution. */
   readonly workdir?: string;
+  /** The project config file named in prune messages; defaults to the loaded config, else `supabase/config.toml`. */
+  readonly configFile?: ConfigFileRef;
   /**
    * When true, overwrite/prune decisions resolve from consent alone and no prompt runs, so the
    * caller cannot consume a line of its parent's stdin. `start` sets this: it has already
@@ -208,6 +210,11 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
     ));
   // `--yes` OR `SUPABASE_YES`.
   const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
+  const configPath =
+    opts.configFile?.path ??
+    (context === undefined
+      ? DEFAULT_CONFIG_FILE.path
+      : configFileRefOf(path, workdir, context.resolvedConfig).path);
   const config = opts.resolvedConfig?.config ?? context?.config ?? decodeDefaultCliConfig({});
   const document = opts.resolvedConfig?.document ?? context?.document;
 
@@ -281,7 +288,13 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
     // A hosted run never prompts per item: one consent covers every overwrite and prune.
     const confirmHostedWrites = projectRef === "" ? undefined : opts.confirmHostedWrites;
     if (confirmHostedWrites !== undefined) {
-      const details = yield* planHostedWrites(gateway, config, bucketPropsByName, existingBuckets);
+      const details = yield* planHostedWrites(
+        gateway,
+        config,
+        bucketPropsByName,
+        existingBuckets,
+        configPath,
+      );
       if (details.length > 0) yield* confirmHostedWrites(details);
     }
     const approved = confirmHostedWrites !== undefined || yes;
@@ -309,6 +322,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
         gateway,
         Object.keys(config.storage.analytics.buckets),
         summary,
+        configPath,
       );
     }
 
@@ -323,6 +337,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
         gateway,
         vectorBucketNames,
         summary,
+        configPath,
       ).pipe(Effect.catch((error) => handleVectorError(output, error, summary)));
     }
 
@@ -426,6 +441,7 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
   gateway: StorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
+  configPath: string,
 ) {
   const existing = yield* gateway.listVectorBuckets;
   const existingSet = new Set(existing);
@@ -448,14 +464,14 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
       : yield* promptYesNo(
           output,
           yes,
-          `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
+          `Bucket ${bold(name)} not found in ${bold(configPath)}. Do you want to prune it?`,
           false,
           interactive,
         );
     if (!prune) {
       if (promptless) {
         yield* output.raw(
-          `Keeping vector bucket ${bold(name)}: not declared in ${bold(CONFIG_PATH)}. Run ${bold("supabase seed buckets")} to prune.\n`,
+          `Keeping vector bucket ${bold(name)}: not declared in ${bold(configPath)}. Run ${bold("supabase seed buckets")} to prune.\n`,
           "stderr",
         );
       }
@@ -475,6 +491,7 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   gateway: StorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
+  configPath: string,
 ) {
   const existing = yield* gateway.listAnalyticsBuckets;
   const existingSet = new Set(existing);
@@ -497,14 +514,14 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
       : yield* promptYesNo(
           output,
           yes,
-          `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
+          `Bucket ${bold(name)} not found in ${bold(configPath)}. Do you want to prune it?`,
           false,
           interactive,
         );
     if (!prune) {
       if (promptless) {
         yield* output.raw(
-          `Keeping analytics bucket ${bold(name)}: not declared in ${bold(CONFIG_PATH)}. Run ${bold("supabase seed buckets")} to prune.\n`,
+          `Keeping analytics bucket ${bold(name)}: not declared in ${bold(configPath)}. Run ${bold("supabase seed buckets")} to prune.\n`,
           "stderr",
         );
       }
@@ -527,6 +544,7 @@ const planHostedWrites = Effect.fnUntraced(function* (
   config: CliConfig,
   propsByName: ReadonlyMap<string, UpsertBucketProps>,
   existingBuckets: ReadonlyArray<ExistingBucket>,
+  configPath: string,
 ) {
   const details: Array<string> = [];
   const existing = new Set(existingBuckets.map((bucket) => bucket.name));
@@ -553,7 +571,7 @@ const planHostedWrites = Effect.fnUntraced(function* (
     const pruned = [...present].filter((name) => !declared.includes(name));
     if (created.length > 0) details.push(`Create analytics buckets: ${joinNames(created)}`);
     if (pruned.length > 0) {
-      details.push(`Delete analytics buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);
+      details.push(`Delete analytics buckets not declared in ${configPath}: ${joinNames(pruned)}`);
     }
   }
 
@@ -574,7 +592,7 @@ const planHostedWrites = Effect.fnUntraced(function* (
       const pruned = listed.value.filter((name) => !declaredVector.includes(name));
       if (created.length > 0) details.push(`Create vector buckets: ${joinNames(created)}`);
       if (pruned.length > 0) {
-        details.push(`Delete vector buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);
+        details.push(`Delete vector buckets not declared in ${configPath}: ${joinNames(pruned)}`);
       }
     }
   }

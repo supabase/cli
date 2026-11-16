@@ -1,7 +1,6 @@
 import { withAttemptCount } from "./internal/attempts.ts";
 import { NodeStream } from "@effect/platform-node";
 import {
-  Crypto,
   Data,
   Deferred,
   Duration,
@@ -17,6 +16,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { Digest, SecureRandom } from "effect/crypto";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -62,7 +62,7 @@ const computeRelease = Effect.gen(function* () {
 export const currentRelease: Effect.Effect<
   string,
   never,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  FileSystem.FileSystem | Path.Path | Digest.Digest
 > = Effect.runSync(Effect.cached(computeRelease));
 
 /**
@@ -280,7 +280,11 @@ export const connectHost = Effect.fn("HostProcess.connectHost")(function* (
 ): Effect.fn.Return<
   HostAccess,
   HostProcessError | NamespaceError,
-  HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  | HttpClient.HttpClient
+  | FileSystem.FileSystem
+  | Path.Path
+  | SecureRandom.SecureRandom
+  | Digest.Digest
 > {
   const stack = yield* registered(state, stackId);
   // Lease and holder reads repeat every poll and stay untraced; the identity request is traced.
@@ -619,7 +623,7 @@ const withStartupPayload = Effect.fn("HostProcess.withStartupPayload")(function*
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const payload: HostStartupPayload = {
     ...(options.register === undefined ? {} : { register: options.register }),
     ...(options.requestedCreations === undefined
@@ -661,7 +665,12 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
 ): Effect.fn.Return<
   HostAccess,
   HostProcessError | NamespaceError,
-  Scope.Scope | HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  | Scope.Scope
+  | HttpClient.HttpClient
+  | FileSystem.FileSystem
+  | Path.Path
+  | SecureRandom.SecureRandom
+  | Digest.Digest
 > {
   const entrypoint = options.entrypoint ?? hostEntrypointFor(import.meta.url);
   const attempt = Effect.gen(function* () {

@@ -29,7 +29,6 @@ import {
 import {
   Clock,
   Config,
-  Crypto,
   DateTime,
   Effect,
   FileSystem,
@@ -39,6 +38,7 @@ import {
   Result,
   Schema,
 } from "effect";
+import { Digest } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
 
 import { ensureGitignore, readProjectLink } from "../shared/config/project-link.ts";
@@ -747,7 +747,7 @@ export const withProjectLease = <A, E, R>(projectRoot: string, effect: Effect.Ef
   holdLease(projectRoot).pipe(Effect.andThen(effect), Effect.scoped);
 
 /**
- * Fails a project without `supabase/config.toml` that is frozen, explicitly or by `CI` with a
+ * Fails a project without a config file that is frozen, explicitly or by `CI` with a
  * lock present: with no config the lock cannot be checked, so the bundled versions must not
  * silently stand in for it. An explicitly frozen project with no lock fails on the missing lock.
  */
@@ -758,7 +758,7 @@ export const rejectFrozenWithoutConfig = Effect.fn("StackLock.rejectFrozenWithou
     if (Option.isSome(lock))
       return yield* new LockResolutionError({
         reason: "frozen-missing",
-        message: `supabase/config.toml not found, so ${LOCK_FILE} cannot be checked; commit supabase/config.toml next to it`,
+        message: `supabase/config.toml, config.json or config.jsonc not found, so ${LOCK_FILE} cannot be checked; commit your config file next to it`,
       });
     if (frozen)
       return yield* new LockResolutionError({
@@ -1000,7 +1000,7 @@ export const lockedResolution = (options: {
   ): Effect.fn.Return<
     LockedResolution,
     StackConfigError | LockResolutionError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    FileSystem.FileSystem | Path.Path | Digest.Digest
   > {
     const requests = yield* requestsOf(request);
     const ci = yield* continuousIntegration;
@@ -1111,7 +1111,7 @@ export const updatedLock = <E, R>(options: {
   ): Effect.fn.Return<
     LockUpdate,
     StackConfigError | LockResolutionError | E,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | CommandSettings | R
+    FileSystem.FileSystem | Path.Path | Digest.Digest | CommandSettings | R
   > {
     const requests = yield* requestsOf(request);
     const { update, published } = yield* Effect.gen(function* () {
@@ -1266,7 +1266,7 @@ export const linkedLock = <E, R, E2, R2>(options: {
   ): Effect.fn.Return<
     LinkedLock,
     StackConfigError | LockResolutionError | E | E2,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | CommandSettings | R | R2
+    FileSystem.FileSystem | Path.Path | Digest.Digest | CommandSettings | R | R2
   > {
     const requests = yield* requestsOf(request);
     const ci = yield* continuousIntegration;
@@ -1390,7 +1390,7 @@ export const outdatedServices = Effect.fn("StackLock.outdated")(function* (reque
     const newest: Effect.Effect<
       ResolvedPin | undefined,
       StackConfigError | LockResolutionError,
-      Crypto.Crypto
+      Digest.Digest
     > =
       reason !== undefined || isExactRelease(requested)
         ? Effect.undefined

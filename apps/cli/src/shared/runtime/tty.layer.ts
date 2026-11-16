@@ -12,6 +12,7 @@ export const ttyLayer = Layer.effect(
       Tty.of({
         stdinIsTty: !!process.stdin.isTTY,
         stdoutIsTty: !!process.stdout.isTTY,
+        stdoutColumns: process.stdout.columns,
         stdoutIsPipe,
       }),
     ),

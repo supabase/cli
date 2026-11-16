@@ -74,6 +74,12 @@ shown as `--remerge-diff`. Both sides were reviewed in their own PRs, so the
 prompts limit findings to what the resolution introduced; `pr.diff` stays the
 anchor for inline comments.
 
+### Breaking changes
+
+Only the Claude prompt asks for `breaking-change` findings, because only its job
+has `pr.json` with the title and branches. They post as `major` and ask for a
+`!` title, plus a retarget to `next` on `develop`.
+
 ## Once-per-PR semantics and manual re-runs
 
 New commits never re-trigger a review — `resolve.ts`'s dedup guard skips a

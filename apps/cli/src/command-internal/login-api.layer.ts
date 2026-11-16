@@ -88,11 +88,10 @@ export const loginApiLayer = Layer.effect(
       // host and token.
       fetchGotrueId: (apiHost: string, token: string) =>
         Effect.gen(function* () {
-          const api = yield* makeApiClient({
-            baseUrl: apiHost,
-            accessToken: token,
-            userAgent: cliSettings.userAgent,
-          });
+          const api = yield* makeApiClient(
+            { baseUrl: apiHost, accessToken: token, userAgent: cliSettings.userAgent },
+            { retry: { maxRetries: Option.getOrUndefined(cliSettings.apiMaxRetries) } },
+          );
           const profile = yield* api.v1.getProfile();
           return profile.gotrue_id.length > 0
             ? Option.some(profile.gotrue_id)

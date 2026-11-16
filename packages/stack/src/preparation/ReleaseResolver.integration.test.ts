@@ -1,6 +1,7 @@
-import { NodeHttpClient, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Crypto, Effect, Layer, Schema } from "effect";
+import { ConfigProvider, Effect, Layer, Schema } from "effect";
+import { Digest } from "effect/crypto";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the fixture owns a local native listener.
 import { createServer, type Server } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the fixture owns a local native listener.
@@ -93,8 +94,8 @@ const startResettingListener = Effect.acquireRelease(
 ).pipe(Effect.map(({ origin }) => origin));
 
 const sha256Of = Effect.fn(function* (text: string) {
-  const crypto = yield* Crypto.Crypto;
-  return digestHex(yield* crypto.digest("SHA-256", new TextEncoder().encode(text)));
+  const crypto = yield* Digest.Digest;
+  return digestHex(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(text)));
 });
 
 interface Publication {
@@ -215,7 +216,7 @@ describe("release resolver", () => {
         const manifestRequest = fixture.requests.find(({ path }) => path.includes("/manifests/"));
         expect(manifestRequest?.authorization).toBe("Bearer anon");
         expect(manifestRequest?.accept).toContain("application/vnd.oci.image.index.v1+json");
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -239,7 +240,7 @@ describe("release resolver", () => {
         expect(pin.natives).toEqual(first.natives);
         expect(pin.image).toBe(`ghcr.io/supabase/cli/auth:v2.1.0-r0@${first.digest}`);
         expect(sumsRequests(fixture)).toEqual(["/releases/auth-v2.1.0-r0/SHA256SUMS"]);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -257,7 +258,7 @@ describe("release resolver", () => {
         const pin = yield* against(fixture, resolvePin({ service: "mail", upstream: "v1.31.0" }));
 
         expect(pin.upstreamImage).toBe("axllent/mailpit:v1.31.0");
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -288,7 +289,7 @@ describe("release resolver", () => {
           revision: 3,
           url: `${fixture.origin}/releases/storage-v1.0.0-r3/SHA256SUMS`,
         });
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -319,7 +320,7 @@ describe("release resolver", () => {
           status: row.status,
           url: expect.stringContaining(row.path),
         });
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -337,7 +338,7 @@ describe("release resolver", () => {
           _tag: "ReleaseTransient",
           url: expect.stringContaining(resetting),
         });
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -354,7 +355,7 @@ describe("release resolver", () => {
         const pin = yield* against(fixture, resolvePin({ service: "pgmeta", upstream: "v1.0.0" }));
 
         expect(pin.revision).toBe(row.expected);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 
@@ -456,7 +457,7 @@ describe("release resolver", () => {
           expect(error).toMatchObject({ expected: expect.stringMatching(/^[0-9a-f]{64}$/u) });
         if (row.digests === "registry-header")
           expect(error).toMatchObject({ expected: `sha256:${"c".repeat(64)}` });
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     ),
   );
 });

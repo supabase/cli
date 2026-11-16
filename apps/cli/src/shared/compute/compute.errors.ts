@@ -114,6 +114,17 @@ export class UnknownComputeExposureError extends Data.TaggedError("UnknownComput
   }
 }
 
+export class UnknownComputeSecretsScopeError extends Data.TaggedError(
+  "UnknownComputeSecretsScopeError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 export class MissingComputeExposureError extends Data.TaggedError("MissingComputeExposureError")<{
   readonly detail: string;
   readonly suggestion: string;
@@ -129,18 +140,6 @@ export class ComputeDirectoryExistsError extends Data.TaggedError("ComputeDirect
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
-  }
-}
-
-/** A compute scaffold cannot safely edit a JSON-authoritative project config. */
-export class ComputeJsonConfigUnsupportedError extends Data.TaggedError(
-  "ComputeJsonConfigUnsupportedError",
-)<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
   }
 }
 
@@ -279,14 +278,6 @@ export class ComputeApiUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-/**
- * The logs query itself failed. The analytics endpoint can answer HTTP 200 with a populated
- * `error` field, so this isn't reachable from a status code alone; it also covers the server's
- * 30-second query timeout, which arrives as a non-2xx. Kept apart from {@link
- * ComputeApiUnexpectedStatusError} because the SQL here is the CLI's own, not user input — its
- * own fingerprint keeps a broken projection or filter visible instead of blending into transport
- * noise.
- */
 export class ComputeLogsQueryFailedError extends Data.TaggedError("ComputeLogsQueryFailedError")<{
   readonly detail: string;
   readonly suggestion: string;
@@ -296,7 +287,6 @@ export class ComputeLogsQueryFailedError extends Data.TaggedError("ComputeLogsQu
   }
 }
 
-/** The project has exhausted its log query allowance (402). */
 export class ComputeLogsUsageExceededError extends Data.TaggedError(
   "ComputeLogsUsageExceededError",
 )<{
@@ -308,11 +298,6 @@ export class ComputeLogsUsageExceededError extends Data.TaggedError(
   }
 }
 
-/**
- * The analytics endpoints allow 10 requests per 60 seconds, which `--follow` polls against — so
- * 429 is an ordinary outcome here, not an edge case. Its own error lets the suggestion name the
- * poll interval as the thing to slow down.
- */
 export class ComputeLogsRateLimitedError extends Data.TaggedError("ComputeLogsRateLimitedError")<{
   readonly detail: string;
   readonly suggestion: string;

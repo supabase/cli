@@ -38,6 +38,7 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-link": ["local-dev"],
   "supabase-login": ["local-dev"],
   "supabase-logout": ["local-dev"],
+  "supabase-logs": ["management-api", "local-dev"],
   "supabase-migration": ["local-dev"],
   "supabase-network-bans": ["management-api"],
   "supabase-network-restrictions": ["management-api"],
@@ -168,12 +169,6 @@ export const DOCS_EXTRA_FLAGS: Readonly<Record<string, ReadonlyArray<DocsFlag>>>
   ],
 };
 
-/**
- * Documented accepted values where the Effect choice union is wider than the
- * globally valid set, keyed `"<doc id> <flag id>"`. The root `-o, --output`
- * union includes `table`/`csv` only because `db query` reuses the global
- * flag; everywhere else the valid formats are the five below.
- */
 export const DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase output": ["env", "pretty", "json", "toml", "yaml"],
 };

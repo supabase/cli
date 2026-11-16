@@ -74,6 +74,7 @@ export const resolveAuthConfig = Effect.fn("StackAuthConfig.resolve")(
           double_confirm_changes: auth.email.double_confirm_changes,
           enable_confirmations: auth.email.enable_confirmations,
           secure_password_change: auth.email.secure_password_change,
+          require_current_password: auth.email.require_current_password,
           max_frequency: auth.email.max_frequency,
           otp_length: auth.email.otp_length,
           otp_expiry: auth.email.otp_expiry,

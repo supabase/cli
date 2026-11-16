@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
-import { Cause, Crypto, Effect, Exit } from "effect";
+import { Cause, Effect, Exit } from "effect";
+import { SecureRandom } from "effect/crypto";
 import { absurd } from "effect/Function";
 import type { KeyValue, AnyValue } from "effect/observability/OtlpResource";
 import type { ScopeSpan, TraceData } from "effect/observability/OtlpTracer";
@@ -331,18 +332,17 @@ export interface TraceSanitizer {
  * Creates a sanitizer whose `db.query.hash` is keyed by a fresh random salt, so repeated
  * statements share a hash within one sanitizer but hashes cannot be compared across runs.
  */
-export const makeTraceSanitizer: Effect.Effect<TraceSanitizer, never, Crypto.Crypto> = Effect.gen(
-  function* () {
-    const crypto = yield* Crypto.Crypto;
-    const salt = yield* Effect.orDie(crypto.randomBytes(QUERY_HASH_SALT_BYTES));
+export const makeTraceSanitizer: Effect.Effect<TraceSanitizer, never, SecureRandom.SecureRandom> =
+  Effect.gen(function* () {
+    const crypto = yield* SecureRandom.SecureRandom;
+    const salt = yield* crypto.randomBytes(QUERY_HASH_SALT_BYTES);
     const hashQuery: QueryHasher = (text) =>
       createHmac("sha256", salt).update(text).digest("hex").slice(0, QUERY_HASH_HEX_LENGTH);
     return {
       attributeEntries: (entries) => sanitizeAttributeEntries(entries, hashQuery),
       traceData: (data) => sanitizeTraceData(data, hashQuery),
     };
-  },
-);
+  });
 
 function failureOf(reason: Cause.Reason<unknown>): unknown {
   if (Cause.isFailReason(reason)) return reason.error;

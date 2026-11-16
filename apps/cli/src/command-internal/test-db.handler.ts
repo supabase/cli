@@ -10,7 +10,7 @@ import {
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
-import { readDbToml } from "./db-config.toml-read.ts";
+import { readDbConfig } from "./db-config.read.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { DockerRun } from "./docker-run.service.ts";
@@ -192,7 +192,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         ? { _tag: "named" as const, name: networkId }
         : isLocal && backend.kind !== "stack"
           ? yield* Effect.gen(function* () {
-              const toml = yield* readDbToml(fs, path, cliSettings.workdir);
+              const toml = yield* readDbConfig(fs, path, cliSettings.workdir);
               return { _tag: "named" as const, name: `supabase_network_${toml.projectId}` };
             })
           : { _tag: "host" as const };
@@ -289,7 +289,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         }
         if (backend.kind === "stack") {
           const bundled = yield* BundledPostgresClient;
-          const toml = yield* readDbToml(fs, path, cliSettings.workdir);
+          const toml = yield* readDbConfig(fs, path, cliSettings.workdir);
           const pin = yield* databaseArtifactPin(String(toml.majorVersion)).pipe(
             Effect.mapError((cause) => new TestDbRunError({ message: cause.message, cause })),
           );

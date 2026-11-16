@@ -1,3 +1,4 @@
+import { hasOptionalSubcommand } from "../../src/shared/output/optional-subcommand-usage.ts";
 import type { Command } from "effect/cli";
 
 import { rootCommandForFeatures } from "../../src/cli/root.ts";
@@ -66,6 +67,7 @@ export interface TreeNode {
   /** What each of {@link flags} accepts; a node's own definition wins over an inherited one of the same name. */
   readonly flagInfo: ReadonlyMap<string, FlagInfo>;
   readonly isLeaf: boolean;
+  readonly isExecutable: boolean;
 }
 
 function walk(
@@ -82,6 +84,7 @@ function walk(
     flags: new Set(flagInfo.keys()),
     flagInfo,
     isLeaf: children.length === 0,
+    isExecutable: children.length === 0 || hasOptionalSubcommand(command),
   });
   for (const child of children) walk(child, [...path, child.name], flags, out);
 }

@@ -1316,6 +1316,11 @@ export const PUSH_AUTH_LEAF_MAP: ReadonlyArray<PushAuthLeafSpec> = [
     transform: asBoolean,
   },
   {
+    configPath: ["auth", "email", "require_current_password"],
+    apiKey: "security_update_password_require_current_password",
+    transform: asBoolean,
+  },
+  {
     configPath: ["auth", "email", "max_frequency"],
     apiKey: "smtp_max_frequency",
     transform: durationToSeconds,

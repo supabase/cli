@@ -48,6 +48,7 @@ interface RecordedRequest {
 }
 
 interface StubResponse {
+  readonly headers?: Readonly<Record<string, string>>;
   readonly status: number;
   readonly body?: unknown;
 }
@@ -88,7 +89,7 @@ function respond(
     request,
     new Response(hasBody ? encodedBody : "", {
       status: stub.status,
-      headers: hasBody ? { "content-type": "application/json" } : { "content-type": "text/plain" },
+      headers: { "content-type": hasBody ? "application/json" : "text/plain", ...stub.headers },
     }),
   );
 }
@@ -127,7 +128,12 @@ function mockComputeHttp(routes: ComputeHttpRoutes) {
         method: request.method,
         url: request.url,
         // UrlParams is iterable over [key, value] pairs, not an array.
-        urlParams: Object.fromEntries(request.urlParams),
+        urlParams: Object.fromEntries(
+          Array.from(request.urlParams, ([key, value]) => [
+            key,
+            Redacted.isRedacted(value) ? Redacted.value(value) : value,
+          ]),
+        ),
         body: new TextDecoder().decode(bytes),
         byteLength: bytes.length,
       });
@@ -260,20 +266,9 @@ export function computeResource(options: {
 
 export const computeRoute = (suffix = "") => `/v2/projects/${COMPUTE_PROJECT_REF}/compute${suffix}`;
 
-/**
- * The unified logs endpoint `compute logs` queries. Not under `/v2/.../compute` —
- * there is no compute-scoped log route.
- */
 export const computeLogsRoute = () =>
   `/v1/projects/${COMPUTE_PROJECT_REF}/analytics/endpoints/logs`;
 
-/**
- * One row as the logs endpoint returns it, matching the projection in
- * `computeLogsQuery`.
- *
- * `log_attributes` values are all strings — the column is a
- * `Map(String, String)`, so `status` arrives as `"200"`.
- */
 export function computeLogRow(options: {
   readonly id?: string;
   readonly tsMs?: number;
@@ -297,7 +292,6 @@ export function computeLogRow(options: {
   };
 }
 
-/** An HTTP access log row, whose fields live in `log_attributes`, not the message. */
 export function computeIngressLogRow(options: {
   readonly id?: string;
   readonly tsMs?: number;
@@ -314,7 +308,7 @@ export function computeIngressLogRow(options: {
     ...(options.tsMs === undefined ? {} : { tsMs: options.tsMs }),
     ...(options.compute === undefined ? {} : { compute: options.compute }),
     stream: "worker_ingress_logs",
-    // Only method and path go in the message, matching the wire format.
+
     message: `${method} ${path}`,
     attributes: {
       method,
@@ -326,7 +320,6 @@ export function computeIngressLogRow(options: {
   });
 }
 
-/** A build/deploy lifecycle row. */
 export function computeApiLogRow(options: {
   readonly id?: string;
   readonly tsMs?: number;
@@ -406,6 +399,7 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         explicitWorkdir,
         workdirEnvValue: Option.none(),
         userAgent: "supabase",
+        apiMaxRetries: Option.none(),
       });
     }),
   ).pipe(Layer.provide(BunServices.layer));

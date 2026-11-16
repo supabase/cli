@@ -5,7 +5,13 @@ import type { DbSession } from "./db-connection.service.ts";
 import type { DbExecError } from "./db-connection.errors.ts";
 import { MigrationApplyError, applyMigrationFile, applySchemaFiles } from "./migration-apply.ts";
 import { loadPartialMigrations } from "./migration-history.ts";
-import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION, isPgNetUnavailableError } from "./pg-net-guidance.ts";
+import { enableLocalWebhooksSuggestion, isPgNetUnavailableError } from "./pg-net-guidance.ts";
+import {
+  type ConfigFileRef,
+  configKey,
+  configSetting,
+  DEFAULT_CONFIG_FILE,
+} from "./config-advice.ts";
 import { applySeedFiles, type SeedConfig } from "./seed.ts";
 
 /** Config consumed by `migrateAndSeed`. */
@@ -27,12 +33,15 @@ export interface MigrateAndSeedConfig {
    * this is not a local start/reset replay and disables local-only remediation.
    */
   readonly localDatabaseWebhooksEnabled?: boolean;
+  /** The project config file the guidance points at; absent means `config.toml`. */
+  readonly configFile?: ConfigFileRef | undefined;
 }
 
 const migrationApplyError = (
   message: string,
   dbError: DbExecError | undefined,
   localDatabaseWebhooksEnabled: boolean | undefined,
+  configFile: ConfigFileRef | undefined,
 ): MigrationApplyError => {
   const pgNetUnavailable =
     localDatabaseWebhooksEnabled === false &&
@@ -40,14 +49,16 @@ const migrationApplyError = (
     isPgNetUnavailableError(dbError);
   return new MigrationApplyError({
     message,
-    suggestion: pgNetUnavailable ? ENABLE_LOCAL_WEBHOOKS_SUGGESTION : undefined,
+    suggestion: pgNetUnavailable ? enableLocalWebhooksSuggestion(configFile) : undefined,
     reason: pgNetUnavailable ? "local_pg_net_unavailable" : undefined,
   });
 };
 
 /** Warns a versionless `--experimental` rebuild that `schema_paths` is ignored while pg-delta is on. */
-export const experimentalSchemaPathsIgnoredWarning =
-  "WARNING: [db.migrations].schema_paths is not applied while pg-delta is enabled (the default). Set [experimental.pgdelta] enabled = false to apply schema_paths files.\n";
+export const experimentalSchemaPathsIgnoredWarning = (
+  configFile: ConfigFileRef = DEFAULT_CONFIG_FILE,
+): string =>
+  `WARNING: ${configKey(configFile.format, "db.migrations", "schema_paths")} is not applied while pg-delta is enabled (the default). Set ${configSetting(configFile.format, "experimental.pgdelta", "enabled", "false")} to apply schema_paths files.\n`;
 
 /** Whether {@link experimentalSchemaPathsIgnoredWarning} applies to this rebuild. */
 export const ignoresExperimentalSchemaPaths = (inputs: {
@@ -81,7 +92,7 @@ export const migrateAndSeed = (
   Effect.gen(function* () {
     const output = yield* Output;
     if (ignoresExperimentalSchemaPaths({ ...config, version })) {
-      yield* output.raw(experimentalSchemaPathsIgnoredWarning, "stderr");
+      yield* output.raw(experimentalSchemaPathsIgnoredWarning(config.configFile), "stderr");
     }
     if (config.experimental && version.length === 0 && !config.pgDeltaEnabled) {
       yield* applySchemaFiles(
@@ -100,7 +111,12 @@ export const migrateAndSeed = (
       for (const migrationPath of pending) {
         yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
         yield* applyMigrationFile(session, fs, path, migrationPath, (message, dbError) =>
-          migrationApplyError(message, dbError, config.localDatabaseWebhooksEnabled),
+          migrationApplyError(
+            message,
+            dbError,
+            config.localDatabaseWebhooksEnabled,
+            config.configFile,
+          ),
         );
       }
     }

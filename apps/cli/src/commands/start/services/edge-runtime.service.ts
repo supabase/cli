@@ -64,6 +64,7 @@ export interface EdgeRuntimeBringUpInput {
    * `shared/functions/deploy.ts`'s `rawFunctionConfigRecord(document)`.
    */
   readonly rawConfigFunctions: ServeEdgeRuntimeContainerConfig["rawConfigFunctions"];
+  readonly configPath?: ServeEdgeRuntimeContainerConfig["configPath"];
   /** Every already-resolved secret/key this container needs; not independently re-resolved here. */
   readonly authArtifacts: ServeAuthArtifacts;
   /** The global `--debug` flag. */
@@ -107,6 +108,7 @@ export const startStackEdgeRuntimeContainer = Effect.fn("start.edgeRuntime")(fun
       configDeclaredFunctions: input.configDeclaredFunctions,
       configFunctions: input.configFunctions,
       rawConfigFunctions: input.rawConfigFunctions,
+      configPath: input.configPath,
     },
     authArtifacts: input.authArtifacts,
     dbUrl: startInternalDbUrl(

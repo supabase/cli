@@ -39,6 +39,12 @@ When enabled, the CLI exposes:
 - `supabase compute logs`
 - `supabase compute delete`
 
+`supabase compute logs` remains available until v4 with its existing `--tail`,
+`--kind`, and `-f/--follow` options. It prints a deprecation warning on stderr.
+For the new log browser, read Compute logs with `supabase logs --remote --service compute`. Use
+`--resource <name>` to select an application and `--kind app|requests|builds` to
+select its log stream. Press `L` in the interactive browser to load more logs.
+
 Compute source directories live under `supabase/compute/<name>/`.
 
 `compute new` edits TOML configuration. It refuses projects whose authoritative

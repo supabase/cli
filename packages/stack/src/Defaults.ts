@@ -39,6 +39,8 @@ export const DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE =
   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG";
 /** Key used to encrypt local Pooler tenant secrets. */
 export const DEFAULT_POOLER_VAULT_ENCRYPTION_KEY = "12345678901234567890123456789032";
+/** Keeps the BEAM port table at its 65536 default; a huge nofile limit inflates it to ~2 GiB. */
+export const DEFAULT_ERL_MAX_PORTS = "65536";
 
 /** The compiled default artifact pin of every service kind. */
 export { defaultArtifactSelection } from "./Artifacts.ts";

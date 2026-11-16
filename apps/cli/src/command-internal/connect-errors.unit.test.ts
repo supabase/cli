@@ -3,14 +3,18 @@ import * as Pg from "pg";
 import { describe, expect, it } from "vitest";
 
 import {
+  SUGGEST_CA_VERIFICATION,
   SUGGEST_ENV_VAR,
   SUGGEST_LOCAL_STACK,
   connectFailureMessage,
   connectSuggestion,
   ipv6Suggestion,
+  isCertificateVerificationFailure,
+  isNetworkRestrictionFailure,
   isDialFailure,
   isIPv6ConnectivityError,
   isIPv6ConnectivityErrorCause,
+  isTlsNegotiationFailure,
 } from "./connect-errors.ts";
 
 // The real `@effect/sql` wrapper produced by the connect probe
@@ -269,6 +273,13 @@ describe("connectSuggestion", () => {
     );
   });
 
+  it("maps a certificate-verification failure to the CA hint", () => {
+    const err = sqlError(
+      systemError("self-signed certificate in certificate chain", "SELF_SIGNED_CERT_IN_CHAIN"),
+    );
+    expect(connectSuggestion(err, ctx)).toBe(SUGGEST_CA_VERIFICATION);
+  });
+
   it("maps a refused local connection to the local stack hint", () => {
     const err = sqlError(systemError("connect ECONNREFUSED 127.0.0.1:54322", "ECONNREFUSED"));
     expect(connectSuggestion(err, { ...ctx, isLocal: true })).toBe(SUGGEST_LOCAL_STACK);
@@ -421,6 +432,34 @@ describe("connectSuggestion", () => {
   });
 });
 
+describe("isCertificateVerificationFailure", () => {
+  it("matches the X509 verification codes but not other TLS or dial failures", () => {
+    const withCode = (code: string) =>
+      realSqlConnectError(Object.assign(new Error("failure"), { code }));
+    expect(isCertificateVerificationFailure(withCode("SELF_SIGNED_CERT_IN_CHAIN"))).toBe(true);
+    expect(isCertificateVerificationFailure(withCode("CERT_HAS_EXPIRED"))).toBe(true);
+    expect(isCertificateVerificationFailure(withCode("ERR_TLS_CERT_ALTNAME_INVALID"))).toBe(true);
+    expect(isCertificateVerificationFailure(withCode("OUT_OF_MEM"))).toBe(false);
+    expect(isCertificateVerificationFailure(withCode("ECONNREFUSED"))).toBe(false);
+    expect(isCertificateVerificationFailure(withCode("ECONNRESET"))).toBe(false);
+    expect(isCertificateVerificationFailure(authFailedError())).toBe(false);
+  });
+});
+
+describe("isNetworkRestrictionFailure", () => {
+  it("matches the pooler's allow-list rejection but not other failures", () => {
+    expect(
+      isNetworkRestrictionFailure(
+        realSqlConnectError(new Error("Address not in tenant allow_list: 1.2.3.4")),
+      ),
+    ).toBe(true);
+    expect(isNetworkRestrictionFailure(authFailedError())).toBe(false);
+    expect(isNetworkRestrictionFailure(realSqlConnectError(new Error("some other failure")))).toBe(
+      false,
+    );
+  });
+});
+
 describe("isDialFailure", () => {
   it("classifies dial errno failures", () => {
     expect(isDialFailure(realSqlConnectError(dialError("ECONNREFUSED", "127.0.0.1", 54322)))).toBe(
@@ -528,5 +567,32 @@ describe("isIPv6ConnectivityErrorCause", () => {
         new Error("could not translate host name: no address associated with hostname"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("isTlsNegotiationFailure (sslmode=prefer plaintext fallback gate)", () => {
+  it("is true for a declined SSLRequest, a botched reply, and TLS handshake failures", () => {
+    for (const cause of [
+      new Error("The server does not support SSL connections"),
+      new Error("There was an error establishing an SSL connection"),
+      new Error("Client network socket disconnected before secure TLS connection was established"),
+      Object.assign(new Error("wrong version number"), { code: "ERR_SSL_WRONG_VERSION_NUMBER" }),
+      Object.assign(new Error("write EPROTO wrong version number"), { code: "EPROTO" }),
+      Object.assign(new Error("Socket is closed"), { code: "ERR_SOCKET_CLOSED" }),
+    ]) {
+      expect(isTlsNegotiationFailure(realSqlConnectError(cause))).toBe(true);
+    }
+  });
+
+  it("is false for dial, timeout, authentication and unclassified failures", () => {
+    for (const cause of [
+      dialError("ECONNREFUSED", "127.0.0.1", 5432),
+      new Error("Connection terminated unexpectedly"),
+      new Error("timeout expired"),
+      Object.assign(new Error("password authentication failed"), { code: "28P01" }),
+    ]) {
+      expect(isTlsNegotiationFailure(realSqlConnectError(cause))).toBe(false);
+    }
+    expect(isTlsNegotiationFailure("boom")).toBe(false);
   });
 });
