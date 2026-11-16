@@ -566,6 +566,15 @@ describe("status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("reports status despite a bucket's invalid file_size_limit", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig('project_id = "demo"\n[storage.buckets.a]\nfile_size_limit = "5XB"\n');
+      yield* status(flags());
+      expect(out.stderrText).toContain("local development setup is running.");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("fails when config.toml is malformed", () => {
     const { layer, child } = setup();
     return Effect.gen(function* () {

@@ -130,6 +130,10 @@ export const genTypesGeneratorLayer = Layer.effect(
           ),
           Effect.withSpan("GenTypes.introspect"),
         );
+        const found = new Set(metadata.schemas.map((schema) => schema.name));
+        const missingSchemas = [...new Set(input.requestedSchemas)].filter(
+          (name) => !found.has(name),
+        );
         return yield* Effect.gen(function* () {
           const host = makeTypegenHost({
             cwd: runtime.cwd,
@@ -147,7 +151,7 @@ export const genTypesGeneratorLayer = Layer.effect(
             catch: (cause) => mapRegistryError(input.lang, cause),
           });
           yield* Effect.annotateCurrentSpan("typegen.output_length", source.length);
-          return source;
+          return { source, missingSchemas };
         }).pipe(Effect.withSpan("GenTypes.render"));
       }),
     });

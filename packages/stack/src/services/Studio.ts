@@ -53,7 +53,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         (jwt === undefined ? undefined : yield* serviceJwt("service_role", jwt));
       const values: Record<string, string> = {
         ...(http === undefined ? {} : { PORT: String(http.port) }),
-        HOSTNAME: container ? "0.0.0.0" : "127.0.0.1",
+        NITRO_HOST: container ? "0.0.0.0" : "127.0.0.1",
         S3_PROTOCOL_ACCESS_KEY_ID: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
         S3_PROTOCOL_ACCESS_KEY_SECRET: DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
         ENABLED_FEATURES_LOGS_ALL: String(

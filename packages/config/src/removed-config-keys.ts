@@ -5,11 +5,35 @@ import { CliConfigRemovedKeyError } from "./errors.ts";
 
 type RemovedConfigKey = CliConfigRemovedKeyError["removedKeys"][number];
 
+const BARE_KEY = /^[A-Za-z0-9_-]+$/;
+
+const tomlSegment = (segment: string): string =>
+  BARE_KEY.test(segment) ? segment : JSON.stringify(segment);
+
+const removed = (
+  remote: string | undefined,
+  local: ReadonlyArray<string>,
+  replacementLocal: ReadonlyArray<string>,
+  table: boolean,
+): RemovedConfigKey => {
+  const render = (segments: ReadonlyArray<string>): string =>
+    [...(remote === undefined ? [] : ["remotes", remote]), ...segments].map(tomlSegment).join(".");
+  return {
+    key: render(local),
+    replacement: render(replacementLocal),
+    path: local,
+    replacementPath: replacementLocal,
+    table,
+    ...(remote === undefined ? {} : { remote }),
+  };
+};
+
 const REMOVED_EXTERNAL_PROVIDERS = ["linkedin", "slack"] as const;
 
 function scanScope(
   scope: Record<string, unknown>,
-  prefix: string,
+  remote: string | undefined,
+  dropRemoved: boolean,
 ): {
   readonly removedKeys: ReadonlyArray<RemovedConfigKey>;
   readonly scope: Record<string, unknown>;
@@ -18,7 +42,11 @@ function scanScope(
   let stripped = scope;
 
   if (Object.hasOwn(scope, "inbucket")) {
-    removedKeys.push({ key: `${prefix}inbucket`, replacement: `${prefix}local_smtp` });
+    removedKeys.push(removed(remote, ["inbucket"], ["local_smtp"], true));
+    if (dropRemoved) {
+      stripped = { ...stripped };
+      delete stripped["inbucket"];
+    }
   }
 
   const experimental = scope["experimental"];
@@ -26,12 +54,16 @@ function scanScope(
     if (experimental["orioledb_version"] === "") {
       const withoutEmptyVersion = { ...experimental };
       delete withoutEmptyVersion["orioledb_version"];
-      stripped = { ...scope, experimental: withoutEmptyVersion };
+      stripped = { ...stripped, experimental: withoutEmptyVersion };
     } else {
-      removedKeys.push({
-        key: `${prefix}experimental.orioledb_version`,
-        replacement: `${prefix}db.orioledb_version`,
-      });
+      removedKeys.push(
+        removed(remote, ["experimental", "orioledb_version"], ["db", "orioledb_version"], false),
+      );
+      if (dropRemoved) {
+        const withoutVersion = { ...experimental };
+        delete withoutVersion["orioledb_version"];
+        stripped = { ...stripped, experimental: withoutVersion };
+      }
     }
   }
 
@@ -40,10 +72,26 @@ function scanScope(
   if (isObject(external)) {
     for (const provider of REMOVED_EXTERNAL_PROVIDERS) {
       if (Object.hasOwn(external, provider)) {
-        removedKeys.push({
-          key: `${prefix}auth.external.${provider}`,
-          replacement: `${prefix}auth.external.${provider}_oidc`,
-        });
+        removedKeys.push(
+          removed(
+            remote,
+            ["auth", "external", provider],
+            ["auth", "external", `${provider}_oidc`],
+            true,
+          ),
+        );
+        if (dropRemoved) {
+          const strippedAuth = stripped["auth"];
+          const strippedExternal = isObject(strippedAuth) ? strippedAuth["external"] : undefined;
+          if (isObject(strippedAuth) && isObject(strippedExternal)) {
+            const withoutProvider = { ...strippedExternal };
+            delete withoutProvider[provider];
+            stripped = {
+              ...stripped,
+              auth: { ...strippedAuth, external: withoutProvider },
+            };
+          }
+        }
       }
     }
   }
@@ -56,11 +104,14 @@ function scanScope(
  * returned document drops an empty `experimental.orioledb_version`, which older `supabase init`
  * templates wrote and which carries no meaning.
  */
-function detectRemovedConfigKeys(document: Record<string, unknown>): {
+function detectRemovedConfigKeys(
+  document: Record<string, unknown>,
+  dropRemoved: boolean,
+): {
   readonly removedKeys: ReadonlyArray<RemovedConfigKey>;
   readonly document: Record<string, unknown>;
 } {
-  const root = scanScope(document, "");
+  const root = scanScope(document, undefined, dropRemoved);
   const removedKeys = [...root.removedKeys];
   const remotes = document["remotes"];
   if (!isObject(remotes)) {
@@ -71,7 +122,7 @@ function detectRemovedConfigKeys(document: Record<string, unknown>): {
       if (!isObject(remote)) {
         return [name, remote];
       }
-      const scanned = scanScope(remote, `remotes.${name}.`);
+      const scanned = scanScope(remote, name, dropRemoved);
       removedKeys.push(...scanned.removedKeys);
       return [name, scanned.scope];
     }),
@@ -85,8 +136,16 @@ export const rejectRemovedConfigKeys = (
   path: string,
   format: ConfigFormat,
 ): Effect.Effect<Record<string, unknown>, CliConfigRemovedKeyError> => {
-  const { removedKeys, document: stripped } = detectRemovedConfigKeys(document);
+  const { removedKeys, document: stripped } = detectRemovedConfigKeys(document, false);
   return removedKeys.length === 0
     ? Effect.succeed(stripped)
     : Effect.fail(new CliConfigRemovedKeyError({ path, format, removedKeys }));
 };
+
+/** Every removed key the raw document uses, and the document with each of them deleted. */
+export const stripRemovedConfigKeys = (
+  document: Record<string, unknown>,
+): {
+  readonly removedKeys: ReadonlyArray<RemovedConfigKey>;
+  readonly document: Record<string, unknown>;
+} => detectRemovedConfigKeys(document, true);

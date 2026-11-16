@@ -66,6 +66,16 @@ describe("toDumpEnv", () => {
       });
   });
 
+  it("verifies a require that carries a root CA", () => {
+    expect(
+      toDumpEnv({ ...CONN, sslmode: "require", sslrootcert: "/certs/root.crt" }, true),
+    ).toMatchObject({ PGSSLMODE: "verify-ca", PGSSLROOTCERT: "/certs/root.crt" });
+    expect(
+      toDumpEnv({ ...CONN, sslmode: "require", sslrootcertInline: "PEM" }, true),
+    ).toMatchObject({ PGSSLMODE: "verify-ca", PGSSLROOTCERT_PEM: "PEM" });
+    expect(toDumpEnv({ ...CONN, sslmode: "require" }, true)["PGSSLMODE"]).toBe("require");
+  });
+
   it("keeps the root cert and an encrypted key out of a remote dump", () => {
     const env = toDumpEnv(
       {
