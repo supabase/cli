@@ -1,3 +1,5 @@
+import { generatedCommands } from "../../command-internal/api/generated.ts";
+import type { ApiCommandData } from "../../command-internal/api/model.ts";
 import { GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES } from "../../commands/gen/types/types.languages.ts";
 
 /**
@@ -6,6 +8,9 @@ import { GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES } from "../../commands/gen/types/ty
  * enforces coverage for directly-declared flags, helper-built ones are listed by hand.
  */
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
+  ...generatedCommands.flatMap((command: ApiCommandData) =>
+    command.fields.filter((field) => field.type !== "boolean").map((field) => field.name),
+  ),
   "db-url",
   "password", // db push/pull/dump/remote (short -p)
   "sql-paths",
@@ -84,6 +89,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
   "tail",
   "template",
+  "timeout",
   "timestamp",
   "to",
   "token",

@@ -66,6 +66,14 @@
       "outputs": ["src/generated/**", "scripts/openapi-source.json"],
       "env": ["SUPABASE_API_URL"]
     },
+    "supabase#generate": {
+      "dependsOn": ["@supabase/api#generate"],
+      "cache": false,
+      "outputs": [
+        "src/command-internal/api/generated.ts",
+        "src/command-internal/api/api-commands.snapshot.json"
+      ]
+    },
     "@supabase/stack#generate": {
       "cache": false,
       "outputs": ["src/functions/generated/**"]

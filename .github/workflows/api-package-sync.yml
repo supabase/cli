@@ -28,13 +28,16 @@ jobs:
         env:
           SUPABASE_API_URL: https://api.supabase.com
 
-      - name: Format API package
+      - name: Regenerate API commands
+        run: pnpm --filter supabase generate
+
+      - name: Format generated files
         run: pnpm run fmt:fix
 
       - name: Check for generated changes
         id: check
         run: |
-          if git diff --ignore-space-at-eol --exit-code --quiet packages/api/src/generated packages/api/scripts/openapi-source.json; then
+          if git diff --ignore-space-at-eol --exit-code --quiet packages/api/src/generated packages/api/scripts/openapi-source.json apps/cli/src/command-internal/api/generated.ts apps/cli/src/command-internal/api/api-commands.snapshot.json; then
             echo "No generated changes detected."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else

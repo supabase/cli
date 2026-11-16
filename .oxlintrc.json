@@ -51,7 +51,7 @@
       // Management API calls go through the typed `@supabase/api` client so they emit the
       // `api.operation` span; tests build stub URLs freely.
       "files": ["apps/cli/src/**"],
-      "excludeFiles": ["**/*.test.ts"],
+      "excludeFiles": ["**/*.test.ts", "apps/cli/src/command-internal/api/generated.ts"],
       "jsPlugins": ["./tools/oxlint/supabase-plugin.js"],
       "rules": {
         "supabase/no-raw-management-api-url": "error"
