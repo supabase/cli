@@ -37,6 +37,7 @@ const START_TIMEOUT_MS = 280_000;
 const SHORT_E2E_TIMEOUT_MS = 30_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
 const CLEANUP_TIMEOUT_MS = 120_000;
+const INVOKE_TIMEOUT_MS = 60_000;
 
 /**
  * `--exclude` values for the 3 heaviest, least-relevant services (same set the sibling Docker
@@ -69,16 +70,18 @@ const FunctionEnvResponse = Schema.fromJsonString(
 );
 
 const invokeEnvFunction = Effect.fnUntraced(function* (apiUrl: string, edgeRuntime: string) {
-  const response = yield* HttpClient.get(`${apiUrl}/functions/v1/env`);
-  const body = yield* response.text;
+  const { status, body } = yield* Effect.gen(function* () {
+    const response = yield* HttpClient.get(`${apiUrl}/functions/v1/env`);
+    return { status: response.status, body: yield* response.text };
+  }).pipe(Effect.timeout(INVOKE_TIMEOUT_MS));
   const logs =
-    response.status === 200
+    status === 200
       ? ""
       : yield* runDockerEffect(["logs", edgeRuntime]).pipe(
           Effect.map(({ stdout, stderr }) => `${stdout}${stderr}`),
           Effect.catch((error) => Effect.succeed(`<logs unavailable: ${error.message}>`)),
         );
-  expect(response.status, `body: ${body}\nedge runtime logs:\n${logs}`).toBe(200);
+  expect(status, `body: ${body}\nedge runtime logs:\n${logs}`).toBe(200);
   return yield* Schema.decodeEffect(FunctionEnvResponse)(body);
 });
 
@@ -368,6 +371,6 @@ describe("supabase start (e2e)", () => {
         expect(restart.exitCode, `stdout:\n${restart.stdout}\nstderr:\n${restart.stderr}`).toBe(0);
         expect(yield* invokeEnvFunction(apiUrl, edgeRuntime)).toEqual(expected);
       }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
-    START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS * 2,
+    START_TIMEOUT_MS * 2 + INVOKE_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS * 2,
   );
 });
