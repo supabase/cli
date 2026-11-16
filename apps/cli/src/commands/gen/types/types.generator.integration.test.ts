@@ -171,7 +171,7 @@ describe.skipIf(process.platform === "win32")("genTypesGeneratorLayer for --lang
         const output = yield* generate("swift").pipe(
           Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin", XDG_CACHE_HOME: `${cwd}/cache` })),
         );
-        expectFakeSupabaseTypegenOutput(output);
+        expectFakeSupabaseTypegenOutput(output.source);
       }),
     ),
   );
@@ -186,7 +186,7 @@ describe.skipIf(process.platform === "win32")("genTypesGeneratorLayer for --lang
         const output = yield* generate("swift").pipe(
           Effect.provide(layerIn(cwd, { PATH: "/usr/bin:/bin", HOME: `${cwd}/home` })),
         );
-        expectFakeSupabaseTypegenOutput(output);
+        expectFakeSupabaseTypegenOutput(output.source);
       }),
     ),
   );
