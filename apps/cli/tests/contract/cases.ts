@@ -63,6 +63,9 @@ const trustingWebSocket = (ca: string) =>
     }
   };
 
+/* The first channel join on a fresh stack also pays Realtime's tenant startup, which can pass the 10s client default on a slow runner. */
+const REALTIME_JOIN_TIMEOUT_MS = 30_000;
+
 const contractClient = (key: "PUBLISHABLE_KEY" | "ANON_KEY" | "SECRET_KEY") =>
   Effect.gen(function* () {
     const target = yield* ContractTarget;
@@ -70,6 +73,10 @@ const contractClient = (key: "PUBLISHABLE_KEY" | "ANON_KEY" | "SECRET_KEY") =>
     const base = yield* FetchHttpClient.Fetch;
     return createClient(target.API_URL, target[key], {
       auth: { persistSession: false, autoRefreshToken: false },
+      realtime: {
+        timeout: REALTIME_JOIN_TIMEOUT_MS,
+        ...(ca === undefined ? {} : { transport: trustingWebSocket(ca) }),
+      },
       ...(ca === undefined
         ? {}
         : {
@@ -80,7 +87,6 @@ const contractClient = (key: "PUBLISHABLE_KEY" | "ANON_KEY" | "SECRET_KEY") =>
                 { preconnect: base.preconnect },
               ),
             },
-            realtime: { transport: trustingWebSocket(ca) },
           }),
     });
   });
