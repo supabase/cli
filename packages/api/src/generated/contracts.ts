@@ -14133,7 +14133,208 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     }),
   }),
 });
-export const V2GetWarehouseContextInput = Schema.Struct({
+export const V2GetWarehouseSetupInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  inspect_fdw: Schema.optionalKey(Schema.Literals(["true", "false"])),
+  selection_id: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[a-f0-9]{64}$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-f0-9]{64}$",
+      }),
+    ),
+  ),
+});
+export const V2GetWarehouseSetupOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_setup").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      dns: Schema.optionalKey(
+        Schema.Struct({
+          hostname: Schema.String,
+          region: Schema.String,
+          status: Schema.Union([
+            Schema.Literals(["pending", "ready", "error", "removed"]),
+            OpenString,
+          ]),
+        }).annotate({
+          description:
+            "Warehouse DNS delivery status. Ready means the DNS API accepted the route; client DNS caches may still be updating.",
+        }),
+      ),
+      delete_data: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description: "Whether the current disable request deletes DuckLake data.",
+        }),
+      ),
+      error: Schema.optionalKey(
+        Schema.String.annotate({ description: "Warehouse cleanup failure, when present." }),
+      ),
+      setup_status: Schema.Union([
+        Schema.Literals([
+          "not_started",
+          "setting_up",
+          "copying",
+          "complete",
+          "error",
+          "disabling",
+          "disabled",
+          "deletion_failed",
+        ]).annotate({
+          description:
+            "Overall Warehouse lifecycle status, using persisted state during teardown and replication state during setup",
+        }),
+        OpenString,
+      ]),
+      pipeline_id: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Warehouse replication pipeline ID when it exists",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      steps: Schema.Array(
+        Schema.Struct({
+          name: Schema.Union([
+            Schema.Literals(["warehouse_pipeline", "warehouse_copy", "warehouse_fdw"]).annotate({
+              description: "Observable Warehouse setup phase",
+            }),
+            OpenString,
+          ]),
+          status: Schema.Union([
+            Schema.Literals(["waiting", "running", "completed", "skipped", "error"]).annotate({
+              description: "Derived Warehouse setup step status",
+            }),
+            OpenString,
+          ]),
+          message: Schema.optionalKey(
+            Schema.String.annotate({
+              description: "Best-effort progress or error message derived from Warehouse state",
+            }),
+          ),
+        }),
+      ).annotate({ description: "Warehouse setup phases in execution order" }),
+      tables: Schema.Array(
+        Schema.Struct({
+          schema: Schema.String.annotate({ description: "Postgres schema name" }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          name: Schema.String.annotate({ description: "Postgres table name" }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          state: Schema.Union([
+            Schema.Literals(["syncing", "live", "error"]).annotate({
+              description: "Warehouse copy sync state derived from replication status",
+            }),
+            OpenString,
+          ]),
+          lag_ms: Schema.optionalKey(
+            Schema.Number.annotate({
+              description: "Replication lag in milliseconds, when available",
+            })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          last_synced_at: Schema.optionalKey(
+            Schema.String.annotate({
+              description: "Last sync timestamp, when available",
+              format: "date-time",
+            }),
+          ),
+          copy_name: Schema.String.annotate({
+            description:
+              "DuckLake table path with individually quoted identifiers, including the configured project namespace when present",
+          }),
+          warehouse_size_bytes: Schema.optionalKey(
+            Schema.Number.annotate({ description: "Warehouse table size in bytes, when available" })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          replication_state: Schema.Union([Schema.String, Schema.Null]),
+        }),
+      ),
+      fdw_status: Schema.Union([
+        Schema.Struct({
+          extension_available: Schema.Boolean.annotate({
+            description:
+              "Whether fdw_warehouse is available to install on the project database instance",
+          }),
+          extension_installed: Schema.Boolean.annotate({
+            description: "Whether the fdw_warehouse extension exists in the project database",
+          }),
+          wrapper_installed: Schema.Boolean.annotate({
+            description:
+              "Whether the Warehouse foreign data wrapper exists in the project database",
+          }),
+          server_configured: Schema.Boolean.annotate({
+            description: "Whether the Warehouse foreign server exists in the project database",
+          }),
+          schema_created: Schema.Boolean.annotate({
+            description: "Whether the local Warehouse schema exists in the project database",
+          }),
+          foreign_schema_imported: Schema.Boolean.annotate({
+            description:
+              "Whether the Warehouse foreign schema import has exposed the Warehouse snapshots table",
+          }),
+        }).annotate({
+          description:
+            "Project database FDW setup markers; null during or after teardown, when setup inspection is inapplicable.",
+        }),
+        Schema.Null,
+      ]),
+      status: Schema.Union([
+        Schema.Literals(["running", "succeeded", "failed"]).annotate({
+          description:
+            "Current enablement readiness. Success requires initial copy, a running pipeline and ready routing; this is not a historical operation result or a query connectivity check.",
+        }),
+        OpenString,
+      ]),
+      status_error: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Reason current enablement readiness failed. Separate from Studio setup or cleanup errors.",
+        }),
+      ),
+      replication_state: Schema.String,
+    }),
+  }),
+});
+export const V2GetWarehouseStatusInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
@@ -14146,7 +14347,7 @@ export const V2GetWarehouseContextInput = Schema.Struct({
       }),
     ),
 });
-export const V2GetWarehouseContextOutput = Schema.Struct({
+export const V2GetWarehouseStatusOutput = Schema.Struct({
   data: Schema.Struct({
     attributes: Schema.Struct({
       capabilities: Schema.Struct({
@@ -14488,207 +14689,6 @@ export const V2GetWarehouseContextOutput = Schema.Struct({
         }),
       ),
     type: Schema.Literal("warehouse_context").annotate({ description: "Resource type." }),
-  }),
-});
-export const V2GetWarehouseSetupInput = Schema.Struct({
-  ref: Schema.String.check(
-    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
-  )
-    .check(
-      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
-    )
-    .check(
-      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
-        expected: "a string matching the RegExp ^[a-z]+$",
-      }),
-    ),
-  inspect_fdw: Schema.optionalKey(Schema.Literals(["true", "false"])),
-  selection_id: Schema.optionalKey(
-    Schema.String.check(
-      Schema.isPattern(new RegExp("^[a-f0-9]{64}$", "u")).annotate({
-        expected: "a string matching the RegExp ^[a-f0-9]{64}$",
-      }),
-    ),
-  ),
-});
-export const V2GetWarehouseSetupOutput = Schema.Struct({
-  data: Schema.Struct({
-    type: Schema.Literal("warehouse_setup").annotate({ description: "Resource type." }),
-    id: Schema.String,
-    attributes: Schema.Struct({
-      dns: Schema.optionalKey(
-        Schema.Struct({
-          hostname: Schema.String,
-          region: Schema.String,
-          status: Schema.Union([
-            Schema.Literals(["pending", "ready", "error", "removed"]),
-            OpenString,
-          ]),
-        }).annotate({
-          description:
-            "Warehouse DNS delivery status. Ready means the DNS API accepted the route; client DNS caches may still be updating.",
-        }),
-      ),
-      delete_data: Schema.optionalKey(
-        Schema.Boolean.annotate({
-          description: "Whether the current disable request deletes DuckLake data.",
-        }),
-      ),
-      error: Schema.optionalKey(
-        Schema.String.annotate({ description: "Warehouse cleanup failure, when present." }),
-      ),
-      setup_status: Schema.Union([
-        Schema.Literals([
-          "not_started",
-          "setting_up",
-          "copying",
-          "complete",
-          "error",
-          "disabling",
-          "disabled",
-          "deletion_failed",
-        ]).annotate({
-          description:
-            "Overall Warehouse lifecycle status, using persisted state during teardown and replication state during setup",
-        }),
-        OpenString,
-      ]),
-      pipeline_id: Schema.optionalKey(
-        Schema.String.annotate({
-          description: "Warehouse replication pipeline ID when it exists",
-        }).check(
-          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-        ),
-      ),
-      steps: Schema.Array(
-        Schema.Struct({
-          name: Schema.Union([
-            Schema.Literals(["warehouse_pipeline", "warehouse_copy", "warehouse_fdw"]).annotate({
-              description: "Observable Warehouse setup phase",
-            }),
-            OpenString,
-          ]),
-          status: Schema.Union([
-            Schema.Literals(["waiting", "running", "completed", "skipped", "error"]).annotate({
-              description: "Derived Warehouse setup step status",
-            }),
-            OpenString,
-          ]),
-          message: Schema.optionalKey(
-            Schema.String.annotate({
-              description: "Best-effort progress or error message derived from Warehouse state",
-            }),
-          ),
-        }),
-      ).annotate({ description: "Warehouse setup phases in execution order" }),
-      tables: Schema.Array(
-        Schema.Struct({
-          schema: Schema.String.annotate({ description: "Postgres schema name" }).check(
-            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-          ),
-          name: Schema.String.annotate({ description: "Postgres table name" }).check(
-            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-          ),
-          state: Schema.Union([
-            Schema.Literals(["syncing", "live", "error"]).annotate({
-              description: "Warehouse copy sync state derived from replication status",
-            }),
-            OpenString,
-          ]),
-          lag_ms: Schema.optionalKey(
-            Schema.Number.annotate({
-              description: "Replication lag in milliseconds, when available",
-            })
-              .check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(0).annotate({
-                  expected: "a value greater than or equal to 0",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          last_synced_at: Schema.optionalKey(
-            Schema.String.annotate({
-              description: "Last sync timestamp, when available",
-              format: "date-time",
-            }),
-          ),
-          copy_name: Schema.String.annotate({
-            description:
-              "DuckLake table path with individually quoted identifiers, including the configured project namespace when present",
-          }),
-          warehouse_size_bytes: Schema.optionalKey(
-            Schema.Number.annotate({ description: "Warehouse table size in bytes, when available" })
-              .check(Schema.isInt().annotate({ expected: "an integer" }))
-              .check(
-                Schema.isGreaterThanOrEqualTo(0).annotate({
-                  expected: "a value greater than or equal to 0",
-                }),
-              )
-              .check(
-                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
-                  expected: "a value less than or equal to 9007199254740991",
-                }),
-              ),
-          ),
-          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-            .check(
-              Schema.isLessThanOrEqualTo(4294967295).annotate({
-                expected: "a value less than or equal to 4294967295",
-              }),
-            )
-            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
-          replication_state: Schema.Union([Schema.String, Schema.Null]),
-        }),
-      ),
-      fdw_status: Schema.Union([
-        Schema.Struct({
-          extension_available: Schema.Boolean.annotate({
-            description:
-              "Whether fdw_warehouse is available to install on the project database instance",
-          }),
-          extension_installed: Schema.Boolean.annotate({
-            description: "Whether the fdw_warehouse extension exists in the project database",
-          }),
-          wrapper_installed: Schema.Boolean.annotate({
-            description:
-              "Whether the Warehouse foreign data wrapper exists in the project database",
-          }),
-          server_configured: Schema.Boolean.annotate({
-            description: "Whether the Warehouse foreign server exists in the project database",
-          }),
-          schema_created: Schema.Boolean.annotate({
-            description: "Whether the local Warehouse schema exists in the project database",
-          }),
-          foreign_schema_imported: Schema.Boolean.annotate({
-            description:
-              "Whether the Warehouse foreign schema import has exposed the Warehouse snapshots table",
-          }),
-        }).annotate({
-          description:
-            "Project database FDW setup markers; null during or after teardown, when setup inspection is inapplicable.",
-        }),
-        Schema.Null,
-      ]),
-      status: Schema.Union([
-        Schema.Literals(["running", "succeeded", "failed"]).annotate({
-          description:
-            "Current enablement readiness. Success requires initial copy, a running pipeline and ready routing; this is not a historical operation result or a query connectivity check.",
-        }),
-        OpenString,
-      ]),
-      status_error: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Reason current enablement readiness failed. Separate from Studio setup or cleanup errors.",
-        }),
-      ),
-      replication_state: Schema.String,
-    }),
   }),
 });
 export const V2GetWarehouseTeardownInput = Schema.Struct({
@@ -19749,8 +19749,8 @@ export const openApiOperationIdMap = {
   "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
-  "v2-get-warehouse-context": "v2GetWarehouseContext",
   "v2-get-warehouse-setup": "v2GetWarehouseSetup",
+  "v2-get-warehouse-status": "v2GetWarehouseStatus",
   "v2-get-warehouse-teardown": "v2GetWarehouseTeardown",
   "v2-list-all-compute-instances": "v2ListAllComputeInstances",
   "v2-list-log-drains": "v2ListLogDrains",
@@ -22910,20 +22910,6 @@ export const operationDefinitions = {
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
   },
-  v2GetWarehouseContext: {
-    id: "v2GetWarehouseContext",
-    description:
-      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.\n\nThis endpoint is currently in its **Alpha** stage.",
-    method: "GET",
-    path: "/v2/projects/{ref}/warehouse/context",
-    pathParams: ["ref"],
-    queryParams: [],
-    headerParams: [],
-    requestBody: { kind: "none" },
-    response: { kind: "json" },
-    inputSchema: V2GetWarehouseContextInput,
-    outputSchema: V2GetWarehouseContextOutput,
-  },
   v2GetWarehouseSetup: {
     id: "v2GetWarehouseSetup",
     description:
@@ -22937,6 +22923,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetWarehouseSetupInput,
     outputSchema: V2GetWarehouseSetupOutput,
+  },
+  v2GetWarehouseStatus: {
+    id: "v2GetWarehouseStatus",
+    description:
+      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/status",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseStatusInput,
+    outputSchema: V2GetWarehouseStatusOutput,
   },
   v2GetWarehouseTeardown: {
     id: "v2GetWarehouseTeardown",

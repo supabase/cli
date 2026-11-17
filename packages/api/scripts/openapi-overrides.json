@@ -1208,11 +1208,11 @@
   },
   {
     "op": "add",
-    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1context",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1status",
     "value": {
       "get": {
         "description": "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.\n\nThis endpoint is currently in its **Alpha** stage.",
-        "operationId": "v2-get-warehouse-context",
+        "operationId": "v2-get-warehouse-status",
         "parameters": [
           {
             "description": "Project ref",

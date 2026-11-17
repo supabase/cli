@@ -151,7 +151,7 @@ it.live("warehouse status keeps consolidated API bytes when stdout is piped", ()
 
     requireCliSuccess(result, "warehouse status");
     expect(result.stdout, result.stderr).toBe(response.body);
-    expect(requests).toEqual([`GET /v2/projects/${REF}/warehouse/context`]);
+    expect(requests).toEqual([`GET /v2/projects/${REF}/warehouse/status`]);
   }).pipe(Effect.provide(BunServices.layer)),
 );
 

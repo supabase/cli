@@ -340,7 +340,7 @@ describe("generated warehouse commands", () => {
           expect(sent).toEqual([
             {
               method: "GET",
-              path: `/v2/projects/${VALID_REF}/warehouse/context`,
+              path: `/v2/projects/${VALID_REF}/warehouse/status`,
               search: "",
               body: undefined,
             },

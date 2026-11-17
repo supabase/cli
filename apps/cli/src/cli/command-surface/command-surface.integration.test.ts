@@ -125,7 +125,7 @@ describe("command surface", () => {
       const { variants } = yield* Effect.promise(() => surface);
       const status = variants.warehouse["warehouse status"];
       expect(status).toMatchObject({
-        api: { operationId: "v2-get-warehouse-context" },
+        api: { operationId: "v2-get-warehouse-status" },
         target: { group: "hosted", consent: "none" },
         stage: { status: "experimental", feature: "warehouse" },
       });

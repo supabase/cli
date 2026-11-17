@@ -246,7 +246,247 @@ export const apiCommandSchemas = {
       required: ["data"],
     },
   },
-  "v2-get-warehouse-context": {
+  "v2-get-warehouse-setup": {
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        data: {
+          type: "object",
+          properties: {
+            type: {
+              type: "string",
+              description: "Resource type.",
+              enum: ["warehouse_setup"],
+            },
+            id: {
+              type: "string",
+            },
+            attributes: {
+              type: "object",
+              properties: {
+                dns: {
+                  description:
+                    "Warehouse DNS delivery status. Ready means the DNS API accepted the route; client DNS caches may still be updating.",
+                  type: "object",
+                  properties: {
+                    hostname: {
+                      type: "string",
+                    },
+                    region: {
+                      type: "string",
+                    },
+                    status: {
+                      type: "string",
+                      enum: ["pending", "ready", "error", "removed"],
+                    },
+                  },
+                  required: ["hostname", "region", "status"],
+                },
+                delete_data: {
+                  description: "Whether the current disable request deletes DuckLake data.",
+                  type: "boolean",
+                },
+                error: {
+                  description: "Warehouse cleanup failure, when present.",
+                  type: "string",
+                },
+                setup_status: {
+                  type: "string",
+                  enum: [
+                    "not_started",
+                    "setting_up",
+                    "copying",
+                    "complete",
+                    "error",
+                    "disabling",
+                    "disabled",
+                    "deletion_failed",
+                  ],
+                  description:
+                    "Overall Warehouse lifecycle status, using persisted state during teardown and replication state during setup",
+                  examples: ["copying"],
+                },
+                pipeline_id: {
+                  description: "Warehouse replication pipeline ID when it exists",
+                  type: "string",
+                  minLength: 1,
+                  examples: ["03dg2o5teb2eucxr9ggh3uie6"],
+                },
+                steps: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: {
+                        type: "string",
+                        enum: ["warehouse_pipeline", "warehouse_copy", "warehouse_fdw"],
+                        description: "Observable Warehouse setup phase",
+                        examples: ["warehouse_copy"],
+                      },
+                      status: {
+                        type: "string",
+                        enum: ["waiting", "running", "completed", "skipped", "error"],
+                        description: "Derived Warehouse setup step status",
+                        examples: ["running"],
+                      },
+                      message: {
+                        description:
+                          "Best-effort progress or error message derived from Warehouse state",
+                        type: "string",
+                        examples: ["Pending initial copy: public.orders:copying_table"],
+                      },
+                    },
+                    required: ["name", "status"],
+                  },
+                  description: "Warehouse setup phases in execution order",
+                },
+                tables: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      schema: {
+                        type: "string",
+                        minLength: 1,
+                        description: "Postgres schema name",
+                        examples: ["public"],
+                      },
+                      name: {
+                        type: "string",
+                        minLength: 1,
+                        description: "Postgres table name",
+                        examples: ["orders"],
+                      },
+                      state: {
+                        type: "string",
+                        enum: ["syncing", "live", "error"],
+                        description: "Warehouse copy sync state derived from replication status",
+                        examples: ["live"],
+                      },
+                      lag_ms: {
+                        description: "Replication lag in milliseconds, when available",
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                        examples: [12000],
+                      },
+                      last_synced_at: {
+                        description: "Last sync timestamp, when available",
+                        type: "string",
+                        format: "date-time",
+                        pattern:
+                          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                        examples: ["2026-06-23T17:48:00Z"],
+                      },
+                      copy_name: {
+                        type: "string",
+                        description:
+                          "DuckLake table path with individually quoted identifiers, including the configured project namespace when present",
+                        examples: ['"abcjuqabhgwjjutfvtpa"."public"."orders"'],
+                      },
+                      warehouse_size_bytes: {
+                        description: "Warehouse table size in bytes, when available",
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                        examples: [197912092672],
+                      },
+                      id: {
+                        type: "integer",
+                        maximum: 4294967295,
+                        exclusiveMinimum: 0,
+                      },
+                      replication_state: {
+                        type: ["string", "null"],
+                      },
+                    },
+                    required: ["schema", "name", "state", "copy_name", "id", "replication_state"],
+                  },
+                },
+                fdw_status: {
+                  type: ["object", "null"],
+                  properties: {
+                    extension_available: {
+                      type: "boolean",
+                      description:
+                        "Whether fdw_warehouse is available to install on the project database instance",
+                      examples: [true],
+                    },
+                    extension_installed: {
+                      type: "boolean",
+                      description:
+                        "Whether the fdw_warehouse extension exists in the project database",
+                      examples: [true],
+                    },
+                    wrapper_installed: {
+                      type: "boolean",
+                      description:
+                        "Whether the Warehouse foreign data wrapper exists in the project database",
+                      examples: [true],
+                    },
+                    server_configured: {
+                      type: "boolean",
+                      description:
+                        "Whether the Warehouse foreign server exists in the project database",
+                      examples: [true],
+                    },
+                    schema_created: {
+                      type: "boolean",
+                      description:
+                        "Whether the local Warehouse schema exists in the project database",
+                      examples: [true],
+                    },
+                    foreign_schema_imported: {
+                      type: "boolean",
+                      description:
+                        "Whether the Warehouse foreign schema import has exposed the Warehouse snapshots table",
+                      examples: [true],
+                    },
+                  },
+                  required: [
+                    "extension_available",
+                    "extension_installed",
+                    "wrapper_installed",
+                    "server_configured",
+                    "schema_created",
+                    "foreign_schema_imported",
+                  ],
+                  description:
+                    "Project database FDW setup markers; null during or after teardown, when setup inspection is inapplicable.",
+                },
+                status: {
+                  type: "string",
+                  enum: ["running", "succeeded", "failed"],
+                  description:
+                    "Current enablement readiness. Success requires initial copy, a running pipeline and ready routing; this is not a historical operation result or a query connectivity check.",
+                },
+                status_error: {
+                  description:
+                    "Reason current enablement readiness failed. Separate from Studio setup or cleanup errors.",
+                  type: "string",
+                },
+                replication_state: {
+                  type: "string",
+                },
+              },
+              required: [
+                "setup_status",
+                "steps",
+                "tables",
+                "fdw_status",
+                "status",
+                "replication_state",
+              ],
+            },
+          },
+          required: ["type", "id", "attributes"],
+        },
+      },
+      required: ["data"],
+    },
+  },
+  "v2-get-warehouse-status": {
     result: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       properties: {
@@ -649,246 +889,6 @@ export const apiCommandSchemas = {
       },
       required: ["data"],
       type: "object",
-    },
-  },
-  "v2-get-warehouse-setup": {
-    result: {
-      $schema: "https://json-schema.org/draft/2020-12/schema",
-      type: "object",
-      properties: {
-        data: {
-          type: "object",
-          properties: {
-            type: {
-              type: "string",
-              description: "Resource type.",
-              enum: ["warehouse_setup"],
-            },
-            id: {
-              type: "string",
-            },
-            attributes: {
-              type: "object",
-              properties: {
-                dns: {
-                  description:
-                    "Warehouse DNS delivery status. Ready means the DNS API accepted the route; client DNS caches may still be updating.",
-                  type: "object",
-                  properties: {
-                    hostname: {
-                      type: "string",
-                    },
-                    region: {
-                      type: "string",
-                    },
-                    status: {
-                      type: "string",
-                      enum: ["pending", "ready", "error", "removed"],
-                    },
-                  },
-                  required: ["hostname", "region", "status"],
-                },
-                delete_data: {
-                  description: "Whether the current disable request deletes DuckLake data.",
-                  type: "boolean",
-                },
-                error: {
-                  description: "Warehouse cleanup failure, when present.",
-                  type: "string",
-                },
-                setup_status: {
-                  type: "string",
-                  enum: [
-                    "not_started",
-                    "setting_up",
-                    "copying",
-                    "complete",
-                    "error",
-                    "disabling",
-                    "disabled",
-                    "deletion_failed",
-                  ],
-                  description:
-                    "Overall Warehouse lifecycle status, using persisted state during teardown and replication state during setup",
-                  examples: ["copying"],
-                },
-                pipeline_id: {
-                  description: "Warehouse replication pipeline ID when it exists",
-                  type: "string",
-                  minLength: 1,
-                  examples: ["03dg2o5teb2eucxr9ggh3uie6"],
-                },
-                steps: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      name: {
-                        type: "string",
-                        enum: ["warehouse_pipeline", "warehouse_copy", "warehouse_fdw"],
-                        description: "Observable Warehouse setup phase",
-                        examples: ["warehouse_copy"],
-                      },
-                      status: {
-                        type: "string",
-                        enum: ["waiting", "running", "completed", "skipped", "error"],
-                        description: "Derived Warehouse setup step status",
-                        examples: ["running"],
-                      },
-                      message: {
-                        description:
-                          "Best-effort progress or error message derived from Warehouse state",
-                        type: "string",
-                        examples: ["Pending initial copy: public.orders:copying_table"],
-                      },
-                    },
-                    required: ["name", "status"],
-                  },
-                  description: "Warehouse setup phases in execution order",
-                },
-                tables: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      schema: {
-                        type: "string",
-                        minLength: 1,
-                        description: "Postgres schema name",
-                        examples: ["public"],
-                      },
-                      name: {
-                        type: "string",
-                        minLength: 1,
-                        description: "Postgres table name",
-                        examples: ["orders"],
-                      },
-                      state: {
-                        type: "string",
-                        enum: ["syncing", "live", "error"],
-                        description: "Warehouse copy sync state derived from replication status",
-                        examples: ["live"],
-                      },
-                      lag_ms: {
-                        description: "Replication lag in milliseconds, when available",
-                        type: "integer",
-                        minimum: 0,
-                        maximum: 9007199254740991,
-                        examples: [12000],
-                      },
-                      last_synced_at: {
-                        description: "Last sync timestamp, when available",
-                        type: "string",
-                        format: "date-time",
-                        pattern:
-                          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
-                        examples: ["2026-06-23T17:48:00Z"],
-                      },
-                      copy_name: {
-                        type: "string",
-                        description:
-                          "DuckLake table path with individually quoted identifiers, including the configured project namespace when present",
-                        examples: ['"abcjuqabhgwjjutfvtpa"."public"."orders"'],
-                      },
-                      warehouse_size_bytes: {
-                        description: "Warehouse table size in bytes, when available",
-                        type: "integer",
-                        minimum: 0,
-                        maximum: 9007199254740991,
-                        examples: [197912092672],
-                      },
-                      id: {
-                        type: "integer",
-                        maximum: 4294967295,
-                        exclusiveMinimum: 0,
-                      },
-                      replication_state: {
-                        type: ["string", "null"],
-                      },
-                    },
-                    required: ["schema", "name", "state", "copy_name", "id", "replication_state"],
-                  },
-                },
-                fdw_status: {
-                  type: ["object", "null"],
-                  properties: {
-                    extension_available: {
-                      type: "boolean",
-                      description:
-                        "Whether fdw_warehouse is available to install on the project database instance",
-                      examples: [true],
-                    },
-                    extension_installed: {
-                      type: "boolean",
-                      description:
-                        "Whether the fdw_warehouse extension exists in the project database",
-                      examples: [true],
-                    },
-                    wrapper_installed: {
-                      type: "boolean",
-                      description:
-                        "Whether the Warehouse foreign data wrapper exists in the project database",
-                      examples: [true],
-                    },
-                    server_configured: {
-                      type: "boolean",
-                      description:
-                        "Whether the Warehouse foreign server exists in the project database",
-                      examples: [true],
-                    },
-                    schema_created: {
-                      type: "boolean",
-                      description:
-                        "Whether the local Warehouse schema exists in the project database",
-                      examples: [true],
-                    },
-                    foreign_schema_imported: {
-                      type: "boolean",
-                      description:
-                        "Whether the Warehouse foreign schema import has exposed the Warehouse snapshots table",
-                      examples: [true],
-                    },
-                  },
-                  required: [
-                    "extension_available",
-                    "extension_installed",
-                    "wrapper_installed",
-                    "server_configured",
-                    "schema_created",
-                    "foreign_schema_imported",
-                  ],
-                  description:
-                    "Project database FDW setup markers; null during or after teardown, when setup inspection is inapplicable.",
-                },
-                status: {
-                  type: "string",
-                  enum: ["running", "succeeded", "failed"],
-                  description:
-                    "Current enablement readiness. Success requires initial copy, a running pipeline and ready routing; this is not a historical operation result or a query connectivity check.",
-                },
-                status_error: {
-                  description:
-                    "Reason current enablement readiness failed. Separate from Studio setup or cleanup errors.",
-                  type: "string",
-                },
-                replication_state: {
-                  type: "string",
-                },
-              },
-              required: [
-                "setup_status",
-                "steps",
-                "tables",
-                "fdw_status",
-                "status",
-                "replication_state",
-              ],
-            },
-          },
-          required: ["type", "id", "attributes"],
-        },
-      },
-      required: ["data"],
     },
   },
   "v2-get-warehouse-teardown": {

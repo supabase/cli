@@ -28,11 +28,11 @@ The command is generated from the Management API contract (`generated.ts`).
 
 ## API Routes
 
-| Method | Path                                   | Auth         | Request body | Response (used fields)                                          |
-| ------ | -------------------------------------- | ------------ | ------------ | --------------------------------------------------------------- |
-| `GET`  | `/v2/projects/{ref}/warehouse/context` | Bearer token | none         | passed through unchanged                                        |
-| `GET`  | `/v1/projects`                         | Bearer token | none         | only when no ref resolved and the session is interactive        |
-| `GET`  | `/v1/projects/{ref}`                   | Bearer token | none         | linked-project cache miss only (best-effort, after the command) |
+| Method | Path                                  | Auth         | Request body | Response (used fields)                                          |
+| ------ | ------------------------------------- | ------------ | ------------ | --------------------------------------------------------------- |
+| `GET`  | `/v2/projects/{ref}/warehouse/status` | Bearer token | none         | passed through unchanged                                        |
+| `GET`  | `/v1/projects`                        | Bearer token | none         | only when no ref resolved and the session is interactive        |
+| `GET`  | `/v1/projects/{ref}`                  | Bearer token | none         | linked-project cache miss only (best-effort, after the command) |
 
 No operation-specific query parameters or FDW inspection.
 `--dry-run` prints `{method, path, query, headers, body}` and sends no command request (the linked-project cache read in the table above can still run).

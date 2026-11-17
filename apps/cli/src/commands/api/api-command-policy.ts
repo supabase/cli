@@ -29,7 +29,7 @@ export type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "fail
 
 /** Only these operations generate commands; `x-operation` on any other operation is ignored. */
 export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
-  "v2-get-warehouse-context",
+  "v2-get-warehouse-status",
   "v2-enable-warehouse",
   "v2-get-warehouse-setup",
   "v2-disable-warehouse",
