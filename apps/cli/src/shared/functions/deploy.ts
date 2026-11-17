@@ -31,6 +31,7 @@ import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClientError from "effect/http/HttpClientError";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
+import { planGateFromResponse } from "../../command-internal/http-errors.ts";
 import { Output } from "../output/output.service.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
@@ -1802,6 +1803,7 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
     return yield* new FunctionsApiStatusError({
       status: response.status,
       message: `unexpected deploy status ${response.status}: ${formatUnexpectedStatusBody(body)}`,
+      ...planGateFromResponse(response.status, body),
     });
   }
   // A 201 whose body is not the expected JSON is an API-response problem, not a
@@ -1893,6 +1895,7 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
     return yield* new FunctionsApiStatusError({
       status: response.status,
       message: `unexpected bulk update status ${response.status}: ${body}`,
+      ...planGateFromResponse(response.status, body),
     });
   }).pipe(
     Effect.retry({
@@ -1975,6 +1978,7 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
       status: response.status,
       message: `unexpected ${action} function status ${response.status}: ${body}`,
       notFoundIsInvalidInput: yield* Ref.get(shouldUpdateRef),
+      ...planGateFromResponse(response.status, body),
     });
   });
 

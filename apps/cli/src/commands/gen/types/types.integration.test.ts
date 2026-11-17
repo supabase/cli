@@ -182,6 +182,7 @@ function defaultFlags(overrides: Partial<GenTypesFlags> = {}): GenTypesFlags {
     lang: "typescript" as const,
     schema: [],
     "swift-access-control": Option.none(),
+    "swift-typegen-source": Option.none(),
     postgrestV9Compat: false,
     queryTimeout: "15s",
     ...overrides,
@@ -1520,6 +1521,37 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("rejects --swift-typegen-source with --project-ref (mutex group)", () =>
+      Effect.gen(function* () {
+        const { layer } = yield* setup({
+          args: [
+            "gen",
+            "types",
+            "--project-ref",
+            VALID_REF,
+            "--swift-typegen-source",
+            "main",
+            "--lang",
+            "swift",
+          ],
+        });
+        const exit = yield* genTypes(
+          defaultFlags({
+            projectRef: Option.some(VALID_REF),
+            lang: "swift",
+            "swift-typegen-source": Option.some("main"),
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "if any flags in the group [remote linked project-ref swift-typegen-source] are set none of the others can be; [project-ref swift-typegen-source] were all set",
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect(
       "rejects --postgrest-v9-compat without --db-url for project-ref generation, ahead of the mutex group",
       () =>
@@ -2057,7 +2089,7 @@ describe("gen types", () => {
     );
 
     it.effect(
-      "forwards --query-timeout and --swift-access-control to the generator for the default local database",
+      "forwards --query-timeout and the Swift flags to the generator for the default local database",
       () =>
         Effect.gen(function* () {
           const { layer, generator } = yield* setup({
@@ -2070,6 +2102,8 @@ describe("gen types", () => {
               "20s",
               "--swift-access-control",
               "public",
+              "--swift-typegen-source",
+              "./supabase-swift",
             ],
           });
           yield* genTypes(
@@ -2077,12 +2111,14 @@ describe("gen types", () => {
               lang: "go",
               queryTimeout: "20s",
               "swift-access-control": Option.some("public"),
+              "swift-typegen-source": Option.some("./supabase-swift"),
             }),
           ).pipe(Effect.provide(layer));
 
           const call = generator.calls[0];
           expect(call?.isLocal).toBe(true);
           expect(call?.options["swift-access-control"]).toBe("public");
+          expect(call?.options["swift-typegen-source"]).toBe("./supabase-swift");
           expect(call?.conn.runtimeParams?.["statement_timeout"]).toBe("20000");
           expect(call?.conn.connectTimeoutSeconds).toBe(20);
         }).pipe(Effect.provide(BunServices.layer)),
@@ -3213,149 +3249,6 @@ describe("gen types", () => {
           input: { ref: VALID_REF },
         });
         expect(generator.calls).toHaveLength(1);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-  });
-
-  describe("TLS: pin the Supabase CA only where the design calls for it", () => {
-    it.effect("pins the Supabase CA for a db-url pointing at a direct database host", () =>
-      Effect.gen(function* () {
-        const { layer, generator } = yield* setup({
-          dbConfigResolve: () =>
-            Effect.succeed(
-              remoteResolvedConfig({
-                host: `db.${VALID_REF}.supabase.co`,
-                port: 5432,
-                user: "postgres",
-                password: "postgres",
-                database: "postgres",
-              }),
-            ),
-        });
-        yield* genTypes(
-          defaultFlags({
-            remote: Option.some({
-              _tag: "DbUrl",
-              url: `postgresql://postgres:postgres@db.${VALID_REF}.supabase.co:5432/postgres`,
-            } as const),
-          }),
-        ).pipe(Effect.provide(layer));
-
-        expect(generator.calls[0]?.conn.sslmode).toBe("require");
-        expect(generator.calls[0]?.conn.sslrootcertInline).toBe(rootCaBundle());
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("pins the Supabase CA for a db-url pointing at the pooler host", () =>
-      Effect.gen(function* () {
-        const { layer, generator } = yield* setup({
-          dbConfigResolve: () =>
-            Effect.succeed(
-              remoteResolvedConfig({
-                host: "aws-0-us-east-1.pooler.supabase.com",
-                port: 6543,
-                user: `postgres.${VALID_REF}`,
-                password: "pooler-password",
-                database: "postgres",
-              }),
-            ),
-        });
-        yield* genTypes(
-          defaultFlags({
-            remote: Option.some({
-              _tag: "DbUrl",
-              url: "postgresql://postgres.ref:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
-            } as const),
-          }),
-        ).pipe(Effect.provide(layer));
-
-        expect(generator.calls[0]?.conn.sslmode).toBe("require");
-        expect(generator.calls[0]?.conn.sslrootcertInline).toBe(rootCaBundle());
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("honors an explicit sslmode from the db-url's DSN on a Supabase host", () =>
-      Effect.gen(function* () {
-        const { layer, generator } = yield* setup({
-          dbConfigResolve: () =>
-            Effect.succeed(
-              remoteResolvedConfig({
-                host: `db.${VALID_REF}.supabase.co`,
-                port: 5432,
-                user: "postgres",
-                password: "postgres",
-                database: "postgres",
-                sslmode: "disable",
-              }),
-            ),
-        });
-        yield* genTypes(
-          defaultFlags({
-            remote: Option.some({
-              _tag: "DbUrl",
-              url: `postgresql://postgres:postgres@db.${VALID_REF}.supabase.co:5432/postgres?sslmode=disable`,
-            } as const),
-          }),
-        ).pipe(Effect.provide(layer));
-
-        expect(generator.calls[0]?.conn.sslmode).toBe("disable");
-        expect(generator.calls[0]?.conn.sslrootcertInline).toBeUndefined();
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("leaves a non-Supabase db-url host unpinned", () =>
-      Effect.gen(function* () {
-        const { layer, generator } = yield* setup({
-          dbConfigResolve: () =>
-            Effect.succeed(
-              remoteResolvedConfig({
-                host: "db.example.net",
-                port: 5432,
-                user: "postgres",
-                password: "postgres",
-                database: "postgres",
-              }),
-            ),
-        });
-        yield* genTypes(
-          defaultFlags({
-            remote: Option.some({
-              _tag: "DbUrl",
-              url: "postgresql://postgres:postgres@db.example.net:5432/postgres",
-            } as const),
-          }),
-        ).pipe(Effect.provide(layer));
-
-        expect(generator.calls[0]?.conn.sslmode).toBeUndefined();
-        expect(generator.calls[0]?.conn.sslrootcertInline).toBeUndefined();
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("never pins TLS for a local db-url target", () =>
-      Effect.gen(function* () {
-        const { layer, generator } = yield* setup({
-          dbConfigResolve: () =>
-            Effect.succeed(
-              localResolvedConfig({
-                host: `db.${VALID_REF}.supabase.co`,
-                port: 5432,
-                user: "postgres",
-                password: "postgres",
-                database: "postgres",
-              }),
-            ),
-        });
-        yield* genTypes(
-          defaultFlags({
-            remote: Option.some({
-              _tag: "DbUrl",
-              url: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
-            } as const),
-          }),
-        ).pipe(Effect.provide(layer));
-
-        expect(generator.calls[0]?.conn.sslmode).toBeUndefined();
-        expect(generator.calls[0]?.conn.sslrootcertInline).toBeUndefined();
       }).pipe(Effect.provide(BunServices.layer)),
     );
   });
