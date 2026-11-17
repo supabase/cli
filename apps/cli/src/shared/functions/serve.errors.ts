@@ -3,9 +3,12 @@ import {
   SUGGEST_CONTAINER_MEMORY_LIMIT,
   SUGGEST_DOCKER_INSTALL,
   SUGGEST_DOCKER_START,
+  SUGGEST_DOCKER_START_RERUN,
+  isDockerDaemonUnreachable,
 } from "../../command-internal/docker-suggest.ts";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
@@ -152,3 +155,168 @@ export class ServeLocalDbInspectError extends Data.TaggedError("ServeLocalDbInsp
     return this.daemonDown ? SUGGEST_DOCKER_INSTALL : undefined;
   }
 }
+
+/** A `functions serve` input or project setting is invalid or missing before the container starts. */
+export class ServeConfigError extends Data.TaggedError("ServeConfigError")<{
+  readonly message: string;
+  readonly reason: "inspect_flags" | "missing_import";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    switch (this.reason) {
+      case "inspect_flags":
+        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
+      case "missing_import":
+        return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+      default:
+        return actionability.invalidInput;
+    }
+  }
+}
+
+/** The functions env input, an env file or a configured secret, is missing, can't be read, doesn't parse, or has an invalid name. */
+export class ServeEnvError extends Data.TaggedError("ServeEnvError")<{
+  readonly message: string;
+  readonly reason: "not_found" | "read" | "syntax" | "env_name";
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    switch (this.reason) {
+      case "not_found":
+        return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+      case "syntax":
+        return { ...actionability.invalidInput, fingerprint_suffix: "invalid_content" };
+      case "env_name":
+        return { ...actionability.invalidInput, fingerprint_suffix: "functions_env" };
+      default:
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.toolFailed,
+            fingerprint_suffix: "filesystem_io",
+          }
+        );
+    }
+  }
+}
+
+/** Staging env files on the host failed during `functions serve`. */
+export class ServeFilesystemError extends Data.TaggedError("ServeFilesystemError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return (
+      causeDeclaration(this.cause) ?? {
+        ...actionability.toolFailed,
+        fingerprint_suffix: "filesystem_io",
+      }
+    );
+  }
+}
+
+export type EdgeRuntimeDockerStepReason =
+  | "daemon_down"
+  | "port_in_use"
+  | "name_conflict"
+  | "mount_denied"
+  | "disk_full"
+  | "other";
+
+const edgeRuntimeStepSuffix = {
+  create: "engine_command_create",
+  cp: "engine_command_copy",
+  start: "engine_command_start",
+} as const;
+
+/** A `docker create`, `docker cp` or `docker start` step for the Edge Runtime container failed. */
+export class EdgeRuntimeDockerStepError extends Data.TaggedError("EdgeRuntimeDockerStepError")<{
+  readonly message: string;
+  readonly step: "create" | "cp" | "start";
+  readonly reason: EdgeRuntimeDockerStepReason;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    switch (this.reason) {
+      case "daemon_down":
+        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "port_in_use":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
+      case "name_conflict":
+        return { ...actionability.invalidInput, fingerprint_suffix: "conflict" };
+      case "mount_denied":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "container_configuration" };
+      case "disk_full":
+        return { ...actionability.resourceLimit, fingerprint_suffix: "disk_full" };
+      default:
+        return {
+          ...actionability.runtimeCrash,
+          fingerprint_suffix: edgeRuntimeStepSuffix[this.step] ?? "engine_command_create",
+        };
+    }
+  }
+
+  get suggestion(): string | undefined {
+    return this.reason === "daemon_down" ? SUGGEST_DOCKER_START_RERUN : undefined;
+  }
+}
+
+/** Creating the Docker network or named volume that `functions serve` needs failed. */
+export class DockerResourceCreateError extends Data.TaggedError("DockerResourceCreateError")<{
+  readonly message: string;
+  readonly resource: "network" | "volume";
+  readonly reason: "daemon_down" | "address_pool" | "other";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    switch (this.reason) {
+      case "daemon_down":
+        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "address_pool":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "container_configuration" };
+      default:
+        return { ...actionability.runtimeCrash, fingerprint_suffix: "engine_command_create" };
+    }
+  }
+
+  get suggestion(): string | undefined {
+    return this.reason === "daemon_down" ? SUGGEST_DOCKER_START_RERUN : undefined;
+  }
+}
+
+/** Reads the stderr of a failed Edge Runtime `docker create|cp|start` into a closed reason. */
+export const classifyEdgeRuntimeDockerStepStderr = (
+  stderr: string,
+): EdgeRuntimeDockerStepReason => {
+  if (isDockerDaemonUnreachable(stderr)) return "daemon_down";
+  if (
+    /port is already allocated|address already in use|ports are not available|bind: an attempt was made to access a socket/iu.test(
+      stderr,
+    )
+  ) {
+    return "port_in_use";
+  }
+  if (/is already in use by container|container name .* is already in use/iu.test(stderr)) {
+    return "name_conflict";
+  }
+  if (
+    /mounts denied|is not shared from the host|bind source path does not exist|has not been shared/iu.test(
+      stderr,
+    )
+  ) {
+    return "mount_denied";
+  }
+  if (/no space left on device/iu.test(stderr)) return "disk_full";
+  return "other";
+};
+
+/** Reads the stderr of a failed `docker network|volume create` into a closed reason. */
+export const classifyDockerResourceCreateStderr = (
+  stderr: string,
+): "daemon_down" | "address_pool" | "other" => {
+  if (isDockerDaemonUnreachable(stderr)) return "daemon_down";
+  if (
+    /pool overlaps|all predefined address pools have been fully subnetted|non-overlapping .*address pool/iu.test(
+      stderr,
+    )
+  ) {
+    return "address_pool";
+  }
+  return "other";
+};

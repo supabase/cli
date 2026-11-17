@@ -24,10 +24,12 @@ import {
   ErrorActionabilityId,
   unwrapNativeFailure,
 } from "../telemetry/error-actionability.ts";
+import { DockerResourceCreateError } from "./serve.errors.ts";
 import {
   buildFunctionsDockerRunArgs,
   containerArchiveBytes,
   edgeRuntimeCacheVolume,
+  ensureDockerNetwork,
   localDockerId,
   NativeFailure,
   nativeFailure,
@@ -48,12 +50,13 @@ function mockStreamingChildProcessLayer(
   opts: {
     readonly stdout?: ReadonlyArray<Uint8Array>;
     readonly stderr?: ReadonlyArray<Uint8Array>;
+    readonly exitCode?: number;
   } = {},
 ) {
   const spawner = ChildProcessSpawner.make(() =>
     Effect.gen(function* () {
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(opts.exitCode ?? 0));
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         stdout: Stream.fromIterable(opts.stdout ?? []),
@@ -546,4 +549,30 @@ describe("native failure compatibility", () => {
     expect(probe.message).toBe("");
     expect(Runtime.getErrorExitCode(probe)).toBe(1);
   });
+});
+
+describe("ensureDockerNetwork", () => {
+  it.effect("fails with an address-pool reason when docker cannot allocate a subnet", () =>
+    Effect.gen(function* () {
+      const error = yield* ensureDockerNetwork("supabase_network_p", "p").pipe(
+        Effect.provide(
+          mockStreamingChildProcessLayer({
+            exitCode: 1,
+            stderr: [
+              new TextEncoder().encode("all predefined address pools have been fully subnetted"),
+            ],
+          }),
+        ),
+        Effect.flip,
+      );
+
+      const cause = unwrapNativeFailure(error);
+      expect(cause).toBeInstanceOf(DockerResourceCreateError);
+      expect(cause).toMatchObject({
+        resource: "network",
+        reason: "address_pool",
+        message: "failed to create docker network: supabase_network_p",
+      });
+    }),
+  );
 });

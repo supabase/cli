@@ -1,14 +1,23 @@
+import { PlatformError } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   SUGGEST_CONTAINER_MEMORY_LIMIT,
   SUGGEST_DOCKER_INSTALL,
   SUGGEST_DOCKER_START,
+  SUGGEST_DOCKER_START_RERUN,
 } from "../../command-internal/docker-suggest.ts";
 import { actionability, classifyCliErrorActionability } from "../telemetry/error-actionability.ts";
 import {
+  classifyDockerResourceCreateStderr,
+  classifyEdgeRuntimeDockerStepStderr,
   DockerLogsStreamError,
+  DockerResourceCreateError,
   EdgeRuntimeContainerCrashedError,
+  EdgeRuntimeDockerStepError,
   EdgeRuntimeLogStreamLostError,
+  ServeConfigError,
+  ServeEnvError,
+  ServeFilesystemError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
 } from "./serve.errors.ts";
@@ -236,5 +245,213 @@ describe("ServeLocalDbInspectError actionability", () => {
     const result = classifyCliErrorActionability(error);
     expect(result.error_category).toBe("unknown");
     expect(result.error_fingerprint).toBe("tag:ServeLocalDbInspectError");
+  });
+});
+
+const platformCause = (tag: "NotFound" | "PermissionDenied") =>
+  new PlatformError.PlatformError(
+    new PlatformError.SystemError({ _tag: tag, module: "FileSystem", method: "readFile" }),
+  );
+
+describe("ServeConfigError actionability", () => {
+  it.each([
+    ["inspect_flags", "user_actionable", "invalid_input", "tag:ServeConfigError:flags"],
+    ["missing_import", "user_actionable", "invalid_input", "tag:ServeConfigError:not_found"],
+  ] as const)("classifies %s", (reason, kind, category, fingerprint) => {
+    const result = classifyCliErrorActionability(new ServeConfigError({ message: "m", reason }));
+
+    expect(result.error_kind).toBe(kind);
+    expect(result.error_category).toBe(category);
+    expect(result.error_fingerprint).toBe(fingerprint);
+  });
+});
+
+describe("ServeEnvError actionability", () => {
+  it.each([
+    ["syntax", undefined, "invalid_input", "tag:ServeEnvError:invalid_content"],
+    ["env_name", undefined, "invalid_input", "tag:ServeEnvError:functions_env"],
+    ["not_found", undefined, "invalid_input", "tag:ServeEnvError:not_found"],
+    [
+      "read",
+      Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }),
+      "unknown",
+      "tag:ServeEnvError:filesystem_io",
+    ],
+    ["read", undefined, "unknown", "tag:ServeEnvError:filesystem_io"],
+  ] as const)("classifies a %s failure with cause %#", (reason, cause, category, fingerprint) => {
+    const result = classifyCliErrorActionability(
+      new ServeEnvError({ message: "m", reason, cause }),
+    );
+
+    expect(result.error_category).toBe(category);
+    expect(result.error_fingerprint).toBe(fingerprint);
+  });
+});
+
+describe("ServeFilesystemError actionability", () => {
+  it.each([
+    [platformCause("NotFound"), "invalid_input", "tag:ServeFilesystemError:not_found"],
+    [platformCause("PermissionDenied"), "permission", "tag:ServeFilesystemError:filesystem"],
+    [undefined, "unknown", "tag:ServeFilesystemError:filesystem_io"],
+  ] as const)("classifies cause %#", (cause, category, fingerprint) => {
+    const result = classifyCliErrorActionability(new ServeFilesystemError({ message: "m", cause }));
+
+    expect(result.error_category).toBe(category);
+    expect(result.error_fingerprint).toBe(fingerprint);
+  });
+});
+
+describe("EdgeRuntimeDockerStepError actionability", () => {
+  it.each([
+    [
+      "create",
+      "daemon_down",
+      "docker_not_running",
+      "tag:EdgeRuntimeDockerStepError:docker_not_running",
+      SUGGEST_DOCKER_START_RERUN,
+    ],
+    [
+      "create",
+      "port_in_use",
+      "invalid_config",
+      "tag:EdgeRuntimeDockerStepError:port_conflict",
+      undefined,
+    ],
+    [
+      "start",
+      "name_conflict",
+      "invalid_input",
+      "tag:EdgeRuntimeDockerStepError:conflict",
+      undefined,
+    ],
+    [
+      "cp",
+      "mount_denied",
+      "invalid_config",
+      "tag:EdgeRuntimeDockerStepError:container_configuration",
+      undefined,
+    ],
+    ["cp", "disk_full", "resource_limit", "tag:EdgeRuntimeDockerStepError:disk_full", undefined],
+    [
+      "create",
+      "other",
+      "runtime_crash",
+      "tag:EdgeRuntimeDockerStepError:engine_command_create",
+      undefined,
+    ],
+    [
+      "cp",
+      "other",
+      "runtime_crash",
+      "tag:EdgeRuntimeDockerStepError:engine_command_copy",
+      undefined,
+    ],
+    [
+      "start",
+      "other",
+      "runtime_crash",
+      "tag:EdgeRuntimeDockerStepError:engine_command_start",
+      undefined,
+    ],
+  ] as const)(
+    "classifies %s step failing with %s",
+    (step, reason, category, fingerprint, suggestion) => {
+      const error = new EdgeRuntimeDockerStepError({ message: "m", step, reason });
+
+      const result = classifyCliErrorActionability(error);
+
+      expect(result.error_category).toBe(category);
+      expect(result.error_fingerprint).toBe(fingerprint);
+      expect(error.suggestion).toBe(suggestion);
+    },
+  );
+});
+
+describe("DockerResourceCreateError actionability", () => {
+  it.each([
+    [
+      "network",
+      "daemon_down",
+      "docker_not_running",
+      "tag:DockerResourceCreateError:docker_not_running",
+      SUGGEST_DOCKER_START_RERUN,
+    ],
+    [
+      "network",
+      "address_pool",
+      "invalid_config",
+      "tag:DockerResourceCreateError:container_configuration",
+      undefined,
+    ],
+    [
+      "volume",
+      "other",
+      "runtime_crash",
+      "tag:DockerResourceCreateError:engine_command_create",
+      undefined,
+    ],
+  ] as const)(
+    "classifies a %s create failing with %s",
+    (resource, reason, category, fingerprint, suggestion) => {
+      const error = new DockerResourceCreateError({ message: "m", resource, reason });
+
+      const result = classifyCliErrorActionability(error);
+
+      expect(result.error_category).toBe(category);
+      expect(result.error_fingerprint).toBe(fingerprint);
+      expect(error.suggestion).toBe(suggestion);
+    },
+  );
+});
+
+describe("new serve errors built without fields", () => {
+  it.each([
+    ServeConfigError,
+    ServeEnvError,
+    ServeFilesystemError,
+    EdgeRuntimeDockerStepError,
+    DockerResourceCreateError,
+  ])("keeps a tagged fingerprint for $name", (ErrorClass) => {
+    const error: unknown = Reflect.construct(ErrorClass, [{}]);
+
+    const result = classifyCliErrorActionability(error);
+
+    expect(result.error_fingerprint).toMatch(new RegExp(`^tag:${ErrorClass.name}`));
+  });
+});
+
+describe("classifyEdgeRuntimeDockerStepStderr", () => {
+  it.each([
+    [
+      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      "daemon_down",
+    ],
+    ["Bind for 0.0.0.0:54321 failed: port is already allocated", "port_in_use"],
+    [
+      'Conflict. The container name "/supabase_edge_runtime_x" is already in use by container "abc"',
+      "name_conflict",
+    ],
+    ["Mounts denied: The path /Users/x is not shared from the host", "mount_denied"],
+    ["write /var/lib/docker/tmp: no space left on device", "disk_full"],
+    ["something unexpected", "other"],
+    ["", "other"],
+    ["permission denied while trying to connect to the Docker daemon socket", "daemon_down"],
+  ] as const)("reads %j as %s", (stderr, reason) => {
+    expect(classifyEdgeRuntimeDockerStepStderr(stderr)).toBe(reason);
+  });
+});
+
+describe("classifyDockerResourceCreateStderr", () => {
+  it.each([
+    ["Cannot connect to the Docker daemon at unix:///var/run/docker.sock", "daemon_down"],
+    ["all predefined address pools have been fully subnetted", "address_pool"],
+    ["Pool overlaps with other one on this address space", "address_pool"],
+    [
+      "could not find an available, non-overlapping IPv4 address pool among the defaults to assign to the network",
+      "address_pool",
+    ],
+    ["something unexpected", "other"],
+  ] as const)("reads %j as %s", (stderr, reason) => {
+    expect(classifyDockerResourceCreateStderr(stderr)).toBe(reason);
   });
 });

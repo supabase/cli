@@ -8,6 +8,10 @@ export const SUGGEST_DOCKER_INSTALL =
 export const SUGGEST_DOCKER_START =
   "Docker is no longer reachable. Start Docker, then rerun `supabase functions serve`.";
 
+/** Command-neutral variant of `SUGGEST_DOCKER_START` for errors shared by several commands; also covers a socket the user cannot access. */
+export const SUGGEST_DOCKER_START_RERUN =
+  "Docker is not reachable. Start Docker, or check that your user can access its socket, then rerun the command.";
+
 /** Remediation hint shown when the OOM killer kills a container. */
 export const SUGGEST_CONTAINER_MEMORY_LIMIT =
   "The container ran out of memory and was killed. Raise the memory allocated to your container runtime (Docker Desktop: Settings > Resources), or free up memory on the host, and try again.";

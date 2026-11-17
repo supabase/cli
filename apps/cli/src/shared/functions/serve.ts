@@ -19,6 +19,7 @@ import {
   type JsonWebKeyInput,
 } from "node:crypto";
 import { styleText } from "node:util";
+import type { PlatformError } from "effect/PlatformError";
 import {
   Clock,
   Data,
@@ -30,6 +31,7 @@ import {
   Exit,
   Fiber,
   Option,
+  Predicate,
   Redacted,
   Result,
   Schema,
@@ -93,9 +95,14 @@ import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   DockerLogsStreamError,
   EdgeRuntimeContainerCrashedError,
+  EdgeRuntimeDockerStepError,
   EdgeRuntimeLogStreamLostError,
+  ServeConfigError,
+  ServeEnvError,
+  ServeFilesystemError,
   ServeLocalDbInspectError,
   ServeLocalDbNotRunningError,
+  classifyEdgeRuntimeDockerStepStderr,
   externalTerminationExitCodes,
 } from "./serve.errors.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
@@ -461,14 +468,21 @@ export function toPlainFunctionRecord(
   );
 }
 
-/* Env file failures keep the plain error `start` and `serve` have always reported. */
-const legacyEnvFailure = <A, R>(effect: Effect.Effect<A, FunctionsEnvError, R>) =>
+/* Parse failures carry no cause; a missing file is a Node `ENOENT`. */
+const typedEnvFileFailure = <A, R>(effect: Effect.Effect<A, FunctionsEnvError, R>) =>
   effect.pipe(
     Effect.mapError((error) =>
       nativeFailure(
-        error.cause === undefined
-          ? new Error(error.message)
-          : new Error(error.message, { cause: error.cause }),
+        new ServeEnvError({
+          reason:
+            error.cause === undefined
+              ? "syntax"
+              : Predicate.hasProperty(error.cause, "code") && error.cause.code === "ENOENT"
+                ? "not_found"
+                : "read",
+          message: error.message,
+          cause: error.cause,
+        }),
       ),
     ),
   );
@@ -815,6 +829,14 @@ function splitEnvEntry(entry: string) {
     : ([entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1)] as const);
 }
 
+const envStagingFailure = (error: PlatformError, pathname: string) =>
+  nativeFailure(
+    new ServeFilesystemError({
+      message: nativePlatformFailure(error, pathname).message,
+      cause: error,
+    }),
+  );
+
 const writeDockerEnvFile = Effect.fn("functions.serve.writeDockerEnvFile")(function* (
   { fs, path }: { readonly fs: FileSystem.FileSystem; readonly path: Path.Path },
   env: Readonly<Record<string, string>>,
@@ -832,10 +854,10 @@ const writeDockerEnvFile = Effect.fn("functions.serve.writeDockerEnvFile")(funct
   // alongside the fresh write.
   yield* fs
     .remove(dir, { recursive: true, force: true })
-    .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
+    .pipe(Effect.mapError((error) => envStagingFailure(error, dir)));
   yield* fs
     .makeDirectory(dir, { recursive: true, mode: 0o700 })
-    .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
+    .pipe(Effect.mapError((error) => envStagingFailure(error, dir)));
   const pathname = path.join(dir, "docker.env");
   // The file holds the JWT secret, anon/service-role keys, and JWKS, so keep it
   // owner-only rather than relying on the process umask.
@@ -847,7 +869,7 @@ const writeDockerEnvFile = Effect.fn("functions.serve.writeDockerEnvFile")(funct
         .join("\n"),
       { mode: 0o600 },
     )
-    .pipe(Effect.mapError((error) => nativePlatformFailure(error, pathname)));
+    .pipe(Effect.mapError((error) => envStagingFailure(error, pathname)));
 
   return { path: pathname };
 });
@@ -1327,7 +1349,11 @@ const bestEffortRemoveContainer = Effect.fn("functions.serve.removeContainer")(f
 // passes a `messagePrefix`, since its raw stderr is uninterpretable alone.
 const runEdgeRuntimeDockerStep = Effect.fn("functions.serve.dockerStep")(function* (
   args: ReadonlyArray<string>,
-  opts: { readonly messagePrefix?: string; readonly stdin?: Stream.Stream<Uint8Array> } = {},
+  opts: {
+    readonly step: "create" | "cp" | "start";
+    readonly messagePrefix?: string;
+    readonly stdin?: Stream.Stream<Uint8Array>;
+  },
 ) {
   const result = yield* runChildProcess("docker", args, {
     stdin: opts.stdin,
@@ -1342,7 +1368,14 @@ const runEdgeRuntimeDockerStep = Effect.fn("functions.serve.dockerStep")(functio
         : detail.length > 0
           ? `${opts.messagePrefix}: ${detail}`
           : opts.messagePrefix;
-    return yield* nativeFailure(new Error(message));
+    const reason = classifyEdgeRuntimeDockerStepStderr(detail);
+    yield* Effect.annotateCurrentSpan({
+      "edge_runtime.docker_step": opts.step,
+      "edge_runtime.failure_reason": reason,
+    });
+    return yield* nativeFailure(
+      new EdgeRuntimeDockerStepError({ step: opts.step, reason, message }),
+    );
   }
 });
 
@@ -1501,7 +1534,10 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
       );
       if (missingSourceWarning !== undefined) {
         return yield* nativeFailure(
-          new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
+          new ServeConfigError({
+            reason: "missing_import",
+            message: missingSourceWarning.trimStart().replace(/^WARN:\s*/, ""),
+          }),
         );
       }
     }
@@ -1594,7 +1630,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       );
       if (missingSourceWarning !== undefined) {
         return yield* nativeFailure(
-          new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
+          new ServeConfigError({
+            reason: "missing_import",
+            message: missingSourceWarning.trimStart().replace(/^WARN:\s*/, ""),
+          }),
         );
       }
       for (const warning of bindWarnings) {
@@ -1609,7 +1648,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
           ? yield* resolveFunctionEnv({ functionsDir, slug: config.slug, warn: true }).pipe(
-              legacyEnvFailure,
+              typedEnvFileFailure,
             )
           : {};
       functionsConfig[config.slug] = toFunctionContainerConfig(
@@ -1643,7 +1682,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
             normalizeEnvPath(input.flagCwd, pathname, path),
           ),
           warn: true,
-        }).pipe(legacyEnvFailure),
+        }).pipe(typedEnvFileFailure),
       ).map(([name, value]) => `${name}=${value}`),
       "SUPABASE_URL=http://kong:8000",
       `SUPABASE_ANON_KEY=${input.authArtifacts.anonKey}`,
@@ -1669,7 +1708,13 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     return yield* Effect.gen(function* () {
       yield* Effect.try({
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
-        catch: nativeFailure,
+        catch: (cause) =>
+          nativeFailure(
+            new ServeEnvError({
+              reason: "env_name",
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+          ),
       });
       const dockerEnvFile = yield* writeDockerEnvFile(
         { fs, path },
@@ -1680,7 +1725,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       const legacyMultilineEnvDir = path.join(stagingDir, "multiline-env");
       yield* fs
         .remove(legacyMultilineEnvDir, { recursive: true, force: true })
-        .pipe(Effect.mapError((error) => nativePlatformFailure(error, legacyMultilineEnvDir)));
+        .pipe(Effect.mapError((error) => envStagingFailure(error, legacyMultilineEnvDir)));
       const multilineEnvDir = "/root/.supabase/multiline-env";
       const dockerMultilineEnv = dockerMultilineEnvFiles(multilineDockerEnv, multilineEnvDir);
 
@@ -1749,15 +1794,16 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       // The container must exist for `docker cp` to have a target, and must not be running
       // yet so edge-runtime never races the copy.
       yield* Effect.uninterruptibleMask((restore) =>
-        restore(runEdgeRuntimeDockerStep(command)).pipe(
+        restore(runEdgeRuntimeDockerStep(command, { step: "create" })).pipe(
           Effect.tap(() => Effect.sync(() => input.onContainerCreated?.())),
         ),
       );
       yield* runEdgeRuntimeDockerStep(["cp", "-", `${containerId}:/`], {
+        step: "cp",
         messagePrefix: "failed to copy edge runtime main service into container",
         stdin: Stream.make(serveMainArchive),
       });
-      yield* runEdgeRuntimeDockerStep(["start", containerId]);
+      yield* runEdgeRuntimeDockerStep(["start", containerId], { step: "start" });
 
       return {
         containerId,
@@ -1931,7 +1977,13 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
       buildFunctionsServeInspectArgs(resolvedInspectMode, flags.inspectMain);
       return resolvedInspectMode;
     },
-    catch: nativeFailure,
+    catch: (cause) =>
+      nativeFailure(
+        new ServeConfigError({
+          reason: "inspect_flags",
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+      ),
   });
   const gracePeriod = dependencies.timers?.shutdownSignalGracePeriod ?? shutdownSignalGracePeriod;
   const retryDelay = dependencies.timers?.dockerLogRetryDelay ?? dockerLogRetryDelay;
