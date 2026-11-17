@@ -45,9 +45,10 @@ Target: account, consent default Yes — see [Command target](../../../../docs/c
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                        |
-| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id` is telemetry-safe) |
+| Event                   | When                                                                                                              | Notable properties / groups                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                                                        | `exit_code`, `duration_ms`, `flags` (`--org-id` is telemetry-safe) |
+| `cli_upgrade_suggested` | post-run (via wrapper), before `cli_command_executed`, on a 4xx whose body is the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug`                      |
 
 ## Flags
 
