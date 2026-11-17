@@ -46,20 +46,25 @@ jobs:
             targets="$(jq -cn --arg v "${version}" '[{tags: "manual", version: $v}]')"
           else
             cli="$(npm view supabase dist-tags time --json)"
-            # Only dist-tags that ship the @supabase/cli-* platform packages are tested; older lines
-            # download the binary in a postinstall script that setup-cli v3 does not run.
-            platform="$(npm view @supabase/cli-linux-x64 dist-tags --json)"
+            # Only versions that depend on the @supabase/cli-* platform packages are tested; older
+            # lines download the binary in a postinstall script that setup-cli v3 does not run.
+            platform='{}'
+            while IFS= read -r version; do
+              deps="$(npm view "supabase@${version}" optionalDependencies --json < /dev/null)"
+              platform="$(jq -c --arg v "${version}" --argjson deps "${deps:-null}" \
+                '. + {($v): (($deps // {}) | has("@supabase/cli-linux-x64"))}' <<< "${platform}")"
+            done < <(jq -r '."dist-tags" | [.[]] | unique[]' <<< "${cli}")
             candidates="$(jq -c --argjson platform "${platform}" '
               .time as $time
               | [."dist-tags" | to_entries[]
                 | {
                     tag: .key,
                     version: .value,
-                    platform: ($platform[.key] == .value),
+                    platform: $platform[.value],
                     age: (now - ($time[.value] | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601))
                   }]' <<< "${cli}")"
             jq -r '.[] | select(.platform | not)
-              | "::notice::Skipping dist-tag \(.tag) (\(.version)): it ships no @supabase/cli-* platform packages"' <<< "${candidates}"
+              | "::notice::Skipping dist-tag \(.tag) (\(.version)): it does not depend on the @supabase/cli-* platform packages"' <<< "${candidates}"
             jq -r --argjson min "${MIN_AGE_SECONDS}" '.[] | select(.platform and .age < $min)
               | "::warning::Skipping dist-tag \(.tag) (\(.version)): published less than an hour ago, so npm may still be propagating it"' <<< "${candidates}"
             targets="$(jq -c --argjson min "${MIN_AGE_SECONDS}" '
@@ -292,15 +297,15 @@ jobs:
             echo "status=setup-cli-npm-fallback" >> "$GITHUB_OUTPUT"
           fi
 
-  # Manual runs are for debugging, so only scheduled runs page. A summary job that failed before
-  # it could classify the run is reported as a smoke-test failure.
+  # Manual runs are for debugging, so only scheduled runs page. A summary job that failed or timed
+  # out before it could classify the run is reported as a smoke-test failure.
   notify-slack:
     name: Notify Slack
     needs: summary
     if: >-
       ${{ !cancelled() &&
       github.event_name == 'schedule' &&
-      (needs.summary.result == 'failure' || needs.summary.outputs.status != '') }}
+      (needs.summary.result != 'success' || needs.summary.outputs.status != '') }}
     uses: ./.github/workflows/slack-notify.yml
     with:
       package: Supabase CLI
