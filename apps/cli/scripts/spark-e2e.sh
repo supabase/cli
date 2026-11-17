@@ -180,9 +180,8 @@ check app.test.mjs
 ok "db reset: data removed, all migrations replayed, the app works"
 
 run sb stop
-# A spark process can outlive stop briefly (see the stop race in the PoC's docs/GAPS.md); allow 3 s.
-for _ in 1 2 3 4 5 6; do pgrep -f "$SPARK_BIN" >/dev/null || break; sleep 0.5; done
-pgrep -af "$SPARK_BIN" >&2 && fail "spark still running 3 s after stop"
+# Anchored: an unanchored match also finds any shell whose command line names the binary.
+pgrep -af "^$SPARK_BIN( |\$)" >&2 && fail "spark still running after stop"
 code=$(curl -s -o /dev/null -w '%{http_code}' "$API/rest/v1/" || true)
 [ "$code" = 000 ] || fail "the API still answers after stop (HTTP $code)"
 ok "supabase stop: nothing left running"
