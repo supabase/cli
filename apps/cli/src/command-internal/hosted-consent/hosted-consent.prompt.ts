@@ -2,24 +2,14 @@ import { Effect, Option } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { isMachineResourceFormat } from "../../shared/output/resource-format.ts";
-import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
-import { resolveAgentMode } from "../agent-mode.ts";
-import { AgentFlag, OutputFlag } from "../global-flags.ts";
+import { agentDetected } from "../agent-mode.ts";
+import { OutputFlag } from "../global-flags.ts";
 
 export interface PromptBlocker {
   readonly reason: string;
   readonly agent: boolean;
 }
-
-const agentDetected = Effect.gen(function* () {
-  const flag = Option.getOrElse(yield* Effect.serviceOption(AgentFlag), () => "auto" as const);
-  const tool = yield* Effect.serviceOption(AiTool);
-  return resolveAgentMode(
-    flag,
-    Option.flatMap(tool, (detected) => detected.name),
-  );
-});
 
 /**
  * Why this run cannot ask a question, or `None` when it can: text output on an interactive

@@ -1,22 +1,20 @@
-import { Clock, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Clock, Effect, FileSystem, Path, Schema } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
-import { resolveAgentMode } from "./agent-mode.ts";
-import { AgentFlag } from "./global-flags.ts";
+import { agentDetected } from "./agent-mode.ts";
 
 const DOCS_URL =
   "https://supabase.com/docs/guides/local-development/running-multiple-local-projects";
 
-export const START_STACK_NUDGE_MESSAGE = `Try the new local stack: faster, lighter, and one project per worktree in parallel.
+const START_STACK_NUDGE_MESSAGE = `Try the new local stack: faster, lighter, and one project per worktree in parallel.
 To switch: remove the fixed ports from supabase/config.toml, then add \`stack = true\` under \`[experimental]\`.
 Steps and limitations: ${DOCS_URL}`;
 
-export const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack: SUPABASE_EXPERIMENTAL_STACK=1 supabase init
+const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack: SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force (regenerates this config)
 Learn more: ${DOCS_URL}`;
 
-export const INIT_STACK_ENABLED_MESSAGE =
+const INIT_STACK_ENABLED_MESSAGE =
   "Experimental local stack enabled in supabase/config.toml. Share feedback: https://github.com/supabase/cli/issues";
 
 const NUDGE_STATE_FILE = "stack-nudge.json";
@@ -27,26 +25,22 @@ const NudgeState = Schema.fromJsonString(Schema.Struct({ lastShownAt: Schema.Fin
 const START_AGENT_ASK_LINE =
   "Coding agents: offer this switch to the user and ask before changing supabase/config.toml.";
 const INIT_AGENT_ASK_LINE =
-  "Coding agents: offer this to the user and ask before re-running init with the new stack.";
+  "Coding agents: offer this to the user and ask before re-running init with --force.";
 
 /**
- * Who to nudge: a coding agent, a human at a terminal, or nobody. The nudge goes through
- * `output.info`, so every output format renders it on its own log channel and result payloads
- * stay unchanged.
+ * Who to nudge: a coding agent, a human at a terminal, or nobody. Text mode writes to stderr so
+ * piped stdout stays clean; json and stream-json use `output.info` so result payloads are unchanged.
  */
-export const nudgeAudience = Effect.gen(function* () {
+const nudgeAudience = Effect.gen(function* () {
   const output = yield* Output;
-  const agentFlag = Option.getOrElse(yield* Effect.serviceOption(AgentFlag), () => "auto" as const);
-  const tool = yield* Effect.serviceOption(AiTool);
-  if (
-    resolveAgentMode(
-      agentFlag,
-      Option.flatMap(tool, (detected) => detected.name),
-    )
-  ) {
-    return "agent" as const;
-  }
+  if (yield* agentDetected) return "agent" as const;
   return output.interactive ? ("human" as const) : undefined;
+});
+
+const emitNudge = Effect.fnUntraced(function* (message: string) {
+  const output = yield* Output;
+  if (output.format === "text") return yield* output.raw(`${message}\n`, "stderr");
+  return yield* output.info(message);
 });
 
 /**
@@ -56,7 +50,6 @@ export const nudgeAudience = Effect.gen(function* () {
 export const maybeShowStartStackNudge = Effect.fn("StackNudge.maybeShowStart")(function* () {
   const audience = yield* nudgeAudience;
   if (audience === undefined) return;
-  const output = yield* Output;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const settings = yield* CommandSettings;
@@ -68,11 +61,14 @@ export const maybeShowStartStackNudge = Effect.fn("StackNudge.maybeShowStart")(f
     Effect.map((state) => state.lastShownAt),
     Effect.orElseSucceed(() => undefined),
   );
-  const throttled = lastShownAt !== undefined && now - lastShownAt < NUDGE_INTERVAL_MILLIS;
+  const throttled =
+    lastShownAt !== undefined &&
+    now - lastShownAt >= 0 &&
+    now - lastShownAt < NUDGE_INTERVAL_MILLIS;
   yield* Effect.annotateCurrentSpan({ "stack_nudge.throttled": throttled });
   if (throttled) return;
 
-  yield* output.info(
+  yield* emitNudge(
     audience === "agent"
       ? `${START_STACK_NUDGE_MESSAGE}\n${START_AGENT_ASK_LINE}`
       : START_STACK_NUDGE_MESSAGE,
@@ -90,9 +86,8 @@ export const showInitStackNote = Effect.fn("StackNudge.showInit")(function* (
 ) {
   const audience = yield* nudgeAudience;
   if (audience === undefined) return;
-  const output = yield* Output;
-  if (experimentalStack) return yield* output.info(INIT_STACK_ENABLED_MESSAGE);
-  yield* output.info(
+  if (experimentalStack) return yield* emitNudge(INIT_STACK_ENABLED_MESSAGE);
+  yield* emitNudge(
     audience === "agent"
       ? `${INIT_STACK_NUDGE_MESSAGE}\n${INIT_AGENT_ASK_LINE}`
       : INIT_STACK_NUDGE_MESSAGE,

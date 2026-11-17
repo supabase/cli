@@ -1662,10 +1662,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const { values: statusValues, names } = yield* buildStatusValues(statusExcluded, values);
       yield* output.raw(renderStatusPretty(statusValues, names));
       yield* output.raw(startSecurityNotice(), "stderr");
+      yield* maybeShowStartStackNudge();
     } else {
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
+      yield* maybeShowStartStackNudge();
       yield* output.success("", statusValues);
     }
-    yield* maybeShowStartStackNudge();
   }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });

@@ -534,7 +534,7 @@ describe("init", () => {
   });
 
   it.effect.each([
-    { env: {}, interactive: true, expected: "SUPABASE_EXPERIMENTAL_STACK=1 supabase init" },
+    { env: {}, interactive: true, expected: "SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force" },
     {
       env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
       interactive: true,
@@ -545,7 +545,7 @@ describe("init", () => {
       env: {},
       interactive: false,
       agent: true,
-      expected: "Coding agents: offer this to the user and ask before re-running init",
+      expected: "Coding agents: offer this to the user and ask before re-running init with --force",
     },
   ])(
     "stack note (interactive=$interactive, agent=$agent, env=$env)",
@@ -571,19 +571,9 @@ describe("init", () => {
         );
 
         if (expected === undefined) {
-          expect(
-            out.messages
-              .filter((m) => m.type === "info")
-              .map((m) => m.message)
-              .join("\n"),
-          ).not.toContain("local stack");
+          expect(out.stderrText).not.toContain("local stack");
         } else {
-          expect(
-            out.messages
-              .filter((m) => m.type === "info")
-              .map((m) => m.message)
-              .join("\n"),
-          ).toContain(expected);
+          expect(out.stderrText).toContain(expected);
         }
       });
     },

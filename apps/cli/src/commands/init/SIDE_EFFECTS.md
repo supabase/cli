@@ -61,11 +61,13 @@ In interactive mode (`-i`/`--interactive`), may prompt for IDE settings preferen
 
 Success is emitted as raw text even when the CLI is invoked with non-text output modes.
 
-After success, in every output format, when stdout is interactive or a coding agent is driving the
-run, one info log is emitted (no throttle; text and json print it on stderr, stream-json emits a
-`log` event on stdout): without the stack opt-in,
-`Try the new faster, lighter, parallel local stack: SUPABASE_EXPERIMENTAL_STACK=1 supabase init` plus a
-docs link (agents also get a line asking them to offer it to the user before re-running init); with it, `Experimental local stack enabled in supabase/config.toml. Share feedback: <issues URL>`.
+After success, one nudge or confirmation is emitted (no throttle). It is shown in text mode (on
+stderr) when stdout is a TTY, and in any output format when a coding agent is detected or
+`--agent yes` is set; json prints it on stderr and stream-json emits a `log` event. Without the
+stack opt-in the message is
+`Try the new faster, lighter, parallel local stack: SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force (regenerates this config)`
+plus a docs link; agents also get a line asking them to ask the user before re-running init with
+`--force`. With the opt-in it is `Experimental local stack enabled in supabase/config.toml. Share feedback: <issues URL>`.
 
 When `supabase/config.json`, `supabase/config.jsonc` or `supabase/config.toml` already exists and `--force` is not set (stderr; the first of those files in that order is named, and the platform check selects the exact per-OS path separator and errno text; `config.toml` is shown):
 

@@ -661,11 +661,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text", interactive: opts.interactive });
   const telemetry = mockTelemetryStateTracked();
   const analytics = mockAnalytics();
-  const hostPath = yield* Path.Path;
-  const cliSettings = mockCommandSettings({
-    workdir,
-    supabaseHome: hostPath.join(workdir, ".supabase-home"),
-  });
+  const cliSettings = mockCommandSettings({ workdir });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
@@ -1969,26 +1965,21 @@ describe("start integration", () => {
 
     describe("stack nudge", () => {
       const NUDGE = "Try the new local stack";
+      const nudgeShown = Effect.fnUntraced(function* () {
+        const { layer, out } = yield* setup({ interactive: true });
+        yield* start(flags()).pipe(Effect.provide(layer));
+        return out.stderrText.includes(NUDGE);
+      });
 
-      it.effect("shows the nudge once per 7 days on an interactive terminal", () =>
+      it.effect("shows the nudge on stderr again only after 7 days", () =>
         Effect.gen(function* () {
-          const first = yield* setup({ interactive: true });
-          yield* start(flags()).pipe(Effect.provide(first.layer));
-          expect(
-            first.out.messages
-              .filter((m) => m.type === "info")
-              .map((m) => m.message)
-              .join("\n"),
-          ).toContain(NUDGE);
+          expect(yield* nudgeShown()).toBe(true);
 
-          const second = yield* setup({ interactive: true });
-          yield* start(flags()).pipe(Effect.provide(second.layer));
-          expect(
-            second.out.messages
-              .filter((m) => m.type === "info")
-              .map((m) => m.message)
-              .join("\n"),
-          ).not.toContain(NUDGE);
+          yield* TestClock.adjust(7 * 24 * 60 * 60 * 1000 - 1);
+          expect(yield* nudgeShown()).toBe(false);
+
+          yield* TestClock.adjust("1 millis");
+          expect(yield* nudgeShown()).toBe(true);
         }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
       );
 
@@ -1996,52 +1987,28 @@ describe("start integration", () => {
         Effect.gen(function* () {
           const { layer, out } = yield* setup({ interactive: false });
           yield* start(flags()).pipe(Effect.provide(layer));
-          expect(
-            out.messages
-              .filter((m) => m.type === "info")
-              .map((m) => m.message)
-              .join("\n"),
-          ).not.toContain(NUDGE);
+          expect(out.stderrText).not.toContain(NUDGE);
         }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
       );
 
-      it.effect("shows the nudge to an agent without a terminal", () =>
-        Effect.gen(function* () {
-          const { layer, out } = yield* setup({ interactive: false });
-          yield* start(flags()).pipe(
-            Effect.provide(Layer.mergeAll(layer, Layer.succeed(AgentFlag, "yes" as const))),
-          );
-          expect(
-            out.messages
+      it.effect(
+        "emits the nudge to an agent in json mode without changing the result payload",
+        () =>
+          Effect.gen(function* () {
+            const { layer, out } = yield* setup({ format: "json", interactive: false });
+            yield* start(flags()).pipe(
+              Effect.provide(Layer.mergeAll(layer, Layer.succeed(AgentFlag, "yes" as const))),
+            );
+            const info = out.messages
               .filter((m) => m.type === "info")
               .map((m) => m.message)
-              .join("\n"),
-          ).toContain(NUDGE);
-        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
-      );
-
-      it.effect("shows the nudge on stderr in json mode for an agent", () =>
-        Effect.gen(function* () {
-          const { layer, out } = yield* setup({ format: "json", interactive: false });
-          yield* start(flags()).pipe(
-            Effect.provide(Layer.mergeAll(layer, Layer.succeed(AgentFlag, "yes" as const))),
-          );
-          expect(
-            out.messages
-              .filter((m) => m.type === "info")
-              .map((m) => m.message)
-              .join("\n"),
-          ).toContain(NUDGE);
-          expect(
-            out.messages
-              .filter((m) => m.type === "info")
-              .map((m) => m.message)
-              .join("\n"),
-          ).toContain("Coding agents: offer this switch to the user");
-          expect(out.messages.find((m) => m.type === "success")?.data).toMatchObject({
-            DB_URL: expect.any(String),
-          });
-        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+              .join("\n");
+            expect(info).toContain(NUDGE);
+            expect(info).toContain("Coding agents: offer this switch to the user");
+            expect(out.messages.find((m) => m.type === "success")?.data).toMatchObject({
+              DB_URL: expect.any(String),
+            });
+          }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
       );
     });
 

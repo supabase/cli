@@ -411,11 +411,13 @@ buckets to prune.` for a bucket left in place. These seeding lines use the raw w
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).
 - stderr: the local-dev security notice block (bind-to-`0.0.0.0` / shared-default-keys /
   no-auth-on-Studio-pgMeta-analytics warning).
-- info log (conditional, fresh start only, never on the already-running path; text and json print it
-  on stderr, stream-json emits a `log` event with level `info` on stdout): a three-line nudge to
-  try the experimental local stack (`Try the new local stack: ...`, the switch steps, and the docs URL; agents also get a line asking them to offer the switch to the user). Shown only
-  in every output format when stdout is interactive or a coding agent is detected, and at most once
-  per 7 days (see "Files Written"). Never fails `start`.
+- stack nudge (conditional, fresh start only, never on the already-running path): a three-line
+  suggestion to try the experimental local stack (`Try the new local stack: ...`, the switch steps,
+  and the docs URL; agents also get a line asking them to offer the switch to the user). Shown in
+  text mode (on stderr, after the security notice) when stdout is a TTY, and in any output format
+  when a coding agent is detected or `--agent yes` is set; json prints it on stderr and stream-json
+  emits a `log` event before the `result` event. At most once per 7 days (see "Files Written").
+  Never fails `start`.
 
 ### `--output-format json` / `--output-format stream-json`
 
