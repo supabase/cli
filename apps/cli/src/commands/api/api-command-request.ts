@@ -16,7 +16,8 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   Predicate.isObject(value) && !Array.isArray(value);
 
 /** The operation's typed definition; the entry names it as a key of `operationDefinitions`. */
-export const definitionOf = (entry: ApiCommandEntry) => operationDefinitions[entry.definition];
+export const definitionOf = (entry: Pick<ApiCommandEntry, "definition">) =>
+  operationDefinitions[entry.definition];
 
 const parseBodyText = Effect.fnUntraced(function* (text: string, source: string) {
   const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(

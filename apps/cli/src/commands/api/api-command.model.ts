@@ -106,6 +106,12 @@ export interface ApiCommandEntry {
   readonly wait?: ApiCommandWait;
 }
 
+/** A response-linked read used for polling without registering a CLI command. */
+export type ApiPollTarget = Pick<
+  ApiCommandEntry,
+  "operationId" | "definition" | "summary" | "response"
+>;
+
 /** OpenAPI schemas of one operation with every `$ref` inlined. */
 export interface ApiCommandSchemas {
   readonly request?: { readonly contentType: "application/json"; readonly schema: unknown };

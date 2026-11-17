@@ -40,7 +40,7 @@ No operation-specific query parameters or FDW inspection.
 The response preserves enabled state independently of selected table count, configured readiness,
 query connectivity, lifecycle, per-observation availability and capabilities. `observed_at` is
 retrieval time; it is separate from table sync lag, pipeline apply lag and feedback age.
-This read has no waiter. `warehouse setups get --wait` observes enablement; `warehouse teardowns get --wait`
+This read has no waiter. `warehouse enable --wait` observes enablement; `warehouse teardowns get --wait`
 observes cleanup. Their operation identities and bounded waiting remain separate.
 
 ## Exit Codes

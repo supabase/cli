@@ -96,6 +96,8 @@ message prints as a step line on stdout before the response. JSON and YAML outpu
 
 ## Notes
 
+- `--wait` polls the setup endpoint internally; it does not expose a separate setup command.
+
 - Repeating the same selection is safe; the API rejects a different existing selection.
 - `--wait` fails only on a status in the failed set; `status_error` supplies the failure message and does not end the wait by itself.
 - `data.attributes.selection_id` is required in the accepted response; a response without it is a defect and ends `--wait` with an internal error, never a silent success.

@@ -10,14 +10,14 @@ import { parsePlanGateEnvelope, sanitizeErrorBody } from "../../command-internal
 import { encodeStructYaml, shapeAny } from "../../command-internal/struct-output.encoders.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { readPointer } from "./api-command-pointer.ts";
-import { decodeInput, definitionOf, type ApiRequestPreview } from "./api-command-request.ts";
+import { definitionOf, type ApiRequestPreview } from "./api-command-request.ts";
 import { renderDryRunText, renderResponseText } from "./api-command.format.ts";
 import {
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
-import type { ApiCommandEntry, ApiCommandWait } from "./api-command.model.ts";
+import type { ApiCommandEntry, ApiCommandWait, ApiPollTarget } from "./api-command.model.ts";
 
 const POLL_BASE_DELAY = "1 second";
 const POLL_MAX_DELAY_MILLIS = 10_000;
@@ -143,7 +143,7 @@ export interface ApiCommandResponse {
  * the API's own message, code and hint.
  */
 export const sendApiRequest = Effect.fnUntraced(function* (
-  entry: ApiCommandEntry,
+  entry: Pick<ApiCommandEntry, "definition" | "operationId">,
   decoded: OperationInput<OperationId>,
 ) {
   const api = yield* CommandPlatformApi;
@@ -168,7 +168,7 @@ const parseResponse = (response: ApiCommandResponse): unknown =>
  * person.
  */
 export const writeApiResponse = Effect.fnUntraced(function* (
-  entry: ApiCommandEntry,
+  entry: Pick<ApiCommandEntry, "response">,
   response: ApiCommandResponse,
   format: ApiOutputFormat,
 ) {
@@ -197,7 +197,8 @@ export const writeApiResponse = Effect.fnUntraced(function* (
 interface WaitInput {
   readonly wait: ApiCommandWait;
   /** The operation the wait polls; its decoded input is `readInput`. */
-  readonly readEntry: ApiCommandEntry;
+  readonly readEntry: ApiPollTarget;
+  readonly statusEntry?: ApiCommandEntry;
   /** The flat input of the read operation, as assembled from flags or the change response. */
   readonly readInput: Readonly<Record<string, unknown>>;
   readonly ref: string;
@@ -311,8 +312,13 @@ export const linkedReadInput = Effect.fnUntraced(function* (input: {
  */
 export const waitForOperation = Effect.fn("api-command.wait")(function* (input: WaitInput) {
   const { wait, readEntry, readInput } = input;
-  const decoded = yield* decodeInput(readEntry, readInput);
-  const hint = `Check it with \`${statusCommand(readEntry, input.ref, readInput)}\`.`;
+  const decoded = yield* Schema.decodeEffect(definitionOf(readEntry).inputSchema, {
+    onExcessProperty: "error",
+  })(readInput).pipe(Effect.orDie);
+  const hint =
+    input.statusEntry === undefined
+      ? "Inspect the operation's status before retrying."
+      : `Check it with \`${statusCommand(input.statusEntry, input.ref, readInput)}\`.`;
   const attempts = yield* Ref.make(0);
   const lastStatus = yield* Ref.make<string | null>(null);
 

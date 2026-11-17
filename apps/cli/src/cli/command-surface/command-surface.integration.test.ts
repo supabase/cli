@@ -48,8 +48,6 @@ describe("command surface", () => {
         "warehouse",
         "warehouse disable",
         "warehouse enable",
-        "warehouse setups",
-        "warehouse setups get",
         "warehouse status",
         "warehouse teardowns",
         "warehouse teardowns get",
@@ -132,9 +130,12 @@ describe("command surface", () => {
       expect(status?.flags).not.toHaveProperty("inspect-fdw");
       expect(status?.flags).not.toHaveProperty("selection-id");
       expect(status?.flags).not.toHaveProperty("wait");
-      expect(variants.warehouse["warehouse setups get"]).toMatchObject({
-        api: { operationId: "v2-get-warehouse-setup" },
-        flags: { wait: { type: "boolean" }, "selection-id": { required: false } },
+      expect(status?.flags).not.toHaveProperty("timeout");
+      expect(variants.warehouse).not.toHaveProperty("warehouse setups");
+      expect(variants.warehouse).not.toHaveProperty("warehouse setups get");
+      expect(variants.warehouse["warehouse enable"]?.flags).toMatchObject({
+        wait: { type: "boolean" },
+        timeout: { type: "string" },
       });
     }),
   );

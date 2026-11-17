@@ -106,9 +106,9 @@ const runWarehouse = (
     return { result, requests, bodies };
   }).pipe(Effect.scoped);
 
-it.live("warehouse setups get reports a 409 as a conflict failure document on stderr", () =>
+it.live("warehouse status reports a 409 as a conflict failure document on stderr", () =>
   Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["setups", "get", "-o", "json"], () =>
+    const { result } = yield* runWarehouse(["status", "-o", "json"], () =>
       json(409, {
         error: {
           code: "selection_conflict",
@@ -155,13 +155,17 @@ it.live("warehouse status keeps consolidated API bytes when stdout is piped", ()
   }).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.live("warehouse setups get --output-format text renders the response for people", () =>
+it.live("warehouse enable --wait --output-format text renders the final response for people", () =>
   Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["setups", "get", "--output-format", "text"], () =>
-      statusBody("succeeded"),
+    const { result } = yield* runWarehouse(
+      ["enable", "--schema", "public", "--wait", "--yes", "--output-format", "text"],
+      (request) =>
+        request.method === "POST"
+          ? json(202, { data: { attributes: { selection_id: SEL } } })
+          : statusBody("succeeded"),
     );
 
-    requireCliSuccess(result, "warehouse setups get --output-format text");
+    requireCliSuccess(result, "warehouse enable --wait --output-format text");
     expect(result.exitCode, result.stderr).toBe(0);
     expect(
       result.stdout.endsWith(

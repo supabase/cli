@@ -632,13 +632,75 @@ describe("deriveApiCommands", () => {
       expect(waitOf(result)).toBeUndefined();
     });
 
-    it("rejects a link to a polled target that is not generated", () => {
-      const result = derive({ "create-thing": changeThing(link({})), "get-thing": readThing }, [
+    it("keeps a linked polling target internal when only the mutation is generated", () => {
+      const result = derive(
+        {
+          "create-thing": changeThing(
+            link({ ref: "$request.path.ref", thing_id: "$response.body#/data/id" }),
+          ),
+          "get-thing": readThing,
+        },
+        ["create-thing"],
+      );
+
+      expect(result.problems).toEqual([]);
+      expect(result.entries.map((entry) => entry.command)).toEqual([["thing", "create"]]);
+      expect(waitOf(result)).toEqual({
+        read: "get-thing",
+        params: { thing_id: "/data/id" },
+        ...poll,
+      });
+      expect(result.pollTargets).toEqual([
+        {
+          operationId: "get-thing",
+          definition: "v2EnableWarehouse",
+          summary: "Do the thing",
+          response: { status: 200, kind: "json" },
+        },
+      ]);
+      expect(result.schemas["get-thing"]?.result).toEqual({ $schema: DIALECT, ...readSchema });
+    });
+
+    it.each([
+      ["a mutation", "update-thing", readThing, "must use GET"],
+      [
+        "a request body",
+        "get-thing",
+        { ...readThing, requestBody: envelope({}) },
+        "must not require a request body",
+      ],
+      [
+        "no project scope",
+        "get-thing",
+        { ...readThing, parameters: [] },
+        "must be scoped by a project ref path parameter",
+      ],
+      [
+        "invalid poll metadata",
+        "get-thing",
+        readWith({ ...poll, succeeded: "done" }),
+        "invalid x-operation",
+      ],
+    ] as const)("rejects an internal polling target with %s", (_label, id, read, message) => {
+      const result = derive({ "create-thing": changeThing(link({}, id)), [id]: read }, [
         "create-thing",
       ]);
 
+      expect(result.problems.join("\n")).toContain(message);
+      expect(result.pollTargets).toEqual([]);
+    });
+
+    it("rejects an internal polling target missing from the typed client", () => {
+      const result = derive(
+        { "create-thing": changeThing(link({})), "get-thing": readThing },
+        ["create-thing"],
+        {
+          overrides: { operationIdMap: { "create-thing": "v2EnableWarehouse" } },
+        },
+      );
+
       expect(result.problems).toEqual([
-        'create-thing: link "setup" targets "get-thing", which declares poll but is not generated',
+        "get-thing: polling target is missing from the typed client; regenerate @supabase/api",
       ]);
     });
 
@@ -708,7 +770,9 @@ describe("deriveApiCommands", () => {
         'wait.params does not supply required parameter "thing_id" of get-thing',
       ],
     ])("rejects a poll with %s", (_label, read, message) => {
-      const result = derive({ "create-thing": changeThing(link({})), "get-thing": read });
+      const result = derive({ "create-thing": changeThing(link({})), "get-thing": read }, [
+        "create-thing",
+      ]);
 
       expect(result.problems.map((problem) => problem.replace(/^[^:]+: /u, ""))).toContain(message);
     });

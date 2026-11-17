@@ -31,7 +31,6 @@ export type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "fail
 export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-get-warehouse-status",
   "v2-enable-warehouse",
-  "v2-get-warehouse-setup",
   "v2-disable-warehouse",
   "v2-get-warehouse-teardown",
 ];
@@ -41,7 +40,6 @@ export const nouns = {
     description: "Manage the data warehouse for a project",
     feature: "warehouse",
     groups: {
-      setups: "Inspect Warehouse setup and initial synchronization",
       teardowns: "Inspect Warehouse cleanup operations",
       replication: "Manage Warehouse replication targets and resynchronization",
       tables: "Inspect replicated Warehouse tables",

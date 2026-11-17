@@ -45,8 +45,13 @@ import {
   readBodyOverride,
 } from "./api-command-request.ts";
 import { withApiCommand } from "./api-command.annotation.ts";
-import type { ApiCommandEntry, ApiCommandFlag, ApiCommandWait } from "./api-command.model.ts";
-import { apiCommands } from "./generated.ts";
+import type {
+  ApiCommandEntry,
+  ApiCommandFlag,
+  ApiCommandWait,
+  ApiPollTarget,
+} from "./api-command.model.ts";
+import { apiCommands, apiPollTargets } from "./generated.ts";
 
 const DEFAULT_WAIT_TIMEOUT = "10m";
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
@@ -59,7 +64,8 @@ const stageOf = (entry: ApiCommandEntry): CommandStage => ({
 /** A command's `--wait`: the wait declared on its entry and the entry of the operation it polls. */
 interface ResolvedWait {
   readonly wait: ApiCommandWait;
-  readonly readEntry: ApiCommandEntry;
+  readonly readEntry: ApiPollTarget;
+  readonly statusEntry?: ApiCommandEntry;
 }
 
 const resolveWait = (
@@ -68,8 +74,16 @@ const resolveWait = (
 ): ResolvedWait | undefined => {
   const { wait } = entry;
   if (wait === undefined) return undefined;
-  const readEntry = entries.find((candidate) => candidate.operationId === wait.read);
-  return readEntry === undefined ? undefined : { wait, readEntry };
+  const statusEntry = entries.find((candidate) => candidate.operationId === wait.read);
+  const readEntry =
+    statusEntry ?? apiPollTargets.find((candidate) => candidate.operationId === wait.read);
+  return readEntry === undefined
+    ? undefined
+    : {
+        wait,
+        readEntry,
+        ...(statusEntry === undefined ? {} : { statusEntry }),
+      };
 };
 
 const flagLocation = (entry: ApiCommandEntry, flag: ApiCommandFlag): ApiFlagLocation => {
@@ -145,7 +159,8 @@ const parseTimeoutMillis = (value: string) =>
     ),
   );
 
-const summaryText = (entry: ApiCommandEntry): string => entry.summary.replace(/\.$/, "");
+const summaryText = (entry: Pick<ApiCommandEntry, "summary">): string =>
+  entry.summary.replace(/\.$/, "");
 
 const OUTPUT_FORMATS: ReadonlyArray<string> = ["json", "yaml", "pretty"];
 
@@ -263,6 +278,7 @@ const handle = Effect.fn("api-command.run")(function* (
           waitForOperation({
             wait: resolved.wait,
             readEntry: resolved.readEntry,
+            ...(resolved.statusEntry === undefined ? {} : { statusEntry: resolved.statusEntry }),
             readInput,
             ref,
             timeoutMillis,
