@@ -145,6 +145,10 @@ const engineKind = (
           : undefined;
 
 const DAEMON_PROBE_TIMEOUT = "2 seconds";
+const DAEMON_PROBE_FORMAT = {
+  docker: "{{.ServerVersion}} running={{.ContainersRunning}}",
+  podman: "{{.Version.Version}} running={{.Store.ContainerStore.Running}}",
+} as const;
 
 /** Names the stalled engine subcommand and its latest stderr, never the full argv. */
 const commandTimedOut = (
@@ -608,7 +612,7 @@ export const makeContainerRuntime = (options: {
     // Separates a daemon-wide stall from one engine call stuck on a single object; runs
     // without its own command timeout so a stalled probe cannot probe again.
     const daemonState: Effect.Effect<string> = run(
-      ["info", "--format", "{{.ServerVersion}} running={{.ContainersRunning}}"],
+      ["info", "--format", DAEMON_PROBE_FORMAT[engine]],
       { timeout: undefined },
     ).pipe(
       Effect.timeout(DAEMON_PROBE_TIMEOUT),
