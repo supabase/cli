@@ -79,10 +79,10 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
           ? undefined
           : [{ id: target.id, hostRunning: target.hostRunning }];
     if (selected === undefined) {
-      if (Option.isSome(flags.stack))
+      if (target?.name !== undefined)
         return yield* new StackCommandStopError({
           reason: "flags",
-          message: `No managed stack named "${flags.stack.value}" was found for this project.`,
+          message: `No managed stack named "${target.name}" was found for this project.`,
         });
       yield* output.success("No managed stack found for this context.", { found: false });
       return;

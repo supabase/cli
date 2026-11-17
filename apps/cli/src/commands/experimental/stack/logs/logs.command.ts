@@ -10,12 +10,14 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 const config = {
   stack: Flag.String("stack").pipe(
     Flag.withDescription(
-      "Select an existing stack by name (defaults to the current project stack).",
+      "Select an existing stack by name (defaults to SUPABASE_STACK, else the current project stack).",
     ),
     Flag.optional,
   ),
   stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Read logs from an existing stack by id or unique id prefix."),
+    Flag.withDescription(
+      "Read logs from an existing stack by id or unique id prefix (defaults to SUPABASE_STACK_ID).",
+    ),
     Flag.optional,
   ),
   service: Flag.String("service").pipe(

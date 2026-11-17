@@ -5,7 +5,9 @@ owned database data, Storage upload files, port claims, and attached jobs. The e
 
 ## Selection and confirmation
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`;
+`SUPABASE_STACK`/`SUPABASE_STACK_ID` stand in for the flags. Only an explicit full `--stack-id`
+selects a deleted stack's leftover containers.
 The selectors are mutually exclusive; a missing target fails. `--stack-id` repeats
 to select several stacks; every id resolves before confirmation, so ids that are not
 found fail together, each named, before anything is destroyed, and ids naming the

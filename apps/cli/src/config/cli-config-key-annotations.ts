@@ -350,6 +350,8 @@ export const CLI_NON_CONFIG_ENV_NAMES: Readonly<Record<string, string>> = {
   SUPABASE_SHADOW_CACHE: "shadow database cache",
   SUPABASE_SHADOW_DEBUG: "shadow database",
   SUPABASE_SSL_DEBUG: "telemetry signal",
+  SUPABASE_STACK: "global flag",
+  SUPABASE_STACK_ID: "global flag",
   SUPABASE_TELEMETRY_DEBUG: "telemetry",
   SUPABASE_TELEMETRY_DISABLED: "telemetry",
   SUPABASE_TELEMETRY_POSTHOG_HOST: "telemetry",

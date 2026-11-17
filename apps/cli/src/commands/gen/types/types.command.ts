@@ -36,6 +36,10 @@ import {
   targetFlags,
 } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  STACK_SELECTOR_FLAGS,
+  STACK_SELECTOR_FLAG_NAMES,
+} from "../../../command-internal/stack-target.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -138,6 +142,12 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
       description: "Generate types from a database URL",
     },
   ]),
+  Command.withHandler(genTypesHandler),
+  Command.provide(genTypesRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(commandConfig),
+  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
   withPermissions(
     remoteTarget.reduce(
       (fragment, condition) => withCondition(fragment, condition),
@@ -174,7 +184,12 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
                 "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
             },
           ],
-          noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
+          noApiEffectFlags: [
+            "schema",
+            "query-timeout",
+            ...GEN_TYPES_LANGUAGE_FLAG_NAMES,
+            ...STACK_SELECTOR_FLAG_NAMES,
+          ],
         },
         withContext(dbConfigLinked, notBranch),
         withContext(dbConfigPoolerFallbackLinked, notBranch),
@@ -184,9 +199,4 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
       ),
     ),
   ),
-  Command.withHandler(genTypesHandler),
-  Command.provide(genTypesRuntimeLayer),
-  Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(commandConfig),
-  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

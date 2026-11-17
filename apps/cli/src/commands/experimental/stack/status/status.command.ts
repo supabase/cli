@@ -10,9 +10,16 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  stack: Flag.String("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
+  stack: Flag.String("stack").pipe(
+    Flag.withDescription(
+      "Inspect a named stack (defaults to SUPABASE_STACK, else the current project stack).",
+    ),
+    Flag.optional,
+  ),
   stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Inspect an existing stack by id or unique id prefix."),
+    Flag.withDescription(
+      "Inspect an existing stack by id or unique id prefix (defaults to SUPABASE_STACK_ID).",
+    ),
     Flag.optional,
   ),
   env: Flag.Boolean("env").pipe(

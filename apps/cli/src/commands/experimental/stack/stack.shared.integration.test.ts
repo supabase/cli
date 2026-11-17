@@ -1,6 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Ref } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Path, Ref } from "effect";
 import {
   StackApi,
   StackTargetError,
@@ -56,6 +56,11 @@ const workspace = Effect.gen(function* () {
     );
   return { root, home, register, resolve };
 });
+
+const withEnv =
+  (env: Readonly<Record<string, string>>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.provideService(effect, ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord(env));
 
 describe("stack target resolver", () => {
   it.effect("resolves an explicit id without reading the current project identity", () =>
@@ -157,6 +162,69 @@ describe("stack target resolver", () => {
 
       expect(target).toMatchObject({ projectRoot: root, id, name: "feature" });
       expect(target.definition?.identity.stackName).toBe("feature");
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("selects the stack SUPABASE_STACK names when no selector is passed", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      yield* register({ projectRoot: root });
+      const id = yield* register({ projectRoot: root, name: "feature" });
+
+      const target = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK: "feature" }),
+      );
+
+      expect(target).toMatchObject({ id, name: "feature" });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("prefers an explicit selector over SUPABASE_STACK", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      yield* register({ projectRoot: root, name: "other" });
+      const id = yield* register({ projectRoot: root, name: "feature" });
+
+      const target = yield* resolve({ projectRoot: root, name: "feature", runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK: "other" }),
+      );
+
+      expect(target).toMatchObject({ id, name: "feature" });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("refuses a SUPABASE_STACK_ID that selects another project's stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, register, resolve } = yield* workspace;
+      const otherRoot = path.join(root, "other-project");
+      yield* fs.makeDirectory(otherRoot);
+      const id = yield* register({ projectRoot: otherRoot });
+
+      const failure = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK_ID: id }),
+        Effect.flip,
+      );
+
+      expect(failure.reason).toBe("flags");
+      expect(failure.message).toBe(
+        `SUPABASE_STACK_ID selects stack ${id} of ${otherRoot}, not of this project (${root}).`,
+      );
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("rejects SUPABASE_STACK and SUPABASE_STACK_ID set together", () =>
+    Effect.gen(function* () {
+      const { root, resolve } = yield* workspace;
+
+      const failure = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK: "feature", SUPABASE_STACK_ID: "abcd" }),
+        Effect.flip,
+      );
+
+      expect(failure.reason).toBe("flags");
+      expect(failure.message).toBe("SUPABASE_STACK and SUPABASE_STACK_ID cannot be used together");
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 

@@ -2,6 +2,7 @@ import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
 import {
+  ConfigProvider,
   Effect,
   FileSystem,
   Layer,
@@ -287,6 +288,38 @@ describe("stack destroy", () => {
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
         f.stack.id,
       ]);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.effect("leaves a deleted stack's leftovers alone when only SUPABASE_STACK_ID names it", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const id = "d".repeat(64);
+      let destroyed = 0;
+      const api = Layer.succeed(StackApi, {
+        ...f.api,
+        findDeleted: () =>
+          Effect.succeed(
+            Option.some({
+              id,
+              destroy: Effect.sync(() => {
+                destroyed += 1;
+              }),
+            }),
+          ),
+      });
+
+      const error = yield* stackDestroy({ ...f.flags, stackId: [] }).pipe(
+        Effect.provide(Layer.merge(f.layer, api)),
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({ SUPABASE_STACK_ID: id }),
+        ),
+        Effect.flip,
+      );
+
+      expect(error.message).toBe(`Stack ${id} (from SUPABASE_STACK_ID) was not found`);
+      expect(destroyed).toBe(0);
     }).pipe(Effect.provide(live)),
   );
 

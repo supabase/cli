@@ -4,7 +4,11 @@ import { Clock, Effect, FileSystem, Option, Path, Result, Schema, Stream } from 
 import { gatewayLog } from "@supabase/stack/effect";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
-import { StackTargetResolver, validateStackTarget } from "../../command-internal/stack-target.ts";
+import {
+  missingStackAdvice,
+  StackTargetResolver,
+  validateStackTarget,
+} from "../../command-internal/stack-target.ts";
 import { parseTargetSelector } from "../../command-internal/target/target-selector.ts";
 import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
 import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
@@ -325,6 +329,10 @@ export const logsSources = Effect.fn("logs.sources")(function* (flags: LogsSourc
         name: Option.getOrUndefined(flags.stack),
         id: Option.getOrUndefined(flags.stackId),
       });
+      if (target.name !== undefined && target.definition === undefined) {
+        const { message, suggestion } = missingStackAdvice(target.name);
+        return yield* new LogsInputError({ message: `${message} ${suggestion}` });
+      }
       const instances = target.definition?.instances ?? [];
       const requested = Option.getOrUndefined(flags.service);
       const gateway = target.definition !== undefined && hasGatewayLogs(target.definition);

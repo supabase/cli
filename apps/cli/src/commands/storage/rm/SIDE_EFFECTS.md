@@ -52,7 +52,8 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 override family are legacy backend only. `SUPABASE_AUTH_SERVICE_ROLE_KEY` is legacy backend only
 for the local target; on a remote project a non-empty shell value skips the api-keys call under either
 backend. `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, and `SUPABASE_EXPERIMENTAL_STACK`
-(backend selection) apply to either backend. `SUPABASE_YES` auto-confirms the local per-bucket
+(backend selection) apply to either backend; `SUPABASE_STACK`/`SUPABASE_STACK_ID` select the local
+stack on the stack backend, as in `storage ls`. `SUPABASE_YES` auto-confirms the local per-bucket
 prompt from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell
 wins); for a remote project only `--yes` or a shell `SUPABASE_YES` counts.
 `SUPABASE_PROJECT_ID` supplies the ref for a bare `--remote` and the parent project for `--remote=<branch>`.

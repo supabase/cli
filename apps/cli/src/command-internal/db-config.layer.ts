@@ -67,6 +67,11 @@ import { block, type OperationEntry } from "./command-permissions/model.ts";
 import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.ts";
 import { isCheckoutLinked } from "../shared/config/link-snapshot.ts";
 import { rejectTargetPassword } from "./target/target-password.ts";
+import {
+  captureStackSelectorFlags,
+  selectedStack,
+  STACK_SELECTOR_FLAG_NAMES,
+} from "./stack-target.ts";
 
 const loginRoleEntry = {
   operationId: "v1-create-login-role",
@@ -133,6 +138,7 @@ export const dbConfig = block(
     ...entry,
     when: [{ dbTarget: ["linked" as const] }, ...(entry.when ?? [])],
   })),
+  STACK_SELECTOR_FLAG_NAMES,
 );
 
 const poolerFallbackEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
@@ -793,7 +799,9 @@ export const dbConfigResolverLayer = Layer.effect(
     void _ambientCoverageCheck;
 
     // `resolveConnection`'s R is `never`, so capture StackApi at layer build.
+    const provideStackSelector = yield* captureStackSelectorFlags;
     const stackDatabaseConn = stackLocalDatabaseConn.pipe(
+      provideStackSelector,
       Effect.provideService(CommandSettings, cliSettings),
       Effect.provideService(StackApi, stackApi),
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -849,14 +857,22 @@ export const dbConfigResolverLayer = Layer.effect(
           isLocalDatabase(conn.host, localHost, conn.port, tomlValues.port, tomlValues.shadowPort);
         // The stack backend publishes its database on a runtime-assigned port rather than
         // `[db].port`, so a URL naming the running stack's SQL endpoint is local too.
+        const onStackBackend = (yield* currentStackBackend).kind === "stack";
         const stackConn =
-          singleHost &&
-          (yield* currentStackBackend).kind === "stack" &&
-          mayBeStackDatabaseHost(conn.host, localHost)
+          singleHost && onStackBackend && mayBeStackDatabaseHost(conn.host, localHost)
             ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
             : undefined;
         const onStack = stackConn?.host === conn.host && stackConn.port === conn.port;
-        const isLocal = legacyLocal || onStack;
+        /* Under a selection, `[db].port` is local only when the selected stack listens on it. */
+        const selectsAnother =
+          legacyLocal && onStackBackend && stackConn?.port !== conn.port
+            ? yield* selectedStack.pipe(
+                provideStackSelector,
+                Effect.map((selected) => selected.name !== undefined || selected.id !== undefined),
+                Effect.orElseSucceed(() => false),
+              )
+            : false;
+        const isLocal = onStack || (legacyLocal && !selectsAnother);
         // A local direct URL fills an empty password from the local database's own
         // credentials, so a passwordless DSN like `postgresql://postgres@127.0.0.1:54322/postgres`
         // still authenticates.

@@ -5,11 +5,11 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
   isStackId,
-  StackApi,
-  rejectStackOutput,
-  StackTargetResolver,
   mapTargetError,
-  validateStackTarget,
+  rejectStackOutput,
+  selectStack,
+  StackApi,
+  StackTargetResolver,
 } from "../../../../command-internal/stack-target.ts";
 import { destroyScope, destroyStacks, stackLocations } from "../stack-destroy.ts";
 import type { StackDestroyFlags } from "./destroy.command.ts";
@@ -27,17 +27,19 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     yield* rejectStackOutput(outputFlag).pipe(
       Effect.mapError(mapTargetError((props) => new StackCommandDestroyError(props))),
     );
-    yield* validateStackTarget({
-      stack: Option.getOrUndefined(flags.stack),
-      stackId: flags.stackId[0],
+    /* Resolved up front, so `SUPABASE_STACK`/`SUPABASE_STACK_ID` pick the stack to destroy as the flags do. */
+    const selector = yield* selectStack({
+      stack: flags.stack,
+      stackId: Option.fromNullishOr(flags.stackId[0]),
     }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandDestroyError(props))));
 
     const resolver = yield* StackTargetResolver;
     const path = yield* Path.Path;
     const locations = stackLocations(path, settings.supabaseHome);
     const select = Effect.fnUntraced(function* (stackId: string | undefined) {
+      /* A deleted stack carries no project, so only an explicit --stack-id reaches its leftovers. */
       const lookup =
-        stackId !== undefined && isStackId(stackId)
+        stackId !== undefined && isStackId(stackId) && selector.idFromEnv !== true
           ? yield* Effect.result(api.findDeleted({ ...locations, id: stackId }))
           : Result.succeedNone;
       const deleted = Result.getOrElse(lookup, Option.none);
@@ -51,8 +53,9 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       const target = yield* resolver
         .resolve({
           projectRoot: settings.workdir,
-          ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
+          ...(selector.name === undefined ? {} : { name: selector.name }),
           ...(stackId === undefined ? {} : { id: stackId }),
+          ...(selector.idFromEnv === true ? { idFromEnv: true } : {}),
           runtime: "auto",
         })
         .pipe(
@@ -69,9 +72,10 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       if (target.id === undefined)
         return yield* new StackCommandDestroyError({
           reason: "flags",
-          message: Option.isSome(flags.stack)
-            ? `No managed stack named "${flags.stack.value}" was found for this project.`
-            : "No managed stack was found for this project.",
+          message:
+            target.name === undefined
+              ? "No managed stack was found for this project."
+              : `No managed stack named "${target.name}" was found for this project.`,
           suggestion: "Choose an existing --stack name or --stack-id.",
         });
       return {
@@ -82,7 +86,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     });
     /* Every id resolves before the prompt, so a missing one destroys nothing. */
     const [resolved, unresolved] = yield* Effect.partition(
-      flags.stackId.length === 0 ? [undefined] : flags.stackId,
+      flags.stackId.length === 0 ? [selector.id] : flags.stackId,
       (stackId) => select(stackId).pipe(Effect.mapError((error) => ({ stackId, error }))),
     );
     const [missing] = unresolved;

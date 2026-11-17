@@ -12,13 +12,13 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 const config = {
   stack: Flag.String("stack").pipe(
     Flag.withDescription(
-      "Destroy the stack with this name (defaults to the current project stack).",
+      "Destroy the stack with this name (defaults to SUPABASE_STACK, else the current project stack).",
     ),
     Flag.optional,
   ),
   stackId: Flag.String("stack-id").pipe(
     Flag.withDescription(
-      "Destroy an existing stack by id or unique id prefix; repeat to select several. A full id, such as a container's `com.supabase.stack` label, also selects the containers a deleted stack left behind.",
+      "Destroy an existing stack by id or unique id prefix; repeat to select several. A full id, such as a container's `com.supabase.stack` label, also selects the containers a deleted stack left behind. Defaults to SUPABASE_STACK_ID.",
     ),
     Flag.atLeast(0),
   ),

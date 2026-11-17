@@ -21,10 +21,11 @@ import {
   summaryCredentials,
 } from "../stack-summary.ts";
 import {
+  mapTargetError,
+  missingStackAdvice,
+  rejectStackOutput,
   StackApi,
   StackTargetResolver,
-  mapTargetError,
-  rejectStackOutput,
   validateStackTarget,
 } from "../../../../command-internal/stack-target.ts";
 import type { StackStatusFlags } from "./status.command.ts";
@@ -261,8 +262,7 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
   if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
-      message: "No managed stack exists for the selected project.",
-      suggestion: "Run supabase stack start first.",
+      ...missingStackAdvice(target.name),
     });
   return {
     ...target,

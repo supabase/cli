@@ -5,7 +5,9 @@ import {
   type StackError,
 } from "@supabase/stack/effect";
 import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Flag, GlobalFlag } from "effect/cli";
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { envValue } from "../shared/config/env-option.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -13,6 +15,8 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { recordStackRuntimeTelemetry, type StackRuntime } from "./stack-runtime.ts";
+import { currentShellPlatform, shellQuoteArgument } from "./shell-quote.ts";
+import { currentStackBackend } from "./stack-backend.ts";
 
 export { StackApi, stackApiLayer };
 
@@ -81,13 +85,21 @@ export const mapTargetError =
       cause: error,
     });
 
+/** A stack named by `--stack`/`--stack-id`, or by `SUPABASE_STACK`/`SUPABASE_STACK_ID`. */
+interface StackSelector {
+  readonly name?: string;
+  readonly id?: string;
+  /** Set when `SUPABASE_STACK_ID` chose the id, which then only selects a stack of this project. */
+  readonly idFromEnv?: true;
+}
+
+interface StackTargetInput extends StackSelector {
+  readonly projectRoot: string;
+  readonly runtime: "auto" | StackRuntime;
+}
+
 interface StackTargetResolverShape {
-  readonly resolve: (input: {
-    readonly projectRoot: string;
-    readonly name?: string;
-    readonly id?: string;
-    readonly runtime: "auto" | StackRuntime;
-  }) => Effect.Effect<StackTarget, StackTargetError>;
+  readonly resolve: (input: StackTargetInput) => Effect.Effect<StackTarget, StackTargetError>;
 }
 
 export class StackTargetResolver extends Context.Service<
@@ -108,6 +120,148 @@ export const validateStackTarget = (input: {
       )
     : Effect.void;
 
+const StackFlag = GlobalFlag.Setting("stack")({
+  flag: Flag.String("stack").pipe(
+    Flag.withDescription(
+      "Select a local stack by name (defaults to SUPABASE_STACK, else the current project stack).",
+    ),
+    Flag.optional,
+  ),
+});
+
+const StackIdFlag = GlobalFlag.Setting("stack-id")({
+  flag: Flag.String("stack-id").pipe(
+    Flag.withDescription(
+      "Select a local stack by ID or unique ID prefix (defaults to SUPABASE_STACK_ID).",
+    ),
+    Flag.optional,
+  ),
+});
+
+/** Registered on each leaf, or group, whose commands reach the project stack. */
+export const STACK_SELECTOR_FLAGS = [StackFlag, StackIdFlag] as const;
+
+/** The selector flags pick a local stack, so they never change which Management API calls run. */
+export const STACK_SELECTOR_FLAG_NAMES = ["stack", "stack-id"] as const;
+
+const selector = (name: string | undefined, id: string | undefined): StackSelector => ({
+  ...(name === undefined ? {} : { name }),
+  ...(id === undefined ? {} : { id }),
+});
+
+/** The services a command reads `--stack`/`--stack-id` from. */
+export type StackSelectorFlags =
+  | GlobalFlag.Setting.Identifier<"stack">
+  | GlobalFlag.Setting.Identifier<"stack-id">;
+
+/** Provides the selector services from a leaf that declares its own `--stack`/`--stack-id`. */
+export const stackSelectorFlagsLayer = (flags: {
+  readonly stack: Option.Option<string>;
+  readonly stackId: Option.Option<string>;
+}) =>
+  Layer.mergeAll(Layer.succeed(StackFlag, flags.stack), Layer.succeed(StackIdFlag, flags.stackId));
+
+/** For a command that reaches the project stack without a selector flag; `SUPABASE_STACK` still applies. */
+export const noStackSelectorFlags = stackSelectorFlagsLayer({
+  stack: Option.none(),
+  stackId: Option.none(),
+});
+
+/** Snapshots `--stack`/`--stack-id` in a layer so the services it builds can provide them per call. */
+export const captureStackSelectorFlags = Effect.gen(function* () {
+  const stack = yield* StackFlag;
+  const stackId = yield* StackIdFlag;
+  return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(StackFlag, stack),
+      Effect.provideService(StackIdFlag, stackId),
+    );
+});
+
+/** The not-found message for a selection no saved stack matches, and the start that creates it. */
+export const missingStackAdvice = (name: string | undefined) => {
+  const named = name === undefined ? undefined : describeStackSelector({ name });
+  return {
+    message:
+      named === undefined
+        ? "No managed stack exists for the selected project."
+        : `No managed stack named ${named.label} exists for this project.`,
+    suggestion: `Run supabase stack start${named === undefined ? "" : ` ${named.flags}`} first.`,
+  };
+};
+
+const nonEmptyEnv = (name: string) =>
+  envValue(name).pipe(Effect.map((value) => (value === "" ? undefined : value)));
+
+/** `selected`, or the stack `SUPABASE_STACK`/`SUPABASE_STACK_ID` select when it names none. */
+const orEnvSelector = Effect.fnUntraced(function* (selected: StackSelector) {
+  if (selected.name !== undefined || selected.id !== undefined) return selected;
+  const name = yield* nonEmptyEnv("SUPABASE_STACK");
+  const id = yield* nonEmptyEnv("SUPABASE_STACK_ID");
+  if (name !== undefined && id !== undefined)
+    return yield* new StackTargetError({
+      message: "SUPABASE_STACK and SUPABASE_STACK_ID cannot be used together",
+      reason: "flags",
+      suggestion: "Unset one of them, or pass --stack or --stack-id to override both.",
+    });
+  return id === undefined ? selector(name, id) : { id, idFromEnv: true as const };
+});
+
+/** The stack `--stack`/`--stack-id` select, else the one `SUPABASE_STACK`/`SUPABASE_STACK_ID` select. */
+export const selectStack = Effect.fnUntraced(function* (flags: {
+  readonly stack: Option.Option<string>;
+  readonly stackId: Option.Option<string>;
+}) {
+  const name = Option.getOrUndefined(flags.stack);
+  const id = Option.getOrUndefined(flags.stackId);
+  yield* validateStackTarget({ stack: name, stackId: id });
+  return yield* orEnvSelector(selector(name, id));
+});
+
+/** {@link selectStack} for the `--stack`/`--stack-id` the command was run with. */
+export const selectedStack = Effect.gen(function* () {
+  return yield* selectStack({ stack: yield* StackFlag, stackId: yield* StackIdFlag });
+});
+
+/** The selector flags, with a leading space, that keep a printed command on the selected stack. */
+export const selectedStackFlags = selectedStack.pipe(
+  Effect.map((selected) => {
+    const named = describeStackSelector(selected);
+    return named === undefined ? "" : ` ${named.flags}`;
+  }),
+  Effect.orElseSucceed(() => ""),
+);
+
+/** The selector flag passed on the command line, if any; never requires the flags to be registered. */
+export const passedStackSelectorFlag = Effect.gen(function* () {
+  const stack = Option.flatten(yield* Effect.serviceOption(StackFlag));
+  const stackId = Option.flatten(yield* Effect.serviceOption(StackIdFlag));
+  return Option.isSome(stack) ? "--stack" : Option.isSome(stackId) ? "--stack-id" : undefined;
+});
+
+/** The legacy backend has no named stacks, so a selector flag there is an error, not a no-op. */
+export const rejectStackSelectorOnLegacy = Effect.gen(function* () {
+  const flag = yield* passedStackSelectorFlag;
+  if (flag !== undefined && (yield* currentStackBackend).kind === "legacy")
+    return yield* new StackTargetError({
+      message: `${flag} requires the experimental stack backend.`,
+      reason: "flags",
+      suggestion:
+        "Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml.",
+    });
+});
+
+/** How errors name a selected stack, and the selector flags that keep a printed command on it. */
+export const describeStackSelector = (selected: StackSelector) =>
+  selected.name !== undefined
+    ? {
+        label: `"${selected.name}"`,
+        flags: `--stack ${shellQuoteArgument(selected.name, currentShellPlatform())}`,
+      }
+    : selected.id !== undefined
+      ? { label: selected.id, flags: `--stack-id ${selected.id}` }
+      : undefined;
+
 export const isStackId = Schema.is(StackId);
 const STACK_ID_PREFIX = /^[0-9a-f]{4,64}$/;
 
@@ -116,8 +270,7 @@ const validateStackId = (id: string): Effect.Effect<string, StackTargetError> =>
     ? Effect.succeed(id)
     : Effect.fail(
         new StackTargetError({
-          message:
-            "--stack-id must be a lowercase hexadecimal stack id or a prefix of at least 4 characters",
+          message: `Stack ID ${id} must be a lowercase hexadecimal ID or a unique prefix of at least 4 characters`,
           reason: "flags",
           suggestion: "Copy the ID column from `supabase stack list`.",
         }),
@@ -148,7 +301,10 @@ const runtimeMatches = (
   requested: StackTarget["runtime"],
 ): boolean => requested === undefined || saved === requested;
 
-/** Resolves an existing stack by id, unique id prefix, or the identity of the project and stack name. */
+/**
+ * Resolves an existing stack by id, unique id prefix, or the identity of the project and stack name;
+ * with neither selector, `SUPABASE_STACK`/`SUPABASE_STACK_ID` select it.
+ */
 export const stackTargetResolverLayer = Layer.effect(
   StackTargetResolver,
   Effect.gen(function* () {
@@ -198,12 +354,10 @@ export const stackTargetResolverLayer = Layer.effect(
           .pipe(Effect.mapError(stateError("unreadable-stack")));
       return matches[0];
     });
-    const resolve = Effect.fn("StackTargetResolver.resolve")(function* (input: {
-      readonly projectRoot: string;
-      readonly name?: string;
-      readonly id?: string;
-      readonly runtime: "auto" | StackRuntime;
-    }) {
+    const resolve = Effect.fn("StackTargetResolver.resolve")(function* (
+      requested: StackTargetInput,
+    ) {
+      const input = { ...requested, ...(yield* orEnvSelector(requested)) };
       const id = input.id === undefined ? undefined : yield* validateStackId(input.id);
       const requestedRuntime = runtimeForFlag(input.runtime);
       const stateRoot = path.join(settings.supabaseHome, "stacks");
@@ -226,10 +380,21 @@ export const stackTargetResolverLayer = Layer.effect(
           : yield* findByIdPrefix(stateRoot, id);
       if (id !== undefined && found === undefined)
         return yield* new StackTargetError({
-          message: `Stack ${id} was not found`,
+          message: `Stack ${id}${input.idFromEnv === true ? " (from SUPABASE_STACK_ID)" : ""} was not found`,
           reason: "flags",
           suggestion: "Run `supabase stack list` to see managed stacks and their IDs.",
         });
+      if (input.idFromEnv === true && found !== undefined) {
+        /* An exported id survives `cd`; only an explicit --stack-id targets another project's stack. */
+        const currentRoot = yield* canonicalProjectRoot(input.projectRoot);
+        if (found.definition.identity.projectRoot !== currentRoot)
+          return yield* new StackTargetError({
+            message: `SUPABASE_STACK_ID selects stack ${found.definition.id} of ${found.definition.identity.projectRoot}, not of this project (${currentRoot}).`,
+            reason: "flags",
+            suggestion:
+              "Unset SUPABASE_STACK_ID, or pass --stack-id to target that stack explicitly.",
+          });
+      }
       if (found !== undefined && !runtimeMatches(found.definition.runtime, requestedRuntime))
         return yield* new StackTargetError({
           message: `Requested runtime ${requestedRuntime} does not match existing stack runtime ${found.definition.runtime}`,

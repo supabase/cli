@@ -5,11 +5,12 @@ import {
   Cause,
   ConfigProvider,
   Effect,
+  Exit,
   Layer,
   Option,
-  Stream,
-  Schema,
   Queue,
+  Schema,
+  Stream,
   Terminal,
 } from "effect";
 import { DebugFlag, ProfileFlag, WorkdirFlag } from "../../command-internal/global-flags.ts";
@@ -33,6 +34,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { LogsApiError, LogsInputError } from "./logs.errors.ts";
+import { projectStateModeLayer } from "../../shared/config/project-state-mode.ts";
 
 const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
 
@@ -456,6 +458,34 @@ describe("unified logs", () => {
         expect(sql).toContain("positionCaseInsensitiveUTF8(event_message, 'can''t_%\\\\') > 0");
         expect(sql).toContain("parsed.error_severity");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("names a --stack that local sources cannot find instead of listing nothing", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({ workdir: repo.dir, format: "json", routes: {} });
+      const error = yield* logsSources({
+        ...tailFlags(),
+        remote: Option.none(),
+        stack: Option.some("feature"),
+        service: Option.none(),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            setup.layer,
+            projectStateModeLayer(Exit.succeed("stack")),
+            Layer.succeed(StackTargetResolver, {
+              resolve: () =>
+                Effect.succeed({ projectRoot: repo.dir, name: "feature", hostRunning: false }),
+            }),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(error.message).toBe(
+        'No managed stack named "feature" exists for this project. Run supabase stack start --stack feature first.',
+      );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.effect("discovers truthful hosted capabilities without querying logs", () =>

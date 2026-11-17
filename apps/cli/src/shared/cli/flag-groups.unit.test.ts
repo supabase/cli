@@ -576,6 +576,8 @@ describe("GLOBAL_VALUE_FLAG_TOKENS", () => {
         "--log-level",
         "-o",
         "--completions",
+        "--stack",
+        "--stack-id",
       ]),
     );
   });

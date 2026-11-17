@@ -1025,6 +1025,7 @@ describe("experimental stack start", () => {
             "analytics",
             "pooler",
           ]),
+          stack: Option.some("feature"),
           runtime: "auto",
         }).pipe(Effect.provide(Layer.merge(layers(root, fixture, output, false), overrides)));
         expect(createdRuntimes).toEqual(["podman"]);
@@ -1033,6 +1034,10 @@ describe("experimental stack start", () => {
           message: expect.stringContaining(
             "Docker didn't answer, so this new stack uses the Podman runtime",
           ),
+        });
+        expect(output.messages).toContainEqual({
+          type: "info",
+          message: expect.stringContaining("`supabase stack destroy --stack feature`"),
         });
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );

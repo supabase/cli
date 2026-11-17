@@ -11,11 +11,12 @@ import { dim } from "../../../../command-internal/colors.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
-  StackApi,
   mapTargetError,
+  missingStackAdvice,
+  rejectStackOutput,
+  StackApi,
   StackTargetResolver,
   validateStackTarget,
-  rejectStackOutput,
 } from "../../../../command-internal/stack-target.ts";
 import { StackCommandLogsError } from "./logs.errors.ts";
 import { makeTextFormatter, truncationFooter } from "./logs.format.ts";
@@ -136,8 +137,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
     if (target.id === undefined || target.definition === undefined)
       return yield* new StackCommandLogsError({
         reason: "flags",
-        message: "No managed stack exists for the selected project.",
-        suggestion: "Run supabase stack start first.",
+        ...missingStackAdvice(target.name),
       });
     if (flags.follow && !target.hostRunning)
       return yield* new StackCommandLogsError({

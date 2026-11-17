@@ -42,6 +42,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { resolveTarget } from "./resolve-target.ts";
+import { type StackBackend, stackBackendLayer } from "../stack-backend.ts";
 import { renderLocalTarget } from "./target-identity.ts";
 import { TargetPolicy } from "./target-policy.ts";
 import type { TargetGroup } from "./target-policy.ts";
@@ -122,6 +123,8 @@ const run = (
     readonly unreachable?: string;
     readonly branches?: Listing;
     readonly listings?: Readonly<Record<string, Listing>>;
+    readonly stack?: string;
+    readonly backend?: StackBackend;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -180,7 +183,9 @@ const run = (
             workdir: dir,
             projectId: options.projectId ?? Option.none(),
             ...(options.storedToken === true ? { accessToken: Option.none() } : {}),
+            ...(options.stack === undefined ? {} : { stack: options.stack }),
           }),
+          options.backend === undefined ? Layer.empty : stackBackendLayer(options.backend),
           options.args === undefined
             ? Layer.empty
             : Layer.succeed(CliArgs, prepareCliArgs(root, options.args)),
@@ -235,6 +240,49 @@ describe("resolveTarget", () => {
       expect(result.refFlags).toEqual([]);
     }),
   );
+
+  describe("--stack", () => {
+    it.effect("rejects --stack on the legacy backend instead of ignoring it", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", none, { stack: "feature", backend: "legacy" });
+        expect(failureOf(result.exit)).toMatchObject({
+          message: "--stack requires the experimental stack backend.",
+          suggestion:
+            "Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml.",
+        });
+      }),
+    );
+
+    it.effect("rejects --stack beside --linked before resolving the linked project", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, linked: true },
+          { stack: "feature", backend: "stack" },
+        );
+        expect(failureOf(result.exit)).toMatchObject({
+          flags: ["--stack", "--linked"],
+          message: "--stack selects a local stack and cannot be combined with --linked.",
+        });
+        expect(result.refFlags).toEqual([]);
+        expect(result.apiRequests).toEqual([]);
+      }),
+    );
+
+    it.effect("rejects --stack combined with --remote", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "DbUrl", url: SECRET_URL }) },
+          { stack: "feature", backend: "stack" },
+        );
+        expect(failureOf(result.exit)).toMatchObject({
+          flags: ["--stack", "--remote"],
+          message: "--stack selects a local stack and cannot be combined with --remote.",
+        });
+      }),
+    );
+  });
 
   describe("--remote", () => {
     it.effect("targets the linked project when bare", () =>

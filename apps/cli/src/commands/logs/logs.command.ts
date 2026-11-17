@@ -22,11 +22,15 @@ import { logs, logsSources } from "./logs.handler.ts";
 
 const stackFlags = {
   stack: Flag.String("stack").pipe(
-    Flag.withDescription("Select a local stack by name."),
+    Flag.withDescription(
+      "Select a local stack by name (defaults to SUPABASE_STACK, else the current project stack).",
+    ),
     Flag.optional,
   ),
   stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Select a local stack by ID."),
+    Flag.withDescription(
+      "Select a local stack by ID or unique ID prefix (defaults to SUPABASE_STACK_ID).",
+    ),
     Flag.optional,
   ),
 };

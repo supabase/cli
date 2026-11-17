@@ -6,7 +6,11 @@ import {
   type StackLogRecord,
 } from "@supabase/stack/effect";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { StackTargetResolver, validateStackTarget } from "../../command-internal/stack-target.ts";
+import {
+  missingStackAdvice,
+  StackTargetResolver,
+  validateStackTarget,
+} from "../../command-internal/stack-target.ts";
 import { isFromLaunch, makeHistoryCollector } from "../../command-internal/logs/local-history.ts";
 import { parseSince } from "../../command-internal/logs/since.ts";
 import { hasGatewayLogs } from "../../command-internal/logs/local-sources.ts";
@@ -50,10 +54,10 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
       ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
     })
     .pipe(Effect.mapError(inputError));
-  if (target.id === undefined || target.definition === undefined)
-    return yield* new LogsInputError({
-      message: "No managed stack exists for the selected project. Run supabase stack start first.",
-    });
+  if (target.id === undefined || target.definition === undefined) {
+    const { message, suggestion } = missingStackAdvice(target.name);
+    return yield* new LogsInputError({ message: `${message} ${suggestion}` });
+  }
   const requested = Option.isSome(flags.resource)
     ? [flags.resource.value]
     : flags.service.map((service) => (service === "postgres" ? "database" : service));

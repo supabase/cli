@@ -84,13 +84,14 @@ import {
   parseSpecifier,
 } from "../../../../command-internal/stack-lock.ts";
 import {
-  StackApi,
-  stackCapabilityForService,
-  StackTargetResolver,
+  describeStackSelector,
   failedOutcomesDetail,
   mapTargetError,
   rejectStackOutput,
-  validateStackTarget,
+  selectStack,
+  StackApi,
+  stackCapabilityForService,
+  StackTargetResolver,
 } from "../../../../command-internal/stack-target.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
@@ -589,17 +590,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))),
     );
     const exclusions = yield* validateExclusions(flags.exclude);
-    yield* validateStackTarget({
-      stack: Option.getOrUndefined(flags.stack),
-      stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))));
+    const selected = yield* selectStack(flags).pipe(
+      Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))),
+    );
     const target = yield* resolver
-      .resolve({
-        projectRoot: settings.workdir,
-        ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
-        ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
-        runtime: flags.runtime,
-      })
+      .resolve({ projectRoot: settings.workdir, ...selected, runtime: flags.runtime })
       .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))));
     const configFile = yield* loadConfigFileRef(target.projectRoot);
     const runtime = yield* RuntimeInfo;
@@ -743,8 +738,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       {
         explicitWorkdir: settings.explicitWorkdir,
         projectRoot: target.projectRoot,
-        ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
-        ...(Option.isSome(flags.stackId) ? { stackId: stack.id } : {}),
+        ...(selected.name === undefined ? {} : { stack: selected.name }),
+        ...(selected.id === undefined ? {} : { stackId: stack.id }),
       },
       currentShellPlatform(),
     );
@@ -783,8 +778,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           `\n${renderStackSummary(report.views, credentials)}\n${gray(`Runtime: ${selectedRuntime}`, process.stdout)}\nRun ${statusPointer} to export these values as environment variables.\n`,
         );
       });
+    const named = describeStackSelector(selected);
+    const selectedFlags = named === undefined ? "" : ` ${named.flags}`;
     const runtimeNotice =
-      target.id === undefined ? automaticRuntimeNotice(target.runtime, selectedRuntime) : undefined;
+      target.id === undefined
+        ? automaticRuntimeNotice(target.runtime, selectedRuntime, selectedFlags)
+        : undefined;
     if (runtimeNotice !== undefined) yield* output.info(runtimeNotice);
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));

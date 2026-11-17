@@ -1,6 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, Ref, Scope } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Ref, Scope } from "effect";
 import { StackError } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -42,6 +42,21 @@ const fixture = Effect.fn("StackStopTest.fixture")(function* () {
 });
 
 describe("stack stop", () => {
+  it.effect("fails naming the stack SUPABASE_STACK selects when it does not exist", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const error = yield* stackStop(flags()).pipe(
+        Effect.provide(f.layer),
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({ SUPABASE_STACK: "typo" }),
+        ),
+        Effect.flip,
+      );
+      expect(error.message).toBe('No managed stack named "typo" was found for this project.');
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
   it.live("stops an owner while preserving standalone definitions", () =>
     Effect.gen(function* () {
       const f = yield* fixture();

@@ -68,6 +68,10 @@ import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 import type { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { OutputFlag } from "../../src/command-internal/global-flags.ts";
+import {
+  type StackSelectorFlags,
+  stackSelectorFlagsLayer,
+} from "../../src/command-internal/stack-target.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
 import type { ProcessControl } from "../../src/shared/runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
@@ -428,8 +432,11 @@ export function mockCommandSettings(opts: {
   readonly supabaseHome?: string;
   readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
   readonly apiMaxRetries?: Option.Option<number>;
-}): Layer.Layer<CommandSettings> {
-  return Layer.succeed(CommandSettings, {
+  /** The `--stack`/`--stack-id` the command was run with; neither by default. */
+  readonly stack?: string;
+  readonly stackId?: string;
+}): Layer.Layer<CommandSettings | StackSelectorFlags> {
+  const settings = Layer.succeed(CommandSettings, {
     githubToken: opts.githubToken ?? Option.none(),
     profile: opts.profile ?? "supabase",
     profileEnvValue: opts.profileEnvValue ?? Option.none(),
@@ -447,6 +454,11 @@ export function mockCommandSettings(opts: {
     userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
     apiMaxRetries: opts.apiMaxRetries ?? Option.none(),
   });
+  const selector = stackSelectorFlagsLayer({
+    stack: Option.fromNullishOr(opts.stack),
+    stackId: Option.fromNullishOr(opts.stackId),
+  });
+  return Layer.mergeAll(settings, selector);
 }
 
 // Low-level building blocks for tests that need a custom `handler` in `mockCommandPlatformApi`.

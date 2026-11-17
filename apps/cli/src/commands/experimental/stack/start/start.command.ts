@@ -13,6 +13,7 @@ import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { stackSelectorFlagsLayer } from "../../../../command-internal/stack-target.ts";
 
 const excludeFlag = stringSliceFlag(
   "exclude",
@@ -22,9 +23,16 @@ const excludeFlag = stringSliceFlag(
 
 const config = {
   exclude: excludeFlag,
-  stack: Flag.String("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
+  stack: Flag.String("stack").pipe(
+    Flag.withDescription(
+      "Name this stack (defaults to SUPABASE_STACK, else the current project stack).",
+    ),
+    Flag.optional,
+  ),
   stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Open an existing stack by id or unique id prefix."),
+    Flag.withDescription(
+      "Open an existing stack by id or unique id prefix (defaults to SUPABASE_STACK_ID).",
+    ),
     Flag.optional,
   ),
   runtime: Flag.Literals("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
@@ -81,6 +89,7 @@ export const stackStartCommand = Command.make("start", config).pipe(
   // `machineErrorContextLayer` carries the structured incompatible-change payload onto the
   // JSON/stream-json error envelope.
   Command.provide(Layer.mergeAll(stdinLayer, machineErrorContextLayer)),
+  Command.provide((flags) => stackSelectorFlagsLayer(flags)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "local-only", consent: "none" }),

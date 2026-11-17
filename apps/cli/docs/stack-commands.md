@@ -165,6 +165,39 @@ Listing is global and has no checkout filter. Owner availability is not service 
 use `supabase stack status` for live state. Registry directories without a state file are ignored
 as remnants.
 
+## Targeting a named stack from other commands
+
+Every command that reaches the project's local stack accepts `--stack <name>` and `--stack-id <id>`
+and acts on that stack instead of the default one: the `db`, `migration`, `inspect` and `storage`
+commands, `gen types`, `test db`, `seed buckets` and `functions serve`. Commands that never reach a
+stack, such as `migration new` or `functions deploy`, reject the flags.
+
+```sh
+supabase start --stack feature-a
+supabase migration up --stack feature-a
+supabase db reset --stack-id 3f9a
+```
+
+`--stack` matches the stack name under the current project root and branch, as `stack start` does;
+`--stack-id` takes a full ID or a unique prefix of at least 4 characters from any checkout. Without
+either flag, `SUPABASE_STACK` or `SUPABASE_STACK_ID` selects the stack, so one export per worktree or
+shell covers every command, including `stack start`, `status`, `stop` and `destroy`. Because an export
+outlives `cd`, `SUPABASE_STACK_ID` only selects a stack of the current project; pass `--stack-id` to
+reach another checkout's stack. A flag overrides both variables, and setting both variables is an
+error.
+
+A selected stack never falls back to the default stack. An unknown name fails with an error that
+names it and suggests the `supabase start` flags that create it; an unknown ID suggests
+`supabase stack list`. A command that needs the database of a stopped stack fails the same way;
+`db start` starts it instead, and so does `db schema declarative` when it generates or exports the
+schema. Among these commands, only `db start` creates a named stack that does not exist yet.
+
+The flags select a local stack, so combining them with `--remote` (or its deprecated aliases) is an
+error, and so is passing them while the legacy backend is selected; the variables are ignored by
+the legacy backend. Migration files and configuration always come from the current project
+directory. To run several stacks of one project at once, leave their ports out of
+`supabase/config.toml`: a port set there is claimed by every stack of the project.
+
 ## Selecting the top-level commands
 
 The top-level `supabase start`, `supabase stop`, and `supabase status` commands use the legacy
