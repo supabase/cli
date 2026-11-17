@@ -225,6 +225,18 @@ describe("buildInfoPayload + renderInfoMarkdown", () => {
     });
   });
 
+  it("renderInfoMarkdown tells the reader to pass a provider ID for a dedicated scope", () => {
+    const out = renderInfoMarkdown("abcdefghijklmnopqrst");
+    expect(out).toContain("shared scope");
+    expect(out).toContain("supabase sso info <provider-id>");
+  });
+
+  it("renderInfoMarkdown names the provider when its ID is given", () => {
+    const id = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
+    const out = renderInfoMarkdown("abcdefghijklmnopqrst", id);
+    expect(out).toContain(`specific to provider ${id}`);
+  });
+
   it("renderInfoMarkdown interpolates ref into the three labels", () => {
     const out = renderInfoMarkdown("abcdefghijklmnopqrst");
     expect(out).toContain("Single sign-on URL (ACS URL)");

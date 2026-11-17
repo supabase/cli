@@ -249,7 +249,15 @@ export function buildInfoPayload(ref: string, providerId?: string): SsoInfoPaylo
 
 export function renderInfoMarkdown(ref: string, providerId?: string): string {
   const payload = buildInfoPayload(ref, providerId);
-  return renderGlamourTable(
+  const note =
+    providerId === undefined
+      ? "These values are for providers that use the shared scope. A provider added with\n" +
+        "--dedicated-scope has its own ACS URL and entity ID: run `supabase sso info <provider-id>`\n" +
+        "with that provider's ID to print them.\n"
+      : `These values are specific to provider ${providerId}, which must have been added with\n` +
+        "--dedicated-scope. Providers that use the shared scope use the values printed by\n" +
+        "`supabase sso info` without a provider ID.\n";
+  const table = renderGlamourTable(
     ["PROPERTY", "VALUE"],
     [
       // Glamour collapses the label's trailing space when computing column
@@ -260,4 +268,5 @@ export function renderInfoMarkdown(ref: string, providerId?: string): string {
       ["Default Relay State", payload.relay_state],
     ],
   );
+  return table + note;
 }

@@ -65,7 +65,7 @@ with `--dedicated-scope`. An invalid UUID fails before any output.
 
 ### `--output-format text` / `--output pretty`
 
-Styled 3-row property/value markdown table.
+Styled 3-row property/value markdown table, followed by a note that the values are for providers using the shared scope and that a dedicated-scope provider needs `supabase sso info <provider-id>` (or, with a provider ID, that the values are specific to that provider). The note is text-only; the machine formats are unchanged.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
