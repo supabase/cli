@@ -48,6 +48,7 @@ export class ApiCommandOperationFailedError extends Data.TaggedError(
 export class ApiCommandWaitTimeoutError extends Data.TaggedError("ApiCommandWaitTimeoutError")<{
   readonly message: string;
   readonly timeoutMillis: number;
+  readonly lastStatus?: string | null;
   readonly hint: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

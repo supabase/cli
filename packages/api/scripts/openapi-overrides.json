@@ -867,5 +867,340 @@
       "required": ["data"]
     },
     "$comment": "Staging-only operation; remove once the production Management API ships it."
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse",
+    "value": {
+      "delete": {
+        "description": "Stops replication and removes the Warehouse publication, FDW and dependent foreign tables, reader group, catalog access and query routing asynchronously. Stored Warehouse data is retained by default. Set delete_data=true to permanently delete the managed catalog schema and dedicated Storage bucket; destination SQL and Storage write permissions are also required. Legacy shared buckets and source Postgres tables are preserved. Reader memberships are not restored on re-enablement. Safe retries return the existing cleanup identity; changing an in-progress data policy returns a conflict. Poll the linked teardown for completion or partial cleanup failures.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-disable-warehouse",
+        "parameters": [
+          {
+            "description": "Permanently delete managed Warehouse data. Defaults to false (retain data). Source Postgres tables and legacy shared buckets are preserved.",
+            "in": "query",
+            "name": "delete_data",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseTeardownResponse_Output"
+                }
+              }
+            },
+            "description": "",
+            "links": {
+              "teardown": {
+                "operationId": "v2-get-warehouse-teardown",
+                "parameters": {
+                  "operation_id": "$response.body#/data/id",
+                  "ref": "$request.path.ref"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Invalid deletion option or unmanaged destination"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse mutation or cleanup policy conflict"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse cleanup unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Disable Warehouse replication and access",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Enterprise", "Pro", "Team"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_write", "project_admin_write"]],
+        "x-oauth-scope": "database:write",
+        "x-operation": {
+          "group": "warehouse",
+          "method": "disable"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1teardowns~1current",
+    "value": {
+      "get": {
+        "description": "Reads durable cleanup state without contacting ETL or inspecting the FDW. Disabling means cleanup is in progress; disabled means cleanup completed; deletion_failed means cleanup may be partial. The original data policy and failure reason remain available. Returns a conflict if re-enablement cleared the operation or a later disable replaced it.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-get-warehouse-teardown",
+        "parameters": [
+          {
+            "description": "Cleanup operation identity returned by disable. A different current operation returns a conflict.",
+            "in": "query",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseTeardownResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Cleanup operation changed or was cleared by re-enablement"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse cleanup state unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get Warehouse cleanup status",
+        "tags": ["Projects Warehouse"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_read"]],
+        "x-oauth-scope": "database:read",
+        "x-operation": {
+          "group": "warehouse.teardowns",
+          "method": "get",
+          "poll": {
+            "error": "/data/attributes/cleanup_error",
+            "failed": ["deletion_failed"],
+            "status": "/data/attributes/lifecycle_status",
+            "succeeded": ["disabled"]
+          }
+        },
+        "x-scalar-stability": "experimental"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseTeardownResponse_Output",
+    "value": {
+      "properties": {
+        "data": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "cleanup_error": {
+                  "description": "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
+                  "nullable": true,
+                  "type": "string"
+                },
+                "delete_data": {
+                  "description": "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+                  "type": "boolean"
+                },
+                "lifecycle_status": {
+                  "enum": ["deletion_failed", "disabled", "disabling"],
+                  "type": "string"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                  "type": "string"
+                }
+              },
+              "required": ["cleanup_error", "delete_data", "lifecycle_status", "updated_at"],
+              "type": "object"
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            },
+            "type": {
+              "description": "Resource type.",
+              "enum": ["warehouse_teardown"],
+              "type": "string"
+            }
+          },
+          "required": ["attributes", "id", "type"],
+          "type": "object"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    }
   }
 ]

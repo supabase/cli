@@ -436,4 +436,9 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v2-organizations-slug-webhooks-deliveries-id-retry-post": { fga: [] },
   "v2-enable-warehouse": { fga: [["database_write"]], oauthScope: "database:write" },
   "v2-get-warehouse-setup": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-disable-warehouse": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-get-warehouse-teardown": { fga: [["database_read"]], oauthScope: "database:read" },
 };

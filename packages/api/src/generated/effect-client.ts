@@ -2980,6 +2980,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    disableWarehouse: (
+      input: typeof operationDefinitions.v2DisableWarehouse.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DisableWarehouse.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DisableWarehouse">(
+          operationDefinitions.v2DisableWarehouse,
+          input,
+          options,
+        );
+      }),
     downloadProjectBackup: (
       input: typeof operationDefinitions.v2DownloadProjectBackup.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3072,6 +3088,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2GetWarehouseSetup">(
           operationDefinitions.v2GetWarehouseSetup,
+          input,
+          options,
+        );
+      }),
+    getWarehouseTeardown: (
+      input: typeof operationDefinitions.v2GetWarehouseTeardown.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseTeardown.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseTeardown">(
+          operationDefinitions.v2GetWarehouseTeardown,
           input,
           options,
         );
