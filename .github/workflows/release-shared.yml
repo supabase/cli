@@ -38,10 +38,6 @@ on:
         required: false
         type: string
         default: supabase
-    outputs:
-      setup_cli_npm_fallback:
-        description: "'true' when a setup-cli v3 smoke job installed from the GitHub release because the npm install failed"
-        value: ${{ jobs.setup-cli-smoke.outputs.npm_fallback }}
     secrets:
       SENTRY_DSN:
         required: false
@@ -607,24 +603,11 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against the just-released
-  # CLI. Runs last and intentionally doesn't gate publish-homebrew/publish-scoop — by the time it
-  # runs, the npm package and GitHub release are already live, so a setup-cli regression surfaces
-  # as a red post-release signal without holding back the rest of the channel. `needs` is for
-  # ordering only; `always() && needs.publish.result == 'success'` lets it run even when
-  # publish-homebrew/publish-scoop are skipped or fail.
-  setup-cli-smoke:
-    needs: [publish, publish-homebrew, publish-scoop]
-    if: ${{ always() && !inputs.dry_run && needs.publish.result == 'success' }}
-    uses: ./.github/workflows/setup-cli-smoke-test.yml
-    with:
-      version: ${{ inputs.version }}
-
   # Post-publish check that the Homebrew tap, Scoop bucket, and curl|bash install script
   # actually install the just-released CLI — brew/scoop verify the published checksum against
   # the downloaded tarball, catching a mismatch like CLI v2.107.0. Only runs when brew/scoop were
-  # published and both pushes succeeded; a skipped channel is covered by the GitHub Release
-  # download path in setup-cli-smoke. Runs last and doesn't gate the rest of the channel.
+  # published and both pushes succeeded; the daily setup-cli smoke test covers the GitHub Release
+  # download path for every channel. Runs last and doesn't gate the rest of the channel.
   verify-install-channels:
     needs: [publish, publish-homebrew, publish-scoop]
     if: ${{ always() && !inputs.dry_run && inputs.publish_brew_scoop && needs.publish-homebrew.result == 'success' && needs.publish-scoop.result == 'success' }}
