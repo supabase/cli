@@ -1,6 +1,6 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
 import { BunPath } from "@effect/platform-bun";
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { Output } from "../shared/output/output.service.ts";
@@ -35,6 +35,7 @@ import {
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
 import { describeConfigParseError } from "./workdir-project.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
+import { canonicalPathForContainment, isPathContainedInRoot } from "./path-containment.ts";
 
 // Re-exported so `stack start` can report a project-context config-load failure with the
 // same tag `seedBucketsRun` itself fails with, without importing across command boundaries.
@@ -71,6 +72,24 @@ interface CollectedFile {
   readonly absPath: string;
   readonly displayPath: string;
 }
+
+interface SeedObject extends CollectedFile {
+  readonly key: string;
+  readonly metadata: Schema.JsonObject | undefined;
+}
+
+// Relative config paths resolve under `supabase/`; absolute paths are used as-is.
+const resolveSupabasePath = (
+  path: Path.Path,
+  workdir: string,
+  configured: string,
+): CollectedFile =>
+  path.isAbsolute(configured)
+    ? { absPath: configured, displayPath: configured }
+    : {
+        absPath: path.join(workdir, "supabase", configured),
+        displayPath: path.join("supabase", configured),
+      };
 
 /** Mutable run summary, emitted as the structured result in json/stream-json mode. */
 interface SeedSummary {
@@ -270,6 +289,14 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
   if (projectRef === "" && opts.announceLocalEndpoint !== undefined) {
     yield* opts.announceLocalEndpoint(credentials.baseUrl);
   }
+  // Manifest failures must leave Storage unchanged.
+  const plannedObjects = yield* planObjectUploads(
+    fs,
+    { path, posixPath },
+    output,
+    workdir,
+    bucketsConfig,
+  );
 
   // Gateway operations use plain `globalThis.fetch` instead of the DoH fetch, with the Kong CA in
   // `FetchHttpClient.RequestInit` for local + https; the api-keys lookup in
@@ -342,7 +369,16 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
     }
 
     // Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, { path, posixPath }, output, gateway, workdir, bucketsConfig, summary);
+    yield* uploadObjects(
+      fs,
+      { path, posixPath },
+      output,
+      gateway,
+      workdir,
+      bucketsConfig,
+      plannedObjects,
+      summary,
+    );
 
     // Machine-readable summary; text mode emits nothing extra.
     if (emitSummary && output.format !== "text") {
@@ -363,6 +399,7 @@ type BucketsConfig = Readonly<
       readonly file_size_limit: string;
       readonly allowed_mime_types: ReadonlyArray<string>;
       readonly objects_path: string;
+      readonly objects_metadata_path?: string;
     }
   >
 >;
@@ -634,6 +671,7 @@ const uploadObjects = Effect.fnUntraced(function* (
   gateway: StorageGateway,
   workdir: string,
   bucketsConfig: BucketsConfig,
+  plannedObjects: ReadonlyMap<string, ReadonlyArray<SeedObject>>,
   summary: SeedSummary,
 ) {
   for (const [name, bucket] of Object.entries(bucketsConfig)) {
@@ -641,21 +679,19 @@ const uploadObjects = Effect.fnUntraced(function* (
     if (objectsPath.length === 0) {
       continue;
     }
-    // A relative `objects_path` resolves against the `supabase/` dir; absolute paths are
-    // left untouched. `displayRoot` (workdir-relative) drives the `Uploading:` stderr line
-    // and the destination key.
-    const displayRoot = path.isAbsolute(objectsPath)
-      ? objectsPath
-      : path.join("supabase", objectsPath);
-    const absRoot = path.isAbsolute(objectsPath)
-      ? objectsPath
-      : path.join(workdir, "supabase", objectsPath);
-    const files = yield* collectFiles(fs, path, output, absRoot, displayRoot);
+    const files =
+      plannedObjects.get(name) ??
+      (yield* collectSeedObjects(
+        fs,
+        { path, posixPath },
+        output,
+        resolveSupabasePath(path, workdir, objectsPath),
+      ));
     yield* Effect.forEach(
       files,
       (file) =>
         Effect.gen(function* () {
-          const dstPath = bucketObjectKey({ path, posixPath }, name, displayRoot, file.displayPath);
+          const dstPath = posixPath.join(name, file.key);
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
           // Content type is sniffed from the first 512 bytes, refining only a generic
           // text/plain by file extension.
@@ -664,6 +700,7 @@ const uploadObjects = Effect.fnUntraced(function* (
             contentType: contentTypeForUpload(path, sniff, file.absPath),
             cacheControl: "max-age=3600",
             overwrite: true,
+            metadata: file.metadata,
           });
           summary.objects_uploaded.push(dstPath);
         }),
@@ -671,6 +708,164 @@ const uploadObjects = Effect.fnUntraced(function* (
     );
   }
 });
+
+const invalidObjectsMetadata = (bucket: string, reason: string) =>
+  new SeedConfigLoadError({
+    message: `Invalid objects_metadata_path for bucket ${bucket}: ${reason}`,
+  });
+
+const planObjectUploads = Effect.fn("SeedBuckets.planObjectUploads")(function* (
+  fs: FileSystem.FileSystem,
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
+  output: typeof Output.Service,
+  workdir: string,
+  bucketsConfig: BucketsConfig,
+) {
+  const objectRoots = Object.entries(bucketsConfig).flatMap(([name, bucket]) =>
+    bucket.objects_path.length === 0
+      ? []
+      : [{ name, root: resolveSupabasePath(path, workdir, bucket.objects_path) }],
+  );
+
+  const manifests: Array<{
+    readonly name: string;
+    readonly root: CollectedFile;
+    readonly manifest: CollectedFile;
+  }> = [];
+  for (const [name, bucket] of Object.entries(bucketsConfig)) {
+    const metadataPath = bucket.objects_metadata_path;
+    if (metadataPath === undefined || metadataPath.length === 0) {
+      continue;
+    }
+    const manifest = resolveSupabasePath(path, workdir, metadataPath);
+    if (bucket.objects_path.length === 0) {
+      return yield* invalidObjectsMetadata(
+        name,
+        `${manifest.displayPath} is set but objects_path is empty.`,
+      );
+    }
+    // Canonical paths, so a symlinked objects_path cannot hide a manifest inside it.
+    const [canonicalManifest, canonicalRoots] = yield* Effect.all([
+      canonicalPathForContainment(manifest.absPath),
+      Effect.forEach(objectRoots, (owner) =>
+        canonicalPathForContainment(owner.root.absPath).pipe(
+          Effect.map((canonicalRoot) => ({ name: owner.name, canonicalRoot })),
+        ),
+      ),
+    ]).pipe(
+      Effect.mapError(() =>
+        invalidObjectsMetadata(
+          name,
+          `${manifest.displayPath} cannot be checked against objects_path.`,
+        ),
+      ),
+    );
+    const owner = canonicalRoots.find(({ canonicalRoot }) =>
+      isPathContainedInRoot(path, canonicalRoot, canonicalManifest),
+    );
+    if (owner !== undefined) {
+      return yield* invalidObjectsMetadata(
+        name,
+        `${manifest.displayPath} is inside objects_path for bucket ${owner.name}.`,
+      );
+    }
+    manifests.push({
+      name,
+      root: resolveSupabasePath(path, workdir, bucket.objects_path),
+      manifest,
+    });
+  }
+
+  const plannedObjects = new Map<string, ReadonlyArray<SeedObject>>();
+  for (const { name, root, manifest } of manifests) {
+    const objects = yield* collectSeedObjects(fs, { path, posixPath }, output, root);
+    const metadataByKey = yield* loadObjectsMetadata(
+      fs,
+      name,
+      manifest,
+      root.displayPath,
+      new Set(objects.map((object) => object.key)),
+    );
+    plannedObjects.set(
+      name,
+      objects.map((object) => ({ ...object, metadata: metadataByKey.get(object.key) })),
+    );
+  }
+  return plannedObjects;
+});
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonObject = Schema.decodeUnknownEffect(Schema.JsonObject);
+
+/** Reads and checks an `objects_metadata_path` manifest; failures never quote metadata values. */
+const loadObjectsMetadata = Effect.fn("SeedBuckets.loadObjectsMetadata")(function* (
+  fs: FileSystem.FileSystem,
+  bucket: string,
+  { absPath, displayPath }: CollectedFile,
+  displayRoot: string,
+  keys: ReadonlySet<string>,
+) {
+  const text = yield* fs
+    .readFileString(absPath)
+    .pipe(
+      Effect.mapError((error) =>
+        invalidObjectsMetadata(
+          bucket,
+          Predicate.isTagged(error.reason, "NotFound")
+            ? `${displayPath} does not exist.`
+            : Predicate.isTagged(error.reason, "BadResource")
+              ? `${displayPath} is not a file.`
+              : `${displayPath} cannot be read.`,
+        ),
+      ),
+    );
+  const json = yield* decodeJson(text).pipe(
+    Effect.mapError(() => invalidObjectsMetadata(bucket, `${displayPath} is not valid JSON.`)),
+  );
+  const manifest = yield* decodeJsonObject(json).pipe(
+    Effect.mapError(() =>
+      invalidObjectsMetadata(bucket, `${displayPath} must contain a JSON object.`),
+    ),
+  );
+  const entries = yield* Effect.validate(Object.entries(manifest), ([key, value]) =>
+    decodeJsonObject(value).pipe(
+      Effect.map((metadata): readonly [string, Schema.JsonObject] => [key, metadata]),
+      Effect.mapError(() => key),
+    ),
+  ).pipe(
+    Effect.mapError((badKeys) =>
+      invalidObjectsMetadata(
+        bucket,
+        `${displayPath} has non-object metadata for keys: ${badKeys.join(", ")}.`,
+      ),
+    ),
+  );
+  const unmatched = entries.flatMap(([key]) => (keys.has(key) ? [] : [key]));
+  if (unmatched.length > 0) {
+    return yield* invalidObjectsMetadata(
+      bucket,
+      `${displayPath} lists keys with no matching file under ${displayRoot}: ${unmatched.join(", ")}. Keys are paths relative to ${displayRoot}, without the bucket name.`,
+    );
+  }
+  return new Map(entries);
+});
+
+// Collects the files under `root` with their bucket object keys and no metadata.
+const collectSeedObjects = (
+  fs: FileSystem.FileSystem,
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
+  output: typeof Output.Service,
+  root: CollectedFile,
+): Effect.Effect<ReadonlyArray<SeedObject>, PlatformError> =>
+  collectFiles(fs, path, output, root.absPath, root.displayPath).pipe(
+    Effect.map((files) =>
+      files.map((file) => ({
+        ...file,
+        key: bucketObjectKey({ path, posixPath }, root.displayPath, file.displayPath),
+        metadata: undefined,
+      })),
+    ),
+  );
 
 /**
  * Collects uploadable files under `absRoot`, lexically ordered.

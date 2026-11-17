@@ -11,6 +11,7 @@ import {
   Option,
   Path,
   Predicate,
+  Schema,
 } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
@@ -41,6 +42,7 @@ import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts"
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { seedBucketsRun } from "../../../command-internal/seed-buckets.ts";
 import { seedBuckets } from "./buckets.handler.ts";
+import { SeedConfigLoadError } from "./buckets.errors.ts";
 import type { BucketsFlags } from "./buckets.command.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
@@ -777,6 +779,18 @@ describe("seed buckets", () => {
     }).pipe(seedScenario),
   );
 
+  const UPLOAD_ROUTES: ReadonlyArray<MockRoute> = [
+    { method: "GET", match: "/storage/v1/bucket", body: [] },
+    { method: "POST", match: "/storage/v1/object/", body: {} },
+    { method: "POST", match: "/storage/v1/bucket", body: {} },
+  ];
+  const decodeJsonString = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+  const userMetadataOf = (header: string | undefined) =>
+    decodeJsonString(Buffer.from(header ?? "", "base64").toString("utf8"));
+
+  const IMAGES_WITH_METADATA =
+    '[storage.buckets.images]\nobjects_path = "./assets"\nobjects_metadata_path = "./assets.json"\n';
+
   it.effect("resolves an absolute objects_path as-is", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -798,6 +812,242 @@ describe("seed buckets", () => {
       expect(out.stderrText).toContain(`Uploading: ${path.join(absRoot, "a.txt")} => images/a.txt`);
       const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
       expect(uploads).toHaveLength(1);
+      expect(uploads[0]?.headers).not.toHaveProperty("x-metadata");
+    }).pipe(seedScenario),
+  );
+
+  it.effect("resolves an absolute objects_metadata_path as-is", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const absManifest = path.join(tmp.current, "external-metadata.json");
+      yield* fs.writeFileString(absManifest, '{"a.txt":{"source":"absolute"}}');
+      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: `[storage.buckets.images]\nobjects_path = "./assets"\nobjects_metadata_path = "${absManifest}"\n`,
+        files: { "supabase/assets/a.txt": "hello" },
+        routes: UPLOAD_ROUTES,
+      });
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const upload = requests.find((r) => r.url.endsWith("/storage/v1/object/images/a.txt"));
+      expect(yield* userMetadataOf(upload?.headers["x-metadata"])).toEqual({
+        source: "absolute",
+      });
+    }).pipe(seedScenario),
+  );
+
+  it.effect("sends objects_metadata_path entries as the listed objects' user metadata", () =>
+    Effect.gen(function* () {
+      const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: [
+          "[storage.buckets.images]",
+          'objects_path = "./assets"',
+          'objects_metadata_path = "./assets.json"',
+          "[storage.buckets.docs]",
+          'objects_path = "./docs"',
+        ].join("\n"),
+        files: {
+          "supabase/assets/a.txt": "hello",
+          "supabase/assets/sub/b.txt": "world",
+          "supabase/assets.json":
+            '{"sub/b.txt":{"caption":"café ☕","nested":{"tags":["a",1,null],"public":false}}}',
+          "supabase/docs/readme.txt": "docs",
+          "supabase/docs/.DS_Store": "junk",
+        },
+        routes: UPLOAD_ROUTES,
+      });
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+      expect(uploads).toHaveLength(3);
+      const listed = uploads.find((r) => r.url.endsWith("/object/images/sub/b.txt"));
+      const unlisted = uploads.find((r) => r.url.endsWith("/object/images/a.txt"));
+      const unconfigured = uploads.find((r) => r.url.endsWith("/object/docs/readme.txt"));
+      expect(yield* userMetadataOf(listed?.headers["x-metadata"])).toEqual({
+        caption: "café ☕",
+        nested: { tags: ["a", 1, null], public: false },
+      });
+      for (const upload of [listed, unlisted, unconfigured]) {
+        expect(upload?.headers["x-upsert"]).toBe("true");
+      }
+      expect(unlisted?.headers).not.toHaveProperty("x-metadata");
+      expect(unconfigured?.headers).not.toHaveProperty("x-metadata");
+      // A bucket without objects_metadata_path is still walked at upload, after bucket writes.
+      expect(
+        out.stderrText.indexOf("Skipping OS metadata file: supabase/docs/.DS_Store"),
+      ).toBeGreaterThan(out.stderrText.indexOf("Creating Storage bucket: docs"));
+    }).pipe(seedScenario),
+  );
+
+  it.effect.each([
+    { name: "an empty manifest", manifest: "{}", header: undefined },
+    { name: "empty object metadata", manifest: '{"a.txt":{}}', header: "e30=" },
+  ])("uploads objects with $name", ({ manifest, header }) =>
+    Effect.gen(function* () {
+      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: IMAGES_WITH_METADATA,
+        files: { "supabase/assets/a.txt": "hello", "supabase/assets.json": manifest },
+        routes: UPLOAD_ROUTES,
+      });
+      yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      const upload = requests.find((r) => r.url.endsWith("/storage/v1/object/images/a.txt"));
+      expect(upload).toBeDefined();
+      expect(upload?.headers["x-metadata"]).toBe(header);
+    }).pipe(seedScenario),
+  );
+
+  it.effect("keys a single-file objects_path in objects_metadata_path by its basename", () =>
+    Effect.gen(function* () {
+      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: '[storage.buckets.docs]\nobjects_path = "./assets/guide.txt"\nobjects_metadata_path = "./docs.json"\n',
+        files: {
+          "supabase/assets/guide.txt": "read me",
+          "supabase/docs.json": '{"guide.txt":{"lang":"en"}}',
+        },
+        routes: UPLOAD_ROUTES,
+      });
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const upload = requests.find((r) => r.url.endsWith("/storage/v1/object/docs/guide.txt"));
+      expect(yield* userMetadataOf(upload?.headers["x-metadata"])).toEqual({ lang: "en" });
+    }).pipe(seedScenario),
+  );
+
+  it.effect.each<{
+    readonly name: string;
+    readonly toml: string;
+    readonly files: Readonly<Record<string, string>>;
+    readonly message: string;
+  }>([
+    {
+      name: "is set while objects_path is empty",
+      toml: '[storage.buckets.images]\nobjects_metadata_path = "./assets.json"\n',
+      files: { "supabase/assets.json": "{}" },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json is set but objects_path is empty.",
+    },
+    {
+      name: "lies inside the bucket's own, missing objects_path",
+      toml: '[storage.buckets.images]\nobjects_path = "./assets"\nobjects_metadata_path = "./assets/meta.json"\n',
+      files: {},
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets/meta.json is inside objects_path for bucket images.",
+    },
+    {
+      name: "lies inside another bucket's objects_path",
+      toml: [
+        "[storage.buckets.all]",
+        'objects_path = "./assets"',
+        "[storage.buckets.images]",
+        'objects_path = "./assets/img"',
+        'objects_metadata_path = "./assets/img.json"',
+      ].join("\n"),
+      files: { "supabase/assets/img/a.png": "png", "supabase/assets/img.json": "{}" },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets/img.json is inside objects_path for bucket all.",
+    },
+    {
+      name: "does not exist",
+      toml: IMAGES_WITH_METADATA,
+      files: { "supabase/assets/a.txt": "hello" },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json does not exist.",
+    },
+    {
+      name: "is a directory",
+      toml: IMAGES_WITH_METADATA,
+      files: { "supabase/assets/a.txt": "hello", "supabase/assets.json/b.txt": "world" },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json is not a file.",
+    },
+    {
+      name: "is not valid JSON",
+      toml: IMAGES_WITH_METADATA,
+      files: { "supabase/assets/a.txt": "hello", "supabase/assets.json": '{"a.txt": s3cr3t}' },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json is not valid JSON.",
+    },
+    {
+      name: "is not a JSON object",
+      toml: IMAGES_WITH_METADATA,
+      files: { "supabase/assets/a.txt": "hello", "supabase/assets.json": '[{"a.txt":{}}]' },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json must contain a JSON object.",
+    },
+    {
+      name: "maps keys to non-object metadata",
+      toml: IMAGES_WITH_METADATA,
+      files: {
+        "supabase/assets/a.txt": "hello",
+        "supabase/assets/b.txt": "world",
+        "supabase/assets.json": '{"a.txt":"owner","b.txt":["x"]}',
+      },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json has non-object metadata for keys: a.txt, b.txt.",
+    },
+    {
+      name: "lists keys with no matching file",
+      toml: IMAGES_WITH_METADATA,
+      files: {
+        "supabase/assets/a.txt": "hello",
+        "supabase/assets.json": '{"a.txt":{},"A.TXT":{},"./a.txt":{},"gone/b.txt":{}}',
+      },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json lists keys with no matching file under supabase/assets: A.TXT, ./a.txt, gone/b.txt. Keys are paths relative to supabase/assets, without the bucket name.",
+    },
+    {
+      name: "is invalid on a later bucket",
+      toml: [
+        "[storage.buckets.docs]",
+        'objects_path = "./docs"',
+        'objects_metadata_path = ""',
+        "[storage.buckets.images]",
+        'objects_path = "./assets"',
+        'objects_metadata_path = "./assets.json"',
+      ].join("\n"),
+      files: {
+        "supabase/docs/readme.txt": "docs",
+        "supabase/assets/a.txt": "hello",
+        "supabase/assets.json": '{"gone.txt":{}}',
+      },
+      message:
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json lists keys with no matching file under supabase/assets: gone.txt. Keys are paths relative to supabase/assets, without the bucket name.",
+    },
+  ])(
+    "fails before any Storage request when objects_metadata_path $name",
+    ({ toml, files, message }) =>
+      Effect.gen(function* () {
+        const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+          toml,
+          files,
+          routes: UPLOAD_ROUTES,
+        });
+        const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const [error] = failureErrors(exit);
+        expect(error).toBeInstanceOf(SeedConfigLoadError);
+        expect(error).toHaveProperty("message", message);
+        expect(requests).toEqual([]);
+      }).pipe(seedScenario),
+  );
+
+  it.effect("rejects a manifest reached through a symlinked objects_path", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: '[storage.buckets.images]\nobjects_path = "./assets"\nobjects_metadata_path = "./real-assets/meta.json"\n',
+        files: { "supabase/real-assets/a.txt": "hello", "supabase/real-assets/meta.json": "{}" },
+        routes: UPLOAD_ROUTES,
+      });
+      yield* fs.symlink("./real-assets", path.join(tmp.current, "supabase", "assets"));
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const [error] = failureErrors(exit);
+      expect(error).toBeInstanceOf(SeedConfigLoadError);
+      expect(error).toHaveProperty(
+        "message",
+        "Invalid objects_metadata_path for bucket images: supabase/real-assets/meta.json is inside objects_path for bucket images.",
+      );
+      expect(requests).toEqual([]);
     }).pipe(seedScenario),
   );
 
@@ -2165,6 +2415,57 @@ describe("seed buckets", () => {
       expect(out.stderrText).toContain("Creating Storage bucket: test");
       expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(true);
       expect(requests.some((r) => r.headers["apikey"] === "remote-service-role-key")).toBe(true);
+    }).pipe(seedScenario),
+  );
+
+  it.effect("--remote sends objects_metadata_path entries as user metadata", () =>
+    Effect.gen(function* () {
+      const flags: BucketsFlags = BARE_REMOTE;
+      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: IMAGES_WITH_METADATA,
+        files: { "supabase/assets/a.txt": "hello", "supabase/assets.json": '{"a.txt":{"k":"v"}}' },
+        projectRef: VALID_REF,
+        apiKeys: [
+          {
+            name: "service_role",
+            api_key: "remote-service-role-key",
+            type: "secret",
+            secret_jwt_template: { role: "service_role" },
+          },
+        ],
+        args: ["seed", "buckets", "--remote"],
+        routes: UPLOAD_ROUTES,
+      });
+      const exit = yield* seedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const upload = requests.find(
+        (r) =>
+          r.url.startsWith(`https://${VALID_REF}.supabase.co`) &&
+          r.url.endsWith("/object/images/a.txt"),
+      );
+      expect(yield* userMetadataOf(upload?.headers["x-metadata"])).toEqual({ k: "v" });
+    }).pipe(seedScenario),
+  );
+
+  it.effect("--remote fails on an invalid objects_metadata_path before any request", () =>
+    Effect.gen(function* () {
+      const flags: BucketsFlags = BARE_REMOTE;
+      const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: IMAGES_WITH_METADATA,
+        files: { "supabase/assets/a.txt": "hello", "supabase/assets.json": "{" },
+        projectRef: VALID_REF,
+        args: ["seed", "buckets", "--remote"],
+        routes: UPLOAD_ROUTES,
+      });
+      const exit = yield* seedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      const [error] = failureErrors(exit);
+      expect(error).toBeInstanceOf(SeedConfigLoadError);
+      expect(error).toHaveProperty(
+        "message",
+        "Invalid objects_metadata_path for bucket images: supabase/assets.json is not valid JSON.",
+      );
+      expect(requests).toEqual([]);
+      expect(out.promptConfirmCalls).toEqual([]);
     }).pipe(seedScenario),
   );
 

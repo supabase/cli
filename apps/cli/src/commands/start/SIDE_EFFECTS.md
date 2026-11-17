@@ -177,7 +177,8 @@ Seeding never prompts. `start` resolves overwrite/prune from consent alone
 cannot consume a line of a parent script's input. A bucket left in place prints
 `Keeping <vector|analytics> bucket <name>: not declared in supabase/config.toml. Run supabase
 seed buckets to prune.` to stderr in every output mode, and deliberate pruning lives in
-`supabase seed buckets`.
+`supabase seed buckets`. A bucket's `objects_metadata_path` manifest is read before any Storage
+request; an invalid manifest fails seeding, which rolls the run back.
 
 A second, narrower seeding path exists for the `--ignore-health-check` downgrade branch:
 when the bulk health check fails but `isFreshVolume && Storage

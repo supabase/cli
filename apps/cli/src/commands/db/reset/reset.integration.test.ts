@@ -2100,6 +2100,24 @@ describe("db reset", () => {
       },
     );
 
+    it.effect("warns and completes a local reset when objects_metadata_path is invalid", () => {
+      const { layer, out, requests } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage.buckets.images]\nobjects_path = "./assets"\nobjects_metadata_path = "./assets.json"\n',
+        files: { "supabase/assets/a.txt": "hello", "supabase/assets.json": "{" },
+        args: ["db", "reset"],
+        isLocal: true,
+        storageRoutes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          "WARNING: skipped seeding storage buckets: Invalid objects_metadata_path for bucket images: supabase/assets.json is not valid JSON.",
+        );
+        expect(out.stderrText).toContain("Finished ");
+        expect(requests).toEqual([]);
+      });
+    });
+
     it.effect(
       "keeps a vector bucket that is missing from config.toml (prune declines by default)",
       () => {

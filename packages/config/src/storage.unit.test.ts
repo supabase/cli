@@ -28,6 +28,27 @@ describe("storage schema", () => {
     });
   });
 
+  describe("bucket objects_metadata_path", () => {
+    test("decodes alongside objects_path", () => {
+      const decoded = decodeStorage({
+        buckets: {
+          images: { objects_path: "./images", objects_metadata_path: "./images.json" },
+        },
+      });
+      expect(decoded.buckets?.["images"]?.objects_metadata_path).toBe("./images.json");
+    });
+
+    test("is absent when omitted", () => {
+      const bucket = decodeStorage({ buckets: { images: {} } }).buckets?.["images"];
+      expect(bucket).toEqual({
+        public: false,
+        file_size_limit: "50MiB",
+        allowed_mime_types: [],
+        objects_path: "",
+      });
+    });
+  });
+
   describe("default-enabled values match the merged template", () => {
     test("vector.enabled defaults to true when omitted", () => {
       // The template config.toml (enabled = true) is the base layer, so an omitted key resolves

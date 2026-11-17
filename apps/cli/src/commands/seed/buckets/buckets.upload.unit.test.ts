@@ -9,38 +9,29 @@ const posixPath = Effect.runSync(Effect.provide(Path.Path, BunPath.layerPosix));
 const win32Path = Effect.runSync(Effect.provide(Path.Path, BunPath.layerWin32));
 
 describe("bucketObjectKey", () => {
-  it("maps a single-file objects_path to <bucket>/<basename>", () => {
-    expect(bucketObjectKey({ path, posixPath }, "docs", "assets/file.pdf", "assets/file.pdf")).toBe(
-      "docs/file.pdf",
+  it("maps a single-file objects_path to its basename", () => {
+    expect(bucketObjectKey({ path, posixPath }, "assets/file.pdf", "assets/file.pdf")).toBe(
+      "file.pdf",
     );
   });
 
   it("normalises win32 separators in the remote key", () => {
     expect(
-      bucketObjectKey(
-        { path: win32Path, posixPath },
-        "docs",
-        "C:\\assets",
-        "C:\\assets\\sub\\b.txt",
-      ),
-    ).toBe("docs/sub/b.txt");
+      bucketObjectKey({ path: win32Path, posixPath }, "C:\\assets", "C:\\assets\\sub\\b.txt"),
+    ).toBe("sub/b.txt");
   });
 
-  it("maps a direct child to <bucket>/<name>", () => {
-    expect(bucketObjectKey({ path, posixPath }, "docs", "assets", "assets/a.txt")).toBe(
-      "docs/a.txt",
-    );
+  it("maps a direct child to its name", () => {
+    expect(bucketObjectKey({ path, posixPath }, "assets", "assets/a.txt")).toBe("a.txt");
   });
 
-  it("maps a nested file to <bucket>/<relative-posix-path>", () => {
-    expect(bucketObjectKey({ path, posixPath }, "docs", "assets", "assets/sub/dir/b.txt")).toBe(
-      "docs/sub/dir/b.txt",
+  it("maps a nested file to its relative posix path", () => {
+    expect(bucketObjectKey({ path, posixPath }, "assets", "assets/sub/dir/b.txt")).toBe(
+      "sub/dir/b.txt",
     );
   });
 
   it("normalises a leading ./ in objects_path", () => {
-    expect(bucketObjectKey({ path, posixPath }, "docs", "./assets", "assets/a.txt")).toBe(
-      "docs/a.txt",
-    );
+    expect(bucketObjectKey({ path, posixPath }, "./assets", "assets/a.txt")).toBe("a.txt");
   });
 });

@@ -410,9 +410,10 @@ composition reapplies the webhook setting before activation, first creating the
 `supabase_functions` schema when the database lacks it.
 
 When configured, initial Storage bucket seeding creates buckets and uploads their `objects_path`
-files using the service-role JWT, silently overwriting or pruning existing buckets without a
-confirmation prompt. Storage is started and made ready before those requests. A resumed
-stack is not re-seeded. Projects without configured buckets make no bucket-seeding requests.
+files, with `objects_metadata_path` user metadata when that file is set, using the service-role
+JWT, silently overwriting or pruning existing buckets without a confirmation prompt. Storage is
+started and made ready before those requests. A resumed stack is not re-seeded. Projects without
+configured buckets make no bucket-seeding requests.
 
 A new stack is registered by its owner once that owner starts; if the owner fails to start (for
 example, Docker is unavailable) or the launch is interrupted, it removes that registration, and the
