@@ -40617,6 +40617,10 @@
               "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
               "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
             ]
+          },
+          "dedicated_scope": {
+            "type": "boolean",
+            "description": "When `true`, the provider's SAML ACS URL and entity ID are scoped to its own provider ID instead of the ones shared by all SAML providers in the project. The same signing key is still used. This cannot be changed once the provider is created."
           }
         },
         "required": ["type"],
@@ -40708,6 +40712,10 @@
                   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
                 ]
+              },
+              "dedicated_scope": {
+                "type": "boolean",
+                "nullable": true
               }
             },
             "required": ["entity_id"]
@@ -40812,6 +40820,10 @@
                         "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                         "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
                       ]
+                    },
+                    "dedicated_scope": {
+                      "type": "boolean",
+                      "nullable": true
                     }
                   },
                   "required": ["entity_id"]
@@ -40915,6 +40927,10 @@
                   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
                 ]
+              },
+              "dedicated_scope": {
+                "type": "boolean",
+                "nullable": true
               }
             },
             "required": ["entity_id"]
@@ -41186,6 +41202,10 @@
                   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
                 ]
+              },
+              "dedicated_scope": {
+                "type": "boolean",
+                "nullable": true
               }
             },
             "required": ["entity_id"]

@@ -14,6 +14,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 export interface SsoProviderView {
   readonly id: string;
   readonly saml?: {
+    readonly dedicated_scope?: boolean | null;
     readonly entity_id?: string;
     readonly metadata_url?: string;
     readonly metadata_xml?: string;

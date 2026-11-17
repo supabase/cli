@@ -1459,6 +1459,12 @@ export const V1CreateASsoProviderInput = Schema.Struct({
       "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
     ]),
   ),
+  dedicated_scope: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When `true`, the provider's SAML ACS URL and entity ID are scoped to its own provider ID instead of the ones shared by all SAML providers in the project. The same signing key is still used. This cannot be changed once the provider is created.",
+    }),
+  ),
 });
 export const V1CreateASsoProviderOutput = Schema.Struct({
   id: Schema.String,
@@ -1493,6 +1499,7 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
   domains: Schema.optionalKey(
@@ -2071,6 +2078,7 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
   domains: Schema.optionalKey(
@@ -2898,6 +2906,7 @@ export const V1GetASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
   domains: Schema.optionalKey(
@@ -6683,6 +6692,7 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
               OpenString,
             ]),
           ),
+          dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
         }),
       ),
       domains: Schema.optionalKey(
@@ -19271,6 +19281,7 @@ export const operationDefinitions = {
         "domains",
         "attribute_mapping",
         "name_id_format",
+        "dedicated_scope",
       ],
     },
     response: { kind: "json" },

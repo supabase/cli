@@ -203,6 +203,7 @@ const defaultFlags: SsoAddFlags = {
   skipUrlValidation: false,
   attributeMappingFile: Option.none(),
   nameIdFormat: Option.none(),
+  dedicatedScope: false,
 };
 
 /**
@@ -232,6 +233,9 @@ function cliArgsFor(flags: SsoAddFlags): ReadonlyArray<string> {
   }
   if (Option.isSome(flags.nameIdFormat)) {
     argv.push("--name-id-format", flags.nameIdFormat.value);
+  }
+  if (flags.dedicatedScope) {
+    argv.push("--dedicated-scope");
   }
   return argv;
 }
@@ -1119,6 +1123,25 @@ describe("sso add integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("SsoAddMetadataFileError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("dedicated_scope is sent as true when --dedicated-scope is passed", () => {
+    const flags = { ...defaultFlags, dedicatedScope: true };
+    const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
+    return Effect.gen(function* () {
+      yield* ssoAdd(flags);
+      const req = api.requests.find((r) => r.method === "POST");
+      expect(req?.body).toHaveProperty("dedicated_scope", true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("dedicated_scope is omitted from the request body when the flag is absent", () => {
+    const { layer, api } = setup({ cliArgs: cliArgsFor(defaultFlags) });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      const req = api.requests.find((r) => r.method === "POST");
+      expect(req?.body).not.toHaveProperty("dedicated_scope");
     }).pipe(Effect.provide(layer));
   });
 

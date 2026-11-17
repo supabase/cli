@@ -54,6 +54,12 @@ const config = {
     ),
     Flag.optional,
   ),
+  dedicatedScope: Flag.Boolean("dedicated-scope").pipe(
+    Flag.withDescription(
+      "Scope the SAML entity ID, metadata URL and ACS URL to this identity provider instead of the shared project-wide URLs.",
+    ),
+    Flag.withDefault(false),
+  ),
   nameIdFormat: Flag.Literals("name-id-format", SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
@@ -87,6 +93,7 @@ export const ssoAddCommand = Command.make("add", config).pipe(
           "skip-url-validation",
           "attribute-mapping-file",
           "name-id-format",
+          "dedicated-scope",
         ],
       },
       upgradeSuggestion,

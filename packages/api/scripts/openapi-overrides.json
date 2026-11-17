@@ -152,5 +152,50 @@
     "path": "/components/schemas/SnippetResponse_Output/properties/content/nullable",
     "value": true,
     "$comment": "The platform returns a null `content` for a snippet that has no stored content."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/CreateProviderBody/properties/dedicated_scope",
+    "value": {
+      "type": "boolean",
+      "description": "When `true`, the provider's SAML ACS URL and entity ID are scoped to its own provider ID instead of the ones shared by all SAML providers in the project. The same signing key is still used. This cannot be changed once the provider is created."
+    },
+    "$comment": "Platform supports `dedicated_scope` on SAML providers; remove once the published spec documents it."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/CreateProviderResponse_Output/properties/saml/properties/dedicated_scope",
+    "value": {
+      "type": "boolean",
+      "nullable": true
+    },
+    "$comment": "Platform supports `dedicated_scope` on SAML providers; remove once the published spec documents it."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/GetProviderResponse_Output/properties/saml/properties/dedicated_scope",
+    "value": {
+      "type": "boolean",
+      "nullable": true
+    },
+    "$comment": "Platform supports `dedicated_scope` on SAML providers; remove once the published spec documents it."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/DeleteProviderResponse_Output/properties/saml/properties/dedicated_scope",
+    "value": {
+      "type": "boolean",
+      "nullable": true
+    },
+    "$comment": "Platform supports `dedicated_scope` on SAML providers; remove once the published spec documents it."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/ListProvidersResponse_Output/properties/items/items/properties/saml/properties/dedicated_scope",
+    "value": {
+      "type": "boolean",
+      "nullable": true
+    },
+    "$comment": "Platform supports `dedicated_scope` on SAML providers; remove once the published spec documents it."
   }
 ]

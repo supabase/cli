@@ -174,6 +174,9 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     const skipUrlValidation = yield* Effect.fromResult(
       argvBoolValue(occurrences, "skip-url-validation"),
     ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
+    const dedicatedScope = yield* Effect.fromResult(
+      argvBoolValue(occurrences, "dedicated-scope"),
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
     const nameIdFormat = yield* Effect.fromResult(
       argvEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
     ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
@@ -291,6 +294,8 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         if (format !== undefined) body.name_id_format = format;
       }
 
+      if (occurrences.has("dedicated-scope")) body.dedicated_scope = dedicatedScope;
+
       yield* requireHostedMutationConsent({
         action: "Add an SSO provider",
         details: [
@@ -298,6 +303,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
           ...(domains.length > 0 ? [`Domains: ${domains.join(", ")}`] : []),
           ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
           ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+          ...(occurrences.has("dedicated-scope") ? [`Dedicated scope: ${dedicatedScope}`] : []),
         ],
       });
 
