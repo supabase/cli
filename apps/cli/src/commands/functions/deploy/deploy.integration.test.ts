@@ -2933,6 +2933,40 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
+    it.effect("fails a 402 envelope on the bulk update as a plan-limit error", () => {
+      const { layer, writes } = setupDockerRetries((request, recorded) => {
+        if (request.method === "GET") {
+          return Effect.succeed(jsonResponse(request, 200, []));
+        }
+        if (request.method === "PUT") {
+          return Effect.succeed(jsonResponse(request, 402, planGateBody));
+        }
+        const slug = recorded.urlParams.includes("slug=bye-world") ? "bye-world" : "hello-world";
+        return Effect.succeed(jsonResponse(request, 201, deployedFunction(slug)));
+      }, 0);
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["hello-world", "bye-world"],
+          useApi: false,
+          useDocker: true,
+        }).pipe(withAdvancingClock, Effect.flip);
+
+        expect(writes()).toEqual(["POST", "POST", "PUT"]);
+        expect(error).toMatchObject({
+          status: 402,
+          message: expect.stringContaining("unexpected bulk update status 402: "),
+          entitlement,
+        });
+        expect(classifyCliCauseActionability(Cause.fail(error)).error_category).toBe("plan_limit");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
     it.effect("caps a rate-limited create at SUPABASE_API_MAX_RETRIES", () => {
       const { layer, writes, out } = setupDockerRetries(
         (request) =>
