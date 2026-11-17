@@ -58,11 +58,7 @@ describe("sso info integration", () => {
   it.effect("renders a 3-row markdown table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("Single sign-on URL (ACS URL)");
       expect(out.stdoutText).toContain("Audience URI (SP Entity ID)");
       expect(out.stdoutText).toContain("Default Relay State");
@@ -75,53 +71,16 @@ describe("sso info integration", () => {
   it.effect("emits exactly one space between the ACS URL label and the column separator", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain(`Single sign-on URL (ACS URL) | ${expectedAcsUrl}`);
       expect(out.stdoutText).not.toContain("Single sign-on URL (ACS URL)  |");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("prints provider-scoped URLs when a provider id is passed", () => {
-    const providerId = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.some(providerId),
-      });
-      expect(out.stdoutText).toContain(`/auth/v1/sso/${providerId}/saml/acs`);
-      expect(out.stdoutText).toContain(`/auth/v1/sso/${providerId}/saml/metadata`);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects a provider id that is not a UUID", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        ssoInfo({
-          remote: Option.none(),
-          projectRef: Option.none(),
-          providerId: Option.some("not-a-uuid"),
-        }),
-      );
-      expect(exit._tag).toBe("Failure");
-      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("TS --output-format=json emits a structured payload", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toEqual({
@@ -135,11 +94,7 @@ describe("sso info integration", () => {
   it.effect("--output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
     const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("ACS_URL=");
       expect(out.stdoutText).toContain("ENTITY_ID=");
       expect(out.stdoutText).toContain("RELAY_STATE=");
@@ -149,11 +104,7 @@ describe("sso info integration", () => {
   it.effect("--output=json sorts keys alphabetically and includes all three", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain('"acs_url"');
       expect(out.stdoutText).toContain('"entity_id"');
       expect(out.stdoutText).toContain('"relay_state"');
@@ -166,11 +117,7 @@ describe("sso info integration", () => {
   it.effect("--output=yaml emits the three keys", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("acs_url:");
       expect(out.stdoutText).toContain("entity_id:");
       expect(out.stdoutText).toContain("relay_state:");
@@ -180,11 +127,7 @@ describe("sso info integration", () => {
   it.effect("--output=toml emits the three keys", () => {
     const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("acs_url");
       expect(out.stdoutText).toContain("entity_id");
       expect(out.stdoutText).toContain("relay_state");
@@ -198,7 +141,6 @@ describe("sso info integration", () => {
       yield* ssoInfo({
         remote: Option.some({ _tag: "Ref", ref: flagRef }),
         projectRef: Option.none(),
-        providerId: Option.none(),
       });
       expect(out.stdoutText).toContain(`https://${flagRef}.supabase.co`);
     }).pipe(Effect.provide(layer));
@@ -207,11 +149,7 @@ describe("sso info integration", () => {
   it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -220,11 +158,7 @@ describe("sso info integration", () => {
   it.effect("makes no Management API call of its own", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -257,11 +191,7 @@ describe("sso info integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
-      yield* ssoInfo({
-        remote: Option.none(),
-        projectRef: Option.none(),
-        providerId: Option.none(),
-      });
+      yield* ssoInfo({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
         `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
@@ -278,5 +208,5 @@ describe("sso info integration", () => {
 describeHostedTargetSelection("sso info", {
   requestsNameProject: false,
   respond: (request) => Effect.succeed(jsonResponse(request, 200, {})),
-  run: (flags) => ssoInfo({ ...flags, providerId: Option.none() }),
+  run: (flags) => ssoInfo(flags),
 });

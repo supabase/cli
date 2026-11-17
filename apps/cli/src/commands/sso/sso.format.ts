@@ -178,7 +178,7 @@ export function renderListProviders(items: ReadonlyArray<SsoProviderView>): stri
  * The optional sections are plain markdown, not run through Glamour, so their
  * styling differs from the table above. See each subcommand's `SIDE_EFFECTS.md`.
  */
-export function renderSingleProvider(provider: SsoProviderView, ref?: string): string {
+export function renderSingleProvider(provider: SsoProviderView, ref: string): string {
   const rows: Array<readonly [string, string]> = [
     ["IDENTITY PROVIDER ID", provider.id],
     ["TYPE", formatProtocol(provider.saml)],
@@ -189,7 +189,7 @@ export function renderSingleProvider(provider: SsoProviderView, ref?: string): s
     // Backticks stripped — see LIST_HEADERS comment above.
     rows.push(["SAML 2.0 EntityID", formatEntityId(provider.saml)]);
     rows.push(["NAMEID FORMAT", formatNameIdFormat(provider.saml)]);
-    if (provider.saml.dedicated_scope === true && ref !== undefined) {
+    if (provider.saml.dedicated_scope === true) {
       const urls = buildInfoPayload(ref, provider.id);
       rows.push(["DEDICATED SCOPE", "true"]);
       rows.push(["SP ACS URL", urls.acs_url]);
@@ -247,17 +247,9 @@ export function buildInfoPayload(ref: string, providerId?: string): SsoInfoPaylo
   };
 }
 
-export function renderInfoMarkdown(ref: string, providerId?: string): string {
-  const payload = buildInfoPayload(ref, providerId);
-  const note =
-    providerId === undefined
-      ? "These values are for providers that use the shared scope. A provider added with\n" +
-        "--dedicated-scope has its own ACS URL and entity ID: run `supabase sso info <provider-id>`\n" +
-        "with that provider's ID to print them.\n"
-      : `These values are specific to provider ${providerId}, which must have been added with\n` +
-        "--dedicated-scope. Providers that use the shared scope use the values printed by\n" +
-        "`supabase sso info` without a provider ID.\n";
-  const table = renderGlamourTable(
+export function renderInfoMarkdown(ref: string): string {
+  const payload = buildInfoPayload(ref);
+  return renderGlamourTable(
     ["PROPERTY", "VALUE"],
     [
       // Glamour collapses the label's trailing space when computing column
@@ -268,5 +260,4 @@ export function renderInfoMarkdown(ref: string, providerId?: string): string {
       ["Default Relay State", payload.relay_state],
     ],
   );
-  return table + note;
 }

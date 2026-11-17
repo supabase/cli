@@ -1,4 +1,4 @@
-import { Argument, Command } from "effect/cli";
+import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -15,12 +15,6 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 
 const config = {
   ...projectTargetFlags(),
-  providerId: Argument.String("provider-id").pipe(
-    Argument.withDescription(
-      "ID of a SAML provider created with a dedicated scope, to print its own ACS URL and entity ID.",
-    ),
-    Argument.optional,
-  ),
 };
 export type SsoInfoFlags = CliCommand.Command.Config.Infer<typeof config>;
 
