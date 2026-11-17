@@ -47,10 +47,13 @@ const runFixture = Effect.fn("StandardErrorsTest.run")(function* (
   return { exitCode: Number(exitCode), stdout, stderr };
 }, Effect.scoped);
 
+/** Each case boots a cold `bun` process whose time scales with CPU contention, so the default 5s budget is too tight. */
+const SUBPROCESS_TIMEOUT_MS = 60_000;
+
 const lastLine = (text: string) => text.trimEnd().split("\n").at(-1) ?? "";
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
-describe("errors.standard failure contract", () => {
+describe("errors.standard failure contract", { timeout: SUBPROCESS_TIMEOUT_MS }, () => {
   it.live("reports an API conflict as the last stderr line and nothing on stdout", () =>
     Effect.gen(function* () {
       const { exitCode, stdout, stderr } = yield* runFixture(["conflict", "-o", "json"]);
@@ -182,7 +185,7 @@ describe("errors.standard failure contract", () => {
   );
 });
 
-describe("commands without the standard marker", () => {
+describe("commands without the standard marker", { timeout: SUBPROCESS_TIMEOUT_MS }, () => {
   it.live("keep the legacy JSON envelope on stdout and exit 1", () =>
     Effect.gen(function* () {
       const { exitCode, stdout, stderr } = yield* runFixture(["legacy", "--output-format", "json"]);
