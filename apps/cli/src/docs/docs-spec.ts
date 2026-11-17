@@ -37,7 +37,7 @@ import type { DocsInfoTag } from "./docs-spec.tables.ts";
  * failing the build on stale entries instead of silently degrading the reference.
  */
 
-export interface DocsExample {
+interface DocsExample {
   readonly id: string;
   readonly name: string;
   readonly code: string;
