@@ -41,9 +41,6 @@ export const nouns = {
     feature: "warehouse",
     groups: {
       teardowns: "Inspect Warehouse cleanup operations",
-      replication: "Manage Warehouse replication targets and resynchronization",
-      tables: "Inspect replicated Warehouse tables",
-      "tables.layout": "Inspect and configure Warehouse table layout",
     },
   },
 } as const satisfies Readonly<Record<string, ApiNoun>>;
