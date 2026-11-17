@@ -46,6 +46,7 @@ describe("command surface", () => {
       const { variants } = yield* Effect.promise(() => surface);
       expect(Object.keys(variants.warehouse)).toEqual([
         "warehouse",
+        "warehouse connection",
         "warehouse disable",
         "warehouse enable",
         "warehouse status",

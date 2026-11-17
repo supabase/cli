@@ -14320,6 +14320,149 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     }),
   }),
 });
+export const V2GetWarehouseConnectionInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2GetWarehouseConnectionOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      access_mode: Schema.Literal("read_only"),
+      authentication: Schema.Struct({
+        credential_source: Schema.Literal("source_project_database"),
+        default_username: Schema.Literal("postgres"),
+        membership_guidance: Schema.String,
+        method: Schema.Literal("database_username_password"),
+        password_guidance: Schema.String,
+        required_membership: Schema.Literal("supabase_warehouse_reader"),
+      }).annotate({
+        description:
+          "How to authenticate. No credentials are returned; the password is never exposed by this API.",
+      }),
+      endpoint: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Arrow Flight SQL URI, grpc+tls://<host>:443. Null unless status is available or pending.",
+        }),
+        Schema.Null,
+      ]),
+      host: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Public hostname of the Flight SQL endpoint. Null unless status is available or pending.",
+        }),
+        Schema.Null,
+      ]),
+      observed_at: Schema.String.annotate({
+        description:
+          "Time the API retrieved this information. This timestamp does not indicate when connectivity was last verified.",
+        format: "date-time",
+      }),
+      port: Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Public TLS port of the Flight SQL endpoint. Null unless status is available or pending.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        Schema.Null,
+      ]),
+      project_ref: Schema.String.annotate({ description: "Project ref" })
+        .check(
+          Schema.isMinCodePoints(20).annotate({
+            expected: "a string with at least 20 code points",
+          }),
+        )
+        .check(
+          Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+            expected: "a string matching the RegExp ^[a-z]+$",
+          }),
+        ),
+      protocol: Schema.Literal("arrow_flight_sql"),
+      query_connectivity: Schema.Literal("not_checked"),
+      region: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Assigned Warehouse compute region, which may differ from the source database region. Null when the project has no project-specific route.",
+        }),
+        Schema.Null,
+      ]),
+      routing_status: Schema.Union([
+        Schema.Union([
+          Schema.Literals(["error", "pending", "ready", "removed"]),
+          Schema.Null,
+        ]).annotate({
+          description:
+            "DNS delivery status of the project route. Null when the project uses the shared legacy route.",
+        }),
+        OpenString,
+      ]),
+      status: Schema.Union([
+        Schema.Literals([
+          "available",
+          "disabled",
+          "disabling",
+          "not_configured",
+          "pending",
+          "unavailable",
+        ]).annotate({
+          description:
+            "Configured availability of the Warehouse endpoint, derived from routing and lifecycle state. It is not a connectivity probe: a ready route does not prove a query will succeed.",
+        }),
+        OpenString,
+      ]),
+      tls_required: Schema.Literal(true),
+      unavailable_reason: Schema.Union([
+        Schema.Union([
+          Schema.Literals([
+            "assignment_unavailable",
+            "cleanup_failed",
+            "observation_unavailable",
+            "routing_failed",
+          ]),
+          Schema.Null,
+        ]).annotate({
+          description: "Why the endpoint is unavailable. Null unless status is unavailable.",
+        }),
+        OpenString,
+      ]),
+    }),
+    id: Schema.String.annotate({ description: "Project ref" })
+      .check(
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
+    type: Schema.Literal("warehouse_connection").annotate({ description: "Resource type." }),
+  }),
+});
 export const V2GetWarehouseSetupInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -19938,6 +20081,7 @@ export const openApiOperationIdMap = {
   "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
+  "v2-get-warehouse-connection": "v2GetWarehouseConnection",
   "v2-get-warehouse-setup": "v2GetWarehouseSetup",
   "v2-get-warehouse-status": "v2GetWarehouseStatus",
   "v2-get-warehouse-teardown": "v2GetWarehouseTeardown",
@@ -23112,6 +23256,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
+  },
+  v2GetWarehouseConnection: {
+    id: "v2GetWarehouseConnection",
+    description:
+      "Returns the public Arrow Flight SQL endpoint resolved from the project's Warehouse routing, with TLS required on port 443. Status is configured availability and query connectivity is not checked, so DNS readiness does not prove a query will succeed. Login uses a role in the source project database with that role's existing password (postgres uses the project database password), including when the catalog and storage are in another project. The role needs supabase_warehouse_reader membership, which is separate from Management API authorization. No passwords, tokens, catalog credentials or private endpoints are returned, and endpoint, host and port are null unless status is available or pending. Example client: usql -W 'flightsql://postgres@<host>:443?tls=enabled'.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/connection",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseConnectionInput,
+    outputSchema: V2GetWarehouseConnectionOutput,
   },
   v2GetWarehouseSetup: {
     id: "v2GetWarehouseSetup",

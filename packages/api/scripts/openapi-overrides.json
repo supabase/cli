@@ -1010,6 +1010,278 @@
     "$comment": "The consolidated Warehouse status contract is not yet in the deployed Management API specification."
   },
   {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1connection",
+    "value": {
+      "get": {
+        "description": "Returns the public Arrow Flight SQL endpoint resolved from the project's Warehouse routing, with TLS required on port 443. Status is configured availability and query connectivity is not checked, so DNS readiness does not prove a query will succeed. Login uses a role in the source project database with that role's existing password (postgres uses the project database password), including when the catalog and storage are in another project. The role needs supabase_warehouse_reader membership, which is separate from Management API authorization. No passwords, tokens, catalog credentials or private endpoints are returned, and endpoint, host and port are null unless status is available or pending. Example client: usql -W 'flightsql://postgres@<host>:443?tls=enabled'.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-get-warehouse-connection",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseConnectionResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse feature or project metadata unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get Warehouse Flight SQL connection details",
+        "tags": ["Projects Warehouse"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_read"]],
+        "x-oauth-scope": "database:read",
+        "x-operation": {
+          "group": "warehouse",
+          "method": "connection"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "$comment": "The Warehouse Flight SQL connection contract is not yet in the deployed Management API specification."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseConnectionResponse_Output",
+    "value": {
+      "properties": {
+        "data": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "access_mode": {
+                  "enum": ["read_only"],
+                  "type": "string"
+                },
+                "authentication": {
+                  "description": "How to authenticate. No credentials are returned; the password is never exposed by this API.",
+                  "properties": {
+                    "credential_source": {
+                      "enum": ["source_project_database"],
+                      "type": "string"
+                    },
+                    "default_username": {
+                      "enum": ["postgres"],
+                      "type": "string"
+                    },
+                    "membership_guidance": {
+                      "type": "string"
+                    },
+                    "method": {
+                      "enum": ["database_username_password"],
+                      "type": "string"
+                    },
+                    "password_guidance": {
+                      "type": "string"
+                    },
+                    "required_membership": {
+                      "enum": ["supabase_warehouse_reader"],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "credential_source",
+                    "default_username",
+                    "membership_guidance",
+                    "method",
+                    "password_guidance",
+                    "required_membership"
+                  ],
+                  "type": "object"
+                },
+                "endpoint": {
+                  "description": "Arrow Flight SQL URI, grpc+tls://<host>:443. Null unless status is available or pending.",
+                  "nullable": true,
+                  "type": "string"
+                },
+                "host": {
+                  "description": "Public hostname of the Flight SQL endpoint. Null unless status is available or pending.",
+                  "nullable": true,
+                  "type": "string"
+                },
+                "observed_at": {
+                  "description": "Time the API retrieved this information. This timestamp does not indicate when connectivity was last verified.",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                  "type": "string"
+                },
+                "port": {
+                  "description": "Public TLS port of the Flight SQL endpoint. Null unless status is available or pending.",
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "nullable": true,
+                  "type": "integer"
+                },
+                "project_ref": {
+                  "description": "Project ref",
+                  "example": "abcdefghijklmnopqrst",
+                  "maxLength": 20,
+                  "minLength": 20,
+                  "pattern": "^[a-z]+$",
+                  "type": "string"
+                },
+                "protocol": {
+                  "enum": ["arrow_flight_sql"],
+                  "type": "string"
+                },
+                "query_connectivity": {
+                  "enum": ["not_checked"],
+                  "type": "string"
+                },
+                "region": {
+                  "description": "Assigned Warehouse compute region, which may differ from the source database region. Null when the project has no project-specific route.",
+                  "nullable": true,
+                  "type": "string"
+                },
+                "routing_status": {
+                  "description": "DNS delivery status of the project route. Null when the project uses the shared legacy route.",
+                  "enum": ["error", null, "pending", "ready", "removed"],
+                  "nullable": true,
+                  "type": "string"
+                },
+                "status": {
+                  "description": "Configured availability of the Warehouse endpoint, derived from routing and lifecycle state. It is not a connectivity probe: a ready route does not prove a query will succeed.",
+                  "enum": [
+                    "available",
+                    "disabled",
+                    "disabling",
+                    "not_configured",
+                    "pending",
+                    "unavailable"
+                  ],
+                  "type": "string"
+                },
+                "tls_required": {
+                  "enum": [true],
+                  "type": "boolean"
+                },
+                "unavailable_reason": {
+                  "description": "Why the endpoint is unavailable. Null unless status is unavailable.",
+                  "enum": [
+                    "assignment_unavailable",
+                    "cleanup_failed",
+                    null,
+                    "observation_unavailable",
+                    "routing_failed"
+                  ],
+                  "nullable": true,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "access_mode",
+                "authentication",
+                "endpoint",
+                "host",
+                "observed_at",
+                "port",
+                "project_ref",
+                "protocol",
+                "query_connectivity",
+                "region",
+                "routing_status",
+                "status",
+                "tls_required",
+                "unavailable_reason"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "description": "Project ref",
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            },
+            "type": {
+              "description": "Resource type.",
+              "enum": ["warehouse_connection"],
+              "type": "string"
+            }
+          },
+          "required": ["attributes", "id", "type"],
+          "type": "object"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    },
+    "$comment": "The Warehouse Flight SQL connection contract is not yet in the deployed Management API specification."
+  },
+  {
     "op": "test",
     "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1setups~1current/get/x-operation",
     "value": {

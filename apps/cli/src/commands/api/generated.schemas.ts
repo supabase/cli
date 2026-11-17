@@ -246,6 +246,177 @@ export const apiCommandSchemas = {
       required: ["data"],
     },
   },
+  "v2-get-warehouse-connection": {
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          properties: {
+            attributes: {
+              properties: {
+                access_mode: {
+                  enum: ["read_only"],
+                  type: "string",
+                },
+                authentication: {
+                  description:
+                    "How to authenticate. No credentials are returned; the password is never exposed by this API.",
+                  properties: {
+                    credential_source: {
+                      enum: ["source_project_database"],
+                      type: "string",
+                    },
+                    default_username: {
+                      enum: ["postgres"],
+                      type: "string",
+                    },
+                    membership_guidance: {
+                      type: "string",
+                    },
+                    method: {
+                      enum: ["database_username_password"],
+                      type: "string",
+                    },
+                    password_guidance: {
+                      type: "string",
+                    },
+                    required_membership: {
+                      enum: ["supabase_warehouse_reader"],
+                      type: "string",
+                    },
+                  },
+                  required: [
+                    "credential_source",
+                    "default_username",
+                    "membership_guidance",
+                    "method",
+                    "password_guidance",
+                    "required_membership",
+                  ],
+                  type: "object",
+                },
+                endpoint: {
+                  description:
+                    "Arrow Flight SQL URI, grpc+tls://<host>:443. Null unless status is available or pending.",
+                  type: ["string", "null"],
+                },
+                host: {
+                  description:
+                    "Public hostname of the Flight SQL endpoint. Null unless status is available or pending.",
+                  type: ["string", "null"],
+                },
+                observed_at: {
+                  description:
+                    "Time the API retrieved this information. This timestamp does not indicate when connectivity was last verified.",
+                  format: "date-time",
+                  pattern:
+                    "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                  type: "string",
+                },
+                port: {
+                  description:
+                    "Public TLS port of the Flight SQL endpoint. Null unless status is available or pending.",
+                  maximum: 9007199254740991,
+                  minimum: -9007199254740991,
+                  type: ["integer", "null"],
+                },
+                project_ref: {
+                  description: "Project ref",
+                  maxLength: 20,
+                  minLength: 20,
+                  pattern: "^[a-z]+$",
+                  type: "string",
+                  examples: ["abcdefghijklmnopqrst"],
+                },
+                protocol: {
+                  enum: ["arrow_flight_sql"],
+                  type: "string",
+                },
+                query_connectivity: {
+                  enum: ["not_checked"],
+                  type: "string",
+                },
+                region: {
+                  description:
+                    "Assigned Warehouse compute region, which may differ from the source database region. Null when the project has no project-specific route.",
+                  type: ["string", "null"],
+                },
+                routing_status: {
+                  description:
+                    "DNS delivery status of the project route. Null when the project uses the shared legacy route.",
+                  enum: ["error", null, "pending", "ready", "removed"],
+                  type: ["string", "null"],
+                },
+                status: {
+                  description:
+                    "Configured availability of the Warehouse endpoint, derived from routing and lifecycle state. It is not a connectivity probe: a ready route does not prove a query will succeed.",
+                  enum: [
+                    "available",
+                    "disabled",
+                    "disabling",
+                    "not_configured",
+                    "pending",
+                    "unavailable",
+                  ],
+                  type: "string",
+                },
+                tls_required: {
+                  enum: [true],
+                  type: "boolean",
+                },
+                unavailable_reason: {
+                  description:
+                    "Why the endpoint is unavailable. Null unless status is unavailable.",
+                  enum: [
+                    "assignment_unavailable",
+                    "cleanup_failed",
+                    null,
+                    "observation_unavailable",
+                    "routing_failed",
+                  ],
+                  type: ["string", "null"],
+                },
+              },
+              required: [
+                "access_mode",
+                "authentication",
+                "endpoint",
+                "host",
+                "observed_at",
+                "port",
+                "project_ref",
+                "protocol",
+                "query_connectivity",
+                "region",
+                "routing_status",
+                "status",
+                "tls_required",
+                "unavailable_reason",
+              ],
+              type: "object",
+            },
+            id: {
+              description: "Project ref",
+              maxLength: 20,
+              minLength: 20,
+              pattern: "^[a-z]+$",
+              type: "string",
+              examples: ["abcdefghijklmnopqrst"],
+            },
+            type: {
+              description: "Resource type.",
+              enum: ["warehouse_connection"],
+              type: "string",
+            },
+          },
+          required: ["attributes", "id", "type"],
+          type: "object",
+        },
+      },
+      required: ["data"],
+      type: "object",
+    },
+  },
   "v2-get-warehouse-setup": {
     result: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
