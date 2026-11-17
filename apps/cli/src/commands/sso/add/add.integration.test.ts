@@ -1136,6 +1136,53 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("dedicated_scope: --dedicated-scope=false is forwarded as false", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", `--dedicated-scope=false`],
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      const req = api.requests.find((r) => r.method === "POST");
+      expect(req?.body).toHaveProperty("dedicated_scope", false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("dedicated_scope: an invalid boolean value fails before any request", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", `--dedicated-scope=yes`],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoInvalidFlagValueError");
+        expect(dump).toContain(
+          'invalid argument "yes" for "--dedicated-scope" flag: expected a boolean',
+        );
+      }
+      expect(api.requests.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("dedicated_scope: repeated --dedicated-scope resolves last-wins", () => {
+    const { layer, api } = setup({
+      cliArgs: [
+        "sso",
+        "add",
+        "--type",
+        "saml",
+        `--dedicated-scope=true`,
+        `--dedicated-scope=false`,
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd({ ...defaultFlags, dedicatedScope: true });
+      const req = api.requests.find((r) => r.method === "POST");
+      expect(req?.body).toHaveProperty("dedicated_scope", false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("dedicated_scope is omitted from the request body when the flag is absent", () => {
     const { layer, api } = setup({ cliArgs: cliArgsFor(defaultFlags) });
     return Effect.gen(function* () {

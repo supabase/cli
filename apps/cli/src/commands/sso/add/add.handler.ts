@@ -130,8 +130,8 @@ const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
 
 // Value-taking flags for `scanArgvFlags`: each consumes the next argv token
-// as its value. `--skip-url-validation` is this command's only boolean flag,
-// so it's excluded.
+// as its value. The boolean flags (`--skip-url-validation`, `--dedicated-scope`)
+// are excluded.
 const SSO_ADD_SCAN_SPEC = {
   valueFlagNames: new Set([
     "project-ref",
