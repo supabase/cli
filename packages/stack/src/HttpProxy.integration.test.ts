@@ -2248,9 +2248,9 @@ it.live.skipIf(process.platform !== "linux" || (routedGateway === undefined && !
         const plain = yield* namespace.exec([
           "bash",
           "-c",
-          `exec 3<>/dev/tcp/${routedGateway}/${proxy.port} && printf 'GET /x HTTP/1.0\\r\\nHost: 127.0.0.1:${proxy.port}\\r\\n\\r\\n' >&3 && { IFS= read -r -d '' -t 5 reply <&3; printf '%s %s' "$?" "$reply"; }`,
+          `trap '' PIPE; exec 3<>/dev/tcp/${routedGateway}/${proxy.port} && { printf 'GET /x HTTP/1.0\\r\\nHost: 127.0.0.1:${proxy.port}\\r\\n\\r\\n' >&3 2>/dev/null; IFS= read -r -d '' -t 5 reply <&3; printf '%s %s' "$?" "$reply"; }`,
         ]);
-        /* Connected and asked, then closed with nothing read. */
+        /* Connected and asked, then closed with nothing read; the close can beat the write. */
         expect(plain.stdout, plain.stderr).toMatch(/^\d+ $/u);
         const secure = yield* namespace.exec([
           "curl",
