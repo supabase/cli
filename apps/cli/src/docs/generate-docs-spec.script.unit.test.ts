@@ -1,6 +1,9 @@
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { parse } from "yaml";
+import { Effect } from "effect";
+import { rootCommand } from "../cli/root.ts";
+import { validateDocsSpec } from "../../scripts/docs-spec-validation.ts";
 
 const cliRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -22,14 +25,18 @@ describe("generate-docs-spec.ts entrypoint", () => {
     return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
   }
 
-  it("emits only parseable spec YAML on stdout, defaulting the version to latest", () => {
-    const { stdout, stderr } = runScript([]);
-    expect(stderr).toBe("");
-    const spec = parse(stdout);
-    expect(spec.clispec).toBe("002");
-    expect(spec.info.version).toBe("latest");
-    expect(spec.commands.length).toBeGreaterThanOrEqual(144);
-  }, 30_000);
+  it.effect(
+    "emits a publishable spec on stdout, defaulting the version to latest",
+    () =>
+      Effect.gen(function* () {
+        const { stdout, stderr } = yield* Effect.sync(() => runScript([]));
+        expect(stderr).toBe("");
+        const spec = yield* validateDocsSpec(stdout, "latest", rootCommand);
+        expect(spec.clispec).toBe("002");
+        expect(spec.info.version).toBe("latest");
+      }),
+    30_000,
+  );
 
   it("strips a leading v from the version argument", () => {
     const { stdout } = runScript(["v2.113.0"]);

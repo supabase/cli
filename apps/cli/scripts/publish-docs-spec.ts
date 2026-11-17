@@ -16,18 +16,13 @@ import { $ } from "bun";
 import { Console, Data, Effect, FileSystem, Layer, Path } from "effect";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { parse } from "yaml";
+import { rootCommand } from "../src/cli/root.ts";
 import { stringifyDocsSections, stringifyDocsSpec } from "../src/docs/docs-spec.ts";
 import { loadDocsBundle } from "./docs-bundle.ts";
-import { json, publishPullRequest, shell } from "./publish-pull-request.ts";
+import { validateDocsSpec } from "./docs-spec-validation.ts";
+import { publishPullRequest, shell } from "./publish-pull-request.ts";
 
 class StdinReadFailed extends Data.TaggedError("StdinReadFailed")<{ readonly cause: unknown }> {}
-
-class SpecYamlInvalid extends Data.TaggedError("SpecYamlInvalid")<{ readonly cause: unknown }> {}
-
-function jsonText(value: unknown): string {
-  return `${JSON.stringify(value)}`;
-}
 
 const { values } = parseArgs({
   options: {
@@ -166,36 +161,13 @@ const main = Effect.gen(function* () {
     return yield* Effect.sync(() => process.exit(1));
   }
 
-  const parsed: { clispec?: unknown; info?: { version?: unknown }; commands?: unknown } =
-    yield* Effect.try({
-      try: () => parse(spec),
-      catch: (cause) => new SpecYamlInvalid({ cause }),
-    }).pipe(
-      Effect.catch((error) =>
-        Console.error(`Refusing to publish: stdin is not valid YAML (${error.cause}).`).pipe(
-          Effect.andThen(Effect.sync(() => process.exit(1))),
-        ),
+  const { commands } = yield* validateDocsSpec(spec, version, rootCommand).pipe(
+    Effect.catch((error) =>
+      Console.error(`Refusing to publish: ${error.message}`).pipe(
+        Effect.andThen(Effect.sync(() => process.exit(1))),
       ),
-    );
-  if (parsed?.clispec !== "002") {
-    yield* Console.error(
-      `Refusing to publish: expected clispec "002", got ${yield* json(() => jsonText(parsed?.clispec))}.`,
-    );
-    return yield* Effect.sync(() => process.exit(1));
-  }
-  if (parsed.info?.version !== version) {
-    yield* Console.error(
-      `Refusing to publish: the spec's version ${yield* json(() => jsonText(parsed.info?.version))} does not match --version ${version}.`,
-    );
-    return yield* Effect.sync(() => process.exit(1));
-  }
-  const commands = parsed.commands;
-  if (!Array.isArray(commands) || commands.length < 144) {
-    yield* Console.error(
-      `Refusing to publish: the spec has ${Array.isArray(commands) ? commands.length : 0} commands, expected at least 144.`,
-    );
-    return yield* Effect.sync(() => process.exit(1));
-  }
+    ),
+  );
 
   if (dryRun) {
     yield* Console.log(

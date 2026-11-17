@@ -17,11 +17,11 @@ FROM library/kong:2.8.1 AS kong
 
 FROM axllent/mailpit:v1.31.3 AS mailpit
 
-FROM postgrest/postgrest:v16.5 AS postgrest
+FROM postgrest/postgrest:v16.6 AS postgrest
 
-FROM supabase/postgres-meta:v0.100.0 AS pgmeta
+FROM supabase/postgres-meta:v0.100.1 AS pgmeta
 
-FROM supabase/studio:2026.11.09-sha-1567384 AS studio
+FROM supabase/studio:2026.11.16-sha-51bd16d AS studio
 
 FROM darthsim/imgproxy:v3.26.0 AS imgproxy
 
@@ -29,13 +29,13 @@ FROM supabase/edge-runtime:v1.79.1 AS edgeruntime
 
 FROM timberio/vector:0.58.0-alpine AS vector
 
-FROM supabase/supavisor:2.10.0 AS supavisor
+FROM supabase/supavisor:2.10.1 AS supavisor
 
-FROM supabase/gotrue:v2.197.0 AS gotrue
+FROM supabase/gotrue:v2.198.0 AS gotrue
 
-FROM supabase/realtime:v2.165.0 AS realtime
+FROM supabase/realtime:v2.170.0 AS realtime
 
-FROM supabase/storage-api:v1.95.0 AS storage
+FROM supabase/storage-api:v1.97.0 AS storage
 
 FROM supabase/logflare:1.50.15 AS logflare
 # One-shot job images (not started as long-running containers); differ's alias

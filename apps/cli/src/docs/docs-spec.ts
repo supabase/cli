@@ -378,6 +378,30 @@ function docsArgumentUsage(
   return docs.variadicMin === undefined ? rendered : `${rendered} ...`;
 }
 
+/** Published command IDs and their children, using the same exclusions as `buildDocsSpec`. */
+export function docsCommandTree(
+  root: Command.Command.Any,
+): ReadonlyMap<string, ReadonlyArray<string>> {
+  const tree = new Map<string, ReadonlyArray<string>>();
+  const published = (command: Command.Command.Any, path: ReadonlyArray<string>) =>
+    docsVisibleChildren(command)
+      .map((child) => ({ child, path: [...path, child.name] }))
+      .filter(
+        ({ child, path }) =>
+          !DOCS_EXCLUDED.has(path.join("-")) && docsOf(child)?.deprecated === undefined,
+      );
+  const visit = (command: Command.Command.Any, path: ReadonlyArray<string>): void => {
+    const children = published(command, path);
+    tree.set(
+      path.join("-"),
+      children.map((entry) => entry.path.join("-")),
+    );
+    for (const entry of children) visit(entry.child, entry.path);
+  };
+  for (const entry of published(root, ["supabase"])) visit(entry.child, entry.path);
+  return tree;
+}
+
 function docsVisibleChildren(command: Command.Command.Any): ReadonlyArray<Command.Command.Any> {
   return command.subcommands
     .flatMap((group) => group.commands)

@@ -3,6 +3,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { parse, stringify } from "yaml";
+import { rootCommand } from "../src/cli/root.ts";
+import { buildDocsSpec } from "../src/docs/docs-spec.ts";
 
 const cliRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -32,11 +34,14 @@ function runScript(
 }
 
 function validSpec(version: string): string {
-  return stringify({
-    clispec: "002",
-    info: { id: "cli", version, title: "Supabase CLI" },
-    commands: Array.from({ length: 144 }, (_, index) => ({ id: `supabase-command-${index}` })),
-  });
+  return stringify(
+    buildDocsSpec({
+      root: rootCommand,
+      version,
+      overlays: new Map(),
+      examples: {},
+    }),
+  );
 }
 
 const localCheckout = Effect.gen(function* () {
@@ -153,6 +158,29 @@ describe("local reference preview", () => {
 });
 
 describe("publish-docs-spec.ts entrypoint", () => {
+  it.effect("rejects malformed nested content before any Git operation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "docs-validation-" });
+      const marker = path.join(root, "git-called");
+      for (const command of ["git", "gh"]) {
+        const executable = path.join(root, command);
+        yield* fs.writeFileString(executable, `#!/bin/sh\ntouch '${marker}'\nexit 99\n`);
+        yield* fs.chmod(executable, 0o755);
+      }
+      const spec = parse(validSpec("1.0.0"));
+      spec.commands[0].flags = "invalid flags";
+      const result = yield* Effect.sync(() =>
+        runScript(["--version", "1.0.0"], stringify(spec), root),
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("invalid clispec 002 document");
+      expect(result.stderr).toContain("flags");
+      expect(yield* fs.exists(marker)).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it("prints usage and fails without --version", () => {
     const { exitCode, stderr } = runScript(["--dry-run"], validSpec("1.0.0"));
     expect(exitCode).toBe(1);
@@ -174,15 +202,15 @@ describe("publish-docs-spec.ts entrypoint", () => {
     expect(stderr).toContain("Refusing to publish");
   }, 30_000);
 
-  it("refuses a truncated spec with too few commands", () => {
-    const truncated = stringify({
-      clispec: "002",
-      info: { id: "cli", version: "1.0.0", title: "Supabase CLI" },
-      commands: [{ id: "supabase-init" }],
-    });
+  it("refuses a truncated spec missing a documented command", () => {
+    const spec = parse(validSpec("1.0.0"));
+    spec.commands = spec.commands.filter(
+      (command: { id: string }) => command.id !== "supabase-init",
+    );
+    const truncated = stringify(spec);
     const { exitCode, stderr } = runScript(["--version", "1.0.0", "--dry-run"], truncated);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("expected at least 144");
+    expect(stderr).toContain("missing: supabase-init");
   }, 30_000);
 
   it("refuses a spec whose version does not match --version", () => {

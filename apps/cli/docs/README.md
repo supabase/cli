@@ -33,6 +33,11 @@ v2 reference comes from the v2 release branch.
 
 ## Release
 
+Before writing a local preview or running Git, the publisher validates the generated `clispec 001`
+fields, including flags and examples. Command IDs and subcommand links must match the documented
+command tree in the current checkout, excluding unlisted and explicitly excluded commands.
+Generate and publish from the same checkout; duplicate, missing, or unexpected commands fail validation.
+
 The `docs` job in `.github/workflows/release.yml` publishes the reference on every stable
 release: it pipes the generator into `scripts/publish-docs-spec.ts`, which formats the spec,
 pushes the `cli/ref-doc` branch in [supabase/supabase](https://github.com/supabase/supabase),
