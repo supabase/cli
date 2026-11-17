@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Result } from "effect";
 
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -11,7 +11,7 @@ import {
 } from "../../../command-internal/output.encoders.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { buildInfoPayload, renderInfoMarkdown } from "../sso.format.ts";
+import { buildInfoPayload, renderInfoMarkdown, validateUuid } from "../sso.format.ts";
 import type { SsoInfoFlags } from "./info.command.ts";
 
 export const ssoInfo = Effect.fn("sso.info")(function* (flags: SsoInfoFlags) {
@@ -22,9 +22,15 @@ export const ssoInfo = Effect.fn("sso.info")(function* (flags: SsoInfoFlags) {
 
   yield* Effect.gen(function* () {
     const ref = yield* resolveProjectTarget(flags);
+    const providerId = yield* Effect.fromResult(
+      Option.match(flags.providerId, {
+        onNone: () => Result.succeed(undefined),
+        onSome: validateUuid,
+      }),
+    );
 
     yield* Effect.gen(function* () {
-      const payload = buildInfoPayload(ref);
+      const payload = buildInfoPayload(ref, providerId);
       const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
       if (outputFlagFormat === "env") {
@@ -49,7 +55,7 @@ export const ssoInfo = Effect.fn("sso.info")(function* (flags: SsoInfoFlags) {
         return;
       }
 
-      yield* output.raw(renderInfoMarkdown(ref));
+      yield* output.raw(renderInfoMarkdown(ref, providerId));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

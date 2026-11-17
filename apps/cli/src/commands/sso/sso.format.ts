@@ -178,7 +178,7 @@ export function renderListProviders(items: ReadonlyArray<SsoProviderView>): stri
  * The optional sections are plain markdown, not run through Glamour, so their
  * styling differs from the table above. See each subcommand's `SIDE_EFFECTS.md`.
  */
-export function renderSingleProvider(provider: SsoProviderView): string {
+export function renderSingleProvider(provider: SsoProviderView, ref?: string): string {
   const rows: Array<readonly [string, string]> = [
     ["IDENTITY PROVIDER ID", provider.id],
     ["TYPE", formatProtocol(provider.saml)],
@@ -189,6 +189,12 @@ export function renderSingleProvider(provider: SsoProviderView): string {
     // Backticks stripped — see LIST_HEADERS comment above.
     rows.push(["SAML 2.0 EntityID", formatEntityId(provider.saml)]);
     rows.push(["NAMEID FORMAT", formatNameIdFormat(provider.saml)]);
+    if (provider.saml.dedicated_scope === true && ref !== undefined) {
+      const urls = buildInfoPayload(ref, provider.id);
+      rows.push(["DEDICATED SCOPE", "true"]);
+      rows.push(["SP ACS URL", urls.acs_url]);
+      rows.push(["SP ENTITY ID", urls.entity_id]);
+    }
   }
   rows.push(["CREATED AT (UTC)", formatSsoTimestamp(provider.created_at)]);
   // Both rows read provider.created_at — see SIDE_EFFECTS.md.
@@ -231,16 +237,18 @@ export interface SsoInfoPayload {
   readonly relay_state: string;
 }
 
-export function buildInfoPayload(ref: string): SsoInfoPayload {
+/** With `providerId`, returns the URLs for a SAML provider created with a dedicated scope. */
+export function buildInfoPayload(ref: string, providerId?: string): SsoInfoPayload {
+  const base = `https://${ref}.supabase.co/auth/v1/sso/${providerId === undefined ? "" : `${providerId}/`}saml`;
   return {
-    acs_url: `https://${ref}.supabase.co/auth/v1/sso/saml/acs`,
-    entity_id: `https://${ref}.supabase.co/auth/v1/sso/saml/metadata`,
+    acs_url: `${base}/acs`,
+    entity_id: `${base}/metadata`,
     relay_state: `https://${ref}.supabase.co`,
   };
 }
 
-export function renderInfoMarkdown(ref: string): string {
-  const payload = buildInfoPayload(ref);
+export function renderInfoMarkdown(ref: string, providerId?: string): string {
+  const payload = buildInfoPayload(ref, providerId);
   return renderGlamourTable(
     ["PROPERTY", "VALUE"],
     [

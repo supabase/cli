@@ -65,6 +65,8 @@ Target: hosted, consent default No — see [Command target](../../../../docs/com
 
 Styled property/value markdown table showing the removed provider's details.
 
+For a provider whose `saml.dedicated_scope` is `true`, the table adds `DEDICATED SCOPE`, `SP ACS URL` and `SP ENTITY ID` rows with the provider's own `https://<ref>.supabase.co/auth/v1/sso/<provider-id>/saml/{acs,metadata}` URLs.
+
 ### `--output json` / `--output yaml` / `--output toml`
 
 Response re-encoded per format (CLI-1975): JSON keeps snake_case keys, alphabetised, with HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses lowercased field names (`metadataxml`, explicit `null` for nil values); TOML uses PascalCase field names (`MetadataXml`) with absent fields omitted.

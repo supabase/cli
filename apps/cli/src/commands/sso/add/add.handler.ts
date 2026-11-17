@@ -377,7 +377,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         return;
       }
 
-      yield* output.raw(renderSingleProvider(provider));
+      yield* output.raw(renderSingleProvider(provider, ref));
     }).pipe(
       // Linked-project cache fill GETs `/v1/projects/{ref}` through the
       // reconciled host, never the config layer's.

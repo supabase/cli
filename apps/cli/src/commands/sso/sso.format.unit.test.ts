@@ -161,6 +161,27 @@ describe("renderListProviders / renderSingleProvider markdown surface", () => {
     expect(out).toContain("```xml");
   });
 
+  it("renders the provider's own ACS URL and entity ID when its scope is dedicated", () => {
+    const id = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
+    const out = renderSingleProvider(
+      { id, saml: { entity_id: "https://idp.example.com", dedicated_scope: true } },
+      "abcdefghijklmnopqrst",
+    );
+    expect(out).toContain(`https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/${id}/saml/acs`);
+    expect(out).toContain(
+      `https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/${id}/saml/metadata`,
+    );
+  });
+
+  it("omits the dedicated URLs when the provider uses the shared scope", () => {
+    const out = renderSingleProvider(
+      { id: "abc", saml: { entity_id: "https://idp.example.com", dedicated_scope: null } },
+      "abcdefghijklmnopqrst",
+    );
+    expect(out).not.toContain("DEDICATED SCOPE");
+    expect(out).not.toContain("SP ACS URL");
+  });
+
   it("renders a single provider WITHOUT optional sections when none present", () => {
     const out = renderSingleProvider({
       id: "abc",
@@ -191,6 +212,15 @@ describe("buildInfoPayload + renderInfoMarkdown", () => {
     expect(payload).toEqual({
       acs_url: "https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/saml/acs",
       entity_id: "https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/saml/metadata",
+      relay_state: "https://abcdefghijklmnopqrst.supabase.co",
+    });
+  });
+
+  it("scopes the ACS URL and entity ID to the provider id when one is given", () => {
+    const id = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
+    expect(buildInfoPayload("abcdefghijklmnopqrst", id)).toEqual({
+      acs_url: `https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/${id}/saml/acs`,
+      entity_id: `https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/${id}/saml/metadata`,
       relay_state: "https://abcdefghijklmnopqrst.supabase.co",
     });
   });

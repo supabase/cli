@@ -59,7 +59,9 @@ own. The ref resolution and the cache fill still call the API:
 
 The payload is `{acs_url, entity_id, relay_state}` where each URL is derived from
 the project ref: `https://<ref>.supabase.co/auth/v1/sso/saml/{acs,metadata}` and
-`https://<ref>.supabase.co`.
+`https://<ref>.supabase.co`. With the optional `<provider-id>` argument (a UUID) the ACS URL and entity ID
+are `https://<ref>.supabase.co/auth/v1/sso/<provider-id>/saml/{acs,metadata}`, the URLs of a provider created
+with `--dedicated-scope`. An invalid UUID fails before any output.
 
 ### `--output-format text` / `--output pretty`
 

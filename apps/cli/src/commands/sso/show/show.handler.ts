@@ -110,7 +110,7 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
         return;
       }
 
-      yield* output.raw(renderSingleProvider(response));
+      yield* output.raw(renderSingleProvider(response, ref));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

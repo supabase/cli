@@ -68,6 +68,8 @@ Raw `response.saml.metadata_xml` (or empty string) followed by a single newline.
 
 Styled property/value markdown table plus optional `## Attribute Mapping` and `## SAML 2.0 Metadata XML` sections.
 
+For a provider whose `saml.dedicated_scope` is `true`, the table adds `DEDICATED SCOPE`, `SP ACS URL` and `SP ENTITY ID` rows with the provider's own `https://<ref>.supabase.co/auth/v1/sso/<provider-id>/saml/{acs,metadata}` URLs.
+
 ### `--output json` / `--output yaml` / `--output toml`
 
 Response re-encoded per format (CLI-1975): JSON keeps snake_case keys, alphabetised, with HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses lowercased field names (`metadataxml`, explicit `null` for nil values); TOML uses PascalCase field names (`MetadataXml`) with absent fields omitted.
