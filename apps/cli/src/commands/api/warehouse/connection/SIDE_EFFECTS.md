@@ -94,7 +94,7 @@ API's JSON bytes. `-o` takes precedence over `--output-format`.
 | `-o json`                      | the same bytes; no `target` key is added                                            |
 | `-o yaml`                      | the same document as YAML                                                           |
 | `--dry-run`, text presentation | `Dry run: <METHOD> <path>`, then `Query`, `Headers` and indented JSON `Body` blocks |
-| `--dry-run` otherwise          | the request preview as JSON                                                         |
+| `--dry-run` otherwise          | the request preview in the selected JSON or YAML presentation                       |
 
 When the presentation is text and `--output-format` is `text`, the request runs under a task. On a terminal it
 is a spinner; when stdout is not a terminal (for example `--output-format text` piped) the task
