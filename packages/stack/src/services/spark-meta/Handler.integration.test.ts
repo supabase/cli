@@ -228,6 +228,23 @@ it.live("applies DDL as a dry-run-checked Spark migration and records it as a mi
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.live("runs a standalone GRANT on Spark as a migration, now that Spark keeps grants", () =>
+  Effect.gen(function* () {
+    const spark = fakeSpark();
+    const { send } = yield* withHandler(spark);
+
+    const { status } = yield* send("POST", "/pg/query", {
+      query: "grant select on public.todos to anon",
+    });
+
+    expect(status).toBe(201);
+    const applied = spark.calls.find(
+      (call) => call.path === "/_spark/v1/migrations" && call.body !== undefined,
+    );
+    expect(applied?.body).toMatchObject({ sql: "grant select on public.todos to anon;" });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.live("refuses a statement Spark cannot run before anything is applied", () =>
   Effect.gen(function* () {
     const spark = fakeSpark({ unsupported: true });

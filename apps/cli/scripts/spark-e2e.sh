@@ -97,7 +97,8 @@ ok "gen types typescript --local from Spark's schema description"
 
 run sb db pull
 [ -f supabase/schemas/public/tables/todos.sql ] || fail "db pull wrote no supabase/schemas/public/tables/todos.sql"
-ok "db pull exports the schema to supabase/schemas"
+grep -rqi 'create policy "Users manage their own todos"' supabase/schemas || fail "db pull exported no todos policy"
+ok "db pull exports the schema, with Spark's native RLS policies, to supabase/schemas"
 
 out="$(sb db diff -f noop 2>"$LOG")" || fail "db diff -f noop"
 [ "$out" = "No schema changes found" ] || fail "db diff -f noop: $out"
@@ -127,8 +128,12 @@ ok "edit schema files (new column, projects table with FK, RLS policy, index); d
 
 run sb db push
 grep -q "Finished supabase db push" "$LOG" || fail "db push did not finish"
+policies="$(curl -s "$API/pg/policies?included_schemas=public" | jq -r '.[].name')"
+for policy in "Owners manage projects" "Users manage their own todos"; do
+  grep -qx "$policy" <<<"$policies" || fail "pg-meta lists no \"$policy\" policy after push: $policies"
+done
 [ "$(rest 'todos?select=id' | jq length)" = "$todos_before" ] || fail "db push lost todos rows"
-ok "db push applies the migration (dry run first), existing rows kept ($todos_before todos)"
+ok "db push applies the migration (dry run first), existing rows kept ($todos_before todos); pg-meta lists both policies"
 
 code=$(rest 'todos?select=priority' -o /dev/null -w '%{http_code}')
 [ "$code" = 200 ] || fail "GET todos?select=priority: HTTP $code"
@@ -175,7 +180,9 @@ check app.test.mjs
 ok "db reset: data removed, all migrations replayed, the app works"
 
 run sb stop
-pgrep -f "$SPARK_BIN" >/dev/null && fail "spark still running after stop"
+# A spark process can outlive stop briefly (see the stop race in the PoC's docs/GAPS.md); allow 3 s.
+for _ in 1 2 3 4 5 6; do pgrep -f "$SPARK_BIN" >/dev/null || break; sleep 0.5; done
+pgrep -af "$SPARK_BIN" >&2 && fail "spark still running 3 s after stop"
 code=$(curl -s -o /dev/null -w '%{http_code}' "$API/rest/v1/" || true)
 [ "$code" = 000 ] || fail "the API still answers after stop (HTTP $code)"
 ok "supabase stop: nothing left running"

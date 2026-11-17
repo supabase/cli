@@ -176,7 +176,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     }
     const forSpark = folded.statements;
     yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
-    // Only grants or comments: nothing for Spark, and no migration.
+    // Only Studio's grant loops: nothing for Spark, and no migration.
     if (forSpark.length === 0) return undefined;
     const script = `${forSpark.join(";\n")};`;
     const latest =
@@ -228,11 +228,10 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     source: string,
   ) {
     const statements = splitSql(query);
+    // GRANT and REVOKE run on Spark as migrations; Spark rejects REVOKE as not supported.
     const ignorable = (s: string) =>
-      isGrantDo(s) ||
-      isSession(s) ||
-      (isDdl(s) && /^(grant|revoke|comment)$/u.test(words(s)[0] ?? ""));
-    // Grants, comments and session settings only: no-ops on Spark.
+      isGrantDo(s) || isSession(s) || (isDdl(s) && (words(s)[0] ?? "") === "comment");
+    // Studio's grant loops, comments and session settings only: nothing Spark keeps.
     if (
       statements.length > 0 &&
       statements.every(ignorable) &&

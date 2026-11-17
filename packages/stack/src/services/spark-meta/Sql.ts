@@ -68,7 +68,7 @@ const isTempObject = (statement: string): boolean => {
 export const isDdl = (statement: string): boolean =>
   DDL.has(firstWord(statement)) && !isTempObject(statement);
 
-/** A `DO` block that only grants or revokes; grants are no-ops on Spark, where RLS is the access control. */
+/** A `DO` block that only grants or revokes; Spark grants the API roles each new table itself, and runs no `DO`. */
 export const isGrantDo = (statement: string): boolean => {
   const body = /^do\s+\$(\w*)\$([\s\S]*)\$\1\$/iu.exec(stripComments(statement).trim())?.[2];
   if (body === undefined || body === "") return false;
