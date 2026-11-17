@@ -14,6 +14,7 @@ import { realtime } from "./realtime.ts";
 import { storage } from "./storage.ts";
 import { studio } from "./studio.ts";
 import { compute } from "./compute.ts";
+import { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 
 const projectId = Schema.optionalKey(
   Schema.String.annotate({
@@ -83,13 +84,31 @@ export const CliConfigSchema = Schema.Struct({
   remotes: RemotesSchema.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 
+const schemaPointerProperty = {
+  type: "string",
+  description:
+    "The JSON Schema this file is validated against; editors use it for completion and validation.",
+  examples: [CLI_CONFIG_SCHEMA_URL],
+};
+
+const isPropertyMap = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
+
 /** `allowTrailingCommas` keeps VS Code from flagging the trailing commas in generated `config.jsonc`. */
 export function toCliConfigJsonSchema() {
   const { $schema, ...rest } = toPublishedJsonSchemaDocument(CliConfigSchema, {
     onExcessProperty: "error",
     acceptEnvReferences: true,
   });
-  return { $schema, allowTrailingCommas: true, ...rest };
+  const properties = "properties" in rest ? rest.properties : undefined;
+  return {
+    $schema,
+    allowTrailingCommas: true,
+    ...rest,
+    properties: {
+      $schema: schemaPointerProperty,
+      ...(isPropertyMap(properties) ? properties : {}),
+    },
+  };
 }
 
 export type CliConfig = typeof CliConfigSchema.Type;
