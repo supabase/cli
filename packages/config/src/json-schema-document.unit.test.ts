@@ -9,6 +9,7 @@ import {
   interpolateEnvReferencesAgainstSchema,
   isEnvReference,
 } from "./lib/env.ts";
+import { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 import { secretPathPatterns } from "./lib/secret-paths.ts";
 import { toProjectConfigJsonSchema } from "./project-config/project-schema.ts";
 
@@ -210,6 +211,19 @@ describe("published JSON Schema documents", () => {
 
     const project = toProjectConfigJsonSchema();
     expect(at(project, "properties", "compute")).not.toHaveProperty("additionalProperties");
+  });
+
+  test("the CLI schema declares an optional leading $schema string property", () => {
+    const cli = toCliConfigJsonSchema();
+    expect(Object.keys(cli.properties)[0]).toBe("$schema");
+    expect(at(cli, "properties", "$schema")).toMatchObject({
+      type: "string",
+      examples: [CLI_CONFIG_SCHEMA_URL],
+    });
+    expect(cli).not.toHaveProperty("required", expect.arrayContaining(["$schema"]));
+    const validate = compile(cli);
+    expect(errorsFor(validate, { $schema: CLI_CONFIG_SCHEMA_URL, project_id: "demo" })).toEqual([]);
+    expect(failingPaths(validate, { $schema: 1 })).toContain("/$schema");
   });
 
   test("migration checks publish a closed object with patterned exclusions", () => {
