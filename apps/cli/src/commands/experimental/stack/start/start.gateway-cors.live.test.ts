@@ -199,8 +199,18 @@ function deployFunctions(cliEffect: LiveFixtures["cliEffect"], ref: string, slug
     }),
   );
   return Effect.acquireRelease(Effect.void, () => deleteAll).pipe(
-    Effect.andThen(cliEffect(["functions", "deploy", "--yes", `--remote=${ref}`])),
-    Effect.flatMap((result) => requireSuccess(result, "functions deploy")),
+    Effect.andThen(
+      cliEffect(["functions", "deploy", "--yes", `--remote=${ref}`]).pipe(
+        Effect.flatMap((result) => requireSuccess(result, "functions deploy")),
+        // A fresh project's permissions can take a moment to reach the Management API.
+        Effect.retry({
+          schedule: Schedule.spaced("5 seconds"),
+          times: 12,
+          while: (error) =>
+            error instanceof GatewayCorsLiveError && /status 403/u.test(error.message),
+        }),
+      ),
+    ),
   );
 }
 
@@ -253,12 +263,19 @@ describe("stack gateway CORS (live)", () => {
             const readiness = probes.filter(
               (probe) =>
                 probe.name === "POST function, allowed origin" ||
-                probe.name === "POST verify_jwt function, invalid Bearer",
+                probe.name === "POST verify_jwt function, invalid Bearer" ||
+                probe.name.startsWith("OPTIONS /rest/v1/"),
             );
-            // A fresh deploy can briefly answer 404 before the edge picks it up.
+            // A fresh deploy can briefly answer 404, and a fresh project's REST edge 403, before
+            // the gateway serves it.
             yield* runProbes(stagingUrl, readiness).pipe(
               Effect.filterOrFail(
-                ([plain, jwt]) => plain?.status === 200 && jwt !== undefined && jwt.status !== 404,
+                ([plain, jwt, ...rest]) =>
+                  plain?.status === 200 &&
+                  jwt !== undefined &&
+                  jwt.status !== 404 &&
+                  rest.length === 2 &&
+                  rest.every((row) => row.status !== 403),
                 (rows) =>
                   new GatewayCorsLiveError({
                     message: `functions not ready: ${JSON.stringify(rows)}`,
