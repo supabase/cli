@@ -251,24 +251,52 @@ function docsVisibleChildren(command: Command.Command.Any): ReadonlyArray<Comman
     .toSorted((a, b) => docsCompare(a.name, b.name));
 }
 
+function walkDocsCommands(
+  root: Command.Command.Any,
+  onCommand: (
+    command: Command.Command.Any,
+    path: ReadonlyArray<string>,
+    inheritedParams: ReadonlyArray<Param.AnyFlag>,
+    children: ReadonlyArray<Command.Command.Any>,
+    publishedChildren: ReadonlyArray<Command.Command.Any>,
+  ) => void,
+  onExcluded?: (path: ReadonlyArray<string>) => void,
+): void {
+  const visit = (
+    command: Command.Command.Any,
+    path: ReadonlyArray<string>,
+    inheritedParams: ReadonlyArray<Param.AnyFlag>,
+  ): void => {
+    if (DOCS_EXCLUDED.has(path.join("-"))) {
+      onExcluded?.(path);
+      return;
+    }
+    const children = docsVisibleChildren(command);
+    const publishedChildren = children.filter(
+      (child) => !DOCS_EXCLUDED.has([...path, child.name].join("-")),
+    );
+    onCommand(command, path, inheritedParams, children, publishedChildren);
+    const childInherited = [
+      ...inheritedParams,
+      ...commandInternals(command).contextConfig.flags,
+      ...userGlobalFlagParams(command),
+    ];
+    for (const child of children) visit(child, [...path, child.name], childInherited);
+  };
+  for (const child of docsVisibleChildren(root)) visit(child, ["supabase", child.name], []);
+}
+
 /** Published command IDs and their children, excluding the root and hidden subtrees. */
 export function docsCommandTree(
   root: Command.Command.Any,
 ): ReadonlyMap<string, ReadonlyArray<string>> {
   const tree = new Map<string, ReadonlyArray<string>>();
-  const visit = (command: Command.Command.Any, path: ReadonlyArray<string>): void => {
-    const children = docsVisibleChildren(command).filter(
-      (child) => !DOCS_EXCLUDED.has([...path, child.name].join("-")),
+  walkDocsCommands(root, (_command, path, _inherited, _children, publishedChildren) => {
+    tree.set(
+      path.join("-"),
+      publishedChildren.map((child) => [...path, child.name].join("-")),
     );
-    if (path.length > 1) {
-      tree.set(
-        path.join("-"),
-        children.map((child) => [...path, child.name].join("-")),
-      );
-    }
-    for (const child of children) visit(child, [...path, child.name]);
-  };
-  visit(root, ["supabase"]);
+  });
   return tree;
 }
 
@@ -355,9 +383,10 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     command: Command.Command.Any,
     commandPath: ReadonlyArray<string>,
     inheritedParams: ReadonlyArray<Param.AnyFlag>,
+    children: ReadonlyArray<Command.Command.Any>,
+    publishedChildren: ReadonlyArray<Command.Command.Any>,
   ): void => {
     const docId = commandPath.join("-");
-    const children = docsVisibleChildren(command);
     const internals = commandInternals(command);
     const optionalSubcommand = hasOptionalSubcommand(command);
     const isExecutable = children.length === 0 || optionalSubcommand;
@@ -449,41 +478,15 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       tags: tags ?? [],
       links: [],
       ...(usage === undefined ? {} : { usage }),
-      subcommands: children
-        .map((child) => [...commandPath, child.name].join("-"))
-        .filter((childId) => !DOCS_EXCLUDED.has(childId)),
+      subcommands: publishedChildren.map((child) => [...commandPath, child.name].join("-")),
       flags,
     });
-
-    // A non-root command's own global flags (e.g. `seed`'s `--remote`) behave like
-    // persistent flags: they're surfaced on every leaf beneath it, alongside shared flags.
-    const childInherited = [
-      ...inheritedParams,
-      ...internals.contextConfig.flags,
-      ...userGlobalFlagParams(command),
-    ];
-    for (const child of children) {
-      const childPath = [...commandPath, child.name];
-      const childId = childPath.join("-");
-      if (DOCS_EXCLUDED.has(childId)) {
-        skippedExcludedIds.add(childId);
-        allowedOrphanOverlayPaths.add(docsOverlayPath(childPath));
-        continue;
-      }
-      visit(child, childPath, childInherited);
-    }
   };
 
-  for (const child of docsVisibleChildren(input.root)) {
-    const childPath = ["supabase", child.name];
-    const childId = childPath.join("-");
-    if (DOCS_EXCLUDED.has(childId)) {
-      skippedExcludedIds.add(childId);
-      allowedOrphanOverlayPaths.add(docsOverlayPath(childPath));
-      continue;
-    }
-    visit(child, childPath, []);
-  }
+  walkDocsCommands(input.root, visit, (path) => {
+    skippedExcludedIds.add(path.join("-"));
+    allowedOrphanOverlayPaths.add(docsOverlayPath(path));
+  });
 
   validateDocsTables({
     emittedIds,

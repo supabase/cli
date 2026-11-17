@@ -44,9 +44,9 @@ const Spec = Schema.Struct({
       examples: Schema.optionalKey(
         Schema.Array(
           Schema.Struct({
-            id: Schema.optionalKey(Schema.String),
-            name: Schema.optionalKey(Schema.String),
-            code: Schema.optionalKey(Schema.String),
+            id: Schema.NonEmptyString,
+            name: Schema.String,
+            code: Schema.String,
             response: Schema.optionalKey(Schema.String),
           }),
         ),
@@ -91,6 +91,15 @@ export const validateDocsSpec = Effect.fn("Docs.validateSpec")(function* (
       return yield* new InvalidDocsSpec({ message: `duplicate command ${command.id}.` });
     }
     actual.add(command.id);
+    const exampleIds = new Set<string>();
+    for (const example of command.examples ?? []) {
+      if (exampleIds.has(example.id)) {
+        return yield* new InvalidDocsSpec({
+          message: `duplicate example ${example.id} in ${command.id}.`,
+        });
+      }
+      exampleIds.add(example.id);
+    }
   }
   const missing = [...expected].filter((id) => !actual.has(id));
   const unexpected = [...actual].filter((id) => !expected.has(id));

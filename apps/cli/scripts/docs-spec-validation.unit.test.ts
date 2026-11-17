@@ -17,6 +17,7 @@ const command = {
   subcommands: [],
   flags: [],
 };
+const example = { id: "basic", name: "Basic usage", code: "supabase example" };
 const spec = {
   clispec: "001",
   info: {
@@ -38,6 +39,17 @@ it.effect("accepts a complete small tree without requiring unlisted commands", (
   Effect.gen(function* () {
     const result = yield* validateDocsSpec(stringify(spec), "1.0.0", root);
     expect(result.commands.map(({ id }) => id)).toEqual(["supabase-example"]);
+  }),
+);
+
+it.effect("accepts examples without responses and reuses IDs across commands", () =>
+  Effect.gen(function* () {
+    const input = {
+      ...inspectSpec,
+      commands: inspectSpec.commands.map((entry) => ({ ...entry, examples: [example] })),
+    };
+    const result = yield* validateDocsSpec(stringify(input), "1.0.0", inspectRoot);
+    expect(result.commands.map((entry) => entry.examples)).toEqual([[example], [example]]);
   }),
 );
 
@@ -114,7 +126,39 @@ it.effect.each([
     "subcommand coverage mismatch",
   ],
   ["invalid command flags", { ...spec, commands: [{ ...command, flags: "wrong" }] }, "flags"],
-  ["invalid example", { ...spec, commands: [{ ...command, examples: [{ code: 42 }] }] }, "code"],
+  [
+    "invalid example",
+    { ...spec, commands: [{ ...command, examples: [{ ...example, code: 42 }] }] },
+    "code",
+  ],
+  ...(["id", "name", "code"] as const).map(
+    (field) =>
+      [
+        `missing example ${field}`,
+        {
+          ...spec,
+          commands: [
+            {
+              ...command,
+              examples: [
+                Object.fromEntries(Object.entries(example).filter(([key]) => key !== field)),
+              ],
+            },
+          ],
+        },
+        field,
+      ] as const,
+  ),
+  [
+    "empty example id",
+    { ...spec, commands: [{ ...command, examples: [{ ...example, id: "" }] }] },
+    "id",
+  ],
+  [
+    "duplicate example id",
+    { ...spec, commands: [{ ...command, examples: [example, example] }] },
+    "duplicate example basic in supabase-example",
+  ],
   [
     "invalid global flag",
     { ...spec, flags: [{ id: "debug", name: "--debug", description: "", default_value: false }] },
