@@ -64,8 +64,10 @@ fetch. Findings are limited to changed reference prose, not every selected file.
 For relevant changes, the trusted collector resolves `supabase/supabase` master
 once and fetches only `apps/docs/style-guide/README.md`,
 `01-voice-and-tone.md`, `02-elements.md`, `03-page-structure.md`, and
-`WORD_LIST.md` at that SHA. Requests use no credentials, reject redirects, time
-out after 15 seconds, and cap each guide at 512 KiB (revision JSON at 64 KiB).
+`WORD_LIST.md` at that SHA. The revision API request uses the job's read-only
+`GH_TOKEN` when available; raw guide requests use no credentials. All requests
+reject redirects, time out after 15 seconds, and cap each guide at 512 KiB
+(revision JSON at 64 KiB).
 The single immutable `docs-guidance` artifact carries a JSON manifest recording
 status, SHA, and file paths, plus raw Markdown under `docs-guidance/`. All models
 read those raw files directly, without decoding long escaped JSON strings.

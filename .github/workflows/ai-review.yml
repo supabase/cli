@@ -187,6 +187,8 @@ jobs:
         if: steps.guidance-sources.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bun .github/scripts/ai-review/docs-guidance.ts
 
       - name: Restore unavailable guidance after collector failure

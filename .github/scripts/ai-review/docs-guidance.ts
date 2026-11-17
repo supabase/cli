@@ -1,5 +1,5 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem, Path, Schema, Stream } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Redacted, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   guidanceReviewStatus,
@@ -47,6 +47,7 @@ const boundedText = Effect.fn("DocsGuidance.fetch")(function* (
   fetcher: Fetch,
   url: string,
   limit: number,
+  headers: Record<string, string> = { Accept: "application/vnd.github+json" },
 ) {
   return yield* Effect.acquireUseRelease(
     Effect.sync(() => new AbortController()),
@@ -57,7 +58,7 @@ const boundedText = Effect.fn("DocsGuidance.fetch")(function* (
             fetcher(url, {
               signal: controller.signal,
               redirect: "error",
-              headers: { Accept: "application/vnd.github+json" },
+              headers,
             }),
           catch: () => new GuidanceError({ operation: "fetch" }),
         });
@@ -90,7 +91,7 @@ const boundedText = Effect.fn("DocsGuidance.fetch")(function* (
   );
 });
 
-/** Resolves master once and retrieves only fixed guide paths at that revision, without credentials. */
+/** Authenticates the revision lookup when configured; retrieves pinned guides without credentials. */
 export const collectGuidance = Effect.fn("DocsGuidance.collect")(function* (
   paths: readonly string[],
   fetcher: Fetch = fetch,
@@ -100,10 +101,17 @@ export const collectGuidance = Effect.fn("DocsGuidance.collect")(function* (
   }
   let sha: string | null = null;
   return yield* Effect.gen(function* () {
+    const token = yield* Config.option(Config.Redacted("GH_TOKEN"));
     const text = yield* boundedText(
       fetcher,
       "https://api.github.com/repos/supabase/supabase/git/ref/heads/master",
       64 * 1024,
+      {
+        Accept: "application/vnd.github+json",
+        ...(Option.isSome(token) && Redacted.value(token.value)
+          ? { Authorization: `Bearer ${Redacted.value(token.value)}` }
+          : {}),
+      },
     );
     const ref = yield* Schema.decodeEffect(Schema.fromJsonString(Revision))(text).pipe(
       Effect.mapError(() => new GuidanceError({ operation: "revision" })),

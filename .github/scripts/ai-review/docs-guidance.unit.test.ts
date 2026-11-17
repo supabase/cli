@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Fiber } from "effect";
+import { ConfigProvider, Deferred, Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
 import {
   collectGuidance as collectGuidanceEffect,
@@ -43,36 +43,47 @@ describe("CLI reference guidance", () => {
     expect(snapshot).toEqual({ status: "not-applicable", sha: null, files: [] });
   });
 
-  test("resolves master once and pins every allowlisted document to the same revision", async () => {
-    const requests: string[] = [];
-    const snapshot = await collectGuidance(
-      ["apps/cli/docs/templates/examples.yaml"],
-      async (url, init) => {
-        requests.push(url);
-        expect(init.redirect).toBe("error");
-        expect(init.signal).toBeInstanceOf(AbortSignal);
-        expect(init.headers).toEqual({ Accept: "application/vnd.github+json" });
-        return new Response(
-          url.endsWith("/master")
-            ? JSON.stringify({ object: { type: "commit", sha } })
-            : "# Rule\nUse plain words.\n",
-        );
-      },
-    );
-    expect(requests).toEqual([
-      "https://api.github.com/repos/supabase/supabase/git/ref/heads/master",
-      ...GUIDE_PATHS.map(
-        (path) => `https://raw.githubusercontent.com/supabase/supabase/${sha}/${path}`,
-      ),
-    ]);
-    expect(snapshot).toEqual({
-      status: "available",
-      sha,
-      files: GUIDE_PATHS.map((path) => ({ path, content: "# Rule\nUse plain words.\n" })),
-    });
-    expect(guidanceReviewStatus(snapshot)).toContain(`supabase/supabase@${sha}`);
-    expect(guidanceReviewStatus(snapshot)).toContain("not a style pass");
-  });
+  test.each([undefined, "test-read-only-token"])(
+    "pins guidance and limits token %s to the revision request",
+    async (token) => {
+      const requests: string[] = [];
+      const snapshot = await Effect.runPromise(
+        collectGuidanceEffect(["apps/cli/docs/templates/examples.yaml"], async (url, init) => {
+          requests.push(url);
+          expect(init.redirect).toBe("error");
+          expect(init.signal).toBeInstanceOf(AbortSignal);
+          expect(init.headers).toEqual({
+            Accept: "application/vnd.github+json",
+            ...(url.startsWith("https://api.github.com/") && token
+              ? { Authorization: `Bearer ${token}` }
+              : {}),
+          });
+          return new Response(
+            url.endsWith("/master")
+              ? JSON.stringify({ object: { type: "commit", sha } })
+              : "# Rule\nUse plain words.\n",
+          );
+        }).pipe(
+          Effect.provide(
+            ConfigProvider.layer(ConfigProvider.fromUnknown(token ? { GH_TOKEN: token } : {})),
+          ),
+        ),
+      );
+      expect(requests).toEqual([
+        "https://api.github.com/repos/supabase/supabase/git/ref/heads/master",
+        ...GUIDE_PATHS.map(
+          (path) => `https://raw.githubusercontent.com/supabase/supabase/${sha}/${path}`,
+        ),
+      ]);
+      expect(snapshot).toEqual({
+        status: "available",
+        sha,
+        files: GUIDE_PATHS.map((path) => ({ path, content: "# Rule\nUse plain words.\n" })),
+      });
+      expect(guidanceReviewStatus(snapshot)).toContain(`supabase/supabase@${sha}`);
+      expect(guidanceReviewStatus(snapshot)).toContain("not a style pass");
+    },
+  );
 
   test.each([
     "network",
