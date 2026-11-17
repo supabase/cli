@@ -1,5 +1,5 @@
 import { SupabaseApiInputError, type SupabaseApiError } from "@supabase/api/effect";
-import { Effect } from "effect";
+import { Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClientError from "effect/http/HttpClientError";
 
@@ -135,6 +135,18 @@ export function parsePlanGateEnvelope(body: unknown): PlanGateEntitlement | unde
   return { feature, upgrade_url: upgradeUrl };
 }
 
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+/** The `entitlement` field a Management API response adds to a status error built by `mapHttpError` or an `executeRaw` caller. */
+export function planGateFromResponse(
+  status: number,
+  rawBody: string,
+): { readonly entitlement?: PlanGateEntitlement } {
+  if (status < 400 || status >= 500) return {};
+  const entitlement = parsePlanGateEnvelope(Option.getOrUndefined(decodeJson(rawBody)));
+  return entitlement === undefined ? {} : { entitlement };
+}
+
 /**
  * Builds an error mapper that classifies a `SupabaseApiError` into either a
  * typed network error or a typed unexpected-status error. Shared by command
@@ -166,18 +178,12 @@ export function mapHttpError<N, S>(opts: {
             Effect.orElseSucceed(() => cause.reason.description ?? ""),
           );
           const body = sanitizeErrorBody(rawBody);
-          const entitlement =
-            status >= 400 && status < 500
-              ? parsePlanGateEnvelope(
-                  yield* cause.response.json.pipe(Effect.orElseSucceed(() => undefined)),
-                )
-              : undefined;
           return yield* Effect.fail(
             new opts.statusError({
               status,
               body,
               message: opts.statusMessage(status, body),
-              ...(entitlement === undefined ? {} : { entitlement }),
+              ...planGateFromResponse(status, rawBody),
             }),
           );
         }

@@ -8,7 +8,9 @@ import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../tests/hel
 import { ExperimentalRequiredError } from "../../../command-internal/experimental-gate.ts";
 import { GLOBAL_FLAGS, ExperimentalFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import {
   type ApiResponse,
   type HttpMethod,
@@ -593,6 +595,66 @@ describe("projects create integration", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+
+  const createFlags = {
+    ...BASE_FLAGS,
+    name: Option.some("alpha"),
+    orgId: Option.some("acme"),
+    dbPassword: Option.some("s3cret-pass"),
+    region: Option.some("us-east-1" as const),
+  };
+  const entitlement = {
+    feature: "instances.compute_update_available_sizes",
+    upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+  };
+  const planGateDenial = {
+    status: 402,
+    body: {
+      message: "This instance size requires a paid plan",
+      error: { code: "entitlement_required", ...entitlement },
+    },
+  };
+
+  it.effect("fails a 402 envelope as a plan-limit error carrying its entitlement", () => {
+    const { layer } = setup({ byMethod: { POST: planGateDenial } });
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(projectsCreate(createFlags));
+      expect(error).toMatchObject({
+        _tag: "ProjectsCreateUnexpectedStatusError",
+        status: 402,
+        entitlement,
+      });
+      expect(classifyCliCauseActionability(Cause.fail(error)).error_category).toBe("plan_limit");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("carries the envelope's entitlement on the JSON-mode failure", () => {
+    const { layer, out } = setup({ format: "json", byMethod: { POST: planGateDenial } });
+    return Effect.gen(function* () {
+      yield* projectsCreate(createFlags).pipe(withJsonErrorHandling);
+      expect(out.failures).toHaveLength(1);
+      expect(out.failures[0]).toMatchObject({
+        code: "ProjectsCreateUnexpectedStatusError",
+        entitlement,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "keeps the status message and adds no entitlement on a 4xx without the envelope",
+    () => {
+      const { layer } = setup({
+        byMethod: { POST: { status: 400, body: { message: "Invalid region" } } },
+      });
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(projectsCreate(createFlags));
+        expect(error).toMatchObject({
+          message: 'Unexpected error creating project: {"message":"Invalid region"}',
+        });
+        expect(error).not.toHaveProperty("entitlement");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("sends the request body with sorted keys", () => {
     const { layer, api } = setup();
