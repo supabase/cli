@@ -80,6 +80,8 @@ export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { apiRoute, sharesApiEndpoint } from "./host/Endpoints.ts";
 export { apiTlsContext } from "./HttpProxy.ts";
 export { gatewayLog };
+/** Resolves the project root, Git branch context and stack name that derive a stack id. */
+export { resolveStackIdentity };
 export { StackError } from "./Rpc.ts";
 /** Atomically writes a file so readers only ever see the prior or the complete new content. */
 export { NamespaceError, publish } from "./StackNamespace.ts";

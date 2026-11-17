@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Option, Path } from "effect";
+import { resolveStackIdentity } from "@supabase/stack/effect";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
@@ -54,17 +55,31 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
             }),
         ),
       );
-    /* Only a project root reported as not found is orphaned; one that cannot be checked is kept. */
-    const orphaned = yield* Effect.filter(discovered, ({ definition }) =>
-      fs.exists(definition.identity.projectRoot).pipe(
-        Effect.map((exists) => !exists),
-        Effect.catchTag("PlatformError", (error) =>
-          output
-            .raw(
-              `Warning: keeping stack ${definition.id}; its project directory could not be checked: ${error.message}\n`,
-              "stderr",
-            )
-            .pipe(Effect.as(false)),
+    /*
+     * Orphaned: the project root is gone, or a root outside any Git repository became its own
+     * repository, so it resolves to another stack. A repository that only encloses it never counts.
+     */
+    const isOrphaned = (projectRoot: string, branchContext: string) =>
+      Effect.gen(function* () {
+        if (!(yield* fs.exists(projectRoot))) return true;
+        if (branchContext !== "ordinary-workspace") return false;
+        const git = path.join(projectRoot, ".git");
+        if (!(yield* fs.exists(git))) return false;
+        const { type } = yield* fs.stat(git);
+        if (type === "Directory" ? !(yield* fs.exists(path.join(git, "HEAD"))) : type !== "File")
+          return false;
+        const identity = yield* resolveStackIdentity({ projectRoot }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        );
+        return identity.branchContext !== "ordinary-workspace";
+      });
+    const unchecked = (id: string, error: { readonly message: string }) =>
+      `Warning: keeping stack ${id}; it could not be checked: ${error.message}`;
+    const orphaned = yield* Effect.filter(discovered, ({ definition: { id, identity } }) =>
+      isOrphaned(identity.projectRoot, identity.branchContext).pipe(
+        Effect.catch((error) =>
+          output.raw(`${unchecked(id, error)}\n`, "stderr").pipe(Effect.as(false)),
         ),
       ),
     );
@@ -77,26 +92,22 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
     if (output.format === "text")
       yield* output.raw(
         stacks.length === 0
-          ? "No stacks found whose project directory no longer exists.\n"
-          : `Found ${stacks.length} ${stacks.length === 1 ? "stack" : "stacks"} whose project directory no longer exists:\n${renderStackListTable(stacks)}\n`,
+          ? "No orphaned stacks found.\n"
+          : `Found ${stacks.length} orphaned ${stacks.length === 1 ? "stack" : "stacks"}:\n${renderStackListTable(stacks)}\n`,
       );
     if (flags.dryRun || stacks.length === 0) {
       if (output.format !== "text") yield* output.success("", { dry_run: flags.dryRun, stacks });
       return stacks;
     }
-    /* Checked again right before each destroy, so a directory that came back keeps its stack. */
-    const recheck = (id: string, projectRoot: string) =>
-      fs.exists(projectRoot).pipe(
-        Effect.map((exists) =>
-          exists
-            ? Option.some(`Warning: keeping stack ${id}; its project directory exists again.`)
-            : Option.none(),
+    /* Checked again right before each destroy, so a stack no longer orphaned is kept. */
+    const recheck = (id: string, projectRoot: string, branchContext: string) =>
+      isOrphaned(projectRoot, branchContext).pipe(
+        Effect.map((orphan) =>
+          orphan
+            ? Option.none()
+            : Option.some(`Warning: keeping stack ${id}; it is no longer orphaned.`),
         ),
-        Effect.catchTag("PlatformError", (error) =>
-          Effect.succeedSome(
-            `Warning: keeping stack ${id}; its project directory could not be checked: ${error.message}`,
-          ),
-        ),
+        Effect.catch((error) => Effect.succeedSome(unchecked(id, error))),
       );
     /* Always a batch, so a failure names each stack and lists the ones destroyed. */
     const destroyed = yield* destroyStacks(
@@ -104,7 +115,7 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
         id: stack.id,
         deleted: Option.none(),
         scope: destroyScope(stack.id, stack.project_root),
-        recheck: recheck(stack.id, stack.project_root),
+        recheck: recheck(stack.id, stack.project_root, stack.branch_context),
       })),
       {
         batch: true,
@@ -113,7 +124,7 @@ export const stackPrune = Effect.fn("experimental.stack.prune")(function* (flags
             ? "Permanently destroy the stack listed above and its owned data?"
             : `Permanently destroy the ${stacks.length} stacks listed above and their owned data?`,
         tolerateConcurrentDestroy: true,
-        /* Pruning again rechecks each directory, which destroying by id would skip. */
+        /* Pruning again rechecks each stack, which destroying by id would skip. */
         retry: "supabase stack prune --yes",
       },
     ).pipe(Effect.mapError(pruneError));
