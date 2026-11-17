@@ -28,29 +28,28 @@ The command is generated from the Management API contract (`generated.ts`).
 
 ## API Routes
 
-| Method | Path                                          | Auth         | Request body | Response (used fields)                                          |
-| ------ | --------------------------------------------- | ------------ | ------------ | --------------------------------------------------------------- |
-| `GET`  | `/v2/projects/{ref}/warehouse/setups/current` | Bearer token | none         | passed through unchanged                                        |
-| `GET`  | `/v1/projects`                                | Bearer token | none         | only when no ref resolved and the session is interactive        |
-| `GET`  | `/v1/projects/{ref}`                          | Bearer token | none         | linked-project cache miss only (best-effort, after the command) |
+| Method | Path                                   | Auth         | Request body | Response (used fields)                                          |
+| ------ | -------------------------------------- | ------------ | ------------ | --------------------------------------------------------------- |
+| `GET`  | `/v2/projects/{ref}/warehouse/context` | Bearer token | none         | passed through unchanged                                        |
+| `GET`  | `/v1/projects`                         | Bearer token | none         | only when no ref resolved and the session is interactive        |
+| `GET`  | `/v1/projects/{ref}`                   | Bearer token | none         | linked-project cache miss only (best-effort, after the command) |
 
-Query: `inspect_fdw=true|false` and `selection_id=<id>`, each only when its flag was given.
+No operation-specific query parameters or FDW inspection.
 `--dry-run` prints `{method, path, query, headers, body}` and sends no command request (the linked-project cache read in the table above can still run).
 
-With `--wait` the command sends no change request: the first send is the first poll, and it polls
-its own route with its own flags. Polling backs off from 1s, doubling to a 10s cap (a longer
-`Retry-After` wins), until `data.attributes.status` is `succeeded` or `failed` or `--timeout`
-(default `10m`) elapses. The output is the last read. Any non-2xx while polling ends the command
-with the API error.
+The response preserves enabled state independently of selected table count, configured readiness,
+query connectivity, lifecycle, per-observation availability and capabilities. `observed_at` is
+retrieval time; it is separate from table sync lag, pipeline apply lag and feedback age.
+This read has no waiter. `warehouse setups get --wait` observes enablement; `warehouse teardowns get --wait`
+observes cleanup. Their operation identities and bounded waiting remain separate.
 
 ## Exit Codes
 
-| Code | Condition                                                                                  |
-| ---- | ------------------------------------------------------------------------------------------ |
-| `0`  | success (with `--wait`, the setup succeeded)                                               |
-| `2`  | `usage_error`: invalid flags                                                               |
-| `1`  | API error (non-2xx, including 409)                                                         |
-| `1`  | with `--wait`: `operation_failed` (a failed status, with `status_error`) or `wait_timeout` |
+| Code | Condition                                                               |
+| ---- | ----------------------------------------------------------------------- |
+| `0`  | successful status read (including disabled or unavailable observations) |
+| `2`  | `usage_error`: invalid flags                                            |
+| `1`  | API error (non-2xx, including 409)                                      |
 
 A 4xx `entitlement_required` body (`{"error":{"code":"entitlement_required","feature","upgrade_url"}}`) adds `entitlement: {feature, upgrade_url}` to the stderr error document in place of the token-permission hint; a terminal run prints the upgrade hint, and `cli_upgrade_suggested` fires. Other statuses and bodies carry no `entitlement` key.
 
@@ -72,8 +71,7 @@ A 4xx `entitlement_required` body (`{"error":{"code":"entitlement_required","fea
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
 Only the names of flags passed appear in `flags`. Target flags record their values, and `--dry-run`
-and `--wait` record `true`. Generated field flags (`--inspect-fdw`, `--selection-id`) and `--timeout`
-are recorded as `<redacted>`.
+records `true`.
 
 ## Output
 
@@ -81,16 +79,15 @@ Text rendering applies on a terminal by default, with `--output-format text` (al
 with `-o pretty`. Piped runs, agent runs, `--output-format json|stream-json` and `-o json` keep the
 API's JSON bytes. `-o` takes precedence over `--output-format`.
 
-| Mode                           | stdout                                                                                                    |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| text presentation              | the response as labelled fields and tables; with `--wait` the last read; an empty response prints `Done.` |
-| JSON presentation              | the API's JSON response bytes, unchanged; with `--wait` the last read                                     |
-| `-o json`                      | the same bytes; no `target` key is added                                                                  |
-| `-o yaml`                      | the same document as YAML                                                                                 |
-| `--dry-run`, text presentation | `Dry run: <METHOD> <path>`, then `Query`, `Headers` and indented JSON `Body` blocks                       |
-| `--dry-run` otherwise          | the request preview as JSON                                                                               |
+| Mode                           | stdout                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------------- |
+| text presentation              | the response as labelled fields and tables; an empty response prints `Done.`        |
+| JSON presentation              | the API's JSON response bytes, unchanged                                            |
+| `-o json`                      | the same bytes; no `target` key is added                                            |
+| `-o yaml`                      | the same document as YAML                                                           |
+| `--dry-run`, text presentation | `Dry run: <METHOD> <path>`, then `Query`, `Headers` and indented JSON `Body` blocks |
+| `--dry-run` otherwise          | the request preview as JSON                                                         |
 
-When the presentation is text and `--output-format` is `text`, each request, and with `--wait` the
-whole polling phase, runs under a task that shows the polled status after 200 ms. On a terminal it
+When the presentation is text and `--output-format` is `text`, the request runs under a task. On a terminal it
 is a spinner; when stdout is not a terminal (for example `--output-format text` piped) the task
 message prints as a step line on stdout before the response. JSON and YAML output show no progress.

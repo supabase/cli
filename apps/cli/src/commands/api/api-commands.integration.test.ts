@@ -71,10 +71,10 @@ const entryOf = (path: string): ApiCommandEntry => {
 };
 
 const enable = entryOf("warehouse enable");
-const status = entryOf("warehouse status");
+const status = entryOf("warehouse setups get");
 
 const ENABLE_PATH = `/v2/projects/${VALID_REF}/warehouse/enable`;
-const STATUS_PATH = `/v2/projects/${VALID_REF}/warehouse/setups/current`;
+const SETUP_PATH = `/v2/projects/${VALID_REF}/warehouse/setups/current`;
 const TARGET_LOOKUP_PATH = `/v1/projects/${VALID_REF}`;
 
 const SEL = "ab".repeat(32);
@@ -304,6 +304,70 @@ const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
   Effect.raceFirst(Effect.forever(TestClock.adjust("2 seconds")), Fiber.await(fiber));
 
 describe("generated warehouse commands", () => {
+  describe("consolidated warehouse status", () => {
+    const body = {
+      data: {
+        type: "warehouse_context",
+        id: VALID_REF,
+        attributes: {
+          enabled: true,
+          status: "degraded",
+          configured_readiness: "not_ready",
+          query_connectivity: "not_checked",
+          observed_at: "2026-11-17T10:00:00Z",
+          tables: { status: "available", items: [] },
+          replication: {
+            status: "unavailable",
+            unavailable_reason: "observation_unavailable",
+            observed_at: null,
+            apply_lag: null,
+          },
+          capabilities: { replication_add: false, replication_remove: true, table_resync: false },
+          future_field: { retained: true },
+        },
+      },
+    };
+
+    it.effect.each(["json", "yaml"] as const)(
+      "preserves zero targets, capabilities and unavailable observations as %s",
+      (format) => {
+        const { out, sent, run } = setup(
+          ["warehouse", "status", ...(format === "yaml" ? ["-o", "yaml"] : [])],
+          { route: ok(body) },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toEqual([
+            {
+              method: "GET",
+              path: `/v2/projects/${VALID_REF}/warehouse/context`,
+              search: "",
+              body: undefined,
+            },
+          ]);
+          expect(
+            format === "yaml" ? Bun.YAML.parse(out.stdoutText) : decodeJson(out.stdoutText),
+          ).toEqual(body);
+          expect(out.progressEvents).toEqual([]);
+        });
+      },
+    );
+
+    it.effect("labels configured readiness and unavailable observations in terminal output", () => {
+      const { out, run } = setup(["warehouse", "status"], { route: ok(body), stdoutIsTty: true });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toMatch(/Enabled\s+yes/);
+        expect(out.stdoutText).toMatch(/Configured readiness\s+not_ready/);
+        expect(out.stdoutText).toMatch(/Query connectivity\s+not_checked/);
+        expect(out.stdoutText).toMatch(/Status\s+unavailable/);
+        expect(out.stdoutText).toMatch(/Unavailable reason\s+observation_unavailable/);
+        expect(out.stdoutText).toMatch(/Replication add\s+no/);
+        expect(out.stdoutText).toMatch(/Replication remove\s+yes/);
+        expect(out.stdoutText).toMatch(/Observed at\s+2026-11-17T10:00:00Z/);
+      });
+    });
+  });
   describe("warehouse disable", () => {
     const operationId = "7579647f-2cdc-466c-982e-425958a2f985";
     const disablePath = `/v2/projects/${VALID_REF}/warehouse`;
@@ -663,14 +727,17 @@ describe("generated warehouse commands", () => {
     );
 
     it.effect("previews a read with a null body", () => {
-      const { out, run } = setup(["warehouse", "status", "--inspect-fdw", "false", "--dry-run"], {
-        route: ok({}),
-      });
+      const { out, run } = setup(
+        ["warehouse", "setups", "get", "--inspect-fdw", "false", "--dry-run"],
+        {
+          route: ok({}),
+        },
+      );
       return Effect.gen(function* () {
         yield* run;
         expect(decodeJson(out.stdoutText)).toEqual({
           method: "GET",
-          path: STATUS_PATH,
+          path: SETUP_PATH,
           query: { inspect_fdw: "false" },
           headers: {},
           body: null,
@@ -698,7 +765,7 @@ describe("generated warehouse commands", () => {
     it.effect.each([
       { name: "a send", argv: ["warehouse", "enable", "--schema", "public"] },
       { name: "a dry run", argv: ["warehouse", "enable", "--schema", "public", "--dry-run"] },
-      { name: "a read", argv: ["warehouse", "status"] },
+      { name: "a read", argv: ["warehouse", "setups", "get"] },
     ])("rejects -o env for $name as a usage error and sends nothing", ({ argv }) => {
       const { sent, run } = setup([...argv, "-o", "env"], { yes: true, route: accepted });
       return Effect.gen(function* () {
@@ -895,21 +962,23 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("sends status --inspect-fdw false as the inspect_fdw=false query", () => {
-      const { sent, out, run } = setup(["warehouse", "status", "--inspect-fdw", "false"], {
+    it.effect("sends setups get --inspect-fdw false as the inspect_fdw=false query", () => {
+      const { sent, out, run } = setup(["warehouse", "setups", "get", "--inspect-fdw", "false"], {
         route: ok(statusBody("succeeded")),
       });
       return Effect.gen(function* () {
         yield* run;
         expect(sent.map((request) => request.method)).toEqual(["GET"]);
-        expect(sent[0]?.path).toBe(STATUS_PATH);
+        expect(sent[0]?.path).toBe(SETUP_PATH);
         expect(sent[0]?.search).toBe("inspect_fdw=false");
         expect(decodeJson(out.stdoutText)).toEqual(statusBody("succeeded"));
       });
     });
 
     it.effect("sends no query when no status flag is given", () => {
-      const { sent, run } = setup(["warehouse", "status"], { route: ok(statusBody("succeeded")) });
+      const { sent, run } = setup(["warehouse", "setups", "get"], {
+        route: ok(statusBody("succeeded")),
+      });
       return Effect.gen(function* () {
         yield* run;
         expect(sent[0]?.search).toBe("");
@@ -947,7 +1016,7 @@ describe("generated warehouse commands", () => {
         yield* Fiber.join(fiber);
         const gets = sent.filter((request) => request.method === "GET");
         expect(gets).toHaveLength(3);
-        expect(gets.every((request) => request.path === STATUS_PATH)).toBe(true);
+        expect(gets.every((request) => request.path === SETUP_PATH)).toBe(true);
         expect(gets.every((request) => request.search === `selection_id=${SEL}`)).toBe(true);
         expect(out.stdoutText).toBe(encodeJson(statusBody("succeeded")));
       });
@@ -1080,7 +1149,7 @@ describe("generated warehouse commands", () => {
         ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "10s"],
         { yes: true, route: enableThenPoll([{ status: 200, body: statusBody("pending") }]) },
       );
-      const command = `supabase warehouse status --selection-id ${SEL} --remote=${VALID_REF}`;
+      const command = `supabase warehouse setups get --selection-id ${SEL} --remote=${VALID_REF}`;
       return Effect.gen(function* () {
         for (const { run } of [failing, stalling]) {
           const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
@@ -1112,7 +1181,7 @@ describe("generated warehouse commands", () => {
     });
 
     describe("on a read that polls itself", () => {
-      const statusWait = ["warehouse", "status", "--wait"];
+      const statusWait = ["warehouse", "setups", "get", "--wait"];
       const reads = (...replies: ReadonlyArray<Reply>): Route => {
         let read = 0;
         return () => replies[Math.min(read++, replies.length - 1)] ?? { status: 200, body: {} };
@@ -1131,7 +1200,7 @@ describe("generated warehouse commands", () => {
           yield* driveClock(fiber);
           yield* Fiber.join(fiber);
           expect(sent.map((request) => request.method)).toEqual(["GET", "GET", "GET"]);
-          expect(sent.every((request) => request.path === STATUS_PATH)).toBe(true);
+          expect(sent.every((request) => request.path === SETUP_PATH)).toBe(true);
           expect(out.stdoutText).toBe(encodeJson(statusBody("succeeded")));
         });
       });
@@ -1147,7 +1216,7 @@ describe("generated warehouse commands", () => {
           expect(failure).toBeInstanceOf(ApiCommandOperationFailedError);
           expect(failure).toMatchObject({
             message: expect.stringContaining("pipeline crashed"),
-            hint: expect.stringContaining(`supabase warehouse status --remote=${VALID_REF}`),
+            hint: expect.stringContaining(`supabase warehouse setups get --remote=${VALID_REF}`),
           });
         });
       });
@@ -1162,7 +1231,7 @@ describe("generated warehouse commands", () => {
           const failure = yield* Fiber.join(fiber);
           expect(failure).toBeInstanceOf(ApiCommandWaitTimeoutError);
           expect(failure).toMatchObject({
-            hint: expect.stringContaining(`supabase warehouse status --remote=${VALID_REF}`),
+            hint: expect.stringContaining(`supabase warehouse setups get --remote=${VALID_REF}`),
           });
           expect(sent.length).toBeGreaterThan(1);
         });
@@ -1225,7 +1294,7 @@ describe("generated warehouse commands", () => {
       ].join("\n") + "\n";
 
     it.effect("renders the status as text on a terminal by default", () => {
-      const { out, run } = setup(["warehouse", "status"], {
+      const { out, run } = setup(["warehouse", "setups", "get"], {
         route: ok(RICH_STATUS),
         stdoutIsTty: true,
       });
@@ -1236,7 +1305,7 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect("keeps the API bytes by default when stdout is piped", () => {
-      const { out, run } = setup(["warehouse", "status"], { route: ok(RICH_STATUS) });
+      const { out, run } = setup(["warehouse", "setups", "get"], { route: ok(RICH_STATUS) });
       return Effect.gen(function* () {
         yield* run;
         expect(out.stdoutText).toBe(encodeJson(RICH_STATUS));
@@ -1244,7 +1313,7 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect("renders text through a pipe when --output-format text is explicit", () => {
-      const { out, run } = setup(["warehouse", "status", "--output-format", "text"], {
+      const { out, run } = setup(["warehouse", "setups", "get", "--output-format", "text"], {
         route: ok(RICH_STATUS),
       });
       return Effect.gen(function* () {
@@ -1257,7 +1326,7 @@ describe("generated warehouse commands", () => {
       "prints only the text rendering for -o pretty under --output-format stream-json",
       () => {
         const { out, run } = setup(
-          ["warehouse", "status", "-o", "pretty", "--output-format", "stream-json"],
+          ["warehouse", "setups", "get", "-o", "pretty", "--output-format", "stream-json"],
           { route: ok(RICH_STATUS), outputFormat: "stream-json", stdoutIsTty: true },
         );
         return Effect.gen(function* () {
@@ -1269,7 +1338,7 @@ describe("generated warehouse commands", () => {
     );
 
     it.effect("keeps the API bytes for -o json on a terminal", () => {
-      const { out, run } = setup(["warehouse", "status", "-o", "json"], {
+      const { out, run } = setup(["warehouse", "setups", "get", "-o", "json"], {
         route: ok(RICH_STATUS),
         stdoutIsTty: true,
       });
@@ -1280,7 +1349,7 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect("shows the request as one task that is cleared when it succeeds", () => {
-      const { out, run } = setup(["warehouse", "status"], {
+      const { out, run } = setup(["warehouse", "setups", "get"], {
         route: ok(RICH_STATUS),
         stdoutIsTty: true,
       });
@@ -1359,7 +1428,8 @@ describe("generated warehouse commands", () => {
       const { out, sent, run } = setup(
         [
           "warehouse",
-          "status",
+          "setups",
+          "get",
           "--inspect-fdw",
           "false",
           "--selection-id",
@@ -1375,7 +1445,7 @@ describe("generated warehouse commands", () => {
         expect(sent).toEqual([]);
         expect(out.stdoutText).toBe(
           [
-            `Dry run: GET ${STATUS_PATH}`,
+            `Dry run: GET ${SETUP_PATH}`,
             "Query",
             "  inspect_fdw   false",
             `  selection_id  ${SEL}`,
@@ -1471,13 +1541,14 @@ describe("generated warehouse commands", () => {
         );
         const tree = commandTreeFor({ warehouseEnabled: true });
         expect(tree.has("warehouse enable")).toBe(true);
+        expect(tree.has("warehouse setups get")).toBe(true);
         expect(tree.has("warehouse status")).toBe(true);
       }),
     );
 
     it("marks each mounted leaf with its operation and experimental feature stage", () => {
       const tree = commandTreeFor({ warehouseEnabled: true });
-      for (const entry of [enable, status]) {
+      for (const entry of apiCommands) {
         const command = tree.get(entry.command.join(" "))?.command;
         if (command === undefined) throw new Error(`${entry.command.join(" ")} is not mounted`);
         expect(Option.map(readApiCommand(command), (api) => api.operationId)).toEqual(

@@ -16,7 +16,7 @@ const REF = "abcdefghijklmnopqrst";
 const ACCESS_TOKEN = `sbp_${"a".repeat(40)}`;
 const SEL = "ab".repeat(32);
 const ENABLE_PATH = `/v2/projects/${REF}/warehouse/enable`;
-const STATUS_PATH = `/v2/projects/${REF}/warehouse/setups/current`;
+const SETUP_PATH = `/v2/projects/${REF}/warehouse/setups/current`;
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -106,9 +106,9 @@ const runWarehouse = (
     return { result, requests, bodies };
   }).pipe(Effect.scoped);
 
-it.live("warehouse status reports a 409 as a conflict failure document on stderr", () =>
+it.live("warehouse setups get reports a 409 as a conflict failure document on stderr", () =>
   Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["status", "-o", "json"], () =>
+    const { result } = yield* runWarehouse(["setups", "get", "-o", "json"], () =>
       json(409, {
         error: {
           code: "selection_conflict",
@@ -130,22 +130,38 @@ it.live("warehouse status reports a 409 as a conflict failure document on stderr
   }).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.live("warehouse status keeps the API bytes when stdout is piped", () =>
+it.live("warehouse status keeps consolidated API bytes when stdout is piped", () =>
   Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["status"], () => statusBody("succeeded"));
+    const response = json(200, {
+      data: {
+        type: "warehouse_context",
+        id: REF,
+        attributes: {
+          enabled: true,
+          status: "ready",
+          configured_readiness: "ready",
+          query_connectivity: "not_checked",
+          tables: { status: "available", items: [] },
+          replication: { status: "not_started", apply_lag: null },
+          capabilities: { replication_add: false, replication_remove: false },
+        },
+      },
+    });
+    const { result, requests } = yield* runWarehouse(["status"], () => response);
 
     requireCliSuccess(result, "warehouse status");
-    expect(result.stdout, result.stderr).toBe(statusBody("succeeded").body);
+    expect(result.stdout, result.stderr).toBe(response.body);
+    expect(requests).toEqual([`GET /v2/projects/${REF}/warehouse/context`]);
   }).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.live("warehouse status --output-format text renders the response for people", () =>
+it.live("warehouse setups get --output-format text renders the response for people", () =>
   Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["status", "--output-format", "text"], () =>
+    const { result } = yield* runWarehouse(["setups", "get", "--output-format", "text"], () =>
       statusBody("succeeded"),
     );
 
-    requireCliSuccess(result, "warehouse status --output-format text");
+    requireCliSuccess(result, "warehouse setups get --output-format text");
     expect(result.exitCode, result.stderr).toBe(0);
     expect(
       result.stdout.endsWith(
@@ -186,7 +202,7 @@ it.live("warehouse enable --wait prints the final status read", () =>
 
     requireCliSuccess(result, "warehouse enable --wait");
     expect(result.stdout, result.stderr).toBe(statusBody("succeeded").body);
-    expect(requests).toEqual([`POST ${ENABLE_PATH}`, `GET ${STATUS_PATH}`]);
+    expect(requests).toEqual([`POST ${ENABLE_PATH}`, `GET ${SETUP_PATH}`]);
   }).pipe(Effect.provide(BunServices.layer)),
 );
 

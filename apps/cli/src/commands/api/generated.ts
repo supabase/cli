@@ -167,7 +167,7 @@ export const apiCommands = [
     },
   },
   {
-    command: ["warehouse", "status"],
+    command: ["warehouse", "setups", "get"],
     operationId: "v2-get-warehouse-setup",
     definition: "v2GetWarehouseSetup",
     method: "GET",
@@ -227,6 +227,30 @@ export const apiCommands = [
       failed: ["failed"],
       error: "/data/attributes/status_error",
     },
+  },
+  {
+    command: ["warehouse", "status"],
+    operationId: "v2-get-warehouse-context",
+    definition: "v2GetWarehouseContext",
+    method: "GET",
+    apiPath: "/v2/projects/{ref}/warehouse/context",
+    summary: "Get consolidated Warehouse status and capabilities",
+    description:
+      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.",
+    readOnly: true,
+    feature: "warehouse",
+    response: {
+      status: 200,
+      kind: "json",
+    },
+    flags: [],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+    ],
   },
   {
     command: ["warehouse", "teardowns", "get"],

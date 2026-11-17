@@ -246,6 +246,411 @@ export const apiCommandSchemas = {
       required: ["data"],
     },
   },
+  "v2-get-warehouse-context": {
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          properties: {
+            attributes: {
+              properties: {
+                capabilities: {
+                  description:
+                    "Complete operations supported by this API, not caller authorization. Each operation still requires its feature, entitlement and project permission checks.",
+                  properties: {
+                    context: {
+                      type: "boolean",
+                    },
+                    query_explain: {
+                      type: "boolean",
+                    },
+                    replication_add: {
+                      type: "boolean",
+                    },
+                    replication_remove: {
+                      type: "boolean",
+                    },
+                    table_layout_read: {
+                      type: "boolean",
+                    },
+                    table_layout_update: {
+                      type: "boolean",
+                    },
+                    table_resync: {
+                      type: "boolean",
+                    },
+                    workload_metrics: {
+                      type: "boolean",
+                    },
+                  },
+                  required: [
+                    "context",
+                    "query_explain",
+                    "replication_add",
+                    "replication_remove",
+                    "table_layout_read",
+                    "table_layout_update",
+                    "table_resync",
+                    "workload_metrics",
+                  ],
+                  type: "object",
+                },
+                compute: {
+                  description:
+                    "Configured Warehouse compute and region, which may differ from the source database region. Live availability and capacity are not reported.",
+                  properties: {
+                    observed_at: {
+                      description:
+                        "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+                      format: "date-time",
+                      pattern:
+                        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      type: ["string", "null"],
+                    },
+                    region: {
+                      type: ["string", "null"],
+                    },
+                    routing_status: {
+                      enum: ["error", null, "pending", "ready", "removed"],
+                      type: ["string", "null"],
+                    },
+                    status: {
+                      enum: ["available", "not_provisioned", "unavailable"],
+                      type: "string",
+                    },
+                    unavailable_reason: {
+                      enum: [
+                        "assignment_unavailable",
+                        "cleanup_failed",
+                        "cleanup_in_progress",
+                        "identity_mismatch",
+                        null,
+                        "observation_unavailable",
+                      ],
+                      type: ["string", "null"],
+                    },
+                  },
+                  required: [
+                    "observed_at",
+                    "region",
+                    "routing_status",
+                    "status",
+                    "unavailable_reason",
+                  ],
+                  type: "object",
+                },
+                configured_readiness: {
+                  description:
+                    "Readiness inferred from configuration and replication observations; no query is executed.",
+                  enum: ["not_ready", "ready", "unavailable"],
+                  type: "string",
+                },
+                enabled: {
+                  description:
+                    "Whether Warehouse is enabled, independently of selected table count. Null means provisioning could not be determined.",
+                  type: ["boolean", "null"],
+                },
+                lifecycle: {
+                  properties: {
+                    delete_data: {
+                      type: "boolean",
+                    },
+                    status: {
+                      enum: ["deletion_failed", "disabled", "disabling"],
+                      type: "string",
+                    },
+                    updated_at: {
+                      format: "date-time",
+                      pattern:
+                        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      type: "string",
+                    },
+                  },
+                  required: ["delete_data", "status", "updated_at"],
+                  type: ["object", "null"],
+                },
+                observed_at: {
+                  format: "date-time",
+                  pattern:
+                    "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                  type: "string",
+                },
+                pipeline: {
+                  properties: {
+                    id: {
+                      minLength: 1,
+                      type: "string",
+                    },
+                    observed_at: {
+                      description:
+                        "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+                      format: "date-time",
+                      pattern:
+                        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      type: ["string", "null"],
+                    },
+                    status: {
+                      enum: [
+                        "failed",
+                        "started",
+                        "starting",
+                        "stopped",
+                        "stopping",
+                        "unavailable",
+                        "unknown",
+                      ],
+                      type: "string",
+                    },
+                    unavailable_reason: {
+                      enum: [
+                        "assignment_unavailable",
+                        "cleanup_failed",
+                        "cleanup_in_progress",
+                        "identity_mismatch",
+                        null,
+                        "observation_unavailable",
+                      ],
+                      type: ["string", "null"],
+                    },
+                  },
+                  required: ["id", "observed_at", "status", "unavailable_reason"],
+                  type: ["object", "null"],
+                },
+                project_ref: {
+                  description: "Project ref",
+                  maxLength: 20,
+                  minLength: 20,
+                  pattern: "^[a-z]+$",
+                  type: "string",
+                  examples: ["abcdefghijklmnopqrst"],
+                },
+                query_connectivity: {
+                  enum: ["not_checked"],
+                  type: "string",
+                },
+                replication: {
+                  properties: {
+                    apply_lag: {
+                      description:
+                        "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+                      properties: {
+                        active: {
+                          type: "boolean",
+                        },
+                        feedback_age_ms: {
+                          minimum: 0,
+                          type: ["number", "null"],
+                        },
+                        flush_lag_ms: {
+                          minimum: 0,
+                          type: ["number", "null"],
+                        },
+                        wal_status: {
+                          enum: ["extended", "lost", null, "reserved", "unknown", "unreserved"],
+                          type: ["string", "null"],
+                        },
+                        write_lag_ms: {
+                          minimum: 0,
+                          type: ["number", "null"],
+                        },
+                      },
+                      required: [
+                        "active",
+                        "feedback_age_ms",
+                        "flush_lag_ms",
+                        "wal_status",
+                        "write_lag_ms",
+                      ],
+                      type: ["object", "null"],
+                    },
+                    observed_at: {
+                      description:
+                        "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+                      format: "date-time",
+                      pattern:
+                        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      type: ["string", "null"],
+                    },
+                    status: {
+                      enum: [
+                        "available",
+                        "not_provisioned",
+                        "not_started",
+                        "stopped",
+                        "unavailable",
+                      ],
+                      type: "string",
+                    },
+                    unavailable_reason: {
+                      enum: [
+                        "assignment_unavailable",
+                        "cleanup_failed",
+                        "cleanup_in_progress",
+                        "identity_mismatch",
+                        null,
+                        "observation_unavailable",
+                      ],
+                      type: ["string", "null"],
+                    },
+                  },
+                  required: ["apply_lag", "observed_at", "status", "unavailable_reason"],
+                  type: "object",
+                },
+                status: {
+                  description:
+                    "Warehouse setup and replication status. Ready means the Warehouse connection is configured and tables are replicating ongoing changes. It does not guarantee that a query will succeed.",
+                  enum: [
+                    "degraded",
+                    "disabled",
+                    "disabling",
+                    "not_provisioned",
+                    "ready",
+                    "starting",
+                    "stopped",
+                    "stopping",
+                    "unavailable",
+                  ],
+                  type: "string",
+                },
+                tables: {
+                  properties: {
+                    items: {
+                      items: {
+                        properties: {
+                          id: {
+                            maximum: 9007199254740991,
+                            type: "integer",
+                            exclusiveMinimum: 0,
+                          },
+                          name: {
+                            type: "string",
+                          },
+                          replication_state: {
+                            enum: [
+                              "copied_table",
+                              "copying_table",
+                              "error",
+                              "following_wal",
+                              null,
+                              "queued",
+                            ],
+                            type: ["string", "null"],
+                          },
+                          schema: {
+                            type: "string",
+                          },
+                          sync_lag: {
+                            description:
+                              "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+                            properties: {
+                              active: {
+                                type: "boolean",
+                              },
+                              feedback_age_ms: {
+                                minimum: 0,
+                                type: ["number", "null"],
+                              },
+                              flush_lag_ms: {
+                                minimum: 0,
+                                type: ["number", "null"],
+                              },
+                              wal_status: {
+                                enum: [
+                                  "extended",
+                                  "lost",
+                                  null,
+                                  "reserved",
+                                  "unknown",
+                                  "unreserved",
+                                ],
+                                type: ["string", "null"],
+                              },
+                              write_lag_ms: {
+                                minimum: 0,
+                                type: ["number", "null"],
+                              },
+                            },
+                            required: [
+                              "active",
+                              "feedback_age_ms",
+                              "flush_lag_ms",
+                              "wal_status",
+                              "write_lag_ms",
+                            ],
+                            type: ["object", "null"],
+                          },
+                        },
+                        required: ["id", "name", "replication_state", "schema", "sync_lag"],
+                        type: "object",
+                      },
+                      type: "array",
+                    },
+                    observed_at: {
+                      description:
+                        "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+                      format: "date-time",
+                      pattern:
+                        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      type: ["string", "null"],
+                    },
+                    status: {
+                      enum: ["available", "not_provisioned", "unavailable"],
+                      type: "string",
+                    },
+                    unavailable_reason: {
+                      enum: [
+                        "assignment_unavailable",
+                        "cleanup_failed",
+                        "cleanup_in_progress",
+                        "identity_mismatch",
+                        null,
+                        "observation_unavailable",
+                      ],
+                      type: ["string", "null"],
+                    },
+                  },
+                  required: ["items", "observed_at", "status", "unavailable_reason"],
+                  type: "object",
+                },
+              },
+              required: [
+                "capabilities",
+                "compute",
+                "configured_readiness",
+                "enabled",
+                "lifecycle",
+                "observed_at",
+                "pipeline",
+                "project_ref",
+                "query_connectivity",
+                "replication",
+                "status",
+                "tables",
+              ],
+              type: "object",
+            },
+            id: {
+              description: "Project ref",
+              maxLength: 20,
+              minLength: 20,
+              pattern: "^[a-z]+$",
+              type: "string",
+              examples: ["abcdefghijklmnopqrst"],
+            },
+            type: {
+              description: "Resource type.",
+              enum: ["warehouse_context"],
+              type: "string",
+            },
+          },
+          required: ["attributes", "id", "type"],
+          type: "object",
+        },
+      },
+      required: ["data"],
+      type: "object",
+    },
+  },
   "v2-get-warehouse-setup": {
     result: {
       $schema: "https://json-schema.org/draft/2020-12/schema",

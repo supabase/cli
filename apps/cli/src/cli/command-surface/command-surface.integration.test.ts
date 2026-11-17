@@ -48,6 +48,8 @@ describe("command surface", () => {
         "warehouse",
         "warehouse disable",
         "warehouse enable",
+        "warehouse setups",
+        "warehouse setups get",
         "warehouse status",
         "warehouse teardowns",
         "warehouse teardowns get",
@@ -115,6 +117,25 @@ describe("command surface", () => {
       expect(globalFlags["output-format"]).toMatchObject({ type: "choice" });
       expect(globalFlags["output-format"]?.choices).toContain("json");
       expect(Object.keys(commands["projects list"]?.flags ?? {})).not.toContain("yes");
+    }),
+  );
+
+  it.effect("separates consolidated status from the identity-bound setup waiter", () =>
+    Effect.gen(function* () {
+      const { variants } = yield* Effect.promise(() => surface);
+      const status = variants.warehouse["warehouse status"];
+      expect(status).toMatchObject({
+        api: { operationId: "v2-get-warehouse-context" },
+        target: { group: "hosted", consent: "none" },
+        stage: { status: "experimental", feature: "warehouse" },
+      });
+      expect(status?.flags).not.toHaveProperty("inspect-fdw");
+      expect(status?.flags).not.toHaveProperty("selection-id");
+      expect(status?.flags).not.toHaveProperty("wait");
+      expect(variants.warehouse["warehouse setups get"]).toMatchObject({
+        api: { operationId: "v2-get-warehouse-setup" },
+        flags: { wait: { type: "boolean" }, "selection-id": { required: false } },
+      });
     }),
   );
 

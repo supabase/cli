@@ -14133,6 +14133,363 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     }),
   }),
 });
+export const V2GetWarehouseContextInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2GetWarehouseContextOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      capabilities: Schema.Struct({
+        context: Schema.Boolean,
+        query_explain: Schema.Boolean,
+        replication_add: Schema.Boolean,
+        replication_remove: Schema.Boolean,
+        table_layout_read: Schema.Boolean,
+        table_layout_update: Schema.Boolean,
+        table_resync: Schema.Boolean,
+        workload_metrics: Schema.Boolean,
+      }).annotate({
+        description:
+          "Complete operations supported by this API, not caller authorization. Each operation still requires its feature, entitlement and project permission checks.",
+      }),
+      compute: Schema.Struct({
+        observed_at: Schema.Union([
+          Schema.String.annotate({
+            description:
+              "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+            format: "date-time",
+          }),
+          Schema.Null,
+        ]),
+        region: Schema.Union([Schema.String, Schema.Null]),
+        routing_status: Schema.Union([
+          Schema.Union([Schema.Literals(["error", "pending", "ready", "removed"]), Schema.Null]),
+          OpenString,
+        ]),
+        status: Schema.Union([
+          Schema.Literals(["available", "not_provisioned", "unavailable"]),
+          OpenString,
+        ]),
+        unavailable_reason: Schema.Union([
+          Schema.Union([
+            Schema.Literals([
+              "assignment_unavailable",
+              "cleanup_failed",
+              "cleanup_in_progress",
+              "identity_mismatch",
+              "observation_unavailable",
+            ]),
+            Schema.Null,
+          ]),
+          OpenString,
+        ]),
+      }).annotate({
+        description:
+          "Configured Warehouse compute and region, which may differ from the source database region. Live availability and capacity are not reported.",
+      }),
+      configured_readiness: Schema.Union([
+        Schema.Literals(["not_ready", "ready", "unavailable"]).annotate({
+          description:
+            "Readiness inferred from configuration and replication observations; no query is executed.",
+        }),
+        OpenString,
+      ]),
+      enabled: Schema.Union([
+        Schema.Boolean.annotate({
+          description:
+            "Whether Warehouse is enabled, independently of selected table count. Null means provisioning could not be determined.",
+        }),
+        Schema.Null,
+      ]),
+      lifecycle: Schema.Union([
+        Schema.Struct({
+          delete_data: Schema.Boolean,
+          status: Schema.Union([
+            Schema.Literals(["deletion_failed", "disabled", "disabling"]),
+            OpenString,
+          ]),
+          updated_at: Schema.String.annotate({ format: "date-time" }),
+        }),
+        Schema.Null,
+      ]),
+      observed_at: Schema.String.annotate({ format: "date-time" }),
+      pipeline: Schema.Union([
+        Schema.Struct({
+          id: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          observed_at: Schema.Union([
+            Schema.String.annotate({
+              description:
+                "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+              format: "date-time",
+            }),
+            Schema.Null,
+          ]),
+          status: Schema.Union([
+            Schema.Literals([
+              "failed",
+              "started",
+              "starting",
+              "stopped",
+              "stopping",
+              "unavailable",
+              "unknown",
+            ]),
+            OpenString,
+          ]),
+          unavailable_reason: Schema.Union([
+            Schema.Union([
+              Schema.Literals([
+                "assignment_unavailable",
+                "cleanup_failed",
+                "cleanup_in_progress",
+                "identity_mismatch",
+                "observation_unavailable",
+              ]),
+              Schema.Null,
+            ]),
+            OpenString,
+          ]),
+        }),
+        Schema.Null,
+      ]),
+      project_ref: Schema.String.annotate({ description: "Project ref" })
+        .check(
+          Schema.isMinCodePoints(20).annotate({
+            expected: "a string with at least 20 code points",
+          }),
+        )
+        .check(
+          Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+            expected: "a string matching the RegExp ^[a-z]+$",
+          }),
+        ),
+      query_connectivity: Schema.Literal("not_checked"),
+      replication: Schema.Struct({
+        apply_lag: Schema.Union([
+          Schema.Struct({
+            active: Schema.Boolean,
+            feedback_age_ms: Schema.Union([
+              Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ).check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              ),
+              Schema.Null,
+            ]),
+            flush_lag_ms: Schema.Union([
+              Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ).check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              ),
+              Schema.Null,
+            ]),
+            wal_status: Schema.Union([
+              Schema.Union([
+                Schema.Literals(["extended", "lost", "reserved", "unknown", "unreserved"]),
+                Schema.Null,
+              ]),
+              OpenString,
+            ]),
+            write_lag_ms: Schema.Union([
+              Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ).check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              ),
+              Schema.Null,
+            ]),
+          }).annotate({
+            description:
+              "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+          }),
+          Schema.Null,
+        ]),
+        observed_at: Schema.Union([
+          Schema.String.annotate({
+            description:
+              "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+            format: "date-time",
+          }),
+          Schema.Null,
+        ]),
+        status: Schema.Union([
+          Schema.Literals([
+            "available",
+            "not_provisioned",
+            "not_started",
+            "stopped",
+            "unavailable",
+          ]),
+          OpenString,
+        ]),
+        unavailable_reason: Schema.Union([
+          Schema.Union([
+            Schema.Literals([
+              "assignment_unavailable",
+              "cleanup_failed",
+              "cleanup_in_progress",
+              "identity_mismatch",
+              "observation_unavailable",
+            ]),
+            Schema.Null,
+          ]),
+          OpenString,
+        ]),
+      }),
+      status: Schema.Union([
+        Schema.Literals([
+          "degraded",
+          "disabled",
+          "disabling",
+          "not_provisioned",
+          "ready",
+          "starting",
+          "stopped",
+          "stopping",
+          "unavailable",
+        ]).annotate({
+          description:
+            "Warehouse setup and replication status. Ready means the Warehouse connection is configured and tables are replicating ongoing changes. It does not guarantee that a query will succeed.",
+        }),
+        OpenString,
+      ]),
+      tables: Schema.Struct({
+        items: Schema.Array(
+          Schema.Struct({
+            id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              )
+              .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+            name: Schema.String,
+            replication_state: Schema.Union([
+              Schema.Union([
+                Schema.Literals([
+                  "copied_table",
+                  "copying_table",
+                  "error",
+                  "following_wal",
+                  "queued",
+                ]),
+                Schema.Null,
+              ]),
+              OpenString,
+            ]),
+            schema: Schema.String,
+            sync_lag: Schema.Union([
+              Schema.Struct({
+                active: Schema.Boolean,
+                feedback_age_ms: Schema.Union([
+                  Schema.Number.check(
+                    Schema.isFinite().annotate({ expected: "a finite number" }),
+                  ).check(
+                    Schema.isGreaterThanOrEqualTo(0).annotate({
+                      expected: "a value greater than or equal to 0",
+                    }),
+                  ),
+                  Schema.Null,
+                ]),
+                flush_lag_ms: Schema.Union([
+                  Schema.Number.check(
+                    Schema.isFinite().annotate({ expected: "a finite number" }),
+                  ).check(
+                    Schema.isGreaterThanOrEqualTo(0).annotate({
+                      expected: "a value greater than or equal to 0",
+                    }),
+                  ),
+                  Schema.Null,
+                ]),
+                wal_status: Schema.Union([
+                  Schema.Union([
+                    Schema.Literals(["extended", "lost", "reserved", "unknown", "unreserved"]),
+                    Schema.Null,
+                  ]),
+                  OpenString,
+                ]),
+                write_lag_ms: Schema.Union([
+                  Schema.Number.check(
+                    Schema.isFinite().annotate({ expected: "a finite number" }),
+                  ).check(
+                    Schema.isGreaterThanOrEqualTo(0).annotate({
+                      expected: "a value greater than or equal to 0",
+                    }),
+                  ),
+                  Schema.Null,
+                ]),
+              }).annotate({
+                description:
+                  "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+              }),
+              Schema.Null,
+            ]),
+          }),
+        ),
+        observed_at: Schema.Union([
+          Schema.String.annotate({
+            description:
+              "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+            format: "date-time",
+          }),
+          Schema.Null,
+        ]),
+        status: Schema.Union([
+          Schema.Literals(["available", "not_provisioned", "unavailable"]),
+          OpenString,
+        ]),
+        unavailable_reason: Schema.Union([
+          Schema.Union([
+            Schema.Literals([
+              "assignment_unavailable",
+              "cleanup_failed",
+              "cleanup_in_progress",
+              "identity_mismatch",
+              "observation_unavailable",
+            ]),
+            Schema.Null,
+          ]),
+          OpenString,
+        ]),
+      }),
+    }),
+    id: Schema.String.annotate({ description: "Project ref" })
+      .check(
+        Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+      )
+      .check(
+        Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+          expected: "a string matching the RegExp ^[a-z]+$",
+        }),
+      ),
+    type: Schema.Literal("warehouse_context").annotate({ description: "Resource type." }),
+  }),
+});
 export const V2GetWarehouseSetupInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -19392,6 +19749,7 @@ export const openApiOperationIdMap = {
   "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
+  "v2-get-warehouse-context": "v2GetWarehouseContext",
   "v2-get-warehouse-setup": "v2GetWarehouseSetup",
   "v2-get-warehouse-teardown": "v2GetWarehouseTeardown",
   "v2-list-all-compute-instances": "v2ListAllComputeInstances",
@@ -22551,6 +22909,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
+  },
+  v2GetWarehouseContext: {
+    id: "v2GetWarehouseContext",
+    description:
+      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/context",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseContextInput,
+    outputSchema: V2GetWarehouseContextOutput,
   },
   v2GetWarehouseSetup: {
     id: "v2GetWarehouseSetup",
