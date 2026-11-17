@@ -144,6 +144,8 @@ const engineKind = (
           ? "port-allocation"
           : undefined;
 
+const DAEMON_PROBE_TIMEOUT = "2 seconds";
+
 /** Names the stalled engine subcommand and its latest stderr, never the full argv. */
 const commandTimedOut = (
   args: ReadonlyArray<string>,
@@ -544,18 +546,6 @@ export const makeContainerRuntime = (options: {
         ...commandOptions,
       });
 
-    // Separates a daemon-wide stall from one engine call stuck on a single object.
-    const daemonState = spawner
-      .string(command(["info", "--format", "{{.ServerVersion}} running={{.ContainersRunning}}"]))
-      .pipe(
-        Effect.timeout("5 seconds"),
-        Effect.map((info) => `responsive (${info.trim()})`),
-        Effect.orElseSucceed(() => "unresponsive to info within 5s"),
-        Effect.scoped,
-        Effect.tap((state) => Effect.annotateCurrentSpan("container.daemon_state", state)),
-        Effect.withSpan("Container.daemonState"),
-      );
-
     const run = Effect.fn("Container.command")(function* (
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
@@ -614,6 +604,22 @@ export const makeContainerRuntime = (options: {
         Effect.mapError((cause) => errorFor(args[0] ?? "command", cause)),
       );
     });
+
+    // Separates a daemon-wide stall from one engine call stuck on a single object; runs
+    // without its own command timeout so a stalled probe cannot probe again.
+    const daemonState: Effect.Effect<string> = run(
+      ["info", "--format", "{{.ServerVersion}} running={{.ContainersRunning}}"],
+      { timeout: undefined },
+    ).pipe(
+      Effect.timeout(DAEMON_PROBE_TIMEOUT),
+      Effect.map((info) => `responsive (${info})`),
+      Effect.catchTags({
+        TimeoutError: () => Effect.succeed(`unresponsive to info within ${DAEMON_PROBE_TIMEOUT}`),
+        ContainerError: (error) => Effect.succeed(`info failed: ${error.message}`),
+      }),
+      Effect.tap((state) => Effect.annotateCurrentSpan("container.daemon_state", state)),
+      Effect.withSpan("Container.daemonState"),
+    );
 
     const mirrored = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
     const present = (image: string) =>
