@@ -59,7 +59,7 @@ After authorization, a separate read-only `docs-guidance` job conservatively
 selects reference sources from the resolved PR head's merge-base diff. Overlays under `apps/cli/docs/supabase/`,
 `apps/cli/docs/templates/examples.yaml`, and non-test TypeScript under
 `apps/cli/src/` qualify. Generated YAML and unrelated paths do not trigger a
-fetch. Findings are limited to changed reference prose, not every selected file.
+fetch. Style findings are limited to changed reference prose, not every selected file.
 
 For relevant changes, the trusted collector resolves `supabase/supabase` master
 once and fetches only `apps/docs/style-guide/README.md`,
@@ -103,8 +103,22 @@ and the poster does not claim delivery if any model missed the artifact. Unrelat
 snapshot status to the consolidated review, independent of model summaries;
 available guidance is not a style-pass claim. Prose findings remain advisory
 `nit` findings in the existing review, with no new reviewer or blocking gate.
-The snapshot artifact is public and retained for three days. When overlays move,
-update both source selection and the shared procedure.
+The snapshot artifact is public and retained for three days. Overlays remain in
+`apps/cli/docs/supabase/`.
+
+### Overlay Drift
+
+The repository-aware reviewer reads affected overlays and command implementations when either changes.
+This includes unchanged overlays affected by command or shared implementation changes. It reports
+PR-introduced contradictions as `docs-drift`, with the quoted claim and implementation evidence.
+The adjudicator checks both sources. The diff-only reviewer can report contradictions only when both
+sides are available in its diff. No additional artifact or checkout is required.
+
+This check runs independently of upstream style guidance. It checks existing claims, not documentation
+completeness, and does not edit overlays or propose replacement prose. Overlay edits require explicit
+human authorization, as described in the [CLI agent guide](../../apps/cli/AGENTS.md#reference-overlays).
+Reviewers do not infer authorship or authorization from writing style or absent PR metadata.
+This is an AI review instruction, not a deterministic guarantee that every contradiction will be found.
 
 ### Next-branch impact
 
