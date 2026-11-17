@@ -39,6 +39,17 @@ const fetchMessages = (endpoint: { readonly host?: string; readonly port: number
     return (yield* response.json) as unknown as MailpitMessages;
   });
 
+/** Reads the database path of whichever Mailpit answers on the endpoint. */
+const fetchDatabasePath = (endpoint: { readonly host?: string; readonly port: number }) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const host = endpoint.host ?? "127.0.0.1";
+    const response = yield* client.execute(
+      HttpClientRequest.get(`http://${host}:${endpoint.port}/api/v1/info`),
+    );
+    return ((yield* response.json) as unknown as { readonly Database: string }).Database;
+  });
+
 /** Sends a test email through Mailpit's HTTP send API rather than a raw SMTP session. */
 const sendTestEmail = (
   endpoint: { readonly host?: string; readonly port: number },
@@ -169,29 +180,49 @@ describe("service catalog", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-persistence-" });
         const recipe = yield* makeServiceRecipe(
           { service: "mail", pin: selection.mail, config: {} },
           options(root),
         );
+        const logs = yield* Ref.make("");
+        const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
+        yield* Stream.fromSubscription(yield* recipe.logs).pipe(
+          Stream.runForEach(({ stream, bytes }) =>
+            Ref.update(logs, (text) => text + decoders[stream].decode(bytes, { stream: true })),
+          ),
+          Effect.forkScoped({ startImmediately: true }),
+        );
         const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
+        const expectOwnMailpit = Effect.fnUntraced(function* (phase: string) {
+          const endpoint = yield* recipe.endpoint("http");
+          const database = yield* fetchDatabasePath(endpoint);
+          expect(
+            database,
+            `${phase}: Mailpit on :${endpoint.port} is not this instance; output:\n${yield* Ref.get(logs)}`,
+          ).toBe(path.join(root, "instance", "mailpit.db"));
+          return endpoint;
+        });
+        const expectCaptured = Effect.fnUntraced(function* (phase: string) {
+          const endpoint = yield* expectOwnMailpit(phase);
+          const { messages } = yield* fetchMessages(endpoint);
+          expect(
+            messages.map((message) => message.Subject),
+            `${phase}: Mailpit on :${endpoint.port} lost the email; output:\n${yield* Ref.get(logs)}`,
+          ).toContain("persistence-test");
+        });
         yield* instance.start;
         yield* instance.ready;
-        yield* sendTestEmail(yield* recipe.endpoint("http"), "persistence-test");
-        const beforeRestart = yield* fetchMessages(yield* recipe.endpoint("http"));
-        expect(beforeRestart.messages.map((message) => message.Subject)).toContain(
-          "persistence-test",
-        );
+        yield* sendTestEmail(yield* expectOwnMailpit("first start"), "persistence-test");
+        yield* expectCaptured("before restart");
         yield* instance.stop;
         yield* instance.start;
         yield* instance.ready;
-        const afterRestart = yield* fetchMessages(yield* recipe.endpoint("http"));
-        expect(afterRestart.messages.map((message) => message.Subject)).toContain(
-          "persistence-test",
-        );
+        yield* expectCaptured("after restart");
         yield* instance.stop;
       }),
     ).pipe(

@@ -121,6 +121,8 @@ interface SetupOpts {
   /** Raw `SUPABASE_WORKDIR` the settings captured; used verbatim, so no prompt fires. */
   readonly workdirEnvValue?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** The cwd the handler sees; defaults to the workdir's parent. */
+  readonly cwd?: string;
 }
 
 function bootstrapApiHandler(opts: SetupOpts) {
@@ -271,8 +273,8 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
     api.httpClientLayer,
     cliSettings,
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
-    // cwd differs from the workdir so the "Using workdir" line prints.
-    mockRuntimeInfo({ cwd: path.dirname(tempRoot.current) }),
+    // By default cwd differs from the workdir so the "Using workdir" line prints.
+    mockRuntimeInfo({ cwd: opts.cwd ?? path.dirname(tempRoot.current) }),
     telemetry.layer,
     linkedCache.layer,
     analytics.layer,
@@ -547,7 +549,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("prompts for a workdir when none is configured", () =>
+  it.live("prompts for a workdir prefilled with the current directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -559,7 +561,37 @@ describe("bootstrap integration", () => {
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
         Effect.provide(s.layer),
       );
+      expect(s.out.promptTextCalls).toEqual([
+        {
+          message: "Enter a directory to bootstrap your project: ",
+          opts: { initialValue: path.join(path.dirname(s.workdir), path.sep) },
+        },
+      ]);
       expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("bootstraps into the current directory when the prefilled path is accepted", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const prefill = path.join(tempRoot.current, path.sep);
+      const s = setup(path, {
+        workdir: Option.none(),
+        cwd: tempRoot.current,
+        promptTextResponses: [prefill],
+      });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.out.promptTextCalls).toEqual([
+        {
+          message: "Enter a directory to bootstrap your project: ",
+          opts: { initialValue: prefill },
+        },
+      ]);
+      expect(yield* fs.exists(path.join(tempRoot.current, "supabase", "config.toml"))).toBe(true);
+      expect(s.out.stderrText).not.toContain("Using workdir");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

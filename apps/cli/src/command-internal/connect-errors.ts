@@ -62,6 +62,13 @@ export const SUGGEST_ENV_VAR =
 export const SUGGEST_CA_VERIFICATION =
   "The server certificate did not verify against the trusted CA (the bundled Supabase CA on a hosted project). Behind a TLS-inspecting proxy, set PGSSLROOTCERT to a CA bundle that trusts it, or set PGSSLMODE=require to skip certificate verification.";
 
+/** The suggestion for a `pg_dump` that exited non-zero, classified from its stderr. */
+export function pgDumpFailureSuggestion(stderr: string): string | undefined {
+  if (isIPv6ConnectivityError(stderr)) return ipv6Suggestion();
+  if (stderr.includes("certificate verify failed")) return SUGGEST_CA_VERIFICATION;
+  return undefined;
+}
+
 /**
  * Shown instead of the remote-only "Network Restrictions" hint when `ctx.isLocal` is true — a
  * refused `--local` connection (Docker/Postgres not running) needs a different fix than an

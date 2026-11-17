@@ -2868,6 +2868,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    createWarehouseSetup: (
+      input: typeof operationDefinitions.v2CreateWarehouseSetup.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreateWarehouseSetup.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreateWarehouseSetup">(
+          operationDefinitions.v2CreateWarehouseSetup,
+          input,
+          options,
+        );
+      }),
     deleteAComputeInstance: (
       input: typeof operationDefinitions.v2DeleteAComputeInstance.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
