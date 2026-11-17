@@ -149,10 +149,11 @@ const commandTimedOut = (
   args: ReadonlyArray<string>,
   timeout: Duration.Input,
   stderr: string,
+  daemon: string,
 ): Cause.TimeoutError => {
   const tail = stderr.trim().slice(-2000);
   return new Cause.TimeoutError(
-    `Engine command '${args[0] ?? "command"}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}`,
+    `Engine command '${args[0] ?? "command"}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}; daemon: ${daemon}`,
   );
 };
 
@@ -543,6 +544,18 @@ export const makeContainerRuntime = (options: {
         ...commandOptions,
       });
 
+    // Separates a daemon-wide stall from one engine call stuck on a single object.
+    const daemonState = spawner
+      .string(command(["info", "--format", "{{.ServerVersion}} running={{.ContainersRunning}}"]))
+      .pipe(
+        Effect.timeout("5 seconds"),
+        Effect.map((info) => `responsive (${info.trim()})`),
+        Effect.orElseSucceed(() => "unresponsive to info within 5s"),
+        Effect.scoped,
+        Effect.tap((state) => Effect.annotateCurrentSpan("container.daemon_state", state)),
+        Effect.withSpan("Container.daemonState"),
+      );
+
     const run = Effect.fn("Container.command")(function* (
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
@@ -590,9 +603,9 @@ export const makeContainerRuntime = (options: {
                 Effect.timeoutOrElse({
                   duration: timeout,
                   orElse: () =>
-                    Ref.get(stderrSoFar).pipe(
-                      Effect.flatMap((stderr) =>
-                        Effect.fail(commandTimedOut(args, timeout, stderr)),
+                    Effect.all([Ref.get(stderrSoFar), daemonState]).pipe(
+                      Effect.flatMap(([stderr, daemon]) =>
+                        Effect.fail(commandTimedOut(args, timeout, stderr, daemon)),
                       ),
                     ),
                 }),

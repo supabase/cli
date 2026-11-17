@@ -1572,7 +1572,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(failure instanceof ContainerLaunchError).toBe(true);
         expect(failureKind(failure)).toBe("engine-timeout");
         expect(failure instanceof ContainerLaunchError ? failure.failure.message : undefined).toBe(
-          "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox; container state: status=created started=0001-01-01T00:00:00Z pid=0 error=",
+          "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox; daemon: responsive (fake-daemon-id); container state: status=created started=0001-01-01T00:00:00Z pid=0 error=",
         );
       }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
