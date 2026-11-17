@@ -175,11 +175,13 @@ describe("stack prune", () => {
         const initialized = f.path.join(f.home, "initialized");
         const enclosed = f.path.join(f.home, "parent", "enclosed");
         const malformed = f.path.join(f.home, "malformed");
-        for (const dir of [initialized, enclosed, malformed])
+        const plain = f.path.join(f.home, "plain");
+        for (const dir of [initialized, enclosed, malformed, plain])
           yield* f.fs.makeDirectory(dir, { recursive: true });
         const fromGitInit = yield* f.create(initialized);
         const underNewParent = yield* f.create(enclosed);
         const unreadable = yield* f.create(malformed);
+        const outsideGit = yield* f.create(plain);
         yield* initialize(f.path.join(initialized, ".git"));
         yield* initialize(f.path.join(f.home, "parent", ".git"));
         /* A stray `.git` without HEAD does not make the enclosed directory its own repository. */
@@ -203,7 +205,9 @@ describe("stack prune", () => {
         yield* stackPrune({ dryRun: false }).pipe(
           Effect.provide(f.layer({ yes: true, output: mockOutput({ format: "json" }) })),
         );
-        expect(yield* f.savedIds).toEqual([f.kept.id, underNewParent.id, unreadable.id].sort());
+        expect(yield* f.savedIds).toEqual(
+          [f.kept.id, underNewParent.id, unreadable.id, outsideGit.id].sort(),
+        );
       }).pipe(Effect.provide(live)),
     { timeout: 60_000 },
   );
