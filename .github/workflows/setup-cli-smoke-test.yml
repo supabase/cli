@@ -1,7 +1,7 @@
 name: setup-cli Smoke Test
 
 # Daily check that the `supabase/setup-cli` GitHub Action installs the Supabase CLI. It tests the
-# newest version on each npm dist-tag once that version has been on npm for an hour, so registry
+# newest version on each npm dist-tag once that version has been on npm for three hours, so registry
 # propagation right after a publish cannot fail it. Catches regressions like supabase/setup-cli#427,
 # where musl libc + archive layout changes silently broke the action on Alpine. v3 installs from
 # npm, and a fallback to the GitHub release is reported; a separate job forces that fallback.
@@ -9,7 +9,7 @@ name: setup-cli Smoke Test
 
 on:
   schedule:
-    # Releases rarely land in the hour before this time, so the age cutoff seldom skips a version.
+    # Releases rarely land in the three hours before this time, so the age cutoff seldom skips a version.
     - cron: "17 4 * * *"
   workflow_dispatch:
     inputs:
@@ -34,7 +34,7 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
-          MIN_AGE_SECONDS: "3600"
+          MIN_AGE_SECONDS: "10800"
         run: |
           set -euo pipefail
           if [[ -n "${INPUT_VERSION}" ]]; then
@@ -66,11 +66,19 @@ jobs:
             jq -r '.[] | select(.platform | not)
               | "::notice::Skipping dist-tag \(.tag) (\(.version)): it does not depend on the @supabase/cli-* platform packages"' <<< "${candidates}"
             jq -r --argjson min "${MIN_AGE_SECONDS}" '.[] | select(.platform and .age < $min)
-              | "::warning::Skipping dist-tag \(.tag) (\(.version)): published less than an hour ago, so npm may still be propagating it"' <<< "${candidates}"
+              | "::warning::Skipping dist-tag \(.tag) (\(.version)): published less than \($min / 3600) hours ago, so npm may still be propagating it"' <<< "${candidates}"
             targets="$(jq -c --argjson min "${MIN_AGE_SECONDS}" '
               map(select(.platform and .age >= $min))
               | group_by(.version)
               | map({tags: (map(.tag) | join(", ")), version: .[0].version})' <<< "${candidates}")"
+            if ! jq -e 'any(.[]; .tag == "latest" and .platform)' <<< "${candidates}" > /dev/null; then
+              echo "::error::dist-tag latest does not depend on the @supabase/cli-* platform packages"
+              exit 1
+            fi
+            if [[ "${targets}" == "[]" ]]; then
+              echo "::error::No dist-tag has a version old enough to test"
+              exit 1
+            fi
           fi
           echo "Versions to test: $(jq -r 'map("\(.version) (\(.tags))") | join(", ")' <<< "${targets}")"
           echo "targets=${targets}" >> "$GITHUB_OUTPUT"
@@ -277,10 +285,13 @@ jobs:
       actions: read
     outputs:
       status: ${{ steps.status.outputs.status }}
+      versions: ${{ steps.status.outputs.versions }}
     steps:
       - id: status
         shell: bash
         env:
+          RESOLVED: ${{ needs.resolve.result == 'success' }}
+          TARGETS: ${{ needs.resolve.outputs.targets }}
           # A job that times out reports `cancelled`, so it counts as a failure here.
           FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
           GH_TOKEN: ${{ github.token }}
@@ -288,13 +299,32 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          semver='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'
+          # Lists the versions read from stdin with their dist-tags, e.g. "3.3.0-beta.2 (beta)".
+          describe() {
+            jq -rRs --argjson targets "${TARGETS}" '
+              split("\n") | map(select(. != "")) | unique
+              | map(. as $v | ($targets | map(select(.version == $v)) | first | .tags) as $tags
+                | if $tags then "\($v) (\($tags))" else $v end)
+              | join(", ")' | tr -cd '0-9A-Za-z.,() -'
+          }
+          if [[ "${RESOLVED}" != "true" ]]; then
+            echo "status=setup-cli-smoke-untested" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "${FAILED}" == "true" ]]; then
+            versions="$(gh api --paginate "repos/${REPO}/actions/runs/${RUN_ID}/jobs?filter=latest" \
+              --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out") | .name' \
+              | sed -nE "s/.*, (${semver})\)\$/\1/p" | describe)"
             echo "status=setup-cli-smoke-failure" >> "$GITHUB_OUTPUT"
+            echo "versions=${versions}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           names="$(gh api --paginate "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[].name')"
           if grep -q '^npm-fallback-' <<< "${names}"; then
+            versions="$(sed -nE "s/^npm-fallback-.*-(${semver})\$/\1/p" <<< "${names}" | describe)"
             echo "status=setup-cli-npm-fallback" >> "$GITHUB_OUTPUT"
+            echo "versions=${versions}" >> "$GITHUB_OUTPUT"
           fi
 
   # Manual runs are for debugging, so only scheduled runs page. A summary job that failed or timed
@@ -310,5 +340,6 @@ jobs:
     with:
       package: Supabase CLI
       status: ${{ needs.summary.outputs.status || 'setup-cli-smoke-failure' }}
+      versions: ${{ needs.summary.outputs.versions }}
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}

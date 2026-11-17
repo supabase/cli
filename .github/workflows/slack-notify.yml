@@ -18,7 +18,7 @@ on:
         type: string
         default: ""
       status:
-        description: Notification kind (success | failure | publish-failure | setup-cli-smoke-failure | setup-cli-npm-fallback | awaiting-approval | declined | sync-conflict)
+        description: Notification kind (success | failure | publish-failure | setup-cli-smoke-failure | setup-cli-smoke-untested | setup-cli-npm-fallback | awaiting-approval | declined | sync-conflict)
         required: false
         type: string
         default: success
@@ -34,6 +34,11 @@ on:
         default: ""
       pull_request:
         description: Pull request number for sync-conflict messages.
+        required: false
+        type: string
+        default: ""
+      versions:
+        description: Versions a setup-cli smoke test message is about (e.g. "3.3.0-beta.2 (beta), 3.2.0 (latest)").
         required: false
         type: string
         default: ""
@@ -58,6 +63,7 @@ jobs:
           TAG_PREFIX: ${{ inputs.tag_prefix }}
           NPM_PACKAGE: ${{ inputs.npm_package }}
           PULL_REQUEST: ${{ inputs.pull_request }}
+          VERSIONS: ${{ inputs.versions }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           SHA: ${{ github.sha }}
@@ -69,6 +75,10 @@ jobs:
           COMMIT_URL="https://github.com/${REPO}/commit/${SHA}"
           RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
           CHANGELOG_URL="https://github.com/${REPO}/releases/tag/${TAG_PREFIX}${VERSION}"
+          VERSIONS_LINE=""
+          if [[ -n "$VERSIONS" ]]; then
+            VERSIONS_LINE="*Versions:* ${VERSIONS}\n"
+          fi
 
           CONTEXT_TEXT="${REPO}"
           if [[ -n "$CHANNEL" ]]; then
@@ -113,12 +123,17 @@ jobs:
             setup-cli-smoke-failure)
               HEADER="❌ setup-cli smoke test failed for ${PACKAGE}"
               FALLBACK_TEXT="❌ The daily setup-cli smoke test failed for ${PACKAGE}"
-              DETAILS="Installing ${PACKAGE} through supabase/setup-cli failed for at least one npm dist-tag. See the failed jobs in the workflow run.\n*Workflow run:* <${RUN_URL}|view failed run>"
+              DETAILS="Installing ${PACKAGE} through supabase/setup-cli failed for at least one npm dist-tag. See the failed jobs in the workflow run.\n${VERSIONS_LINE}*Workflow run:* <${RUN_URL}|view failed run>"
+              ;;
+            setup-cli-smoke-untested)
+              HEADER="❌ setup-cli smoke test tested nothing for ${PACKAGE}"
+              FALLBACK_TEXT="❌ The daily setup-cli smoke test could not pick any ${PACKAGE} version to test"
+              DETAILS="The daily setup-cli smoke test could not pick any ${PACKAGE} version to test. See the *Resolve versions to test* job in the workflow run.\n*Workflow run:* <${RUN_URL}|view failed run>"
               ;;
             setup-cli-npm-fallback)
               HEADER="⚠️ setup-cli fell back from npm for ${PACKAGE}"
               FALLBACK_TEXT="⚠️ In the daily setup-cli smoke test, setup-cli fell back from npm to the GitHub release for ${PACKAGE}"
-              DETAILS="setup-cli v3 could not install ${PACKAGE} from npm and fell back to the GitHub release for at least one npm dist-tag. See the setup-cli v3 jobs in the workflow run.\n*Workflow run:* <${RUN_URL}|view run>"
+              DETAILS="setup-cli v3 could not install ${PACKAGE} from npm and fell back to the GitHub release for at least one npm dist-tag. See the setup-cli v3 jobs in the workflow run.\n${VERSIONS_LINE}*Workflow run:* <${RUN_URL}|view run>"
               ;;
             awaiting-approval)
               # The approval itself happens on the workflow run page (Approve button +
