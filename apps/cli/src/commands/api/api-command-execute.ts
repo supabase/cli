@@ -314,9 +314,14 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
   const decoded = yield* decodeInput(readEntry, readInput);
   const hint = `Check it with \`${statusCommand(readEntry, input.ref, readInput)}\`.`;
   const attempts = yield* Ref.make(0);
+  const lastStatus = yield* Ref.make<string | null>(null);
 
   const poll = Ref.update(attempts, (count) => count + 1).pipe(
     Effect.andThen(sendApiRequest(readEntry, decoded)),
+    Effect.tap((response) => {
+      const status = readPointer(parseResponse(response), wait.status);
+      return Ref.set(lastStatus, typeof status === "string" ? status : null);
+    }),
     Effect.flatMap((response) => classify(wait, response, hint)),
     Effect.tap(({ response }) => {
       const status = readPointer(parseResponse(response), wait.status);
@@ -330,12 +335,17 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
     Effect.timeoutOrElse({
       duration: input.timeoutMillis,
       orElse: () =>
-        Effect.fail(
-          new ApiCommandWaitTimeoutError({
-            message: `Timed out waiting for ${wait.read} to report ${wait.succeeded.join(" or ")}.`,
-            timeoutMillis: input.timeoutMillis,
-            hint,
-          }),
+        Ref.get(lastStatus).pipe(
+          Effect.flatMap((status) =>
+            Effect.fail(
+              new ApiCommandWaitTimeoutError({
+                message: `Timed out waiting for ${wait.read} to report ${wait.succeeded.join(" or ")}. Last observed status: ${status === null ? "unavailable" : sanitizeErrorBody(status)}.`,
+                timeoutMillis: input.timeoutMillis,
+                lastStatus: status,
+                hint,
+              }),
+            ),
+          ),
         ),
     }),
     Effect.tapError((error) =>

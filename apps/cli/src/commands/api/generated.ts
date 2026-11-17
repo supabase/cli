@@ -3,6 +3,55 @@ import type { ApiCommandEntry } from "./api-command.model.ts";
 
 export const apiCommands = [
   {
+    command: ["warehouse", "disable"],
+    operationId: "v2-disable-warehouse",
+    definition: "v2DisableWarehouse",
+    method: "DELETE",
+    apiPath: "/v2/projects/{ref}/warehouse",
+    summary: "Disable Warehouse replication and access",
+    description:
+      "Stops replication and removes the Warehouse publication, FDW and dependent foreign tables, reader group, catalog access and query routing asynchronously. Stored Warehouse data is retained by default. Set delete_data=true to permanently delete the managed catalog schema and dedicated Storage bucket; destination SQL and Storage write permissions are also required. Legacy shared buckets and source Postgres tables are preserved. Reader memberships are not restored on re-enablement. Safe retries return the existing cleanup identity; changing an in-progress data policy returns a conflict. Poll the linked teardown for completion or partial cleanup failures.",
+    readOnly: false,
+    feature: "warehouse",
+    response: {
+      status: 202,
+      kind: "json",
+    },
+    flags: [
+      {
+        name: "delete-data",
+        type: "boolean",
+        repeatable: false,
+        required: false,
+        description:
+          "Permanently delete managed Warehouse data. Defaults to false (retain data). Source Postgres tables and legacy shared buckets are preserved.",
+      },
+    ],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "query",
+        name: "delete_data",
+        source: "flag",
+        flag: "delete-data",
+      },
+    ],
+    wait: {
+      read: "v2-get-warehouse-teardown",
+      params: {
+        operation_id: "/data/id",
+      },
+      status: "/data/attributes/lifecycle_status",
+      succeeded: ["disabled"],
+      failed: ["deletion_failed"],
+      error: "/data/attributes/cleanup_error",
+    },
+  },
+  {
     command: ["warehouse", "enable"],
     operationId: "v2-enable-warehouse",
     definition: "v2EnableWarehouse",
@@ -177,6 +226,53 @@ export const apiCommands = [
       succeeded: ["succeeded"],
       failed: ["failed"],
       error: "/data/attributes/status_error",
+    },
+  },
+  {
+    command: ["warehouse", "teardowns", "get"],
+    operationId: "v2-get-warehouse-teardown",
+    definition: "v2GetWarehouseTeardown",
+    method: "GET",
+    apiPath: "/v2/projects/{ref}/warehouse/teardowns/current",
+    summary: "Get Warehouse cleanup status",
+    description:
+      "Reads the current durable cleanup state without contacting ETL or inspecting the FDW. Disabling means cleanup is in progress; disabled means cleanup completed; deletion_failed means cleanup may be partial. The original data policy and failure reason remain available. Optionally supply operation_id to observe a specific disable attempt. Returns a conflict if no cleanup state is available or the supplied identity does not match the current operation.",
+    readOnly: true,
+    feature: "warehouse",
+    response: {
+      status: 200,
+      kind: "json",
+    },
+    flags: [
+      {
+        name: "operation-id",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Optional cleanup operation identity returned by disable. Omit to read the current cleanup; when supplied, a different current operation returns a conflict.",
+      },
+    ],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "query",
+        name: "operation_id",
+        source: "flag",
+        flag: "operation-id",
+      },
+    ],
+    wait: {
+      read: "v2-get-warehouse-teardown",
+      params: {},
+      status: "/data/attributes/lifecycle_status",
+      succeeded: ["disabled"],
+      failed: ["deletion_failed"],
+      error: "/data/attributes/cleanup_error",
     },
   },
 ] as const satisfies readonly ApiCommandEntry[];

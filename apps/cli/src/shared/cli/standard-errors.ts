@@ -63,7 +63,7 @@ interface StandardErrorDocument {
   readonly hint: string | null;
   readonly api_code?: string;
   readonly entitlement?: PlanGateEntitlement;
-  readonly context?: Readonly<Record<string, string | number>>;
+  readonly context?: Readonly<Record<string, string | number | null>>;
 }
 
 /** A mapped failure: the process exit code and the document to report. */
@@ -172,7 +172,7 @@ const failureForError = (
   }
   if (error instanceof ApiCommandWaitTimeoutError) {
     return failure(EXIT_FAILURE, "wait_timeout", error.message, error.hint, {
-      context: { timeout_ms: error.timeoutMillis },
+      context: { timeout_ms: error.timeoutMillis, last_status: error.lastStatus ?? null },
     });
   }
   if (error instanceof AccessTokenRequiredError || error instanceof InvalidAccessTokenError) {

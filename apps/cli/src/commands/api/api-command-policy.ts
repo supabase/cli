@@ -31,8 +31,14 @@ export type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "fail
 export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-enable-warehouse",
   "v2-get-warehouse-setup",
+  "v2-disable-warehouse",
+  "v2-get-warehouse-teardown",
 ];
 
 export const nouns = {
-  warehouse: { description: "Manage the data warehouse for a project", feature: "warehouse" },
+  warehouse: {
+    description: "Manage the data warehouse for a project",
+    feature: "warehouse",
+    groups: { teardowns: "Inspect Warehouse cleanup operations" },
+  },
 } as const satisfies Readonly<Record<string, ApiNoun>>;

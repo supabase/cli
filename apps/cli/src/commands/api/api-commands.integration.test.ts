@@ -298,12 +298,178 @@ const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
 const failureOf = (exit: Exit.Exit<unknown, unknown>): unknown =>
   Exit.isFailure(exit) ? Exit.findErrorOption(exit).pipe(Option.getOrUndefined) : undefined;
 
+const bodiesOf = (sent: ReadonlyArray<Sent>) => sent.map((request) => request.body);
+
 const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
   Effect.raceFirst(Effect.forever(TestClock.adjust("2 seconds")), Fiber.await(fiber));
 
-const bodiesOf = (sent: ReadonlyArray<Sent>) => sent.map((request) => request.body);
-
 describe("generated warehouse commands", () => {
+  describe("warehouse disable", () => {
+    const operationId = "7579647f-2cdc-466c-982e-425958a2f985";
+    const disablePath = `/v2/projects/${VALID_REF}/warehouse`;
+    const teardownPath = `${disablePath}/teardowns/current`;
+    const teardown = (lifecycleStatus: string, deleteData = false) => ({
+      data: {
+        type: "warehouse_teardown",
+        id: operationId,
+        attributes: {
+          lifecycle_status: lifecycleStatus,
+          delete_data: deleteData,
+          updated_at: "2026-11-17T10:00:00Z",
+          cleanup_error: null,
+          unknown_observation: null,
+        },
+      },
+    });
+
+    it.effect.each([false, true])(
+      "keeps retention as the default and sends explicit deletion=%s",
+      (deleteData) => {
+        const body = teardown("disabling", deleteData);
+        const { sent, out, run } = setup(
+          ["warehouse", "disable", ...(deleteData ? ["--delete-data"] : [])],
+          {
+            yes: true,
+            route: () => ({ status: 202, body }),
+          },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toStrictEqual([
+            {
+              method: "DELETE",
+              path: disablePath,
+              search: deleteData ? "delete_data=true" : "",
+              body: undefined,
+            },
+          ]);
+          expect(out.stdoutText).toBe(encodeJson(body));
+        });
+      },
+    );
+
+    it.effect("previews permanent deletion without consent or a command request", () => {
+      const { sent, out, run } = setup(["warehouse", "disable", "--delete-data", "--dry-run"], {
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([]);
+        expect(decodeJson(out.stdoutText)).toMatchObject({
+          method: "DELETE",
+          path: disablePath,
+          query: { delete_data: true },
+        });
+      });
+    });
+
+    it.effect("waits on the accepted cleanup identity and prints the final raw resource", () => {
+      const final = teardown("disabled");
+      const { sent, out, run } = setup(["warehouse", "disable", "--wait"], {
+        yes: true,
+        route: (request) =>
+          request.method === "DELETE"
+            ? { status: 202, body: teardown("disabling") }
+            : { status: 200, body: final },
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent.map(({ method, path, search }) => ({ method, path, search }))).toStrictEqual([
+          { method: "DELETE", path: disablePath, search: "" },
+          { method: "GET", path: teardownPath, search: `operation_id=${operationId}` },
+        ]);
+        expect(out.stdoutText).toBe(encodeJson(final));
+      });
+    });
+
+    it.effect.each([undefined, operationId])(
+      "reads cleanup without mutation consent using optional operation identity %s",
+      (requestedId) => {
+        const body = teardown("disabling");
+        const { sent, out, run } = setup(
+          [
+            "warehouse",
+            "teardowns",
+            "get",
+            ...(requestedId === undefined ? [] : ["--operation-id", requestedId]),
+          ],
+          { route: () => ({ status: 200, body }) },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toStrictEqual([
+            {
+              method: "GET",
+              path: teardownPath,
+              search: requestedId === undefined ? "" : `operation_id=${requestedId}`,
+              body: undefined,
+            },
+          ]);
+          expect(out.stdoutText).toBe(encodeJson(body));
+        });
+      },
+    );
+
+    it.effect("waits for the current cleanup without an operation identity", () => {
+      const final = teardown("disabled");
+      let reads = 0;
+      const { sent, out, run } = setup(["warehouse", "teardowns", "get", "--wait"], {
+        route: () => ({
+          status: 200,
+          body: reads++ === 0 ? teardown("disabling") : final,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        yield* Fiber.join(fiber);
+        expect(sent.map(({ method, path, search }) => ({ method, path, search }))).toStrictEqual([
+          { method: "GET", path: teardownPath, search: "" },
+          { method: "GET", path: teardownPath, search: "" },
+        ]);
+        expect(out.stdoutText).toBe(encodeJson(final));
+      });
+    });
+
+    it.effect("preserves partial cleanup failure and the command for inspecting it", () => {
+      const failed = teardown("deletion_failed", true);
+      const { run } = setup(["warehouse", "disable", "--delete-data", "--wait"], {
+        yes: true,
+        route: (request) => ({ status: request.method === "DELETE" ? 202 : 200, body: failed }),
+      });
+      return Effect.gen(function* () {
+        const error = yield* run.pipe(Effect.flip);
+        expect(standardFailureFor(Cause.fail(error)).document).toMatchObject({
+          code: "operation_failed",
+          context: { status: "deletion_failed" },
+          hint: expect.stringContaining(`--operation-id ${operationId}`),
+        });
+      });
+    });
+
+    it.effect("reports the last cleanup state on a bounded timeout", () => {
+      const { run, sent } = setup(["warehouse", "disable", "--wait", "--timeout", "10s"], {
+        yes: true,
+        route: (request) => ({
+          status: request.method === "DELETE" ? 202 : 200,
+          body: teardown("disabling"),
+        }),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        const error = yield* Fiber.join(fiber);
+        expect(standardFailureFor(Cause.fail(error)).document).toMatchObject({
+          code: "wait_timeout",
+          context: { timeout_ms: 10000, last_status: "disabling" },
+          message: expect.stringContaining("disabling"),
+          hint: expect.stringContaining(`--operation-id ${operationId}`),
+        });
+        expect(sent.filter((request) => request.method === "DELETE")).toHaveLength(1);
+      });
+    });
+  });
+
   describe("warehouse enable request", () => {
     it.effect("sends only the schema when no other flag is given", () => {
       const { sent, run } = setup(["warehouse", "enable", "--schema", "public"], {
@@ -1351,6 +1517,20 @@ describeHostedConsent("warehouse enable", {
       yes,
       route: accepted,
     });
+    return {
+      run: run.pipe(Effect.provide(cliServices(workdir, args))),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
+
+const disableConsentCommand = commandTreeFor({ warehouseEnabled: true }).get(
+  "warehouse disable",
+)?.command;
+describeHostedConsent("warehouse disable", {
+  ...(disableConsentCommand === undefined ? {} : { command: disableConsentCommand }),
+  invoke: ({ workdir, yes }) => {
+    const { args, sent, run } = execute(["warehouse", "disable"], { yes, route: accepted });
     return {
       run: run.pipe(Effect.provide(cliServices(workdir, args))),
       mutations: () => sent.filter((request) => request.method !== "GET").length,

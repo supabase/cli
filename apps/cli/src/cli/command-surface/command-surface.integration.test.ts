@@ -46,8 +46,11 @@ describe("command surface", () => {
       const { variants } = yield* Effect.promise(() => surface);
       expect(Object.keys(variants.warehouse)).toEqual([
         "warehouse",
+        "warehouse disable",
         "warehouse enable",
         "warehouse status",
+        "warehouse teardowns",
+        "warehouse teardowns get",
       ]);
     }),
   );
@@ -82,6 +85,26 @@ describe("command surface", () => {
       });
       expect(enable?.flags["dry-run"]).toMatchObject({ type: "boolean", default: false });
       expect(Object.keys(enable?.flags ?? {})).not.toContain("output");
+    }),
+  );
+
+  it.effect("describes retained-data disable and its linked cleanup read", () =>
+    Effect.gen(function* () {
+      const { variants } = yield* Effect.promise(() => surface);
+      const disable = variants.warehouse["warehouse disable"];
+      expect(disable).toMatchObject({
+        target: { group: "hosted", consent: "no" },
+        stage: { status: "experimental", feature: "warehouse" },
+        errors: "standard",
+        api: { operationId: "v2-disable-warehouse" },
+      });
+      expect(disable?.flags["delete-data"]).toMatchObject({ type: "boolean", required: false });
+      expect(disable?.flags["wait"]).toMatchObject({ type: "boolean" });
+      expect(disable?.flags["timeout"]).toMatchObject({ type: "string" });
+      expect(titlesOf(disable?.result)).toEqual(["response", "waited", "dryRun"]);
+      expect(variants.warehouse["warehouse teardowns get"]?.flags["operation-id"]).toMatchObject({
+        required: false,
+      });
     }),
   );
 
