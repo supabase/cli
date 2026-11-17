@@ -27,7 +27,9 @@ It uses the shared bounded poller: 1s exponential backoff, capped at 10s, honori
 Polling uses durable metadata, without an ETL, FDW or source-health dependency. A replaced or
 cleared operation returns a conflict. Timeout and cancellation stop local polling only.
 
-`warehouse teardowns get --operation-id <accepted-id> --wait --remote=<ref>` resumes observation.
+`warehouse teardowns get --remote=<ref>` reads current cleanup without an operation ID.
+`warehouse teardowns get --operation-id <accepted-id> --wait --remote=<ref>` resumes observation
+of the accepted disable attempt; `disable --wait` always passes this ID through its response link.
 That command is read-only and needs no mutation consent. It accepts the same `--timeout` and
 output options and requires database-read permission.
 

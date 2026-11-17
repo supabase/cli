@@ -236,7 +236,7 @@ export const apiCommands = [
     apiPath: "/v2/projects/{ref}/warehouse/teardowns/current",
     summary: "Get Warehouse cleanup status",
     description:
-      "Reads durable cleanup state without contacting ETL or inspecting the FDW. Disabling means cleanup is in progress; disabled means cleanup completed; deletion_failed means cleanup may be partial. The original data policy and failure reason remain available. Returns a conflict if re-enablement cleared the operation or a later disable replaced it.",
+      "Reads the current durable cleanup state without contacting ETL or inspecting the FDW. Disabling means cleanup is in progress; disabled means cleanup completed; deletion_failed means cleanup may be partial. The original data policy and failure reason remain available. Optionally supply operation_id to observe a specific disable attempt. Returns a conflict if no cleanup state is available or the supplied identity does not match the current operation.",
     readOnly: true,
     feature: "warehouse",
     response: {
@@ -248,9 +248,9 @@ export const apiCommands = [
         name: "operation-id",
         type: "string",
         repeatable: false,
-        required: true,
+        required: false,
         description:
-          "Cleanup operation identity returned by disable. A different current operation returns a conflict.",
+          "Optional cleanup operation identity returned by disable. Omit to read the current cleanup; when supplied, a different current operation returns a conflict.",
       },
     ],
     bindings: [

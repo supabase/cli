@@ -382,6 +382,55 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect.each([undefined, operationId])(
+      "reads cleanup without mutation consent using optional operation identity %s",
+      (requestedId) => {
+        const body = teardown("disabling");
+        const { sent, out, run } = setup(
+          [
+            "warehouse",
+            "teardowns",
+            "get",
+            ...(requestedId === undefined ? [] : ["--operation-id", requestedId]),
+          ],
+          { route: () => ({ status: 200, body }) },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toStrictEqual([
+            {
+              method: "GET",
+              path: teardownPath,
+              search: requestedId === undefined ? "" : `operation_id=${requestedId}`,
+              body: undefined,
+            },
+          ]);
+          expect(out.stdoutText).toBe(encodeJson(body));
+        });
+      },
+    );
+
+    it.effect("waits for the current cleanup without an operation identity", () => {
+      const final = teardown("disabled");
+      let reads = 0;
+      const { sent, out, run } = setup(["warehouse", "teardowns", "get", "--wait"], {
+        route: () => ({
+          status: 200,
+          body: reads++ === 0 ? teardown("disabling") : final,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        yield* Fiber.join(fiber);
+        expect(sent.map(({ method, path, search }) => ({ method, path, search }))).toStrictEqual([
+          { method: "GET", path: teardownPath, search: "" },
+          { method: "GET", path: teardownPath, search: "" },
+        ]);
+        expect(out.stdoutText).toBe(encodeJson(final));
+      });
+    });
+
     it.effect("preserves partial cleanup failure and the command for inspecting it", () => {
       const failed = teardown("deletion_failed", true);
       const { run } = setup(["warehouse", "disable", "--delete-data", "--wait"], {

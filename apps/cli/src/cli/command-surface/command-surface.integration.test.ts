@@ -103,7 +103,7 @@ describe("command surface", () => {
       expect(disable?.flags["timeout"]).toMatchObject({ type: "string" });
       expect(titlesOf(disable?.result)).toEqual(["response", "waited", "dryRun"]);
       expect(variants.warehouse["warehouse teardowns get"]?.flags["operation-id"]).toMatchObject({
-        required: true,
+        required: false,
       });
     }),
   );
