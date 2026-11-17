@@ -118,6 +118,28 @@ describe("command surface", () => {
     }),
   );
 
+  it.effect("separates consolidated status from the identity-bound setup waiter", () =>
+    Effect.gen(function* () {
+      const { variants } = yield* Effect.promise(() => surface);
+      const status = variants.warehouse["warehouse status"];
+      expect(status).toMatchObject({
+        api: { operationId: "v2-get-warehouse-status" },
+        target: { group: "hosted", consent: "none" },
+        stage: { status: "experimental", feature: "warehouse" },
+      });
+      expect(status?.flags).not.toHaveProperty("inspect-fdw");
+      expect(status?.flags).not.toHaveProperty("selection-id");
+      expect(status?.flags).not.toHaveProperty("wait");
+      expect(status?.flags).not.toHaveProperty("timeout");
+      expect(variants.warehouse).not.toHaveProperty("warehouse setups");
+      expect(variants.warehouse).not.toHaveProperty("warehouse setups get");
+      expect(variants.warehouse["warehouse enable"]?.flags).toMatchObject({
+        wait: { type: "boolean" },
+        timeout: { type: "string" },
+      });
+    }),
+  );
+
   it.effect("declares a waited result only for a command that waits on another read", () =>
     Effect.gen(function* () {
       const { variants } = yield* Effect.promise(() => surface);

@@ -111,6 +111,8 @@ const shapeOf = (schema: unknown): unknown => {
 const PATTERN_SAMPLES: Readonly<Record<string, string>> = {
   "^[a-f0-9]{64}$": "ab".repeat(32),
   "^[a-z]+$": "zyxwvutsrqponmlkjihg",
+  "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$":
+    "7579647f-2cdc-466c-982e-425958a2f985",
 };
 
 /** A value the field's schema accepts; an unknown string pattern fails loudly instead of guessing. */

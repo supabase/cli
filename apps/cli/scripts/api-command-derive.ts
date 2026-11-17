@@ -11,6 +11,7 @@ import type {
   ApiCommandFlag,
   ApiCommandSchemas,
   ApiCommandWait,
+  ApiPollTarget,
 } from "../src/commands/api/api-command.model.ts";
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -85,6 +86,8 @@ interface DeriveInput {
   readonly spec: JsonObject;
   /** Operation ids that generate commands; `x-operation` on any other operation is ignored. */
   readonly generated: ReadonlyArray<string>;
+  /** Hidden polling operation id to the generated operation whose command inspects its state. */
+  readonly pollTargets: Readonly<Record<string, string>>;
   readonly nouns: Readonly<Record<string, ApiNoun>>;
   /** Kebab-case operation id to the camelCase key of the typed client's `operationDefinitions`. */
   readonly operationIdMap: Readonly<Record<string, OperationId>>;
@@ -94,6 +97,7 @@ interface DeriveInput {
 
 interface DeriveResult {
   readonly entries: ReadonlyArray<ApiCommandEntry>;
+  readonly pollTargets: ReadonlyArray<ApiPollTarget>;
   readonly schemas: Readonly<Record<string, ApiCommandSchemas>>;
   readonly problems: ReadonlyArray<string>;
 }
@@ -532,6 +536,60 @@ const readMetadata = (
   return metadata;
 };
 
+/** Reads each internal polling target's `poll` and checks its map entry against the generated operations. */
+const readPollTargets = (
+  operations: ReadonlyMap<string, Operation>,
+  generated: ReadonlyArray<string>,
+  targets: Readonly<Record<string, string>>,
+  problems: Array<string>,
+): ReadonlyMap<string, ApiCommandPoll> => {
+  const polls = new Map<string, ApiCommandPoll>();
+  for (const [targetId, inspectId] of Object.entries(targets)) {
+    const fail = (reason: string) => problems.push(`${targetId}: ${reason}`);
+    const target = operations.get(targetId);
+    if (target === undefined) {
+      fail("polling target has no operation in the spec");
+      continue;
+    }
+    if (generated.includes(targetId)) {
+      fail("polling target is also a generated operation; remove it from pollTargets");
+    }
+    if (!generated.includes(inspectId)) {
+      fail(`inspect operation "${inspectId}" is not a generated operation`);
+    }
+    const block = target.node["x-operation"];
+    if (block === undefined) {
+      fail("polling target has no x-operation poll");
+      continue;
+    }
+    const decoded = decodeXOperation(block);
+    if (Exit.isFailure(decoded)) {
+      fail(`invalid x-operation: ${Cause.pretty(decoded.cause)}`);
+    } else if (decoded.value.poll === undefined) {
+      fail("polling target declares no poll");
+    } else {
+      polls.set(targetId, decoded.value.poll);
+    }
+  }
+  return polls;
+};
+
+const requireExperimental = (operation: Operation, fail: (reason: string) => void): void => {
+  if (asString(operation.node["x-scalar-stability"]) !== "experimental") {
+    fail("only operations marked experimental can be generated (x-scalar-stability)");
+  }
+};
+
+const requireOneWait = (
+  ownPoll: ApiCommandPoll | undefined,
+  linked: ApiCommandWait | undefined,
+  fail: (reason: string) => void,
+): void => {
+  if (ownPoll !== undefined && linked !== undefined) {
+    fail(`declares poll and also links to the polled operation "${linked.read}"; use one`);
+  }
+};
+
 const pollWait = (
   read: string,
   params: Readonly<Record<string, string>>,
@@ -550,12 +608,14 @@ const REQUEST_PATH = /^\$request\.path\.(.+)$/u;
 
 /**
  * The wait a command's 2xx response `links` declare: the one link whose target operation has
- * `poll`. Links to operations without `poll` are ignored; a polled target that is not generated fails.
+ * `poll`. The target is a generated operation or a listed polling target; links without `poll`
+ * are ignored.
  */
 const linkedWait = (
   spec: JsonObject,
   operations: ReadonlyMap<string, Operation>,
-  metadata: ReadonlyMap<string, OperationMetadata>,
+  polls: ReadonlyMap<string, ApiCommandPoll>,
+  generated: ReadonlyArray<string>,
   operation: Operation,
   fail: (reason: string) => void,
 ): ApiCommandWait | undefined => {
@@ -576,11 +636,14 @@ const linkedWait = (
         fail(`link "${linkName}" targets unknown operation "${targetId}"`);
         continue;
       }
-      const poll = metadata.get(targetId)?.poll;
+      const poll = polls.get(targetId);
       if (poll === undefined) {
-        if (!metadata.has(targetId) && asRecord(target.node["x-operation"])?.poll !== undefined) {
+        if (
+          !generated.includes(targetId) &&
+          asRecord(target.node["x-operation"])?.poll !== undefined
+        ) {
           fail(
-            `link "${linkName}" targets "${targetId}", which declares poll but is not generated`,
+            `link "${linkName}" targets polled operation "${targetId}", which is neither generated nor listed in pollTargets`,
           );
         }
         continue;
@@ -626,11 +689,23 @@ const linkedWait = (
 
 /** Derives the generated commands from each operation's `x-operation` and collects every lint failure. */
 export function deriveApiCommands(input: DeriveInput): DeriveResult {
-  const { spec, generated, nouns, operationIdMap, handWrittenTopLevel } = input;
+  const {
+    spec,
+    generated,
+    pollTargets: pollTargetMap,
+    nouns,
+    operationIdMap,
+    handWrittenTopLevel,
+  } = input;
   const operations = collectOperations(spec);
   const problems: Array<string> = [];
   const metadata = readMetadata(operations, generated, problems);
-  const commandNamed = new Set(metadata.keys());
+  const polls = new Map<string, ApiCommandPoll>();
+  for (const [operationId, name] of metadata) {
+    if (name.poll !== undefined) polls.set(operationId, name.poll);
+  }
+  const hiddenPolls = readPollTargets(operations, generated, pollTargetMap, problems);
+  for (const [operationId, poll] of hiddenPolls) polls.set(operationId, poll);
   const entries: Array<ApiCommandEntry> = [];
   const schemas: Record<string, ApiCommandSchemas> = {};
   const commandOwners = new Map<string, string>();
@@ -681,10 +756,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       fail(`command "${commandKey}" collides with the hand-written "${command[0]}" command`);
     }
 
-    const stability = asString(operation.node["x-scalar-stability"]);
-    if (stability !== "experimental") {
-      fail("only operations marked experimental can be generated (x-scalar-stability)");
-    }
+    requireExperimental(operation, fail);
     const summary = asString(operation.node.summary);
     if (summary === undefined) fail("operation has no summary");
 
@@ -937,14 +1009,12 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       });
     }
 
-    const linked = linkedWait(spec, operations, metadata, operation, fail);
+    const linked = linkedWait(spec, operations, polls, generated, operation, fail);
     const ownPoll = name.poll;
-    if (ownPoll !== undefined && linked !== undefined) {
-      fail(`declares poll and also links to the polled operation "${linked.read}"; use one`);
-    }
+    requireOneWait(ownPoll, linked, fail);
     const wait = linked ?? (ownPoll === undefined ? undefined : pollWait(operationId, {}, ownPoll));
     if (wait !== undefined) {
-      lintWait({ spec, operations, commandNamed, operation, wait, fail });
+      lintWait({ spec, operations, operation, wait, fail });
     }
 
     const response = classifySuccess(spec, operation, fail);
@@ -1003,28 +1073,87 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
   entries.sort((left, right) =>
     left.command.join(" ").localeCompare(right.command.join(" "), "en"),
   );
-  return { entries, schemas, problems };
+  const pollTargets: Array<ApiPollTarget> = [];
+  const reached = new Set(
+    entries.flatMap((entry) => (entry.wait === undefined ? [] : [entry.wait.read])),
+  );
+  for (const [operationId, inspectId] of Object.entries(pollTargetMap).toSorted(([a], [b]) =>
+    a.localeCompare(b, "en"),
+  )) {
+    const operation = operations.get(operationId);
+    const poll = hiddenPolls.get(operationId);
+    if (operation === undefined || poll === undefined) continue;
+    const fail = (reason: string) => problems.push(`${operationId}: ${reason}`);
+    if (!reached.has(operationId)) {
+      fail("polling target is not linked from any generated operation; remove it from pollTargets");
+      continue;
+    }
+    const definition = operationIdMap[operationId];
+    if (definition === undefined) {
+      fail("polling target is missing from the typed client; regenerate @supabase/api");
+      continue;
+    }
+    requireExperimental(operation, fail);
+    requireOneWait(poll, linkedWait(spec, operations, polls, generated, operation, fail), fail);
+    const inspect = entries.find((entry) => entry.operationId === inspectId);
+    if (
+      inspect !== undefined &&
+      (inspect.argument !== undefined ||
+        inspect.body !== undefined ||
+        inspect.flags.some((flag) => flag.required))
+    ) {
+      fail(`inspect operation "${inspectId}" needs input beyond the project ref`);
+    }
+    if (inspect !== undefined && !inspect.readOnly) {
+      fail(`inspect operation "${inspectId}" must be a read-only command`);
+    }
+    const summary = asString(operation.node.summary);
+    if (summary === undefined) {
+      fail("polling target is missing a summary");
+      continue;
+    }
+    const response = classifySuccess(spec, operation, fail);
+    if (response === undefined) continue;
+    if (response.kind !== "json") {
+      fail("polling target must return JSON");
+      continue;
+    }
+    schemas[operationId] = { result: withDialect(toJsonSchema(spec, response.schema, [], fail)) };
+    pollTargets.push({
+      operationId,
+      definition,
+      summary,
+      response: { status: response.status, kind: response.kind },
+      inspect: inspectId,
+    });
+  }
+  return { entries, pollTargets, schemas, problems };
 }
 
 function lintWait(input: {
   readonly spec: JsonObject;
   readonly operations: ReadonlyMap<string, Operation>;
-  readonly commandNamed: ReadonlySet<string>;
   readonly operation: Operation;
   readonly wait: ApiCommandWait;
   readonly fail: (reason: string) => void;
 }): void {
-  const { spec, operations, commandNamed, operation, wait, fail } = input;
+  const { spec, operations, operation, wait, fail } = input;
   const readOperation = operations.get(wait.read);
   if (readOperation === undefined) {
     fail(`wait.read "${wait.read}" has no operation in the spec`);
     return;
   }
-  if (!commandNamed.has(wait.read)) {
-    fail(`wait.read "${wait.read}" is not a generated command`);
+  if (readOperation.method !== "GET") {
+    fail(`wait.read "${wait.read}" must use GET`);
+  }
+  if (readOperation.node.requestBody !== undefined) {
+    fail(`wait.read "${wait.read}" must not require a request body`);
   }
 
   const readParameters = operationParameters(spec, readOperation);
+  if (!readParameters.some((parameter) => parameter.in === "path" && parameter.name === "ref")) {
+    fail(`wait.read "${wait.read}" must be scoped by a project ref path parameter`);
+  }
   const suppliable = new Set(
     readParameters
       .filter(
@@ -1052,7 +1181,7 @@ function lintWait(input: {
       wait.read !== operation.id &&
       parameter.required === true &&
       parameterName !== undefined &&
-      parameterName !== "ref" &&
+      !(parameterName === "ref" && parameter.in === "path") &&
       wait.params[parameterName] === undefined
     ) {
       fail(`wait.params does not supply required parameter "${parameterName}" of ${wait.read}`);

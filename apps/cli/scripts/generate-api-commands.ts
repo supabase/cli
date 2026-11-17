@@ -1,7 +1,11 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Console, Data, Effect, FileSystem, Path, Predicate, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { generatedOperations, nouns } from "../src/commands/api/api-command-policy.ts";
+import {
+  generatedOperations,
+  nouns,
+  pollTargets as pollTargetMap,
+} from "../src/commands/api/api-command-policy.ts";
 import { openApiOperationIdMap } from "@supabase/api/effect";
 import { ApiCommandGenerationError, deriveApiCommands } from "./api-command-derive.ts";
 
@@ -85,9 +89,10 @@ const main = Effect.gen(function* () {
     return yield* new ApiCommandGenerationError({ problems: ["openapi.json is not an object"] });
   }
 
-  const { entries, schemas, problems } = deriveApiCommands({
+  const { entries, pollTargets, schemas, problems } = deriveApiCommands({
     spec,
     generated: generatedOperations,
+    pollTargets: pollTargetMap,
     nouns,
     operationIdMap: openApiOperationIdMap,
     handWrittenTopLevel: yield* handWrittenTopLevel(cliRoot),
@@ -100,7 +105,7 @@ const main = Effect.gen(function* () {
   const outputs = [
     {
       relative: "src/commands/api/generated.ts",
-      source: `${HEADER}import type { ApiCommandEntry } from "./api-command.model.ts";\n\nexport const apiCommands = ${yield* encodeJson(entries)} as const satisfies readonly ApiCommandEntry[];\n`,
+      source: `${HEADER}import type { ApiCommandEntry, ApiPollTarget } from "./api-command.model.ts";\n\nexport const apiCommands = ${yield* encodeJson(entries)} as const satisfies readonly ApiCommandEntry[];\n\nexport const apiPollTargets = ${yield* encodeJson(pollTargets)} as const satisfies readonly ApiPollTarget[];\n`,
     },
     {
       relative: "src/commands/api/generated.schemas.ts",
@@ -123,7 +128,10 @@ const main = Effect.gen(function* () {
   }
   if (stale.length > 0) return yield* new ApiCommandDriftError({ files: stale });
   if (check) yield* Console.log("Generated API command files are up to date.");
-  yield* Effect.annotateCurrentSpan("apiCommands.count", entries.length);
+  yield* Effect.annotateCurrentSpan({
+    "apiCommands.count": entries.length,
+    "apiPollTargets.count": pollTargets.length,
+  });
 });
 
 if (import.meta.main) {

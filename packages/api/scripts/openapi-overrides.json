@@ -490,5 +490,552 @@
       "type": "object"
     },
     "$comment": "The public Warehouse disablement and teardown contracts are not yet in the deployed Management API specification."
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1status",
+    "value": {
+      "get": {
+        "description": "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-get-warehouse-status",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseContextResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse feature or project metadata unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get consolidated Warehouse status and capabilities",
+        "tags": ["Projects Warehouse"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_read"]],
+        "x-oauth-scope": "database:read",
+        "x-operation": {
+          "group": "warehouse",
+          "method": "status"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "$comment": "The consolidated Warehouse status contract is not yet in the deployed Management API specification."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseContextResponse_Output",
+    "value": {
+      "properties": {
+        "data": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "capabilities": {
+                  "description": "Complete operations supported by this API, not caller authorization. Each operation still requires its feature, entitlement and project permission checks.",
+                  "properties": {
+                    "context": {
+                      "type": "boolean"
+                    },
+                    "query_explain": {
+                      "type": "boolean"
+                    },
+                    "replication_add": {
+                      "type": "boolean"
+                    },
+                    "replication_remove": {
+                      "type": "boolean"
+                    },
+                    "table_layout_read": {
+                      "type": "boolean"
+                    },
+                    "table_layout_update": {
+                      "type": "boolean"
+                    },
+                    "table_resync": {
+                      "type": "boolean"
+                    },
+                    "workload_metrics": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "context",
+                    "query_explain",
+                    "replication_add",
+                    "replication_remove",
+                    "table_layout_read",
+                    "table_layout_update",
+                    "table_resync",
+                    "workload_metrics"
+                  ],
+                  "type": "object"
+                },
+                "compute": {
+                  "description": "Configured Warehouse compute and region, which may differ from the source database region. Live availability and capacity are not reported.",
+                  "properties": {
+                    "observed_at": {
+                      "description": "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+                      "format": "date-time",
+                      "nullable": true,
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "region": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "routing_status": {
+                      "enum": ["error", null, "pending", "ready", "removed"],
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": ["available", "not_provisioned", "unavailable"],
+                      "type": "string"
+                    },
+                    "unavailable_reason": {
+                      "enum": [
+                        "assignment_unavailable",
+                        "cleanup_failed",
+                        "cleanup_in_progress",
+                        "identity_mismatch",
+                        null,
+                        "observation_unavailable"
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "observed_at",
+                    "region",
+                    "routing_status",
+                    "status",
+                    "unavailable_reason"
+                  ],
+                  "type": "object"
+                },
+                "configured_readiness": {
+                  "description": "Readiness inferred from configuration and replication observations; no query is executed.",
+                  "enum": ["not_ready", "ready", "unavailable"],
+                  "type": "string"
+                },
+                "enabled": {
+                  "description": "Whether Warehouse is enabled, independently of selected table count. Null means provisioning could not be determined.",
+                  "nullable": true,
+                  "type": "boolean"
+                },
+                "lifecycle": {
+                  "nullable": true,
+                  "properties": {
+                    "delete_data": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "enum": ["deletion_failed", "disabled", "disabling"],
+                      "type": "string"
+                    },
+                    "updated_at": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    }
+                  },
+                  "required": ["delete_data", "status", "updated_at"],
+                  "type": "object"
+                },
+                "observed_at": {
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                  "type": "string"
+                },
+                "pipeline": {
+                  "nullable": true,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "observed_at": {
+                      "description": "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+                      "format": "date-time",
+                      "nullable": true,
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "failed",
+                        "started",
+                        "starting",
+                        "stopped",
+                        "stopping",
+                        "unavailable",
+                        "unknown"
+                      ],
+                      "type": "string"
+                    },
+                    "unavailable_reason": {
+                      "enum": [
+                        "assignment_unavailable",
+                        "cleanup_failed",
+                        "cleanup_in_progress",
+                        "identity_mismatch",
+                        null,
+                        "observation_unavailable"
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "observed_at", "status", "unavailable_reason"],
+                  "type": "object"
+                },
+                "project_ref": {
+                  "description": "Project ref",
+                  "example": "abcdefghijklmnopqrst",
+                  "maxLength": 20,
+                  "minLength": 20,
+                  "pattern": "^[a-z]+$",
+                  "type": "string"
+                },
+                "query_connectivity": {
+                  "enum": ["not_checked"],
+                  "type": "string"
+                },
+                "replication": {
+                  "properties": {
+                    "apply_lag": {
+                      "description": "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+                      "nullable": true,
+                      "properties": {
+                        "active": {
+                          "type": "boolean"
+                        },
+                        "feedback_age_ms": {
+                          "minimum": 0,
+                          "nullable": true,
+                          "type": "number"
+                        },
+                        "flush_lag_ms": {
+                          "minimum": 0,
+                          "nullable": true,
+                          "type": "number"
+                        },
+                        "wal_status": {
+                          "enum": ["extended", "lost", null, "reserved", "unknown", "unreserved"],
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "write_lag_ms": {
+                          "minimum": 0,
+                          "nullable": true,
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "active",
+                        "feedback_age_ms",
+                        "flush_lag_ms",
+                        "wal_status",
+                        "write_lag_ms"
+                      ],
+                      "type": "object"
+                    },
+                    "observed_at": {
+                      "description": "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+                      "format": "date-time",
+                      "nullable": true,
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "available",
+                        "not_provisioned",
+                        "not_started",
+                        "stopped",
+                        "unavailable"
+                      ],
+                      "type": "string"
+                    },
+                    "unavailable_reason": {
+                      "enum": [
+                        "assignment_unavailable",
+                        "cleanup_failed",
+                        "cleanup_in_progress",
+                        "identity_mismatch",
+                        null,
+                        "observation_unavailable"
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["apply_lag", "observed_at", "status", "unavailable_reason"],
+                  "type": "object"
+                },
+                "status": {
+                  "description": "Warehouse setup and replication status. Ready means the Warehouse connection is configured and tables are replicating ongoing changes. It does not guarantee that a query will succeed.",
+                  "enum": [
+                    "degraded",
+                    "disabled",
+                    "disabling",
+                    "not_provisioned",
+                    "ready",
+                    "starting",
+                    "stopped",
+                    "stopping",
+                    "unavailable"
+                  ],
+                  "type": "string"
+                },
+                "tables": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "properties": {
+                          "id": {
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "replication_state": {
+                            "enum": [
+                              "copied_table",
+                              "copying_table",
+                              "error",
+                              "following_wal",
+                              null,
+                              "queued"
+                            ],
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "schema": {
+                            "type": "string"
+                          },
+                          "sync_lag": {
+                            "description": "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+                            "nullable": true,
+                            "properties": {
+                              "active": {
+                                "type": "boolean"
+                              },
+                              "feedback_age_ms": {
+                                "minimum": 0,
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "flush_lag_ms": {
+                                "minimum": 0,
+                                "nullable": true,
+                                "type": "number"
+                              },
+                              "wal_status": {
+                                "enum": [
+                                  "extended",
+                                  "lost",
+                                  null,
+                                  "reserved",
+                                  "unknown",
+                                  "unreserved"
+                                ],
+                                "nullable": true,
+                                "type": "string"
+                              },
+                              "write_lag_ms": {
+                                "minimum": 0,
+                                "nullable": true,
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "active",
+                              "feedback_age_ms",
+                              "flush_lag_ms",
+                              "wal_status",
+                              "write_lag_ms"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": ["id", "name", "replication_state", "schema", "sync_lag"],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "observed_at": {
+                      "description": "Time the API retrieved this information. This timestamp does not indicate when data was measured or last synchronized.",
+                      "format": "date-time",
+                      "nullable": true,
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": ["available", "not_provisioned", "unavailable"],
+                      "type": "string"
+                    },
+                    "unavailable_reason": {
+                      "enum": [
+                        "assignment_unavailable",
+                        "cleanup_failed",
+                        "cleanup_in_progress",
+                        "identity_mismatch",
+                        null,
+                        "observation_unavailable"
+                      ],
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["items", "observed_at", "status", "unavailable_reason"],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "capabilities",
+                "compute",
+                "configured_readiness",
+                "enabled",
+                "lifecycle",
+                "observed_at",
+                "pipeline",
+                "project_ref",
+                "query_connectivity",
+                "replication",
+                "status",
+                "tables"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "description": "Project ref",
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            },
+            "type": {
+              "description": "Resource type.",
+              "enum": ["warehouse_context"],
+              "type": "string"
+            }
+          },
+          "required": ["attributes", "id", "type"],
+          "type": "object"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    },
+    "$comment": "The consolidated Warehouse status contract is not yet in the deployed Management API specification."
+  },
+  {
+    "op": "test",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1setups~1current/get/x-operation",
+    "value": {
+      "group": "warehouse",
+      "method": "status",
+      "poll": {
+        "status": "/data/attributes/status",
+        "succeeded": ["succeeded"],
+        "failed": ["failed"],
+        "error": "/data/attributes/status_error"
+      }
+    },
+    "$comment": "The deployed specification still gives the setup read the `warehouse status` command identity, which the consolidated status operation now owns."
+  },
+  {
+    "op": "replace",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1setups~1current/get/x-operation",
+    "value": {
+      "group": "warehouse.setups",
+      "method": "get",
+      "poll": {
+        "status": "/data/attributes/status",
+        "succeeded": ["succeeded"],
+        "failed": ["failed"],
+        "error": "/data/attributes/status_error"
+      }
+    }
   }
 ]

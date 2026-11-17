@@ -448,4 +448,5 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     oauthScope: "database:write",
   },
   "v2-get-warehouse-teardown": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-status": { fga: [["database_read"]], oauthScope: "database:read" },
 };

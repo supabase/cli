@@ -3108,6 +3108,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    getWarehouseStatus: (
+      input: typeof operationDefinitions.v2GetWarehouseStatus.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseStatus.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseStatus">(
+          operationDefinitions.v2GetWarehouseStatus,
+          input,
+          options,
+        );
+      }),
     getWarehouseTeardown: (
       input: typeof operationDefinitions.v2GetWarehouseTeardown.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
