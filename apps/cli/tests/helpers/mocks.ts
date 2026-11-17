@@ -228,6 +228,8 @@ export function mockProcessControl(
   };
 }
 
+const optionalMessage = (message: string | undefined) => (message === undefined ? {} : { message });
+
 export function mockOutput(
   opts: {
     format?: OutputFormat;
@@ -245,6 +247,7 @@ export function mockOutput(
   const messages: OutputMessage[] = [];
   const failures: Array<Parameters<ReturnType<typeof Output.of>["fail"]>[0]> = [];
   const progressEvents: ProgressEvent[] = [];
+  const taskSettlements: Array<{ type: "clear" | "fail" | "cancel"; message?: string }> = [];
   const events: OutputEvent[] = [];
   const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
   const promptConfirmCalls: Array<{
@@ -315,6 +318,7 @@ export function mockOutput(
               }),
             fail: (nextMessage?: string) =>
               Effect.sync(() => {
+                taskSettlements.push({ type: "fail", ...optionalMessage(nextMessage) });
                 if (nextMessage !== undefined) {
                   messages.push({ type: "error", message: nextMessage });
                 }
@@ -327,11 +331,14 @@ export function mockOutput(
               }),
             cancel: (nextMessage?: string) =>
               Effect.sync(() => {
+                taskSettlements.push({ type: "cancel", ...optionalMessage(nextMessage) });
                 if (nextMessage !== undefined) {
                   messages.push({ type: "warn", message: nextMessage });
                 }
               }),
-            clear: Effect.void,
+            clear: Effect.sync(() => {
+              taskSettlements.push({ type: "clear" });
+            }),
           };
         }),
       event: (event) =>
@@ -451,6 +458,7 @@ export function mockOutput(
     messages,
     failures,
     progressEvents,
+    taskSettlements,
     events,
     promptConfirmCalls,
     promptSelectCalls,

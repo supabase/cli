@@ -19,11 +19,12 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { respondToComplete } from "../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../cli/root.ts";
-import { ExperimentalFlag, GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
+import { ExperimentalFlag, ROOT_GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { HostedMutationConsentRequiredError } from "../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { InvalidOutputFormatError } from "../../command-internal/output-formats.ts";
 import { ExperimentalFeatureFlagError } from "../../shared/config/experimental-feature.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
+import type { OutputFormat } from "../../shared/output/types.ts";
 import { commandTreeFor } from "../../../tests/helpers/command-flags.ts";
 import {
   VALID_REF,
@@ -96,6 +97,52 @@ const statusBody = (state: string, statusError?: string) => ({
     },
   },
 });
+
+const RICH_STATUS = {
+  data: {
+    type: "warehouse_setup",
+    id: SEL,
+    attributes: {
+      dns: { hostname: "wh.example.test", region: "us-east-1", status: "active" },
+      delete_data: false,
+      setup_status: "ready",
+      pipeline_id: 42,
+      steps: [
+        { name: "create_pipeline", status: "succeeded" },
+        { name: "import_foreign_schema", status: "failed", message: "line one\nline two" },
+      ],
+      tables: [
+        {
+          schema: "public",
+          name: "orders",
+          state: "synced",
+          lag_ms: 120,
+          last_synced_at: "2026-01-01T00:00:00Z",
+          copy_name: '"public"."orders"',
+          replication_state: "streaming",
+        },
+        {
+          schema: "public",
+          name: "users",
+          state: "copying",
+          copy_name: '"public"."users"',
+          warehouse_size_bytes: 2048,
+          replication_state: "copying",
+        },
+      ],
+      fdw_status: {
+        extension_available: true,
+        extension_installed: true,
+        wrapper_installed: false,
+        server_configured: false,
+        schema_created: false,
+        foreign_schema_imported: false,
+      },
+      status: "succeeded",
+      replication_state: "streaming",
+    },
+  },
+};
 
 /** One request the CLI sent to the stubbed Management API. */
 interface Sent {
@@ -189,7 +236,7 @@ const withApi = (route: Route, sent: Array<Sent>) => {
 
 const warehouseRoot = Command.make("supabase").pipe(
   Command.withSubcommands(apiCommandGroups(["warehouse"])),
-  Command.withGlobalFlags(GLOBAL_FLAGS),
+  Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
 );
 
 const tempRoot = useTempWorkdir("supabase-api-commands-int-");
@@ -210,6 +257,10 @@ interface CliOpts {
   readonly route: Route;
   readonly root?: typeof warehouseRoot;
   readonly analytics?: ReturnType<typeof mockAnalytics>;
+  /** The Output layer's resolved format; defaults to `text`. */
+  readonly outputFormat?: OutputFormat;
+  /** Whether stdout is a terminal; defaults to a pipe. */
+  readonly stdoutIsTty?: boolean;
 }
 
 /**
@@ -227,7 +278,7 @@ const execute = (argv: ReadonlyArray<string>, opts: CliOpts) => {
 };
 
 const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
-  const out = mockOutput({ format: "text" });
+  const out = mockOutput({ format: opts.outputFormat ?? "text" });
   const { args, sent, run } = execute(argv, opts);
   const layer = Layer.mergeAll(
     buildTestRuntime({
@@ -235,7 +286,7 @@ const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
       api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
       cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-      tty: mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      tty: mockTty({ stdinIsTty: false, stdoutIsTty: opts.stdoutIsTty ?? false }),
       stdin: mockStdin(false),
       cliArgs: args,
     }),
@@ -246,6 +297,9 @@ const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
 
 const failureOf = (exit: Exit.Exit<unknown, unknown>): unknown =>
   Exit.isFailure(exit) ? Exit.findErrorOption(exit).pipe(Option.getOrUndefined) : undefined;
+
+const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+  Effect.raceFirst(Effect.forever(TestClock.adjust("2 seconds")), Fiber.await(fiber));
 
 const bodiesOf = (sent: ReadonlyArray<Sent>) => sent.map((request) => request.body);
 
@@ -712,9 +766,6 @@ describe("generated warehouse commands", () => {
   });
 
   describe("--wait", () => {
-    const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
-      Effect.raceFirst(Effect.forever(TestClock.adjust("2 seconds")), Fiber.await(fiber));
-
     it.effect("polls the read operation until the setup succeeds and prints its response", () => {
       const { sent, out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
@@ -974,6 +1025,201 @@ describe("generated warehouse commands", () => {
     });
   });
 
+  describe("text output", () => {
+    const STATUS_TEXT =
+      [
+        "Warehouse setup",
+        `  ID                 ${SEL}`,
+        "  DNS",
+        "    Hostname  wh.example.test",
+        "    Region    us-east-1",
+        "    Status    active",
+        "  Delete data        no",
+        "  Setup status       ready",
+        "  Pipeline ID        42",
+        "  Steps",
+        "     NAME                  | STATUS    | MESSAGE            ",
+        "    -----------------------|-----------|--------------------",
+        "     create_pipeline       | succeeded | -                  ",
+        "     import_foreign_schema | failed    | line one\\nline two ",
+        "  Tables",
+        "     SCHEMA | NAME   | STATE   | LAG MS | LAST SYNCED AT       | COPY NAME         | REPLICATION STATE | WAREHOUSE SIZE BYTES ",
+        "    --------|--------|---------|--------|----------------------|-------------------|-------------------|----------------------",
+        '     public | orders | synced  | 120    | 2026-01-01T00:00:00Z | "public"."orders" | streaming         | -                    ',
+        '     public | users  | copying | -      | -                    | "public"."users"  | copying           | 2048                 ',
+        "  FDW status",
+        "    Extension available      yes",
+        "    Extension installed      yes",
+        "    Wrapper installed        no",
+        "    Server configured        no",
+        "    Schema created           no",
+        "    Foreign schema imported  no",
+        "  Status             succeeded",
+        "  Replication state  streaming",
+      ].join("\n") + "\n";
+
+    it.effect("renders the status as text on a terminal by default", () => {
+      const { out, run } = setup(["warehouse", "status"], {
+        route: ok(RICH_STATUS),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toBe(STATUS_TEXT);
+      });
+    });
+
+    it.effect("keeps the API bytes by default when stdout is piped", () => {
+      const { out, run } = setup(["warehouse", "status"], { route: ok(RICH_STATUS) });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toBe(encodeJson(RICH_STATUS));
+      });
+    });
+
+    it.effect("renders text through a pipe when --output-format text is explicit", () => {
+      const { out, run } = setup(["warehouse", "status", "--output-format", "text"], {
+        route: ok(RICH_STATUS),
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toBe(STATUS_TEXT);
+      });
+    });
+
+    it.effect(
+      "prints only the text rendering for -o pretty under --output-format stream-json",
+      () => {
+        const { out, run } = setup(
+          ["warehouse", "status", "-o", "pretty", "--output-format", "stream-json"],
+          { route: ok(RICH_STATUS), outputFormat: "stream-json", stdoutIsTty: true },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(out.stdoutText).toBe(STATUS_TEXT);
+          expect(out.progressEvents).toEqual([]);
+        });
+      },
+    );
+
+    it.effect("keeps the API bytes for -o json on a terminal", () => {
+      const { out, run } = setup(["warehouse", "status", "-o", "json"], {
+        route: ok(RICH_STATUS),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toBe(encodeJson(RICH_STATUS));
+      });
+    });
+
+    it.effect("shows the request as one task that is cleared when it succeeds", () => {
+      const { out, run } = setup(["warehouse", "status"], {
+        route: ok(RICH_STATUS),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.progressEvents).toEqual([
+          { type: "start", message: "Get Warehouse initial synchronization status" },
+        ]);
+        expect(out.taskSettlements).toEqual([{ type: "clear" }]);
+      });
+    });
+
+    it.effect("prints the final status as text and tracks the wait in one polling task", () => {
+      const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        stdoutIsTty: true,
+        route: enableThenPoll([
+          { status: 200, body: statusBody("pending") },
+          { status: 200, body: statusBody("succeeded") },
+        ]),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        yield* Fiber.join(fiber);
+        expect(out.stdoutText).toBe(
+          ["Warehouse setup", `  Selection ID  ${SEL}`, "  Status        succeeded", ""].join("\n"),
+        );
+        const polling = "Get Warehouse initial synchronization status";
+        expect(out.progressEvents).toEqual([
+          { type: "start", message: "Enable Warehouse replication" },
+          { type: "start", message: polling },
+          { type: "message", message: `${polling} (status: pending)` },
+          { type: "message", message: `${polling} (status: succeeded)` },
+        ]);
+        expect(out.taskSettlements).toEqual([{ type: "clear" }, { type: "clear" }]);
+      });
+    });
+
+    it.effect("fails the polling task and keeps the standard error when the setup fails", () => {
+      const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        stdoutIsTty: true,
+        route: enableThenPoll([{ status: 200, body: statusBody("failed", "pipeline crashed") }]),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        const failure = yield* Fiber.join(fiber);
+        expect(failure).toBeInstanceOf(ApiCommandOperationFailedError);
+        expect(failure).toMatchObject({ message: expect.stringContaining("pipeline crashed") });
+        expect(out.stdoutText).toBe("");
+        expect(out.taskSettlements).toEqual([{ type: "clear" }, { type: "fail" }]);
+      });
+    });
+
+    it.effect("cancels the polling task when the run is interrupted mid-wait", () => {
+      const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        stdoutIsTty: true,
+        route: enableThenPoll([{ status: 200, body: statusBody("pending") }]),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("2 seconds").pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.repeat({ until: () => out.progressEvents.some((e) => e.type === "message") }),
+        );
+        yield* Fiber.interrupt(fiber);
+        expect(out.stdoutText).toBe("");
+        expect(out.taskSettlements).toEqual([{ type: "clear" }, { type: "cancel" }]);
+      });
+    });
+
+    it.effect("prints the dry run as text with its query values", () => {
+      const { out, sent, run } = setup(
+        [
+          "warehouse",
+          "status",
+          "--inspect-fdw",
+          "false",
+          "--selection-id",
+          SEL,
+          "--dry-run",
+          "--output-format",
+          "text",
+        ],
+        { route: ok({}) },
+      );
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([]);
+        expect(out.stdoutText).toBe(
+          [
+            `Dry run: GET ${STATUS_PATH}`,
+            "Query",
+            "  inspect_fdw   false",
+            `  selection_id  ${SEL}`,
+            "",
+          ].join("\n"),
+        );
+      });
+    });
+  });
+
   describe("generic response writing", () => {
     const fixture: ApiCommandEntry = {
       ...status,
@@ -986,7 +1232,7 @@ describe("generated warehouse commands", () => {
             entry,
           ]),
         ]),
-        Command.withGlobalFlags(GLOBAL_FLAGS),
+        Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
       );
 
     it.effect.each([

@@ -76,12 +76,23 @@ and `--wait` record `true`. Generated field flags, `--body`, `--file` and `--tim
 
 ## Output
 
-| Mode           | stdout                                                                            |
-| -------------- | --------------------------------------------------------------------------------- |
-| text (default) | the API's JSON response bytes, unchanged; with `--wait` the final status response |
-| `-o json`      | the same bytes; no `target` key is added                                          |
-| `-o yaml`      | the same document as YAML; other `-o` values are a usage error                    |
-| `--dry-run`    | the request preview as JSON                                                       |
+Text rendering applies on a terminal by default, with `--output-format text` (also when piped), and
+with `-o pretty`. Piped runs, agent runs, `--output-format json|stream-json` and `-o json` keep the
+API's JSON bytes. `-o` takes precedence over `--output-format`.
+
+| Mode                           | stdout                                                                                                                |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| text presentation              | the response as labelled fields and tables; with `--wait` the final status response; an empty response prints `Done.` |
+| JSON presentation              | the API's JSON response bytes, unchanged; with `--wait` the final status response                                     |
+| `-o json`                      | the same bytes; no `target` key is added                                                                              |
+| `-o yaml`                      | the same document as YAML; `-o pretty` selects text; other `-o` values are a usage error                              |
+| `--dry-run`, text presentation | `Dry run: <METHOD> <path>`, then `Query`, `Headers` and indented JSON `Body` blocks                                   |
+| `--dry-run` otherwise          | the request preview as JSON                                                                                           |
+
+When the presentation is text and `--output-format` is `text`, each request, and with `--wait` the
+whole polling phase, runs under a task that shows the polled status after 200 ms. On a terminal it
+is a spinner; when stdout is not a terminal (for example `--output-format text` piped) the task
+message prints as a step line on stdout before the response. JSON and YAML output show no progress.
 
 ## Notes
 

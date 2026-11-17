@@ -65,6 +65,11 @@ function outputFormatFromArg(value: string | undefined): Option.Option<OutputFor
   }
 }
 
+/** The `--output-format` value written on the command line, when it names a known format. */
+export function readExplicitOutputFormat(args: ReadonlyArray<string>): Option.Option<OutputFormat> {
+  return outputFormatFromArg(readLongFlag(args, "--output-format"));
+}
+
 function outputFlagFormatFromArg(value: string | undefined): Option.Option<OutputFlagFormat> {
   switch (value) {
     case "env":

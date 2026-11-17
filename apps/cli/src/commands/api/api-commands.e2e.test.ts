@@ -130,6 +130,31 @@ it.live("warehouse status reports a 409 as a conflict failure document on stderr
   }).pipe(Effect.provide(BunServices.layer)),
 );
 
+it.live("warehouse status keeps the API bytes when stdout is piped", () =>
+  Effect.gen(function* () {
+    const { result } = yield* runWarehouse(["status"], () => statusBody("succeeded"));
+
+    requireCliSuccess(result, "warehouse status");
+    expect(result.stdout, result.stderr).toBe(statusBody("succeeded").body);
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+
+it.live("warehouse status --output-format text renders the response for people", () =>
+  Effect.gen(function* () {
+    const { result } = yield* runWarehouse(["status", "--output-format", "text"], () =>
+      statusBody("succeeded"),
+    );
+
+    requireCliSuccess(result, "warehouse status --output-format text");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(
+      result.stdout.endsWith(
+        `Warehouse setup\n  Selection ID  ${SEL}\n  Status        succeeded\n`,
+      ),
+    ).toBe(true);
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+
 it.live("warehouse enable without --yes refuses to run when stdin is piped", () =>
   Effect.gen(function* () {
     const { result, requests } = yield* runWarehouse(

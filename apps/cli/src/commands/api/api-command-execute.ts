@@ -10,7 +10,8 @@ import { parsePlanGateEnvelope, sanitizeErrorBody } from "../../command-internal
 import { encodeStructYaml, shapeAny } from "../../command-internal/struct-output.encoders.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { readPointer } from "./api-command-pointer.ts";
-import { decodeInput, definitionOf } from "./api-command-request.ts";
+import { decodeInput, definitionOf, type ApiRequestPreview } from "./api-command-request.ts";
+import { renderDryRunText, renderResponseText } from "./api-command.format.ts";
 import {
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
@@ -26,15 +27,30 @@ const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.U
 const textDecoder = new TextDecoder();
 const encodeJsonValue = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-/** How a generated command prints its result: the API's JSON untouched, or the same document as YAML. */
-export type ApiOutputFormat = "json" | "yaml";
+/**
+ * How a generated command prints its result: the API's JSON untouched, the same document as
+ * YAML, or a human-readable rendering.
+ */
+export type ApiOutputFormat = "text" | "json" | "yaml";
+
+type ApiDocumentFormat = Exclude<ApiOutputFormat, "text">;
 
 /** Writes `value` as one document in `format`. */
-export const writeDocument = Effect.fnUntraced(function* (value: unknown, format: ApiOutputFormat) {
+const writeDocument = Effect.fnUntraced(function* (value: unknown, format: ApiDocumentFormat) {
   const output = yield* Output;
   return yield* output.raw(
     format === "yaml" ? encodeStructYaml(value, shapeAny) : `${encodeJsonValue(value)}\n`,
   );
+});
+
+/** Writes the request a dry run would send, as text or as a document. */
+export const writeDryRun = Effect.fnUntraced(function* (
+  preview: ApiRequestPreview,
+  format: ApiOutputFormat,
+) {
+  if (format !== "text") return yield* writeDocument(preview, format);
+  const output = yield* Output;
+  return yield* output.raw(renderDryRunText(preview));
 });
 
 const stringField = (source: unknown, key: string): string | undefined => {
@@ -148,7 +164,8 @@ const parseResponse = (response: ApiCommandResponse): unknown =>
 
 /**
  * Writes a success response. `json` passes JSON bytes through untouched, prints text as a JSON
- * string and an empty body as `null`; `yaml` encodes that same document.
+ * string and an empty body as `null`; `yaml` encodes that same document; `text` renders it for a
+ * person.
  */
 export const writeApiResponse = Effect.fnUntraced(function* (
   entry: ApiCommandEntry,
@@ -157,6 +174,13 @@ export const writeApiResponse = Effect.fnUntraced(function* (
 ) {
   const hasBody = response.bytes.length > 0;
   const text = textDecoder.decode(response.bytes);
+  if (format === "text") {
+    const output = yield* Output;
+    if (!hasBody || entry.response.kind === "empty") return yield* output.raw("Done.\n");
+    const parsed = entry.response.kind === "json" ? decodeJsonText(text) : Option.none();
+    if (Option.isNone(parsed)) return yield* output.raw(text.endsWith("\n") ? text : `${text}\n`);
+    return yield* output.raw(renderResponseText(parsed.value));
+  }
   if (format === "json" && entry.response.kind === "json" && hasBody) {
     const output = yield* Output;
     return yield* output.rawBytes(response.bytes);
@@ -178,6 +202,8 @@ interface WaitInput {
   readonly readInput: Readonly<Record<string, unknown>>;
   readonly ref: string;
   readonly timeoutMillis: number;
+  /** Called after each successful poll with the status it read. */
+  readonly onPoll?: (status: string | undefined) => Effect.Effect<void>;
 }
 
 export interface PollOutcome {
@@ -292,6 +318,10 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
   const poll = Ref.update(attempts, (count) => count + 1).pipe(
     Effect.andThen(sendApiRequest(readEntry, decoded)),
     Effect.flatMap((response) => classify(wait, response, hint)),
+    Effect.tap(({ response }) => {
+      const status = readPointer(parseResponse(response), wait.status);
+      return input.onPoll?.(typeof status === "string" ? status : undefined) ?? Effect.void;
+    }),
     Effect.withTracerEnabled(false),
   );
 

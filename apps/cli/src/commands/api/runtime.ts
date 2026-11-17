@@ -1,4 +1,4 @@
-import { Effect, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { ApiCommandUsageError } from "../../command-internal/command-errors/api-command.errors.ts";
@@ -18,7 +18,12 @@ import { resolveProjectTarget } from "../../command-internal/target/resolve-proj
 import { projectTargetFlags } from "../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { projectRefPicker } from "../../config/project-ref.layer.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { readExplicitOutputFormat } from "../../shared/cli/agent-output.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import type { OutputFormat } from "../../shared/output/types.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
+import { Tty } from "../../shared/runtime/tty.service.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
@@ -29,7 +34,7 @@ import {
   sendApiRequest,
   waitForOperation,
   writeApiResponse,
-  writeDocument,
+  writeDryRun,
 } from "./api-command-execute.ts";
 import { type ApiFlagLocation, apiFlag } from "./api-command-flags.ts";
 import { type ApiNoun, nouns } from "./api-command-policy.ts";
@@ -140,9 +145,52 @@ const parseTimeoutMillis = (value: string) =>
     ),
   );
 
-const consentAction = (entry: ApiCommandEntry): string => entry.summary.replace(/\.$/, "");
+const summaryText = (entry: ApiCommandEntry): string => entry.summary.replace(/\.$/, "");
 
-const OUTPUT_FORMATS: ReadonlyArray<ApiOutputFormat> = ["json", "yaml"];
+const OUTPUT_FORMATS: ReadonlyArray<string> = ["json", "yaml", "pretty"];
+
+/**
+ * How the result prints: `-o` decides first, then an explicit `--output-format`, then text only
+ * for a text-mode run on a terminal; everything else keeps the API's JSON.
+ */
+const presentationOf = (input: {
+  readonly outputFlag: Option.Option<string>;
+  readonly args: ReadonlyArray<string>;
+  readonly outputFormat: OutputFormat;
+  readonly stdoutIsTty: boolean;
+}): ApiOutputFormat => {
+  const flag = Option.getOrUndefined(input.outputFlag);
+  if (flag === "yaml") return "yaml";
+  if (flag === "json") return "json";
+  if (flag === "pretty") return "text";
+  const explicit = readExplicitOutputFormat(input.args);
+  if (Option.isSome(explicit)) return explicit.value === "text" ? "text" : "json";
+  return input.outputFormat === "text" && input.stdoutIsTty ? "text" : "json";
+};
+
+/**
+ * Runs `use` under a progress task when `visible`, handing it the task's message updater; the
+ * task is cleared on success and marked failed or cancelled otherwise.
+ */
+const withTask = <A, E, R>(
+  visible: boolean,
+  message: string,
+  use: (update: (message: string) => Effect.Effect<void>) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    if (!visible) return yield* use(() => Effect.void);
+    const output = yield* Output;
+    const task = yield* output.task(message);
+    return yield* use(task.message).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? task.clear
+          : Cause.hasInterruptsOnly(exit.cause)
+            ? task.cancel()
+            : task.fail(),
+      ),
+    );
+  });
 
 /** The parsed flags of a generated command. */
 interface ApiCommandFlags {
@@ -166,8 +214,15 @@ const handle = Effect.fn("api-command.run")(function* (
   yield* Effect.annotateCurrentSpan("operation.id", entry.operationId);
   const telemetryState = yield* TelemetryState;
   const cache = yield* LinkedProjectCache;
-  const outputFlag = yield* OutputFlag;
-  const format: ApiOutputFormat = Option.getOrUndefined(outputFlag) === "yaml" ? "yaml" : "json";
+  const output = yield* Output;
+  const format = presentationOf({
+    outputFlag: yield* OutputFlag,
+    args: (yield* CliArgs).args,
+    outputFormat: output.format,
+    stdoutIsTty: (yield* Tty).stdoutIsTty,
+  });
+  const progress = format === "text" && output.format === "text";
+  yield* Effect.annotateCurrentSpan("output.presentation", format);
   yield* Effect.gen(function* () {
     const ref = yield* resolveProjectTarget(flags);
     yield* Effect.gen(function* () {
@@ -184,10 +239,10 @@ const handle = Effect.fn("api-command.run")(function* (
 
       if (flags.dryRun) {
         yield* Effect.annotateCurrentSpan("run.outcome", "dry_run");
-        return yield* writeDocument(previewRequest(entry, decoded), format);
+        return yield* writeDryRun(previewRequest(entry, decoded), format);
       }
       if (!entry.readOnly) {
-        yield* requireHostedMutationConsent({ action: consentAction(entry) });
+        yield* requireHostedMutationConsent({ action: summaryText(entry) });
       }
 
       if (waiting) {
@@ -199,19 +254,28 @@ const handle = Effect.fn("api-command.run")(function* (
               wait: resolved.wait,
               changedOperationId: entry.operationId,
               ref,
-              changed: yield* sendApiRequest(entry, decoded),
+              changed: yield* withTask(progress, summaryText(entry), () =>
+                sendApiRequest(entry, decoded),
+              ),
             });
-        const settled = yield* waitForOperation({
-          wait: resolved.wait,
-          readEntry: resolved.readEntry,
-          readInput,
-          ref,
-          timeoutMillis,
-        });
+        const polling = summaryText(resolved.readEntry);
+        const settled = yield* withTask(progress, polling, (update) =>
+          waitForOperation({
+            wait: resolved.wait,
+            readEntry: resolved.readEntry,
+            readInput,
+            ref,
+            timeoutMillis,
+            onPoll: (status) =>
+              update(status === undefined ? polling : `${polling} (status: ${status})`),
+          }),
+        );
         yield* Effect.annotateCurrentSpan("run.outcome", "waited");
         return yield* writeApiResponse(resolved.readEntry, settled, format);
       }
-      const response = yield* sendApiRequest(entry, decoded);
+      const response = yield* withTask(progress, summaryText(entry), () =>
+        sendApiRequest(entry, decoded),
+      );
       yield* Effect.annotateCurrentSpan("run.outcome", "sent");
       return yield* writeApiResponse(entry, response, format);
     }).pipe(Effect.ensuring(cache.cache(ref)));
