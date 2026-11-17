@@ -262,7 +262,6 @@ flowchart TD
     pub --> rel["softprops/action-gh-release (empty draft)<br/>→ upload-release-assets.ts upload (gh release upload per asset)<br/>→ upload-release-assets.ts verify → gh release edit --draft=false<br/>(--latest=false for maintenance)"]
     rel --> hb["publish-homebrew<br/>App-token-authed clone of homebrew-tap<br/>update-homebrew.ts --name <brew_name><br/>(beta, stable, maintenance)"]
     rel --> sc["publish-scoop<br/>App-token-authed clone of scoop-bucket<br/>update-scoop.ts --name <scoop_name><br/>(beta, stable, maintenance)"]
-    rel --> sucs["setup-cli-smoke<br/>install via supabase/setup-cli<br/>(v1/v2 GitHub Release download, v3 npm)"]
     hb --> vic["verify-install-channels<br/>real brew/scoop/install-script installs<br/>against the live channels"]
     sc --> vic
 ```
@@ -486,7 +485,7 @@ Keep two to three stable majors supported at the same time, roughly six to twelv
 
 `v<N>.x` runs its own frozen copy of the release pipeline, so a fix to release infrastructure on `develop` does not reach an active maintenance line unless someone ports it. **Changes to the paths below must be cherry-picked to every active `v*.x` branch** (via a `backport/*` PR) when they are needed to keep releasing from it, and a PR that touches them should flag this when a `v*.x` branch exists.
 
-- Release workflows: `release.yml`, `release-shared.yml`, `build-cli-artifacts.yml`, `release-smoke-test.yml`, `setup-cli-smoke-test.yml`, `verify-install-channels.yml`, `backfill-release-notes.yml`, `propose-release-notes.yml`, `slack-notify.yml`.
+- Release workflows: `release.yml`, `release-shared.yml`, `build-cli-artifacts.yml`, `release-smoke-test.yml`, `verify-install-channels.yml`, `backfill-release-notes.yml`, `propose-release-notes.yml`, `slack-notify.yml`.
 - Live e2e workflows: `live-e2e.yml`, `live-e2e-suite.yml`, `live-e2e-gate.yml`, `live-e2e-notify.yml`.
 - PR gating on `v*.x`: `test.yml`, `lint-pull-request.yml`, `run-ci.yml`, `branch-policy.yml`.
 - Composite action `.github/actions/setup`.
@@ -494,7 +493,7 @@ Keep two to three stable majors supported at the same time, roughly six to twelv
 - Scripts in `apps/cli/scripts/`: `build.ts`, `build-binary.ts`, `compile-options.ts`, `macos-signing.ts`, `publish.ts`, `release-channels.ts`, `sync-versions.ts`, `update-homebrew.ts`, `update-scoop.ts`, `upload-release-assets.ts`, `analyze-commits-title.js`, `backfill-release-notes.ts`, `propose-release-notes.ts`.
 - The `release` block in `apps/cli/package.json` and the smoke tests under `apps/cli/tests/`.
 
-`fast-forward.yml`, `sync-branches.yml`, and the `main`/`develop`/`next` promotion paths act on those branches only, so they have no `v*.x` copy to maintain.
+`fast-forward.yml`, `sync-branches.yml`, and the `main`/`develop`/`next` promotion paths act on those branches only, so they have no `v*.x` copy to maintain. `setup-cli-smoke-test.yml` runs on a schedule from `develop` and already tests the `v<N>.stable` dist-tags, so it has none either.
 
 ### What each job does
 
@@ -532,10 +531,13 @@ Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` a
 
 ### Post-publish: install-channel verification
 
-Once the channels are live, two reusable workflows run automatically (last in `release-shared.yml`, non-gating — by the time they run the artifacts are already published, so a failure surfaces as a red post-release signal rather than blocking distribution):
+Once the channels are live, a reusable workflow runs automatically (last in `release-shared.yml`, non-gating — by the time it runs the artifacts are already published, so a failure surfaces as a red post-release signal rather than blocking distribution):
 
-- `[setup-cli-smoke-test.yml](../../../.github/workflows/setup-cli-smoke-test.yml)` (`setup-cli-smoke` job) — installs the released version through `supabase/setup-cli` v1 and v2 (the GitHub Release download path) and v3 (the npm package) on Linux, macOS, Windows, and Alpine. v3 waits on each runner until npm serves the version (up to 15 minutes) and warns when setup-cli installed from somewhere other than npm, since the GitHub release fallback is a supported path; the fallback is added as a notice to the success Slack message on `stable`/`maintenance` and posted as its own notice on `beta`/`next`, which get no success message; one ubuntu job forces the GitHub release fallback.
 - `[verify-install-channels.yml](../../../.github/workflows/verify-install-channels.yml)` (`verify-install-channels` job) — runs a **real** `brew install` (macOS **and** Linux, so both the `on_macos` and `on_linux` stanzas of the formula are exercised), `scoop install`, and `curl|bash` install of the **published** install script (fetched from the release asset, not the repo checkout) against the just-published Homebrew tap, Scoop bucket, and GitHub Release. Each leg then asserts `supabase --version` matches and runs `supabase --help` to exercise the actual command tree. brew, scoop, and the install script each verify the published `sha256`/`hash` against the downloaded tarball, so this is the signal that would have caught CLI v2.107.0 (where the brew/scoop manifests shipped checksums that did not match the release tarballs and every `brew install` / `scoop install` failed). It only runs for `beta`/`stable`/`maintenance` (the channels that publish brew/scoop) and can be dispatched manually against any already-published version via the Actions tab.
+
+### Daily: setup-cli smoke test
+
+[`setup-cli-smoke-test.yml`](../../../.github/workflows/setup-cli-smoke-test.yml) runs every day on a schedule, outside the release pipeline. It tests the newest version on each npm dist-tag that ships the `@supabase/cli-*` platform packages (`latest`, `beta`, `next`, `v<N>.stable`), skipping any version published less than an hour earlier. Right after a publish, npm can still serve an older package list, and `npm install` then skips the new platform package without an error, so a check run right after publishing reports fallbacks that are only propagation delay. Each version is installed through `supabase/setup-cli` v1 and v2 (the GitHub Release download path) and v3 (the npm package) on Linux, macOS, Windows, and Alpine, and one ubuntu job forces the v3 GitHub release fallback. Scheduled runs post to Slack when a job fails or when v3 fell back from npm to the GitHub release. To test a specific version, dispatch the workflow with `version`; manual runs do not post to Slack.
 
 ### Code signing (macOS)
 
