@@ -119,6 +119,11 @@ The `--output`/`-o` flag does not change deploy output.
 - Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
 - Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
+- **Plan-gated denials:** a function create, update, deploy or bulk update denied with a 4xx whose
+  body is the `entitlement_required` envelope prints the upgrade hint on stderr before the error in
+  text mode, carries `entitlement` on the JSON error, and fires `cli_upgrade_suggested` (via
+  wrapper) before `cli_command_executed`. A `--use-api` deploy of several functions reports its
+  per-function failures as one aggregate error, which carries no entitlement.
 - Prints the target banner before anything else.
 - **Consent:** one question, `Deploy N Function(s)` on the target, asked after planning and
   before the first bundle, upload or delete. The default answer is No. `--prune` adds

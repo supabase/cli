@@ -14,7 +14,7 @@ import {
   shapeString,
   shapeStruct,
 } from "./struct-output.encoders.ts";
-import { sanitizeErrorBody } from "./http-errors.ts";
+import { planGateFromResponse, sanitizeErrorBody } from "./http-errors.ts";
 import {
   ProjectsCreateNetworkError,
   ProjectsCreateUnexpectedStatusError,
@@ -147,12 +147,14 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   );
 
   if (response.status !== 201) {
-    const errorBody = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));
+    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    const errorBody = sanitizeErrorBody(rawBody);
     yield* creating?.fail() ?? Effect.void;
     return yield* new ProjectsCreateUnexpectedStatusError({
       status: response.status,
       body: errorBody,
       message: `Unexpected error creating project: ${errorBody}`,
+      ...planGateFromResponse(response.status, rawBody),
     });
   }
 
