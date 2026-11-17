@@ -35,6 +35,12 @@ export type MigrationSquashFlags = CliCommand.Command.Config.Infer<typeof config
 export const migrationSquashCommand = Command.make("squash", config).pipe(
   Command.withDescription("Squash migrations to a single file."),
   Command.withShortDescription("Squash migrations to a single file"),
+  Command.withExamples([
+    {
+      command: "supabase migration squash --version 20240414044403",
+      description: "Squash local migrations up to the specified version",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["version"] },

@@ -72,6 +72,16 @@ const commandConfig = {
 export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
   Command.withDescription("Serve all Functions locally."),
   Command.withShortDescription("Serve all Functions locally"),
+  Command.withExamples([
+    {
+      command: "supabase functions serve --inspect-mode brk",
+      description: "Serve functions with a breakpoint at the first line",
+    },
+    {
+      command: "supabase functions serve --inspect-mode wait",
+      description: "Serve functions, waiting for a debugger connection before execution",
+    },
+  ]),
   withPermissions({
     operations: [],
     noApiEffectFlags: [

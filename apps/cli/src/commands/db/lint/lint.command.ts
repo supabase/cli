@@ -41,6 +41,20 @@ export type DbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbLintCommand = Command.make("lint", config).pipe(
   Command.withDescription("Checks a database for typing error."),
   Command.withShortDescription("Checks a database for typing error"),
+  Command.withExamples([
+    {
+      command: "supabase db lint --schema public",
+      description: "Lint only the public schema",
+    },
+    {
+      command: "supabase db lint --fail-on warning",
+      description: "Exit with a non-zero status if warnings or errors are found",
+    },
+    {
+      command: "supabase db lint --fail-on error",
+      description: "Exit with a non-zero status only if errors are found",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["schema", "level", "fail-on"] },

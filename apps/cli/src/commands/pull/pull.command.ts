@@ -86,6 +86,14 @@ export const pullCommand = Command.make("pull", config).pipe(
       command: "supabase pull --dry-run",
       description: "Preview what would be pulled without writing anything",
     },
+    {
+      command: "supabase pull --remote-label staging",
+      description: "Write pulled config into the remotes.staging block",
+    },
+    {
+      command: "supabase pull --with-migration-history",
+      description: "Fetch migration history, replacing matching local migration files",
+    },
   ]),
   withPermissions(
     compose(

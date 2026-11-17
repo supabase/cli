@@ -119,6 +119,20 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     "Compares a shadow built from supabase/migrations with a live database (the local database by default, or the one --remote selects). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
   ),
   Command.withShortDescription("Diffs a database for schema changes"),
+  Command.withExamples([
+    {
+      command: "supabase db diff -f add_profiles",
+      description: "Save local schema changes as a new migration",
+    },
+    {
+      command: "supabase db diff --schema public,extensions",
+      description: "Diff only the public and extensions schemas",
+    },
+    {
+      command: "supabase db diff --use-migra",
+      description: "Use the legacy migra engine for this diff",
+    },
+  ]),
   withPermissions(
     compose(
       {

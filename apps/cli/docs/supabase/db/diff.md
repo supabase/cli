@@ -10,7 +10,7 @@ Compares schema differences between the target database and a shadow database, u
 
 In `--from`/`--to`, `remote` means the linked project; passing `--remote` together with `--from` or `--to` is an error. The deprecated aliases still work there and warn: `--project-ref` points a `remote` side at the project it names, and the rest change nothing. Explicit `--from`/`--to` mode always uses pg-delta. In this mode, `-f` is ignored and stdout (or `--output`) is a flattened representation for review, not a portable apply script. Do not apply it directly with plain `psql -f`: transactional units can contain `SET LOCAL` preambles that only take effect inside a transaction, while plans that mix transactional and non-transactional units cannot safely be wrapped in one transaction. To create an applicable migration, use normal target mode with `supabase db diff -f <name>`, then apply it through `supabase db reset` locally or `supabase db push --remote` against the linked project. These paths preserve the plan's per-unit transaction semantics.
 
-By default, all schemas in the target database are diffed. Use the `--schema public,extensions` flag to restrict diffing to a subset of schemas.
+By default, all schemas in the target database are diffed; `--schema` restricts the diff to the listed schemas.
 
 pg-delta is the default diff engine for all projects. To fall back to the legacy migra engine, set `enabled = false` under `[experimental.pgdelta]` in `config.toml`, or pass `--use-migra` for a single run.
 

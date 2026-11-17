@@ -54,6 +54,16 @@ const stopRuntimeLayer = Layer.mergeAll(
 export const stopCommand = Command.make("stop", config).pipe(
   Command.withDescription("Stop all local Supabase containers."),
   Command.withShortDescription("Stop all local Supabase containers"),
+  Command.withExamples([
+    {
+      command: "supabase stop --all",
+      description: "Stop all local Supabase projects on this machine",
+    },
+    {
+      command: "supabase stop --no-backup",
+      description: "Stop this local project and delete its data volumes",
+    },
+  ]),
   withPermissions({
     operations: [],
     noApiEffectFlags: ["project-id", "backup", "no-backup", "all"],

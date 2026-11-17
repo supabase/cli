@@ -44,6 +44,16 @@ export type DbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbResetCommand = Command.make("reset", config).pipe(
   Command.withDescription("Resets a database to current migrations."),
   Command.withShortDescription("Resets a database to current migrations"),
+  Command.withExamples([
+    {
+      command: "supabase db reset --no-seed",
+      description: "Reset the local database without running seed scripts",
+    },
+    {
+      command: "supabase db reset --sql-paths seed.sql --sql-paths fixtures/test.sql",
+      description: "Reset the local database using seed files relative to supabase/",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },
