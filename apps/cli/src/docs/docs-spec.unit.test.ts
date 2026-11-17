@@ -8,7 +8,7 @@ import { ExperimentalFlag } from "../command-internal/global-flags.ts";
 import { hostedRemoteFlag, remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
 
 import { rootCommand } from "../cli/root.ts";
-import { DocsExamplesError, readDocsContent, type DocsContent } from "./docs-spec.content.ts";
+import { readDocsContent, type DocsContent } from "./docs-spec.content.ts";
 import {
   buildDocsSpec,
   docsFlagDoc,
@@ -45,7 +45,6 @@ function builtSpec(): BuiltSpecFixture {
       root: rootCommand,
       version: "1.2.3",
       overlays: content.overlays,
-      examples: content.examples,
     });
     builtSpecCache = {
       content,
@@ -278,14 +277,30 @@ describe("buildDocsSpec", () => {
     expect(db?.subcommands).toContain("supabase-db-push");
   });
 
-  it("sources examples from examples.yaml, falling back to Command.withExamples", () => {
-    const { byId } = builtSpec();
-    const initExamples = byId.get("supabase-init")?.examples;
-    expect(initExamples?.[0]).toMatchObject({ id: "basic-usage", code: "supabase init" });
-    const snippetsExamples = byId.get("supabase-snippets-list")?.examples;
-    expect(snippetsExamples?.length).toBeGreaterThan(0);
-    expect(snippetsExamples?.[0]?.id).toBe("example-1");
-    expect(snippetsExamples?.[0]?.response).toBeUndefined();
+  it("publishes command examples without sample responses", () => {
+    const { byId, spec } = builtSpec();
+    expect(byId.get("supabase-snippets-list")?.examples).toEqual([
+      {
+        id: "example-1",
+        name: "List all SQL snippets",
+        code: "supabase snippets list",
+      },
+      {
+        id: "example-2",
+        name: "List snippets for a specific project",
+        code: "supabase snippets list --remote=<ref>",
+      },
+    ]);
+    for (const command of spec.commands) {
+      const ids = command.examples?.map((example) => example.id) ?? [];
+      expect(new Set(ids).size).toBe(ids.length);
+      for (const example of command.examples ?? []) {
+        expect(example.id.trim()).not.toBe("");
+        expect(example.name.trim()).not.toBe("");
+        expect(example.code.trim()).not.toBe("");
+        expect(example).not.toHaveProperty("response");
+      }
+    }
   });
 
   it("documents db query's output formats via the injected flag", () => {
@@ -391,7 +406,20 @@ function byIdDescription(id: string): string {
 }
 
 describe("build guards fail loudly", () => {
-  const emptyInput = { version: "0", overlays: new Map<string, string>(), examples: {} };
+  const emptyInput = { version: "0", overlays: new Map<string, string>() };
+
+  it.each([
+    { command: " ", description: "Run link" },
+    { command: "supabase link", description: " " },
+  ])("rejects empty example fields: %j", (example) => {
+    const root = Command.make("supabase").pipe(
+      Command.withSubcommands([Command.make("link").pipe(Command.withExamples([example]))]),
+      Command.withGlobalFlags([ExperimentalFlag]),
+    );
+    expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(
+      '"supabase-link" example-1 must have nonempty name and code',
+    );
+  });
 
   it("throws when the root declares no --experimental global flag", () => {
     const root = Command.make("supabase").pipe(Command.withSubcommands([Command.make("link")]));
@@ -430,89 +458,15 @@ describe("build guards fail loudly", () => {
     );
   });
 
-  it.effect("throws for orphaned overlays and examples keys", () =>
+  it.effect("throws for orphaned overlays", () =>
     Effect.gen(function* () {
-      yield* loadDocsContent;
-      const root = Command.make("supabase").pipe(
-        Command.withSubcommands([Command.make("link")]),
-        Command.withGlobalFlags([ExperimentalFlag]),
+      const content = yield* loadDocsContent;
+      const overlays = new Map(content.overlays);
+      overlays.set("supabase/not-a-real-command.md", "## x\n\nBody.\n");
+      expect(() => buildDocsSpec({ root: rootCommand, version: "0", overlays })).toThrow(
+        /content inputs match no command[^]*overlay: "supabase\/not-a-real-command\.md"/,
       );
-      const overlays = new Map([["supabase/lonk.md", "## x\n\nBody.\n"]]);
-      const build = () =>
-        buildDocsSpec({
-          root,
-          version: "0",
-          overlays,
-          examples: { "supabase-lonk": [{ id: "a", code: "x" }] },
-        });
-      // The synthetic tree fails table validation before it reaches content validation; the
-      // content guard is asserted separately below against the real tree.
-      expect(build).toThrow(/stale static-table entries/);
-      const { content } = builtSpec();
-      const badExamples = { ...content.examples, "supabase-not-a-command": [{ id: "a" }] };
-      expect(() =>
-        buildDocsSpec({
-          root: rootCommand,
-          version: "0",
-          overlays: content.overlays,
-          examples: badExamples,
-        }),
-      ).toThrow(/content inputs match no command[^]*supabase-not-a-command/);
-      const badOverlays = new Map(content.overlays);
-      badOverlays.set("supabase/not-a-real-command.md", "## x\n\nBody.\n");
-      expect(() =>
-        buildDocsSpec({
-          root: rootCommand,
-          version: "0",
-          overlays: badOverlays,
-          examples: content.examples,
-        }),
-      ).toThrow(/content inputs match no command[^]*overlay: "supabase\/not-a-real-command\.md"/);
     }),
-  );
-});
-
-describe("readDocsContent rejects malformed examples.yaml", () => {
-  const readTempDocsError = (examplesYaml: string) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "docs-spec-test-" });
-      yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
-      yield* fs.makeDirectory(path.join(dir, "templates"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(dir, "supabase", "link.md"),
-        "## supabase-link\n\nBody.\n",
-      );
-      yield* fs.writeFileString(path.join(dir, "templates", "examples.yaml"), examplesYaml);
-      const error = yield* Effect.flip(readDocsContent(dir));
-      expect(error).toBeInstanceOf(DocsExamplesError);
-      expect(error.cause).toBeInstanceOf(Error);
-      return error;
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
-
-  it.effect("rejects a non-mapping document", () =>
-    Effect.map(readTempDocsError("- just\n- a list\n"), (error) =>
-      expect(error.message).toMatch(/must be a mapping of doc ids/),
-    ),
-  );
-
-  it.effect("rejects a nested-array entry (mis-indented list)", () =>
-    Effect.map(readTempDocsError("supabase-link:\n  - - id: oops\n"), (error) =>
-      expect(error.message).toMatch(/must be a mapping/),
-    ),
-  );
-
-  it.effect("rejects unknown fields (typo'd keys)", () =>
-    Effect.map(readTempDocsError("supabase-link:\n  - titel: typo\n    code: x\n"), (error) =>
-      expect(error.message).toMatch(/unknown field "titel"/),
-    ),
-  );
-
-  it.effect("rejects non-string field values", () =>
-    Effect.map(readTempDocsError("supabase-link:\n  - id: 5\n"), (error) =>
-      expect(error.message).toMatch(/id must be a string/),
-    ),
   );
 });
 
@@ -524,12 +478,10 @@ describe("readDocsContent walk", () => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "docs-spec-test-" });
       const outside = yield* fs.makeTempDirectoryScoped({ prefix: "docs-spec-test-" });
       yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
-      yield* fs.makeDirectory(path.join(dir, "templates"), { recursive: true });
       yield* fs.writeFileString(path.join(dir, "supabase", "link.md"), "## supabase-link\n");
       yield* fs.writeFileString(path.join(outside, "outside.md"), "## outside\n");
       yield* fs.symlink(outside, path.join(dir, "supabase", "linked"));
       yield* fs.symlink("..", path.join(dir, "supabase", "up"));
-      yield* fs.writeFileString(path.join(dir, "templates", "examples.yaml"), "{}\n");
       const content = yield* readDocsContent(dir);
       expect([...content.overlays.keys()]).toEqual(["supabase/link.md"]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
