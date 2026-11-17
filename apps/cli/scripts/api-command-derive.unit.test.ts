@@ -77,6 +77,7 @@ const derive = (
       },
     },
     generated,
+    pollTargets: {},
     nouns: { thing: thingNoun },
     operationIdMap: Object.fromEntries(
       Object.keys(operations).map((id) => [id, "v2EnableWarehouse" as const]),
@@ -548,6 +549,16 @@ describe("deriveApiCommands", () => {
       operation({ ...create, responses: changeResponse(links, schema) });
     const waitOf = (result: ReturnType<typeof derive>) =>
       result.entries.find((entry) => entry.operationId === "create-thing")?.wait;
+    const inspectThing = operation(named("status"));
+    /** `create-thing` and an inspect command are generated; each listed polling target stays hidden. */
+    const deriveHidden = (
+      operations: Record<string, unknown>,
+      targets: Record<string, string> = { "get-thing": "get-inspect" },
+      inspect: unknown = inspectThing,
+    ) =>
+      derive({ ...operations, "get-inspect": inspect }, ["create-thing", "get-inspect"], {
+        overrides: { pollTargets: targets },
+      });
 
     it("builds the wait from the polled target and leaves the shared path parameter to the runtime", () => {
       const result = derive({
@@ -632,19 +643,19 @@ describe("deriveApiCommands", () => {
       expect(waitOf(result)).toBeUndefined();
     });
 
-    it("keeps a linked polling target internal when only the mutation is generated", () => {
-      const result = derive(
-        {
-          "create-thing": changeThing(
-            link({ ref: "$request.path.ref", thing_id: "$response.body#/data/id" }),
-          ),
-          "get-thing": readThing,
-        },
-        ["create-thing"],
-      );
+    it("keeps a listed polling target internal and records the command that inspects it", () => {
+      const result = deriveHidden({
+        "create-thing": changeThing(
+          link({ ref: "$request.path.ref", thing_id: "$response.body#/data/id" }),
+        ),
+        "get-thing": readThing,
+      });
 
       expect(result.problems).toEqual([]);
-      expect(result.entries.map((entry) => entry.command)).toEqual([["thing", "create"]]);
+      expect(result.entries.map((entry) => entry.command)).toEqual([
+        ["thing", "create"],
+        ["thing", "status"],
+      ]);
       expect(waitOf(result)).toEqual({
         read: "get-thing",
         params: { thing_id: "/data/id" },
@@ -656,9 +667,120 @@ describe("deriveApiCommands", () => {
           definition: "v2EnableWarehouse",
           summary: "Do the thing",
           response: { status: 200, kind: "json" },
+          inspect: "get-inspect",
         },
       ]);
       expect(result.schemas["get-thing"]?.result).toEqual({ $schema: DIALECT, ...readSchema });
+    });
+
+    it("rejects a link to a polled operation that is neither generated nor listed", () => {
+      const result = derive({ "create-thing": changeThing(link({})), "get-thing": readThing }, [
+        "create-thing",
+      ]);
+
+      expect(result.problems.join("\n")).toContain(
+        'targets polled operation "get-thing", which is neither generated nor listed in pollTargets',
+      );
+      expect(result.pollTargets).toEqual([]);
+    });
+
+    it("rejects a listed polling target that no generated operation links to", () => {
+      const result = deriveHidden({
+        "create-thing": operation(create),
+        "get-thing": readThing,
+      });
+
+      expect(result.problems).toEqual([
+        "get-thing: polling target is not linked from any generated operation; remove it from pollTargets",
+      ]);
+    });
+
+    it("rejects a listed polling target that is also generated", () => {
+      const result = derive(
+        { "create-thing": changeThing(link({})), "get-thing": readThing },
+        ["create-thing", "get-thing", "get-inspect"],
+        { overrides: { pollTargets: { "get-thing": "get-inspect" } } },
+      );
+
+      expect(result.problems.join("\n")).toContain(
+        "get-thing: polling target is also a generated operation",
+      );
+    });
+
+    it("rejects an inspect command that needs input beyond the project ref", () => {
+      const result = deriveHidden(
+        { "create-thing": changeThing(link({})), "get-thing": readThing },
+        { "get-thing": "get-inspect" },
+        operation({
+          ...named("status"),
+          parameters: [
+            { name: "ref", in: "path", required: true, schema: { type: "string" } },
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+          ],
+        }),
+      );
+
+      expect(result.problems).toEqual([
+        'get-thing: inspect operation "get-inspect" needs input beyond the project ref',
+      ]);
+    });
+
+    it("rejects an inspect command that changes state", () => {
+      const result = derive(
+        {
+          "create-thing": changeThing(link({})),
+          "get-thing": readThing,
+          "reset-thing": operation(named("delete")),
+        },
+        ["create-thing", "reset-thing"],
+        { overrides: { pollTargets: { "get-thing": "reset-thing" } } },
+      );
+
+      expect(result.problems).toEqual([
+        'get-thing: inspect operation "reset-thing" must be a read-only command',
+      ]);
+    });
+
+    it("rejects an inspect operation that is not generated", () => {
+      const result = deriveHidden(
+        { "create-thing": changeThing(link({})), "get-thing": readThing },
+        { "get-thing": "get-missing" },
+      );
+
+      expect(result.problems.join("\n")).toContain(
+        'inspect operation "get-missing" is not a generated operation',
+      );
+    });
+
+    it("rejects a listed polling target that declares poll and also links to a polled operation", () => {
+      const result = deriveHidden(
+        {
+          "create-thing": changeThing(link({})),
+          "get-thing": operation({
+            ...readThing,
+            responses: {
+              "200": { ...jsonResponse(readSchema)["200"], links: link({}, "get-other") },
+            },
+          }),
+          "get-other": readThing,
+        },
+        { "get-thing": "get-inspect", "get-other": "get-inspect" },
+      );
+
+      expect(result.problems.join("\n")).toContain(
+        'get-thing: declares poll and also links to the polled operation "get-other"; use one',
+      );
+    });
+
+    it("rejects a listed polling target that is not experimental", () => {
+      const result = deriveHidden({
+        "create-thing": changeThing(link({})),
+        "get-thing": { ...readThing, "x-scalar-stability": "stable" },
+      });
+
+      expect(result.problems).toEqual([
+        "get-thing: only operations marked experimental can be generated (x-scalar-stability)",
+      ]);
     });
 
     it.each([
@@ -681,21 +803,34 @@ describe("deriveApiCommands", () => {
         readWith({ ...poll, succeeded: "done" }),
         "invalid x-operation",
       ],
-    ] as const)("rejects an internal polling target with %s", (_label, id, read, message) => {
-      const result = derive({ "create-thing": changeThing(link({}, id)), [id]: read }, [
-        "create-thing",
-      ]);
+    ] as const)("rejects a listed polling target with %s", (_label, id, read, message) => {
+      const result = deriveHidden(
+        { "create-thing": changeThing(link({}, id)), [id]: read },
+        {
+          [id]: "get-inspect",
+        },
+      );
 
       expect(result.problems.join("\n")).toContain(message);
       expect(result.pollTargets).toEqual([]);
     });
 
-    it("rejects an internal polling target missing from the typed client", () => {
+    it("rejects a listed polling target missing from the typed client", () => {
       const result = derive(
-        { "create-thing": changeThing(link({})), "get-thing": readThing },
-        ["create-thing"],
         {
-          overrides: { operationIdMap: { "create-thing": "v2EnableWarehouse" } },
+          "create-thing": changeThing(link({})),
+          "get-thing": readThing,
+          "get-inspect": inspectThing,
+        },
+        ["create-thing", "get-inspect"],
+        {
+          overrides: {
+            pollTargets: { "get-thing": "get-inspect" },
+            operationIdMap: {
+              "create-thing": "v2EnableWarehouse",
+              "get-inspect": "v2EnableWarehouse",
+            },
+          },
         },
       );
 
@@ -770,9 +905,7 @@ describe("deriveApiCommands", () => {
         'wait.params does not supply required parameter "thing_id" of get-thing',
       ],
     ])("rejects a poll with %s", (_label, read, message) => {
-      const result = derive({ "create-thing": changeThing(link({})), "get-thing": read }, [
-        "create-thing",
-      ]);
+      const result = deriveHidden({ "create-thing": changeThing(link({})), "get-thing": read });
 
       expect(result.problems.map((problem) => problem.replace(/^[^:]+: /u, ""))).toContain(message);
     });

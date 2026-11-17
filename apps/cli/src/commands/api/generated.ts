@@ -272,5 +272,6 @@ export const apiPollTargets = [
       status: 200,
       kind: "json",
     },
+    inspect: "v2-get-warehouse-status",
   },
 ] as const satisfies readonly ApiPollTarget[];

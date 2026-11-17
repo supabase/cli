@@ -1196,7 +1196,7 @@ describe("generated warehouse commands", () => {
     );
 
     it.effect(
-      "gives guidance without exposing the internal setup read on failure or timeout",
+      "points a failed or timed-out wait at warehouse status without exposing the internal setup read",
       () => {
         const failing = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
           yes: true,
@@ -1206,7 +1206,7 @@ describe("generated warehouse commands", () => {
           ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "10s"],
           { yes: true, route: enableThenPoll([{ status: 200, body: statusBody("pending") }]) },
         );
-        const hint = "Inspect the operation's status before retrying.";
+        const hint = `Check it with \`supabase warehouse status --remote=${VALID_REF}\`.`;
         return Effect.gen(function* () {
           for (const { run } of [failing, stalling]) {
             const fiber = yield* run.pipe(

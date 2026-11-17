@@ -106,11 +106,17 @@ export interface ApiCommandEntry {
   readonly wait?: ApiCommandWait;
 }
 
-/** A response-linked read used for polling without registering a CLI command. */
-export type ApiPollTarget = Pick<
+/** The operation a wait polls: a generated command's entry or a hidden {@link ApiPollTarget}. */
+export type ApiPollRead = Pick<
   ApiCommandEntry,
   "operationId" | "definition" | "summary" | "response"
 >;
+
+/** A response-linked read used for polling without registering a CLI command. */
+export interface ApiPollTarget extends ApiPollRead {
+  /** Operation id of the generated command that inspects the state after a failed or timed-out wait. */
+  readonly inspect: string;
+}
 
 /** OpenAPI schemas of one operation with every `$ref` inlined. */
 export interface ApiCommandSchemas {

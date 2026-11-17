@@ -17,7 +17,7 @@ import {
   ApiCommandStatusError,
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
-import type { ApiCommandEntry, ApiCommandWait, ApiPollTarget } from "./api-command.model.ts";
+import type { ApiCommandEntry, ApiCommandWait, ApiPollRead } from "./api-command.model.ts";
 
 const POLL_BASE_DELAY = "1 second";
 const POLL_MAX_DELAY_MILLIS = 10_000;
@@ -197,8 +197,9 @@ export const writeApiResponse = Effect.fnUntraced(function* (
 interface WaitInput {
   readonly wait: ApiCommandWait;
   /** The operation the wait polls; its decoded input is `readInput`. */
-  readonly readEntry: ApiPollTarget;
-  readonly statusEntry?: ApiCommandEntry;
+  readonly readEntry: ApiPollRead;
+  /** The command to name in a failure hint: the read's own, or the one that inspects a hidden read. */
+  readonly statusEntry: ApiCommandEntry;
   /** The flat input of the read operation, as assembled from flags or the change response. */
   readonly readInput: Readonly<Record<string, unknown>>;
   readonly ref: string;
@@ -315,10 +316,8 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
   const decoded = yield* Schema.decodeEffect(definitionOf(readEntry).inputSchema, {
     onExcessProperty: "error",
   })(readInput).pipe(Effect.orDie);
-  const hint =
-    input.statusEntry === undefined
-      ? "Inspect the operation's status before retrying."
-      : `Check it with \`${statusCommand(input.statusEntry, input.ref, readInput)}\`.`;
+  const statusInput = input.statusEntry.operationId === readEntry.operationId ? readInput : {};
+  const hint = `Check it with \`${statusCommand(input.statusEntry, input.ref, statusInput)}\`.`;
   const attempts = yield* Ref.make(0);
   const lastStatus = yield* Ref.make<string | null>(null);
 
