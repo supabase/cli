@@ -65,7 +65,7 @@ After success, one nudge or confirmation is emitted (no throttle). It is shown i
 stderr) when stdout is a TTY, and in any output format when a coding agent is detected or
 `--agent yes` is set; json prints it on stderr and stream-json emits a `log` event. Without the
 stack opt-in the message is
-`Try the new faster, lighter, parallel local stack: SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force (regenerates this config)`
+``Try the new faster, lighter, parallel local stack: set SUPABASE_EXPERIMENTAL_STACK=1 and re-run `supabase init --force` (regenerates this config)``
 plus a docs link; agents also get a line asking them to ask the user before re-running init with
 `--force`. With the opt-in it is `Experimental local stack enabled in supabase/config.toml. Share feedback: <issues URL>`.
 

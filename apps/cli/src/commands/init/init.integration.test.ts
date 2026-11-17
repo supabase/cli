@@ -534,7 +534,11 @@ describe("init", () => {
   });
 
   it.effect.each([
-    { env: {}, interactive: true, expected: "SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force" },
+    {
+      env: {},
+      interactive: true,
+      expected: "set SUPABASE_EXPERIMENTAL_STACK=1 and re-run `supabase init --force`",
+    },
     {
       env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
       interactive: true,

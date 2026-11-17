@@ -11,7 +11,7 @@ const START_STACK_NUDGE_MESSAGE = `Try the new local stack: faster, lighter, and
 To switch: remove the fixed ports from supabase/config.toml, then add \`stack = true\` under \`[experimental]\`.
 Steps and limitations: ${DOCS_URL}`;
 
-const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack: SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force (regenerates this config)
+const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack: set SUPABASE_EXPERIMENTAL_STACK=1 and re-run \`supabase init --force\` (regenerates this config)
 Learn more: ${DOCS_URL}`;
 
 const INIT_STACK_ENABLED_MESSAGE =

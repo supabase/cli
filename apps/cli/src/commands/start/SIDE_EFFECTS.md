@@ -411,7 +411,8 @@ buckets to prune.` for a bucket left in place. These seeding lines use the raw w
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).
 - stderr: the local-dev security notice block (bind-to-`0.0.0.0` / shared-default-keys /
   no-auth-on-Studio-pgMeta-analytics warning).
-- stack nudge (conditional, fresh start only, never on the already-running path): a three-line
+- stack nudge (conditional, fresh start only, never on the already-running path or with
+  `--ignore-health-check`): a three-line
   suggestion to try the experimental local stack (`Try the new local stack: ...`, the switch steps,
   and the docs URL; agents also get a line asking them to offer the switch to the user). Shown in
   text mode (on stderr, after the security notice) when stdout is a TTY, and in any output format
