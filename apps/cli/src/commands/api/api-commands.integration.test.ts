@@ -369,6 +369,86 @@ describe("generated warehouse commands", () => {
       });
     });
   });
+  describe("warehouse connection", () => {
+    const connectionPath = `/v2/projects/${VALID_REF}/warehouse/connection`;
+    const host = `${VALID_REF}.warehouse.example.invalid`;
+    const connection = (attributes: Readonly<Record<string, unknown>>) => ({
+      data: {
+        type: "warehouse_connection",
+        id: VALID_REF,
+        attributes: {
+          project_ref: VALID_REF,
+          observed_at: "2026-11-17T10:00:00Z",
+          protocol: "arrow_flight_sql",
+          tls_required: true,
+          authentication: {
+            method: "database_username_password",
+            credential_source: "source_project_database",
+            default_username: "postgres",
+            password_guidance:
+              "Use the same password as this role in the source Supabase database. For postgres, use the project's database password.",
+            required_membership: "supabase_warehouse_reader",
+          },
+          access_mode: "read_only",
+          query_connectivity: "not_checked",
+          ...attributes,
+        },
+      },
+    });
+
+    it.effect("prints the endpoint and source database login guidance from a single read", () => {
+      const body = connection({
+        status: "available",
+        unavailable_reason: null,
+        endpoint: `grpc+tls://${host}:443`,
+        host,
+        port: 443,
+        region: "eu-central-1",
+        routing_status: "ready",
+      });
+      const { out, sent, run } = setup(["warehouse", "connection"], {
+        route: ok(body),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([
+          { method: "GET", path: connectionPath, search: "", body: undefined },
+        ]);
+        expect(out.stdoutText).toMatch(/^Warehouse connection$/m);
+        expect(out.stdoutText).toMatch(/Status\s+available/);
+        expect(out.stdoutText).toContain(`grpc+tls://${host}:443`);
+        expect(out.stdoutText).toMatch(/TLS required\s+yes/);
+        expect(out.stdoutText).toMatch(/Default username\s+postgres/);
+        expect(out.stdoutText).toMatch(/Password guidance\s+Use the same password as this role/);
+        expect(out.stdoutText).toMatch(/Required membership\s+supabase_warehouse_reader/);
+        expect(out.stdoutText).toMatch(/Query connectivity\s+not_checked/);
+      });
+    });
+
+    it.effect("shows no connection string for an unconfigured Warehouse", () => {
+      const body = connection({
+        status: "not_configured",
+        unavailable_reason: null,
+        endpoint: null,
+        host: null,
+        port: null,
+        region: null,
+        routing_status: null,
+      });
+      const { out, run } = setup(["warehouse", "connection"], {
+        route: ok(body),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toMatch(/Status\s+not_configured/);
+        expect(out.stdoutText).toMatch(/Endpoint\s+-$/m);
+        expect(out.stdoutText).toMatch(/Host\s+-$/m);
+        expect(out.stdoutText).not.toMatch(/grpc\+tls|flightsql:/);
+      });
+    });
+  });
   describe("warehouse disable", () => {
     const operationId = "7579647f-2cdc-466c-982e-425958a2f985";
     const disablePath = `/v2/projects/${VALID_REF}/warehouse`;

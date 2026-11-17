@@ -2,7 +2,7 @@ import { renderGlamourTable } from "../../output/glamour-table.ts";
 import type { ApiRequestPreview } from "./api-command-request.ts";
 
 const INDENT = "  ";
-const ACRONYMS: ReadonlySet<string> = new Set(["id", "url", "fdw", "dns", "api", "sql"]);
+const ACRONYMS: ReadonlySet<string> = new Set(["id", "url", "fdw", "dns", "api", "sql", "tls"]);
 
 type JsonObject = Readonly<Record<string, unknown>>;
 

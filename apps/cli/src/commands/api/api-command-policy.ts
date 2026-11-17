@@ -11,6 +11,7 @@ export const verbVocabulary = [
   "enable",
   "disable",
   "status",
+  "connection",
   "add",
   "remove",
   "resync",
@@ -30,6 +31,7 @@ export type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "fail
 /** Only these operations generate commands; `x-operation` on any other operation is ignored. */
 export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-get-warehouse-status",
+  "v2-get-warehouse-connection",
   "v2-enable-warehouse",
   "v2-disable-warehouse",
   "v2-get-warehouse-teardown",
