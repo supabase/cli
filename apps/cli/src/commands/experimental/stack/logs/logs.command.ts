@@ -16,7 +16,7 @@ const config = {
   ),
   stackId: Flag.String("stack-id").pipe(
     Flag.withDescription(
-      "Read logs from an existing stack by id or unique id prefix (defaults to SUPABASE_STACK_ID).",
+      "Read logs from an existing stack by ID or unique ID prefix (defaults to SUPABASE_STACK_ID).",
     ),
     Flag.optional,
   ),

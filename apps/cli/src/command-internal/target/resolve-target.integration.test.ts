@@ -269,6 +269,19 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect("reports the --linked conflict before the legacy backend", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, linked: true },
+          { stack: "feature", backend: "legacy" },
+        );
+        expect(failureOf(result.exit)).toMatchObject({
+          message: "--stack selects a local stack and cannot be combined with --linked.",
+        });
+      }),
+    );
+
     it.effect("rejects --stack combined with --remote", () =>
       Effect.gen(function* () {
         const result = yield* run(

@@ -84,7 +84,6 @@ export const resolveTarget = Effect.fn("Target.resolve")(function* (flags: Targe
     );
   }
   const { selection } = yield* selectTarget(flags);
-  yield* rejectStackSelectorOnLegacy;
 
   const finish = Effect.fnUntraced(function* (target: ResolvedTarget, selectedBy: SelectedBy) {
     yield* Effect.annotateCurrentSpan({
@@ -96,11 +95,13 @@ export const resolveTarget = Effect.fn("Target.resolve")(function* (flags: Targe
 
   switch (selection._tag) {
     case "Local":
+      yield* rejectStackSelectorOnLegacy;
       return yield* finish({ kind: "local" }, "flag");
     case "DbUrl":
       yield* rejectRemoteStackSelector(flags);
       return yield* finish({ kind: "db-url", url: Redacted.make(selection.url) }, "flag");
     case "Default":
+      yield* rejectStackSelectorOnLegacy;
       yield* hintLinkedAlternative();
       return yield* finish({ kind: "local" }, "default");
     case "Linked":

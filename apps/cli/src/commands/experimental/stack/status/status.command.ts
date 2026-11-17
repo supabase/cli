@@ -18,7 +18,7 @@ const config = {
   ),
   stackId: Flag.String("stack-id").pipe(
     Flag.withDescription(
-      "Inspect an existing stack by id or unique id prefix (defaults to SUPABASE_STACK_ID).",
+      "Inspect an existing stack by ID or unique ID prefix (defaults to SUPABASE_STACK_ID).",
     ),
     Flag.optional,
   ),
