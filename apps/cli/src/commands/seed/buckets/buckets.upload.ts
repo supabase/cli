@@ -8,9 +8,9 @@ import { type Path } from "effect";
  */
 
 /**
- * Destination object key for a local file relative to `objectsPath`:
- *   - single-file `objects_path` (the file is the path itself) → `<bucket>/<basename>`
- *   - otherwise → `<bucket>/<relative-posix-path>`
+ * Object key inside its bucket for a local file relative to `objectsPath`:
+ *   - single-file `objects_path` (the file is the path itself) → `<basename>`
+ *   - otherwise → `<relative-posix-path>`
  *
  * `objectsPath` and `filePath` are OS paths read through the platform `path`
  * service; the relative segment is normalized to forward slashes for the remote
@@ -18,14 +18,12 @@ import { type Path } from "effect";
  */
 export function bucketObjectKey(
   { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
-  bucketName: string,
   objectsPath: string,
   filePath: string,
 ): string {
   const relPath = path.relative(objectsPath, filePath);
   if (relPath === "") {
-    return posixPath.join(bucketName, path.basename(filePath));
+    return path.basename(filePath);
   }
-  const relPosix = relPath.split(path.sep).join(posixPath.sep);
-  return posixPath.join(bucketName, relPosix);
+  return relPath.split(path.sep).join(posixPath.sep);
 }

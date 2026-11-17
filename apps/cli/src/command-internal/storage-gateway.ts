@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Schema, Stream } from "effect";
+import * as Base64 from "effect/encoding/Base64";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -44,6 +45,8 @@ interface UploadObjectOptions {
   readonly contentType: string;
   readonly cacheControl: string;
   readonly overwrite: boolean;
+  /** Object user metadata, sent as the base64 JSON `x-metadata` header. */
+  readonly metadata?: Schema.JsonObject;
 }
 
 export interface StorageGateway {
@@ -481,6 +484,14 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
       }
       if (options.overwrite) {
         req = req.pipe(HttpClientRequest.setHeader("x-upsert", "true"));
+      }
+      if (options.metadata !== undefined) {
+        req = req.pipe(
+          HttpClientRequest.setHeader(
+            "x-metadata",
+            Base64.encode(JSON.stringify(options.metadata)),
+          ),
+        );
       }
       // `bodyFile` streams the file without buffering. FileSystem is provided
       // here (not via the Effect type) so the gateway's public Effect stays

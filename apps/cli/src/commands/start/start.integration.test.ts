@@ -535,10 +535,15 @@ function mockStorageBucketHttpClient(existingBuckets: ReadonlyArray<string> = []
   const updatedBucketRequests: Array<string> = [];
   /** Every request in order, so a test can assert a readiness probe preceded seeding. */
   const requests: Array<{ method: string; url: string }> = [];
+  /** The `x-metadata` header of each object upload, keyed by request URL. */
+  const uploadedMetadata = new Map<string, string | undefined>();
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
       requests.push({ method: request.method, url: request.url });
+      if (request.method === "POST" && request.url.includes("/storage/v1/object/")) {
+        uploadedMetadata.set(request.url, request.headers["x-metadata"]);
+      }
       if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
         const listed = JSON.stringify(existingBuckets.map((name) => ({ id: name, name })));
         return Effect.succeed(
@@ -589,7 +594,14 @@ function mockStorageBucketHttpClient(existingBuckets: ReadonlyArray<string> = []
       );
     }),
   );
-  return { layer, createdBucketRequests, createdBucketBodies, updatedBucketRequests, requests };
+  return {
+    layer,
+    createdBucketRequests,
+    createdBucketBodies,
+    updatedBucketRequests,
+    requests,
+    uploadedMetadata,
+  };
 }
 
 /**
@@ -3127,6 +3139,62 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(http.requests.some((entry) => entry.url.includes("/storage/v1/status"))).toBe(false);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
+
+    describe("objects_metadata_path", () => {
+      const seedFiles = Effect.fnUntraced(function* (workdir: string, manifest: string) {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(workdir, "supabase", "assets"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "assets", "a.txt"), "hello");
+        yield* fs.writeFileString(path.join(workdir, "supabase", "assets.json"), manifest);
+      });
+      const configContents =
+        'project_id = "demo"\n[storage.buckets.avatars]\nobjects_path = "./assets"\nobjects_metadata_path = "./assets.json"\n';
+
+      it.effect("uploads a seeded object with its manifest metadata", () =>
+        Effect.gen(function* () {
+          const http = mockStorageBucketHttpClient();
+          const { layer, workdir } = yield* setup({
+            configContents,
+            route: freshVolumeRoute(defaultRoute()),
+            httpClientLayer: http.layer,
+          });
+          yield* seedFiles(workdir, '{"a.txt":{"width":1280}}');
+
+          yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+          expect([...http.uploadedMetadata]).toEqual([
+            [
+              expect.stringContaining("/storage/v1/object/avatars/a.txt"),
+              Buffer.from('{"width":1280}').toString("base64"),
+            ],
+          ]);
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      );
+
+      it.effect("rolls back before any Storage request when the manifest names no file", () =>
+        Effect.gen(function* () {
+          const http = mockStorageBucketHttpClient();
+          const { layer, workdir, child } = yield* setup({
+            configContents,
+            route: freshVolumeRoute(defaultRoute()),
+            httpClientLayer: http.layer,
+          });
+          yield* seedFiles(workdir, '{"gone.txt":{"width":1280}}');
+
+          const exit = yield* Effect.exit(
+            start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer)),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain(
+              "Invalid objects_metadata_path for bucket avatars",
+            );
+          }
+          expect(http.requests.filter((entry) => entry.url.includes("/storage/v1/"))).toEqual([]);
+          expect(rollbackWasAttempted(child.spawned)).toBe(true);
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      );
+    });
 
     it.effect(
       "keeps a vector bucket missing from config.toml (prune declines without consent)",

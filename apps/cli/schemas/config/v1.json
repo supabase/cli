@@ -3989,6 +3989,10 @@
                     "type": "string",
                     "description": "The path to the objects in the bucket.",
                     "default": ""
+                  },
+                  "objects_metadata_path": {
+                    "type": "string",
+                    "description": "The path to a JSON file mapping each object's `/`-separated path under `objects_path` to its user metadata. Applied by `start`, `db reset` and `seed buckets`, not by preview branches."
                   }
                 },
                 "additionalProperties": false
@@ -8914,6 +8918,10 @@
                                   "type": "string",
                                   "description": "The path to the objects in the bucket.",
                                   "default": ""
+                                },
+                                "objects_metadata_path": {
+                                  "type": "string",
+                                  "description": "The path to a JSON file mapping each object's `/`-separated path under `objects_path` to its user metadata. Applied by `start`, `db reset` and `seed buckets`, not by preview branches."
                                 }
                               },
                               "additionalProperties": false

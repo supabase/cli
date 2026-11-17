@@ -132,6 +132,8 @@ file_size_limit = "50MiB"
 # file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
 # objects_path = "./images"
+# JSON file mapping each object's path under objects_path to its user metadata.
+# objects_metadata_path = "./images-metadata.json"
 
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]

@@ -1,8 +1,9 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
 import { BunPath } from "@effect/platform-bun";
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
+import { escapeControlCharacters } from "../shared/output/escape-control-characters.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { resolveYesWithProjectEnv } from "./global-flags.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -36,6 +37,7 @@ import {
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
 import { describeConfigParseError } from "./workdir-project.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
+import { canonicalPathForContainment, isPathContainedInRoot } from "./path-containment.ts";
 
 // Re-exported so `stack start` can report a project-context config-load failure with the
 // same tag `seedBucketsRun` itself fails with, without importing across command boundaries.
@@ -72,6 +74,24 @@ interface CollectedFile {
   readonly absPath: string;
   readonly displayPath: string;
 }
+
+interface SeedObject extends CollectedFile {
+  readonly key: string;
+  readonly metadata: Schema.JsonObject | undefined;
+}
+
+/* Relative config paths resolve under `supabase/`; absolute paths are used as-is. */
+const resolveSupabasePath = (
+  path: Path.Path,
+  workdir: string,
+  configured: string,
+): CollectedFile =>
+  path.isAbsolute(configured)
+    ? { absPath: configured, displayPath: configured }
+    : {
+        absPath: path.join(workdir, "supabase", configured),
+        displayPath: path.join("supabase", configured),
+      };
 
 /** Mutable run summary, emitted as the structured result in json/stream-json mode. */
 interface SeedSummary {
@@ -265,6 +285,16 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
     return;
   }
 
+  /* An invalid manifest fails before any credential lookup or Storage request. Files of a
+     bucket with a manifest are collected here, so their skip notices print before bucket setup. */
+  const plannedObjects = yield* planObjectUploads(
+    fs,
+    { path, posixPath },
+    output,
+    workdir,
+    bucketsConfig,
+  );
+
   // Build the Storage service-gateway client (local or remote).
   const credentials = opts.credentials ?? (yield* resolveStorageCredentials({ projectRef }));
   if (projectRef === "" && opts.announceLocalEndpoint !== undefined) {
@@ -342,7 +372,16 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
     }
 
     // Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, { path, posixPath }, output, gateway, workdir, bucketsConfig, summary);
+    yield* uploadObjects(
+      fs,
+      { path, posixPath },
+      output,
+      gateway,
+      workdir,
+      bucketsConfig,
+      plannedObjects,
+      summary,
+    );
 
     // Machine-readable summary; text mode emits nothing extra.
     if (emitSummary && output.format !== "text") {
@@ -363,6 +402,7 @@ type BucketsConfig = Readonly<
       readonly file_size_limit: string;
       readonly allowed_mime_types: ReadonlyArray<string>;
       readonly objects_path: string;
+      readonly objects_metadata_path?: string;
     }
   >
 >;
@@ -634,6 +674,7 @@ const uploadObjects = Effect.fnUntraced(function* (
   gateway: StorageGateway,
   workdir: string,
   bucketsConfig: BucketsConfig,
+  plannedObjects: ReadonlyMap<string, ReadonlyArray<SeedObject>>,
   summary: SeedSummary,
 ) {
   for (const [name, bucket] of Object.entries(bucketsConfig)) {
@@ -641,21 +682,19 @@ const uploadObjects = Effect.fnUntraced(function* (
     if (objectsPath.length === 0) {
       continue;
     }
-    // A relative `objects_path` resolves against the `supabase/` dir; absolute paths are
-    // left untouched. `displayRoot` (workdir-relative) drives the `Uploading:` stderr line
-    // and the destination key.
-    const displayRoot = path.isAbsolute(objectsPath)
-      ? objectsPath
-      : path.join("supabase", objectsPath);
-    const absRoot = path.isAbsolute(objectsPath)
-      ? objectsPath
-      : path.join(workdir, "supabase", objectsPath);
-    const files = yield* collectFiles(fs, path, output, absRoot, displayRoot);
+    const files =
+      plannedObjects.get(name) ??
+      (yield* collectSeedObjects(
+        fs,
+        { path, posixPath },
+        output,
+        resolveSupabasePath(path, workdir, objectsPath),
+      ));
     yield* Effect.forEach(
       files,
       (file) =>
         Effect.gen(function* () {
-          const dstPath = bucketObjectKey({ path, posixPath }, name, displayRoot, file.displayPath);
+          const dstPath = posixPath.join(name, file.key);
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
           // Content type is sniffed from the first 512 bytes, refining only a generic
           // text/plain by file extension.
@@ -664,6 +703,7 @@ const uploadObjects = Effect.fnUntraced(function* (
             contentType: contentTypeForUpload(path, sniff, file.absPath),
             cacheControl: "max-age=3600",
             overwrite: true,
+            metadata: file.metadata,
           });
           summary.objects_uploaded.push(dstPath);
         }),
@@ -671,6 +711,176 @@ const uploadObjects = Effect.fnUntraced(function* (
     );
   }
 });
+
+/* The reason can quote manifest keys, so control characters in it are escaped. */
+const invalidObjectsMetadata = (bucket: string, reason: string) =>
+  new SeedConfigLoadError({
+    message: `Invalid objects_metadata_path for bucket ${bucket}: ${escapeControlCharacters(reason)}`,
+  });
+
+/* A long key list is cut short so the hint after it stays readable. */
+const listKeys = (keys: ReadonlyArray<string>) =>
+  keys.length > 5 ? `${keys.slice(0, 5).join(", ")} and ${keys.length - 5} more` : keys.join(", ");
+
+const planObjectUploads = Effect.fn("SeedBuckets.planObjectUploads")(function* (
+  fs: FileSystem.FileSystem,
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
+  output: typeof Output.Service,
+  workdir: string,
+  bucketsConfig: BucketsConfig,
+) {
+  /* An empty objects_path uploads nothing, so its manifest is ignored. */
+  const objectRoots = Object.entries(bucketsConfig).flatMap(([name, bucket]) =>
+    bucket.objects_path.length === 0
+      ? []
+      : [{ name, bucket, root: resolveSupabasePath(path, workdir, bucket.objects_path) }],
+  );
+  /* Canonical paths, so a symlinked objects_path cannot hide a manifest inside it. */
+  const canonicalRoots = yield* Effect.cached(
+    Effect.forEach(objectRoots, ({ name, root }) =>
+      canonicalPathForContainment(root.absPath).pipe(
+        Effect.map((canonicalRoot) => ({ name, canonicalRoot })),
+      ),
+    ),
+  );
+
+  const plannedObjects = new Map<string, ReadonlyArray<SeedObject>>();
+  for (const { name, bucket, root } of objectRoots) {
+    const metadataPath = bucket.objects_metadata_path;
+    if (metadataPath === undefined || metadataPath.length === 0) {
+      continue;
+    }
+    const manifest = resolveSupabasePath(path, workdir, metadataPath);
+    /* A symlinked manifest is checked where it sits and where it points: either one inside
+       an objects_path would be uploaded as an object. */
+    const roots = yield* canonicalRoots;
+    const [location, target] = yield* Effect.all([
+      canonicalPathForContainment(path.dirname(manifest.absPath)).pipe(
+        Effect.map((directory) => path.join(directory, path.basename(manifest.absPath))),
+      ),
+      canonicalPathForContainment(manifest.absPath),
+    ]).pipe(
+      Effect.mapError(() =>
+        invalidObjectsMetadata(
+          name,
+          `${manifest.displayPath} cannot be checked against objects_path.`,
+        ),
+      ),
+    );
+    const owner = roots.find(
+      ({ canonicalRoot }) =>
+        isPathContainedInRoot(path, canonicalRoot, location) ||
+        isPathContainedInRoot(path, canonicalRoot, target),
+    );
+    if (owner !== undefined) {
+      return yield* invalidObjectsMetadata(
+        name,
+        `${manifest.displayPath} is inside objects_path for bucket ${owner.name}.`,
+      );
+    }
+    const objects = yield* collectSeedObjects(fs, { path, posixPath }, output, root);
+    const metadataByKey = yield* loadObjectsMetadata(
+      fs,
+      name,
+      manifest,
+      root.displayPath,
+      objects.map((object) => object.key),
+    );
+    plannedObjects.set(
+      name,
+      objects.map((object) => ({ ...object, metadata: metadataByKey.get(object.key) })),
+    );
+  }
+  return plannedObjects;
+});
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonObject = Schema.decodeUnknownEffect(Schema.JsonObject);
+
+/* Metadata travels base64 encoded in one request header, and the local API gateway rejects a
+   header line over 8 KB: 6000 bytes of JSON encode to 8000. */
+const MAX_METADATA_JSON_BYTES = 6000;
+
+/** Reads and checks an `objects_metadata_path` manifest; failures never quote metadata values. */
+const loadObjectsMetadata = Effect.fn("SeedBuckets.loadObjectsMetadata")(function* (
+  fs: FileSystem.FileSystem,
+  bucket: string,
+  { absPath, displayPath }: CollectedFile,
+  displayRoot: string,
+  keys: ReadonlyArray<string>,
+) {
+  const text = yield* fs
+    .readFileString(absPath)
+    .pipe(
+      Effect.mapError((error) =>
+        invalidObjectsMetadata(
+          bucket,
+          Predicate.isTagged(error.reason, "NotFound")
+            ? `${displayPath} does not exist.`
+            : Predicate.isTagged(error.reason, "BadResource")
+              ? `${displayPath} is not a file.`
+              : `${displayPath} cannot be read.`,
+        ),
+      ),
+    );
+  const json = yield* decodeJson(text).pipe(
+    Effect.mapError(() => invalidObjectsMetadata(bucket, `${displayPath} is not valid JSON.`)),
+  );
+  const manifest = yield* decodeJsonObject(json).pipe(
+    Effect.mapError(() =>
+      invalidObjectsMetadata(bucket, `${displayPath} must contain a JSON object.`),
+    ),
+  );
+  const entries = yield* Effect.validate(Object.entries(manifest), ([key, value]) =>
+    decodeJsonObject(value).pipe(
+      Effect.map((metadata): readonly [string, Schema.JsonObject] => [key, metadata]),
+      Effect.mapError(() => key),
+    ),
+  ).pipe(
+    Effect.mapError((badKeys) =>
+      invalidObjectsMetadata(
+        bucket,
+        `${displayPath} has non-object metadata for keys: ${listKeys(badKeys)}.`,
+      ),
+    ),
+  );
+  const known = new Set(keys);
+  const unmatched = entries.flatMap(([key]) => (known.has(key) ? [] : [key]));
+  if (unmatched.length > 0) {
+    const example = keys[0] === undefined ? "" : `, such as ${keys[0]}`;
+    return yield* invalidObjectsMetadata(
+      bucket,
+      `${displayPath} lists keys with no matching file under ${displayRoot}: ${listKeys(unmatched)}. Keys use / separators and omit the bucket name${example}.`,
+    );
+  }
+  const oversized = entries.flatMap(([key, metadata]) =>
+    Buffer.byteLength(JSON.stringify(metadata)) > MAX_METADATA_JSON_BYTES ? [key] : [],
+  );
+  if (oversized.length > 0) {
+    return yield* invalidObjectsMetadata(
+      bucket,
+      `${displayPath} has metadata over ${MAX_METADATA_JSON_BYTES} bytes of JSON for keys: ${listKeys(oversized)}.`,
+    );
+  }
+  return new Map(entries);
+});
+
+/* Collects the files under `root` with their bucket object keys and no metadata. */
+const collectSeedObjects = (
+  fs: FileSystem.FileSystem,
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
+  output: typeof Output.Service,
+  root: CollectedFile,
+): Effect.Effect<ReadonlyArray<SeedObject>, PlatformError> =>
+  collectFiles(fs, path, output, root.absPath, root.displayPath).pipe(
+    Effect.map((files) =>
+      files.map((file) => ({
+        ...file,
+        key: bucketObjectKey({ path, posixPath }, root.displayPath, file.displayPath),
+        metadata: undefined,
+      })),
+    ),
+  );
 
 /**
  * Collects uploadable files under `absRoot`, lexically ordered.

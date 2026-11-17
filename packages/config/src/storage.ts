@@ -79,6 +79,13 @@ const bucketSchema = Schema.Struct({
     description: "The path to the objects in the bucket.",
     tags,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketObjectsPath))),
+  objects_metadata_path: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "The path to a JSON file mapping each object's `/`-separated path under `objects_path` to its user metadata. Applied by `start`, `db reset` and `seed buckets`, not by preview branches.",
+      tags,
+    }),
+  ),
 }).pipe(withRecordValueDecodingDefault(Effect.succeed({})));
 
 export const storage = Schema.Struct({
