@@ -87,7 +87,7 @@ API's JSON bytes. `-o` takes precedence over `--output-format`.
 | `-o json`                      | the same bytes; no `target` key is added                                                                              |
 | `-o yaml`                      | the same document as YAML; `-o pretty` selects text; other `-o` values are a usage error                              |
 | `--dry-run`, text presentation | `Dry run: <METHOD> <path>`, then `Query`, `Headers` and indented JSON `Body` blocks                                   |
-| `--dry-run` otherwise          | the request preview as JSON                                                                                           |
+| `--dry-run` otherwise          | the request preview in the selected JSON or YAML presentation                                                         |
 
 When the presentation is text and `--output-format` is `text`, each request, and with `--wait` the
 whole polling phase, runs under a task that shows the polled status after 200 ms. On a terminal it
@@ -96,7 +96,7 @@ message prints as a step line on stdout before the response. JSON and YAML outpu
 
 ## Notes
 
-- `--wait` polls the setup endpoint internally; it does not expose a separate setup command.
+- `--wait` polls the setup endpoint internally; it does not expose a separate setup command, so a failed or timed-out wait carries the hint ``Check it with `supabase warehouse status --remote=<ref>`.``
 
 - Repeating the same selection is safe; the API rejects a different existing selection.
 - `--wait` fails only on a status in the failed set; `status_error` supplies the failure message and does not end the wait by itself.

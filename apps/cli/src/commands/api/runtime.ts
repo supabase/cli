@@ -49,7 +49,7 @@ import type {
   ApiCommandEntry,
   ApiCommandFlag,
   ApiCommandWait,
-  ApiPollTarget,
+  ApiPollRead,
 } from "./api-command.model.ts";
 import { apiCommands, apiPollTargets } from "./generated.ts";
 
@@ -64,8 +64,8 @@ const stageOf = (entry: ApiCommandEntry): CommandStage => ({
 /** A command's `--wait`: the wait declared on its entry and the entry of the operation it polls. */
 interface ResolvedWait {
   readonly wait: ApiCommandWait;
-  readonly readEntry: ApiPollTarget;
-  readonly statusEntry?: ApiCommandEntry;
+  readonly readEntry: ApiPollRead;
+  readonly statusEntry: ApiCommandEntry;
 }
 
 const resolveWait = (
@@ -74,16 +74,13 @@ const resolveWait = (
 ): ResolvedWait | undefined => {
   const { wait } = entry;
   if (wait === undefined) return undefined;
-  const statusEntry = entries.find((candidate) => candidate.operationId === wait.read);
-  const readEntry =
-    statusEntry ?? apiPollTargets.find((candidate) => candidate.operationId === wait.read);
-  return readEntry === undefined
+  const publicRead = entries.find((candidate) => candidate.operationId === wait.read);
+  if (publicRead !== undefined) return { wait, readEntry: publicRead, statusEntry: publicRead };
+  const hidden = apiPollTargets.find((candidate) => candidate.operationId === wait.read);
+  const inspect = entries.find((candidate) => candidate.operationId === hidden?.inspect);
+  return hidden === undefined || inspect === undefined
     ? undefined
-    : {
-        wait,
-        readEntry,
-        ...(statusEntry === undefined ? {} : { statusEntry }),
-      };
+    : { wait, readEntry: hidden, statusEntry: inspect };
 };
 
 const flagLocation = (entry: ApiCommandEntry, flag: ApiCommandFlag): ApiFlagLocation => {
@@ -278,7 +275,7 @@ const handle = Effect.fn("api-command.run")(function* (
           waitForOperation({
             wait: resolved.wait,
             readEntry: resolved.readEntry,
-            ...(resolved.statusEntry === undefined ? {} : { statusEntry: resolved.statusEntry }),
+            statusEntry: resolved.statusEntry,
             readInput,
             ref,
             timeoutMillis,

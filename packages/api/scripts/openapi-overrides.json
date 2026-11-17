@@ -1008,5 +1008,34 @@
       "type": "object"
     },
     "$comment": "The consolidated Warehouse status contract is not yet in the deployed Management API specification."
+  },
+  {
+    "op": "test",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1setups~1current/get/x-operation",
+    "value": {
+      "group": "warehouse",
+      "method": "status",
+      "poll": {
+        "status": "/data/attributes/status",
+        "succeeded": ["succeeded"],
+        "failed": ["failed"],
+        "error": "/data/attributes/status_error"
+      }
+    },
+    "$comment": "The deployed specification still gives the setup read the `warehouse status` command identity, which the consolidated status operation now owns."
+  },
+  {
+    "op": "replace",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1setups~1current/get/x-operation",
+    "value": {
+      "group": "warehouse.setups",
+      "method": "get",
+      "poll": {
+        "status": "/data/attributes/status",
+        "succeeded": ["succeeded"],
+        "failed": ["failed"],
+        "error": "/data/attributes/status_error"
+      }
+    }
   }
 ]
