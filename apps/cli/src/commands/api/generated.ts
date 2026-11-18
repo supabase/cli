@@ -283,6 +283,45 @@ export const apiCommands = [
     ],
   },
   {
+    command: ["warehouse", "tables", "layout", "update"],
+    operationId: "v2-update-warehouse-table-layout",
+    definition: "v2UpdateWarehouseTableLayout",
+    method: "PATCH",
+    apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
+    summary: "Update the layout of a table replicated to Warehouse",
+    description:
+      "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. Historical files and replication progress are preserved; table resets are not supported. Acceptance and application_status do not establish catalog convergence: read the layout to inspect desired and observed rules. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects; inspect the saved layout and pipeline state before retrying.",
+    readOnly: false,
+    feature: "warehouse",
+    body: {
+      contentType: "application/json",
+      kind: "json-envelope",
+      type: "warehouse_table_layout",
+    },
+    response: {
+      status: 202,
+      kind: "json",
+    },
+    argument: {
+      name: "table-id",
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+    },
+    flags: [],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "path",
+        name: "table_id",
+        source: "argument",
+        argument: "table-id",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "tables", "list"],
     operationId: "v2-list-warehouse-tables",
     definition: "v2ListWarehouseTables",
