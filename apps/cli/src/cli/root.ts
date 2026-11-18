@@ -24,6 +24,7 @@ import {
   projectStateModeLayer,
 } from "../shared/config/project-state-mode.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
+import { sparkCommands } from "../commands/experimental/spark/spark.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
@@ -146,6 +147,8 @@ interface RootCommandFeatures {
   readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
+  /** A Spark project gets its own reduced command tree instead of the mainline one. */
+  readonly sparkEnabled?: boolean;
 }
 
 /** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
@@ -160,50 +163,61 @@ const agentDefaultOutputFormatFor = (
 export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
   Command.make("supabase").pipe(
     Command.withDescription(rootDescription(CLI_VERSION)),
-    Command.withSubcommands([
-      backupsCommand,
-      bootstrapCommand,
-      branchesCommand,
-      completionCommand,
-      ...(options.computeEnabled ? [computeCommand] : []),
-      configCommand,
-      dbCommand,
-      domainsCommand,
-      encryptionCommand,
-      feedbackCommand,
-      functionsCommand,
-      genCommand,
-      initCommand,
-      inspectCommand,
-      issueCommand,
-      linkCommand,
-      loginCommand,
-      logoutCommand,
-      migrationCommand,
-      networkBansCommand,
-      networkRestrictionsCommand,
-      notebooksCommand,
-      orgsCommand,
-      postgresConfigCommand,
-      projectsCommand,
-      pullCommand,
-      secretsCommand,
-      seedCommand,
-      servicesCommand,
-      snippetsCommand,
-      sslEnforcementCommand,
-      ssoCommand,
-      ...(options.stackBackend === "stack" ? [stackCommand] : []),
-      options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
-      options.stackBackend === "stack" ? stackStatusAliasCommand : statusCommand,
-      options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
-      storageCommand,
-      telemetryCommand,
-      testCommand,
-      unlinkCommand,
-      vanitySubdomainsCommand,
-      whoamiCommand,
-    ]),
+    Command.withSubcommands(
+      options.sparkEnabled
+        ? [
+            initCommand,
+            ...(options.stackBackend === "stack" ? [stackCommand] : []),
+            stackStartAliasCommand,
+            stackStatusAliasCommand,
+            stackStopAliasCommand,
+            ...sparkCommands,
+          ]
+        : [
+            backupsCommand,
+            bootstrapCommand,
+            branchesCommand,
+            completionCommand,
+            ...(options.computeEnabled ? [computeCommand] : []),
+            configCommand,
+            dbCommand,
+            domainsCommand,
+            encryptionCommand,
+            feedbackCommand,
+            functionsCommand,
+            genCommand,
+            initCommand,
+            inspectCommand,
+            issueCommand,
+            linkCommand,
+            loginCommand,
+            logoutCommand,
+            migrationCommand,
+            networkBansCommand,
+            networkRestrictionsCommand,
+            notebooksCommand,
+            orgsCommand,
+            postgresConfigCommand,
+            projectsCommand,
+            pullCommand,
+            secretsCommand,
+            seedCommand,
+            servicesCommand,
+            snippetsCommand,
+            sslEnforcementCommand,
+            ssoCommand,
+            ...(options.stackBackend === "stack" ? [stackCommand] : []),
+            options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
+            options.stackBackend === "stack" ? stackStatusAliasCommand : statusCommand,
+            options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
+            storageCommand,
+            telemetryCommand,
+            testCommand,
+            unlinkCommand,
+            vanitySubdomainsCommand,
+            whoamiCommand,
+          ],
+    ),
     Command.provide(
       Layer.unwrap(
         Effect.gen(function* () {

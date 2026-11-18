@@ -170,7 +170,3 @@ project ref and its environment.
   tool containers get none of these `PG*` TLS settings (migra gets the CLI's own bundled CA
   outside its OOM fallback); migra and pgadmin get the timeout as `connect_timeout` and the
   pooler's `options` and runtime keys in their URL.
-
-## Spark projects (experimental)
-
-In a Spark project, the local Spark stack is the target: every pending `supabase/migrations` file is dry-run with `POST /_spark/v1/migrations?dry_run=1` before any is applied with `POST /_spark/v1/migrations`; a failed dry run exits 1 and applies nothing.

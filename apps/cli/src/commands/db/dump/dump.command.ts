@@ -1,8 +1,4 @@
 import { Effect } from "effect";
-import {
-  sparkUnsupported,
-  withSparkBackend,
-} from "../../../command-internal/spark/spark-project.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -124,7 +120,7 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    withSparkBackend(dbDump(flags), sparkUnsupported("db dump")).pipe(
+    dbDump(flags).pipe(
       withCommandTelemetry({
         flags: {
           "dry-run": flags.dryRun,

@@ -1,7 +1,8 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
-import { CommandSettings } from "../../config/command-settings.service.ts";
+import { extractCommandPath, hasRootVersionFlag } from "../../shared/cli/run.ts";
 import {
+  type ExperimentalFeatureFlagError,
   readExperimentalFeatureConfig,
   resolveExperimentalFeature,
 } from "../../shared/config/experimental-feature.ts";
@@ -21,43 +22,58 @@ export class SparkBackendError extends Data.TaggedError("SparkBackendError")<{
   }
 }
 
-/** A command the experimental Spark backend does not implement. */
-export class SparkUnsupportedError extends Data.TaggedError("SparkUnsupportedError")<{
+/** A Management API call of a Spark command failed or answered an unexpected status. */
+export class SparkApiError extends Data.TaggedError("SparkApiError")<{
   readonly message: string;
+  readonly status?: number;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
+    return this.status === undefined ? actionability.externalNetwork : actionability.apiStatus;
   }
 }
 
-/** Whether the project opted into Spark with `[experimental.spark] enabled`. */
-const isSparkProject = Effect.fn("Spark.isSparkProject")(function* () {
-  const settings = yield* CommandSettings;
-  const enabled = yield* resolveExperimentalFeature({
-    feature: "spark",
-    configValue: readExperimentalFeatureConfig({
-      feature: "spark",
-      args: [],
-      cwd: settings.workdir,
-    }),
-  }).pipe(Effect.orElseSucceed(() => false));
-  yield* Effect.annotateCurrentSpan({ "spark.enabled": enabled });
-  return enabled;
-});
+/** Spark refused statements of a migration in its dry run; each one is a Postgres compatibility gap. */
+export class SparkMigrationRefusedError extends Data.TaggedError("SparkMigrationRefusedError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
-/** Runs `spark` for a Spark project and `postgres` otherwise. */
-export const withSparkBackend = <A, E, R, A2, E2, R2>(
-  postgres: Effect.Effect<A, E, R>,
-  spark: Effect.Effect<A2, E2, R2>,
-): Effect.Effect<A | A2, E | E2, R | R2 | CommandSettings | FileSystem.FileSystem | Path.Path> =>
+/** The shadow Postgres a Spark `db diff` or `db pull` loads the project's dump into failed. */
+export class SparkShadowError extends Data.TaggedError("SparkShadowError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
+
+/**
+ * Whether the invoked project opted into Spark with `[experimental.spark] enabled` (or
+ * `SUPABASE_EXPERIMENTAL_SPARK_ENABLED`), read before parse so the root swaps in the Spark
+ * command tree. `--version` never selects it.
+ */
+export const resolveSparkEnabled = (input: {
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
+}): Effect.Effect<boolean, ExperimentalFeatureFlagError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    return (yield* isSparkProject()) ? yield* spark : yield* postgres;
-  });
-
-/** Fails a command the Spark backend does not implement. */
-export const sparkUnsupported = (command: string) =>
-  Effect.fail(
-    new SparkUnsupportedError({
-      message: `\`supabase ${command}\` is not supported on the experimental Spark backend (no Postgres runs locally).`,
-    }),
-  );
+    const routingArgs =
+      input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
+        ? input.args.slice(0, -1)
+        : input.args;
+    if (hasRootVersionFlag(routingArgs) && extractCommandPath(routingArgs).length === 0)
+      return false;
+    return yield* resolveExperimentalFeature({
+      feature: "spark",
+      configValue: readExperimentalFeatureConfig({
+        feature: "spark",
+        ...input,
+        args: routingArgs,
+      }),
+    });
+  }).pipe(Effect.withSpan("Spark.resolveEnabled"));

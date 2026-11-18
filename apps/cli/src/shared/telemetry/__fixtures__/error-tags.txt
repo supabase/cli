@@ -459,8 +459,10 @@ SnippetsInvalidIdError
 SnippetsListNetworkError
 SnippetsListUnexpectedStatusError
 SnippetsTomlEncodeError
+SparkApiError
 SparkBackendError
-SparkUnsupportedError
+SparkMigrationRefusedError
+SparkShadowError
 SslEnforcementGetNetworkError
 SslEnforcementGetUnexpectedStatusError
 SslEnforcementMutuallyExclusiveFlagsError

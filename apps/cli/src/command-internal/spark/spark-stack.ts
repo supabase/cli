@@ -2,22 +2,16 @@ import type { ServiceInstance, Stack } from "@supabase/stack/effect";
 import { Context, Effect, Layer, Option, Path } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import type { PgDeltaNextSparkConnection } from "../../commands/db/shared/pgdelta-next-adapter.service.ts";
 import { StackApi } from "../stack-api.ts";
 import { SparkBackendError } from "./spark-project.ts";
 
 const fail = (cause: { readonly message: string }) =>
   new SparkBackendError({ message: cause.message, cause });
 
-const notRunning = () =>
-  new SparkBackendError({ message: "the Spark stack is not running: run `supabase start`" });
-
-/** The project's running Spark stack, as the db commands use it. */
+/** The project's local Spark stack, as `db reset` drives it. */
 export class SparkStack extends Context.Service<
   SparkStack,
   {
-    /** The public API URL and service_role key; fails when the stack is not running. */
-    readonly connection: Effect.Effect<PgDeltaNextSparkConnection, SparkBackendError>;
     /**
      * Runs `effect` with every stack service stopped, since Spark holds an exclusive lock on its
      * database while it serves, and starts them again afterwards when they were running.
@@ -68,19 +62,6 @@ export const sparkStackLayer = Layer.effect(
     const context = yield* Effect.context<StackApi | CommandSettings | Path.Path>();
     const opened = openSpark().pipe(Effect.provideContext(context));
     return SparkStack.of({
-      connection: Effect.scoped(
-        Effect.gen(function* () {
-          const found = yield* opened;
-          if (Option.isNone(found) || !(yield* running(found.value.spark)))
-            return yield* notRunning();
-          const { stack, spark } = found.value;
-          const credentials = yield* spark.credentials().pipe(Effect.mapError(fail));
-          const keys = yield* stack.credentials.get.pipe(Effect.mapError(fail));
-          const url = credentials.apiUrl;
-          if (url === undefined || keys === undefined) return yield* notRunning();
-          return { url, key: keys.serviceRoleKey };
-        }),
-      ).pipe(Effect.withSpan("SparkStack.connection")),
       whileStopped: (effect) =>
         Effect.scoped(
           Effect.gen(function* () {

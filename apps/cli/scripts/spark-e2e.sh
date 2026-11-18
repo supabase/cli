@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end check of the experimental Spark backend: a project opts in through config.toml, and
 # start runs Spark, its meta adapter and Studio on the native stack; then supabase-js with auth and
-# RLS, Studio, the Supabase MCP server, db pull/diff/push/reset, unsupported SQL and stop.
+# RLS, Studio, the Supabase MCP server, and the Spark command tree (link, gen types, db pull/diff/push
+# through the Management API stand-in, with diff and pull on a shadow Postgres loaded from the
+# project's dump), unsupported SQL, the commands the tree leaves out, reset and stop.
 # Needs: a Spark binary (SUPABASE_SPARK_BIN), the PoC example apps (SPARK_EXAMPLE_DIR, with
 # `bun install` run), a built Supabase MCP server (SUPABASE_MCP_CLI), bun, node, jq, curl, python3.
 # SUPABASE_CLI_BIN runs a compiled CLI instead of the source. Uses ports 54321 and 54323.
@@ -17,6 +19,9 @@ export SUPABASE_NO_UPDATE_NOTIFIER=1 SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=
 WORK="$(mktemp -d)"
 PROJECT="$WORK/spark-todos"
 API=http://127.0.0.1:54321
+# The stand-in Management API accepts any token in the client's format and any 20-letter ref.
+PROJECT_REF=sparkpocprojectlocal
+ACCESS_TOKEN="sbp_$(printf '0%.0s' $(seq 40))"
 LOG="$WORK/e2e.log"
 
 cleanup() {
@@ -41,7 +46,11 @@ check() { run env ANON_KEY="$ANON_KEY" SERVICE_KEY="$SERVICE_KEY" node "$EXAMPLE
 rest() { curl -s "$API/rest/v1/$1" -H "apikey: $SERVICE_KEY" -H "authorization: Bearer $SERVICE_KEY" "${@:2}"; }
 no_postgres() {
   local found
-  found="$( (docker ps --format '{{.Image}} {{.Names}}' 2>/dev/null || true; pgrep -a postgres || true) | grep -Ei 'postgres' || true)"
+  # Scoped to this project: other Postgres on the machine (test suites, other stacks) is not this stack's.
+  local real
+  real="$(cd "$PROJECT" && pwd -P)"
+  found="$( (docker ps --format '{{.Image}} {{.Names}} {{.Label "com.supabase.stack-root"}} {{.Label "com.supabase.cli.workdir"}}' 2>/dev/null || true; pgrep -af postgres || true) |
+    grep -Ei 'postgres' | grep -F -e "$PROJECT" -e "$real" || true)"
   [ -z "$found" ] || fail "Postgres is running: $found"
 }
 
@@ -75,6 +84,19 @@ SERVICE_KEY="$(key SERVICE_ROLE_KEY)"
 [ -n "$ANON_KEY" ] && [ -n "$SERVICE_KEY" ] || fail "supabase status --env printed no keys"
 ok "supabase status reports the Spark stack and its keys"
 
+# A profile file is how the CLI points its Management API client at another base URL.
+cat >"$WORK/spark-profile.yaml" <<YAML
+name: spark-local
+api_url: $API
+dashboard_url: http://127.0.0.1:54323
+project_host: localhost
+YAML
+export SUPABASE_PROFILE="$WORK/spark-profile.yaml" SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
+run sb link --project-ref "$PROJECT_REF"
+grep -q "Finished supabase link" "$LOG" || fail "supabase link did not finish"
+[ "$(jq -r .project.ref supabase/.link.json)" = "$PROJECT_REF" ] || fail "supabase link wrote no supabase/.link.json"
+ok "supabase link --project-ref $PROJECT_REF through the Management API ($API, from SUPABASE_PROFILE)"
+
 check app.test.mjs
 ok "app (supabase-js): sign up, CRUD and RLS isolation on todos"
 
@@ -91,18 +113,23 @@ run env ANON_KEY="$ANON_KEY" MCP_CLI="$MCP_CLI" node "$WORK/mcp-check/mcp.check.
 ls supabase/migrations/*_add_labels.sql >/dev/null 2>&1 || fail "apply_migration wrote no migration file"
 ok "MCP: list_tables, apply_migration, execute_sql, list_migrations, generate_typescript_types, get_project_url"
 
-run sb gen types typescript --local
+run sb gen types typescript
 grep -q "todos:" "$LOG" || fail "gen types has no todos table"
-ok "gen types typescript --local from Spark's schema description"
+ok "gen types typescript through the Management API"
 
 run sb db pull
 [ -f supabase/schemas/public/tables/todos.sql ] || fail "db pull wrote no supabase/schemas/public/tables/todos.sql"
 grep -rqi 'create policy "Users manage their own todos"' supabase/schemas || fail "db pull exported no todos policy"
-ok "db pull exports the schema, with Spark's native RLS policies, to supabase/schemas"
+# The shadow image's own grants, default privileges and extensions are not in Spark, which refuses them.
+for image_only in default_privileges.sql adp_wipes.sql schema.sql pgcrypto.sql uuid-ossp.sql; do
+  [ -z "$(find supabase/schemas -name "$image_only")" ] || fail "db pull wrote $image_only, which comes from the shadow image"
+done
+ok "db pull: the project's dump in a shadow Postgres, exported by pg-delta to supabase/schemas, with the RLS policies and none of the image-only files"
 
 out="$(sb db diff -f noop 2>"$LOG")" || fail "db diff -f noop"
 [ "$out" = "No schema changes found" ] || fail "db diff -f noop: $out"
-ok "db diff on the unchanged export: No schema changes found"
+no_postgres
+ok "db diff on the freshly pulled files (Spark, dump, shadow round trip): No schema changes found"
 
 python3 - <<'PY'
 import pathlib
@@ -122,9 +149,9 @@ grant all on table "public"."projects" to "authenticated";
 PY
 todos_before="$(rest 'todos?select=id' | jq length)"
 sb db diff -f add_projects >"$LOG" 2>&1 || fail "db diff -f add_projects"
-grep -q "Proof: OK" "$LOG" || fail "db diff -f add_projects: no \"Proof: OK\""
+grep -q "Dry run on Spark: OK" "$LOG" || fail "db diff -f add_projects: no \"Dry run on Spark: OK\""
 ls supabase/migrations/*_add_projects.sql >/dev/null 2>&1 || fail "no add_projects migration file"
-ok "edit schema files (new column, projects table with FK, RLS policy, index); db diff -f add_projects: Proof: OK"
+ok "edit schema files (new column, projects table with FK, RLS policy, index); db diff -f add_projects: Dry run on Spark: OK"
 
 run sb db push
 grep -q "Finished supabase db push" "$LOG" || fail "db push did not finish"
@@ -151,16 +178,38 @@ create function public.add(a int, b int) returns int
   language plpgsql as $$ begin return a + b; end $$;
 SQL
 if sb db diff -f with_function >"$LOG" 2>&1; then fail "a schema file with a function was accepted"; fi
-grep -Eq 'functions\.sql:[0-9]+' "$LOG" || fail "the rejection names no file:line"
-ok "an unsupported function in a schema file is rejected: $(grep -m1 -Eo 'public/functions\.sql:[0-9]+.{0,90}' "$LOG")"
+grep -Eiq '(unsupported|error) [^:]*: create (or replace )?function [^ ]*add' "$LOG" || fail "the refusal names no function statement"
+grep -q 'supabase/schemas/public/functions.sql:[0-9]' "$LOG" || fail "the refusal names no schema file and line"
+ls supabase/migrations/*_with_function.sql >/dev/null 2>&1 && fail "a refused migration was written"
+ok "an unsupported function in a schema file is refused by the Spark dry run, at $(grep -m1 -Eo 'functions\.sql:[0-9]+' "$LOG"): $(grep -m1 -Eio '(unsupported|error) [^:]*: create (or replace )?function.{0,60}' "$LOG")"
 rm supabase/schemas/public/functions.sql
+
+# Two pending files: a good one, then one Spark refuses. The combined dry run must stop both.
+history_before="$(sb migration list 2>&1)"
+printf 'create table public.notes (id bigint primary key);\n' >supabase/migrations/20990101000000_notes.sql
+printf 'create function public.one() returns int language sql as $$ select 1 $$;\n' >supabase/migrations/20990101000001_one.sql
+if sb db push >"$LOG" 2>&1; then fail "db push applied a migration Spark refuses"; fi
+grep -q '20990101000001_one' "$LOG" || fail "the push refusal names no migration file"
+[ "$(rest 'notes?select=id' -o /dev/null -w '%{http_code}')" != 200 ] || fail "db push applied the good file before the refused one"
+rm supabase/migrations/20990101000000_notes.sql supabase/migrations/20990101000001_one.sql
+[ "$(sb migration list 2>&1)" = "$history_before" ] || fail "migration history changed after a refused push"
+ok "db push with a refused pending migration applies nothing (one dry run over all pending files)"
+
+# Two files with one version fail before anything is applied.
+printf 'create table public.notes (id bigint primary key);\n' >supabase/migrations/20990101000000_notes.sql
+printf 'create table public.other (id bigint primary key);\n' >supabase/migrations/20990101000000_other.sql
+if sb db push >"$LOG" 2>&1; then fail "db push accepted two migrations with one version"; fi
+grep -q '20990101000000_notes' "$LOG" && grep -q '20990101000000_other' "$LOG" || fail "the duplicate-version error names no file"
+[ "$(rest 'notes?select=id' -o /dev/null -w '%{http_code}')" != 200 ] || fail "db push applied a duplicate-version migration"
+rm supabase/migrations/20990101000000_notes.sql supabase/migrations/20990101000000_other.sql
+ok "db push refuses two migration files with the same version before applying anything"
 
 for cmd in "db dump" "db lint" "inspect db table-stats" "test db"; do
   # shellcheck disable=SC2086
   if sb $cmd >"$LOG" 2>&1; then fail "supabase $cmd succeeded on Spark"; fi
-  grep -q "not supported on the experimental Spark backend" "$LOG" || fail "supabase $cmd: no clear message"
+  grep -Eqi "unknown|not found|invalid subcommand" "$LOG" || fail "supabase $cmd: not reported as an unknown command"
 done
-ok "db dump, db lint, inspect db and test db fail with \"not supported on the experimental Spark backend\""
+ok "db dump, db lint, inspect db and test db are not in the Spark command tree"
 
 rows_before="$(rest 'todos?select=id' | jq length)"
 run sb stop

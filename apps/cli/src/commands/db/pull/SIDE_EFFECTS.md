@@ -241,7 +241,3 @@ Both fail with `RemovedSurfaceError` (exit 1). Telemetry records `cli_command_ex
   `--experimental --declarative` runs the declarative export without an error, and an explicit
   `--experimental=false` beats the env. The check lives in the `db pull` command handler, not in
   the shared pull runner, so `supabase pull` does not reject `SUPABASE_EXPERIMENTAL`.
-
-## Spark projects (experimental)
-
-In a Spark project, pg-delta exports the running Spark stack's schema description into `supabase/schemas` (grouped layout) and prints `Finished supabase db pull.`; no Docker or migration file is involved.

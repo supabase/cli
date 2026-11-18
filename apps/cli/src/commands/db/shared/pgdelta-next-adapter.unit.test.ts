@@ -174,8 +174,6 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
         : ["data_loss"],
     }),
     encodeSubject: (subject) => `subject:${subject.id}`,
-    planSparkSchema: () => Promise.reject(new Error("unused")),
-    exportSparkSchema: () => Promise.reject(new Error("unused")),
   };
 
   return {
@@ -207,8 +205,6 @@ const unusedLibraries: PgDeltaNextLibraries<string, Record<string, never>, FakeP
   summarizeRemovals: () => ({ extensions: [], extensionIntents: [] }),
   summarizeHazards: () => ({ actions: [], dataLoss: [], coverage: [], kinds: [] }),
   encodeSubject: (subject) => subject,
-  planSparkSchema: () => Promise.reject(new Error("unused")),
-  exportSparkSchema: () => Promise.reject(new Error("unused")),
 };
 
 describe("PgDeltaNextAdapter", () => {

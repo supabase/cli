@@ -13,10 +13,7 @@ import {
   ShadowLoadError,
 } from "@supabase/pg-delta/frontends";
 import {
-  exportSparkSchema,
-  fetchSparkSchema,
   type IntegrationProfile,
-  planSparkSchema,
   resolveProfile,
   supabaseProfile,
 } from "@supabase/pg-delta/integrations";
@@ -41,9 +38,6 @@ import {
   type PgDeltaNextSnapshotCaptureResult,
   type PgDeltaNextSqlFile,
   type PgDeltaNextOperation,
-  type PgDeltaNextSparkConnection,
-  type PgDeltaNextSparkPlanInput,
-  type PgDeltaNextSparkPlanResult,
 } from "./pgdelta-next-adapter.service.ts";
 import type { PgDeltaErrorDiagnostic, PgDeltaRemovalSummary } from "./pgdelta-engine.service.ts";
 import { PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE } from "./pgdelta-next-diagnostics.ts";
@@ -144,13 +138,6 @@ export interface PgDeltaNextLibraries<FactBase, PlanOptions extends object, Plan
     diagnostics: readonly PgDeltaNextLibraryDiagnostic<Subject>[],
   ) => PgDeltaNextHazardReport;
   readonly encodeSubject: (subject: Subject) => string;
-  readonly planSparkSchema: (
-    connection: PgDeltaNextSparkConnection,
-    files: PgDeltaNextSqlFile[],
-  ) => Promise<PgDeltaNextSparkPlanResult>;
-  readonly exportSparkSchema: (
-    connection: PgDeltaNextSparkConnection,
-  ) => Promise<readonly PgDeltaNextSqlFile[]>;
 }
 
 export function summarizePgDeltaNextRemovals(
@@ -446,31 +433,6 @@ function makePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan, Subj
   libraries: PgDeltaNextLibraries<FactBase, PlanOptions, Plan, Subject>,
 ): PgDeltaNextAdapterShape {
   return {
-    planSparkSchema: Effect.fn("PgDeltaNextAdapter.planSparkSchema")(function* (
-      input: PgDeltaNextSparkPlanInput,
-    ) {
-      yield* Effect.annotateCurrentSpan({ "pgdelta.spark.files": input.files.length });
-      const result = yield* tryPgDeltaNext("sparkPlan", () =>
-        libraries.planSparkSchema(
-          input.connection,
-          input.files.map((file) => ({ name: file.name, sql: file.sql })),
-        ),
-      );
-      yield* Effect.annotateCurrentSpan({
-        "pgdelta.spark.changes": result.sql !== "",
-        "pgdelta.spark.proof_ok": result.proof?.ok ?? true,
-      });
-      return result;
-    }),
-    exportSparkSchema: Effect.fn("PgDeltaNextAdapter.exportSparkSchema")(function* (
-      connection: PgDeltaNextSparkConnection,
-    ) {
-      const files = yield* tryPgDeltaNext("sparkExport", () =>
-        libraries.exportSparkSchema(connection),
-      );
-      yield* Effect.annotateCurrentSpan({ "pgdelta.spark.files": files.length });
-      return files;
-    }),
     diff: Effect.fn("PgDeltaNextAdapter.diff")(function* (input: PgDeltaNextDiffInput) {
       const format = yield* attemptPgDeltaNext("diff", () =>
         pgDeltaNextFormatOptions(input.formatOptions),
@@ -667,10 +629,6 @@ const pgDeltaNextRealLibraries = {
   summarizeRemovals: summarizePgDeltaNextRemovals,
   summarizeHazards: summarizePgDeltaNextHazards,
   encodeSubject: encodeId,
-  planSparkSchema: (connection: PgDeltaNextSparkConnection, files: PgDeltaNextSqlFile[]) =>
-    planSparkSchema(connection, files),
-  exportSparkSchema: (connection: PgDeltaNextSparkConnection) =>
-    fetchSparkSchema(connection).then((description) => exportSparkSchema(description)),
 };
 
 export function pgDeltaNextAdapterLayerFromLibraries<

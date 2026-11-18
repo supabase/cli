@@ -89,8 +89,6 @@ function setup() {
     exportDeclarativeSchema: () => Effect.die("adapter not used"),
     planDeclarativeSchema: () => Effect.die("adapter not used"),
     captureSnapshot: () => Effect.die("adapter not used"),
-    planSparkSchema: () => Effect.die("adapter not used"),
-    exportSparkSchema: () => Effect.die("adapter not used"),
   });
   const debug = Layer.succeed(DebugLogger, {
     debug: () => Effect.void,

@@ -1,9 +1,5 @@
 import { Effect } from "effect";
 
-import {
-  sparkUnsupported,
-  withSparkBackend,
-} from "../../../command-internal/spark/spark-project.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
@@ -30,8 +26,5 @@ export function inspectDbCommandHandler<E, R>(
   handler: (flags: InspectConnectionFlags) => Effect.Effect<void, E, R>,
 ) {
   return (flags: InspectConnectionFlags) =>
-    withSparkBackend(handler(flags), sparkUnsupported("inspect db")).pipe(
-      withCommandTelemetry(),
-      withJsonErrorHandling,
-    );
+    handler(flags).pipe(withCommandTelemetry(), withJsonErrorHandling);
 }

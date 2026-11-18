@@ -14,8 +14,6 @@ const operationConsequence: Record<PgDeltaNextOperation, string> = {
   declarativeExport: "These objects are omitted from the exported declarative schema.",
   declarativePlan: "Changes to these objects are omitted from the declarative migration plan.",
   snapshotCapture: "These objects are omitted from the captured database snapshot.",
-  sparkPlan: "Changes to these objects are omitted from the Spark migration plan.",
-  sparkExport: "These objects are omitted from the exported Spark schema.",
 };
 
 const operationAction: Record<PgDeltaNextOperation, string> = {
@@ -23,8 +21,6 @@ const operationAction: Record<PgDeltaNextOperation, string> = {
   declarativeExport: "export the declarative schema",
   declarativePlan: "emit the declarative migration plan",
   snapshotCapture: "capture the database snapshot",
-  sparkPlan: "plan the Spark schema change",
-  sparkExport: "export the Spark schema",
 };
 
 /**

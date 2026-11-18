@@ -395,7 +395,3 @@ still hits the removal error first, not the mutex error.
 
 The flag definition itself stays in `diff.command.ts` (hidden from `--help`) only
 so misuse produces this actionable error instead of an unknown-flag parse error.
-
-## Spark projects (experimental)
-
-In a Spark project (`[experimental.spark] enabled`), pg-delta plans `supabase/schemas/**/*.sql` against the running Spark stack through its API URL and service_role key, and proves the plan on a Spark scratch copy; `Proof: OK ...` or `Proof: FAILED ...` goes to stderr. No Docker or shadow database is used. Statements Spark cannot run exit 1 and write nothing; `-f <name>` writes `supabase/migrations/<timestamp>_<name>.sql`.

@@ -354,7 +354,3 @@ to those defaults (the usual outcome for an interactive terminal).
   `resetLocalDatabase` in-process too, so the reset runs inside a
   single telemetry/linked-project-cache finalizer cycle (the outer `db schema
 declarative`/`sync` command's own).
-
-## Spark projects (experimental)
-
-In a Spark project, the stack services stop, `spark --workdir <project> db reset` rebuilds `supabase/.temp/spark.db` from migrations and seed files, and the services start again when they were running.

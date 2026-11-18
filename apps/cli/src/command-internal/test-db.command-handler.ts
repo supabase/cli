@@ -1,5 +1,4 @@
 import { Effect } from "effect";
-import { sparkUnsupported, withSparkBackend } from "./spark/spark-project.ts";
 import { Argument } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -46,17 +45,14 @@ export interface TestDbFlags extends TargetFlagValuesWithDbUrl {
 
 /** The `test db` / `db test` handler: telemetry, run-failure routing and JSON error handling. */
 export function runTestDbCommand(flags: CliCommand.Command.Config.Infer<typeof testDbConfig>) {
-  return withSparkBackend(
-    testDb({
-      paths: flags.paths,
-      remote: flags.remote,
-      dbUrl: flags.dbUrl,
-      linked: flags.linked,
-      local: flags.local,
-      projectRef: flags.projectRef,
-    }),
-    sparkUnsupported("test db"),
-  ).pipe(
+  return testDb({
+    paths: flags.paths,
+    remote: flags.remote,
+    dbUrl: flags.dbUrl,
+    linked: flags.linked,
+    local: flags.local,
+    projectRef: flags.projectRef,
+  }).pipe(
     withCommandTelemetry(),
     // Run failures must not corrupt the TAP stream in machine modes; see `onRunFailure`.
     Effect.catchTag(["TestDbRunError", "TestDbNoTestsError"], onRunFailure),

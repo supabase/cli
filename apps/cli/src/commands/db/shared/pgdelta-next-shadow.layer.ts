@@ -60,7 +60,8 @@ import {
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 
-const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
+/** A free loopback port for a shadow container, or none when the OS refuses one. */
+export const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
   const server = Net.createServer();
   const onError = () => resume(Effect.succeed(Option.none()));
   server.once("error", onError);
