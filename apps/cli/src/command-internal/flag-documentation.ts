@@ -23,7 +23,7 @@ export function flagDocumentation(
 }
 
 /** Only literal scalar and array defaults can be displayed without evaluating user code. */
-export function literalDefault(value: unknown): string | undefined {
+function literalDefault(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) {
     return String(value);
