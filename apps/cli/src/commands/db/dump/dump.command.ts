@@ -99,6 +99,16 @@ export type DbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbDumpCommand = Command.make("dump", config).pipe(
   Command.withDescription("Dumps data or schemas from a database."),
   Command.withShortDescription("Dumps data or schemas from a database"),
+  Command.withExamples([
+    {
+      command: "supabase db dump --data-only",
+      description: "Dump data from the local database without schema definitions",
+    },
+    {
+      command: "supabase db dump --role-only",
+      description: "Dump custom roles from the local database",
+    },
+  ]),
   Command.withHandler((flags) =>
     dbDump(flags).pipe(
       withCommandTelemetry({

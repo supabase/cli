@@ -56,6 +56,12 @@ export const dbPushCommand = Command.make("push", config).pipe(
     "Push new migrations to a database. Vault secrets from the config file are updated before migrations unless --skip-vault is set.",
   ),
   Command.withShortDescription("Push new migrations to a database"),
+  Command.withExamples([
+    {
+      command: "supabase db push --dry-run",
+      description: "Preview changes to the local database without applying them",
+    },
+  ]),
   Command.withHandler((flags) =>
     dbPush(flags).pipe(
       withCommandTelemetry({

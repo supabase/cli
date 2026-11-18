@@ -2,8 +2,10 @@
 
 Source content for the [CLI reference](https://supabase.com/docs/reference/cli) published on the Supabase docs site.
 
-- `supabase/` — long-form command descriptions, one file per command path
-- `templates/examples.yaml` — per-command usage examples, keyed by doc id
+Long-form command descriptions live under `supabase/`, one file per command path.
+For CLI contributors, author usage examples with `Command.withExamples` in command definitions.
+Terminal help and the website reference use these same invocations and descriptions, without sample
+output. Examples without descriptions use their invocation as the website title.
 
 ## Local Preview
 
