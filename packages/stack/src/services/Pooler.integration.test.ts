@@ -84,6 +84,10 @@ describe("service catalog", () => {
                 id: `pooler-${runtime}-${poolMode}`,
                 config: poolerRecipe.creation,
               });
+              yield* (
+                poolerRecipe.definition.prepare?.(poolerRecipe.creation) ??
+                Effect.die("Pooler recipe has no prepare step")
+              ).pipe(phaseDeadline(`${runtime} ${poolMode} pooler artifact prepare`, 60));
               for (const phase of runtime === "native" ? ["start", "restart"] : ["start"]) {
                 const step = `${runtime} ${poolMode} pooler ${phase}`;
                 if (phase === "restart") {
@@ -119,6 +123,6 @@ describe("service catalog", () => {
           Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
         ),
       ),
-    { timeout: 120_000 },
+    { timeout: 180_000 },
   );
 });
