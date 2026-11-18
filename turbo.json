@@ -87,7 +87,6 @@
     },
     "supabase#api-commands:generate": {
       "cache": true,
-      "dependsOn": ["@supabase/api#generate"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "!src/commands/api/generated*",

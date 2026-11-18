@@ -188,7 +188,7 @@ it.live("warehouse enable without --yes refuses to run when stdin is piped", () 
     const lastLine = result.stderr.trimEnd().split("\n").at(-1) ?? "";
     expect(decodeJson(lastLine)).toMatchObject({
       code: "usage_error",
-      hint: expect.stringContaining("Pass --yes"),
+      hint: "Re-run with --yes to confirm.",
     });
     expect(requests).toEqual([]);
   }).pipe(Effect.provide(BunServices.layer)),

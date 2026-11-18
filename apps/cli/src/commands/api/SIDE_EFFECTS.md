@@ -55,19 +55,22 @@ Each command sends the one request described in the [per-command reference](./ge
 Bearer token authentication, and passes the JSON response through unchanged. The calls every command
 can add:
 
-| Method | Path                 | Auth         | Request body | Response (used fields)                                                                                             |
-| ------ | -------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/v1/projects`       | Bearer token | none         | only when no ref resolved and the session is interactive (project picker)                                          |
-| `GET`  | `/v1/projects/{ref}` | Bearer token | none         | `{ref, name, organization_id, organization_slug}`; linked-project cache miss only (best-effort, after the command) |
+| Method | Path                             | Auth         | Request body | Response (used fields)                                                                                                                                                                                      |
+| ------ | -------------------------------- | ------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects`                   | Bearer token | none         | only when no ref resolved and the session is interactive (project picker)                                                                                                                                   |
+| `GET`  | `/v1/projects/{ref}`             | Bearer token | none         | `{ref, name, organization_id, organization_slug}`; linked-project cache miss only (best-effort, after the command)                                                                                          |
+| `GET`  | `/v1/projects/{parent}/branches` | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/branches/{id}`              | Bearer token | none         | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                            |
 
 With `--wait`, the command also polls the read operation named in its reference entry.
 
 ### Request input
 
 - `--body` or `--file` supply the whole body; a flag replaces its own field and nothing else.
-- The input is validated before consent and before any request: a top-level body key outside the
-  declared request-body fields, an unknown nested field or a missing required flag fails with
-  nothing sent.
+- The input is validated before consent and before the command request: a top-level body key
+  outside the declared request-body fields, an unknown nested field or a missing required flag
+  fails with no command request sent. Target resolution runs first, so the project picker and
+  branch lookups in the table above can still run.
 - `--dry-run` prints `{method, path, query, headers, body}` and sends no command request, before
   consent. The linked-project cache read in the table above can still run. It shows the local
   request, not a server-resolved impact.
@@ -88,8 +91,8 @@ error).
 - The wait succeeds on a status in the succeeded set and fails (`operation_failed`) on a status in
   the failed set. The failure pointer only supplies the error message and never ends the wait by
   itself.
-- Any non-2xx response while polling, a 409 included, ends the command with the API error; the wait
-  never resumes.
+- Each poll read goes through the API client's own retries (429 and 5xx). Any non-2xx response left
+  after them, a 409 included, ends the command with the API error; the wait never resumes.
 - At the timeout the command fails with `wait_timeout`. Timeout and cancellation stop local polling
   only and do not change server state.
 - The failure and timeout hint names the command that re-reads the state. When the polled read is a

@@ -160,7 +160,7 @@ const failureForError = (
     return failure(EXIT_USAGE, "usage_error", error.message, error.hint ?? null);
   }
   if (error instanceof HostedMutationConsentRequiredError) {
-    return failure(EXIT_USAGE, "usage_error", error.message, "Pass --yes");
+    return failure(EXIT_USAGE, "usage_error", error.message, error.suggestion);
   }
   if (error instanceof HostedMutationDeclinedError) {
     return failure(EXIT_CANCELLED, "cancelled", error.message);

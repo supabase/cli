@@ -89,7 +89,7 @@ describe("standardFailureFor", () => {
     {
       name: "consent required",
       cause: Cause.fail(new HostedMutationConsentRequiredError({ message: "m", suggestion: "s" })),
-      expected: { exitCode: 2, code: "usage_error", status: null, hint: "Pass --yes" },
+      expected: { exitCode: 2, code: "usage_error", status: null, hint: "s" },
     },
     {
       name: "declined confirmation",

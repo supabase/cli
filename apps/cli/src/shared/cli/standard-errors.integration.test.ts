@@ -71,7 +71,7 @@ describe("errors.standard failure contract", { timeout: SUBPROCESS_TIMEOUT_MS },
   );
 
   it.live(
-    "a run that cannot ask for consent is a usage error telling the caller to pass --yes",
+    "a run that cannot ask for consent is a usage error that keeps the consent suggestion",
     () =>
       Effect.gen(function* () {
         const { exitCode, stdout, stderr } = yield* runFixture(["needs-consent"]);
@@ -79,7 +79,7 @@ describe("errors.standard failure contract", { timeout: SUBPROCESS_TIMEOUT_MS },
         expect(exitCode).toBe(2);
         expect(yield* decodeJson(lastLine(stderr))).toMatchObject({
           code: "usage_error",
-          hint: "Pass --yes",
+          hint: "Re-run with --yes to confirm.",
         });
       }).pipe(Effect.provide(BunServices.layer)),
   );
