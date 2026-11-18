@@ -451,6 +451,8 @@ const setup = Effect.fnUntraced(function* (
     readonly childStderr?: ReadonlyArray<string>;
     readonly childDockerMissing?: boolean;
     readonly args?: ReadonlyArray<string>;
+    /** `--stack`, as the parsed flag services see it. */
+    readonly stack?: string;
     readonly generateTypescriptTypes?: (input: {
       readonly ref: string;
       readonly included_schemas?: string;
@@ -590,6 +592,7 @@ const setup = Effect.fnUntraced(function* (
       workdir,
       explicitWorkdir: opts.explicitWorkdir ?? false,
       projectId: opts.projectId ?? Option.none(),
+      ...(opts.stack === undefined ? {} : { stack: opts.stack }),
     }),
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
@@ -1811,6 +1814,18 @@ describe("gen types", () => {
             input: { ref: VALID_REF, included_schemas: "public" },
           },
         ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("does not read a --stack value as the positional language", () =>
+      Effect.gen(function* () {
+        const { layer } = yield* setup({
+          args: ["gen", "types", "--stack", "feature"],
+          stack: "feature",
+        });
+        const error = yield* genTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error.message).toBe("--stack requires the experimental stack backend.");
       }).pipe(Effect.provide(BunServices.layer)),
     );
 

@@ -37,11 +37,10 @@ import type { DocsInfoTag } from "./docs-spec.tables.ts";
  * failing the build on stale entries instead of silently degrading the reference.
  */
 
-export interface DocsExample {
-  readonly id?: string;
-  readonly name?: string;
-  readonly code?: string;
-  readonly response?: string;
+interface DocsExample {
+  readonly id: string;
+  readonly name: string;
+  readonly code: string;
 }
 
 interface DocsAcceptedValue {
@@ -96,8 +95,6 @@ export interface DocsSpecInput {
   readonly version: string;
   /** Overlay markdown keyed by docs-relative POSIX path, e.g. `supabase/db/push.md`. */
   readonly overlays: ReadonlyMap<string, string>;
-  /** Examples keyed by doc id, from `docs/templates/examples.yaml`. */
-  readonly examples: Readonly<Record<string, ReadonlyArray<DocsExample>>>;
 }
 
 /**
@@ -401,7 +398,10 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
     const flags: Array<DocsFlag> = [];
     if (isExecutable) {
-      const declared = flagDocsFor(commandPath, internals.config.flags);
+      const declared = flagDocsFor(commandPath, [
+        ...internals.config.flags,
+        ...userGlobalFlagParams(command),
+      ]);
       const declaredIds = new Set(declared.map((flag) => flag.id));
       const extraFlags = DOCS_EXTRA_FLAGS[docId];
       if (extraFlags !== undefined) {
@@ -457,17 +457,18 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       );
     }
 
-    const fromYaml = input.examples[docId];
     const commandExamples =
-      fromYaml !== undefined && fromYaml.length > 0
-        ? fromYaml
-        : command.examples.length > 0
-          ? command.examples.map((example, index) => ({
-              id: `example-${index + 1}`,
-              name: example.description ?? example.command,
-              code: example.command,
-            }))
-          : undefined;
+      command.examples.length > 0
+        ? command.examples.map((example, index) => {
+            const name = example.description ?? example.command;
+            if (name.trim() === "" || example.command.trim() === "") {
+              throw new Error(
+                `docs-spec.ts: "${docId}" example-${index + 1} must have nonempty name and code.`,
+              );
+            }
+            return { id: `example-${index + 1}`, name, code: example.command };
+          })
+        : undefined;
 
     commands.push({
       id: docId,
@@ -592,10 +593,8 @@ function validateDocsTables(seen: {
 }
 
 /**
- * Extends the build-fails-on-drift guarantee to content inputs: an overlay or `examples.yaml`
- * doc id matching no emitted command would otherwise vanish from the published reference
- * silently. Overlays belonging to `DOCS_EXCLUDED` commands stay allowed as orphans until their
- * pages are removed.
+ * Rejects overlays matching no emitted command, except pages belonging to `DOCS_EXCLUDED`
+ * commands, which remain allowed until their pages are removed.
  */
 function validateDocsContent(
   input: DocsSpecInput,
@@ -610,11 +609,6 @@ function validateDocsContent(
   for (const path of input.overlays.keys()) {
     if (!seen.consumedOverlayPaths.has(path) && !seen.allowedOrphanOverlayPaths.has(path)) {
       orphaned.push(`overlay: "${path}"`);
-    }
-  }
-  for (const docId of Object.keys(input.examples)) {
-    if (!seen.emittedIds.has(docId) && !seen.skippedExcludedIds.has(docId)) {
-      orphaned.push(`examples.yaml: "${docId}"`);
     }
   }
   if (orphaned.length > 0) {

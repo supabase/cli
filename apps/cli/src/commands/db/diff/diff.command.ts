@@ -24,6 +24,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
@@ -119,30 +120,16 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     "Compares a shadow built from supabase/migrations with a live database (the local database by default, or the one --remote selects). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
   ),
   Command.withShortDescription("Diffs a database for schema changes"),
-  withPermissions(
-    compose(
-      {
-        operations: [explicitBranchSide("from"), explicitBranchSide("to")],
-        noApiEffectFlags: [
-          "use-migra",
-          "use-pgadmin",
-          "use-pg-schema",
-          "use-pg-delta",
-          "strict-coverage",
-          "output",
-          "file",
-          "schema",
-        ],
-      },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      explicitLinkedSide("from"),
-      explicitLinkedSide("to"),
-      explicitNamedProjectSide("from"),
-      explicitNamedProjectSide("to"),
-      branchResolution,
-    ),
-  ),
+  Command.withExamples([
+    {
+      command: "supabase db diff -f add_profiles",
+      description: "Save local schema changes as a new migration",
+    },
+    {
+      command: "supabase db diff --schema public,extensions",
+      description: "Diff only the public and extensions schemas",
+    },
+  ]),
   Command.withHandler((flags) =>
     dbDiff(flags).pipe(
       withCommandTelemetry({
@@ -171,4 +158,29 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     consent: "none",
     consentExemptReason: "reads the target and writes only local migration files",
   }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      {
+        operations: [explicitBranchSide("from"), explicitBranchSide("to")],
+        noApiEffectFlags: [
+          "use-migra",
+          "use-pgadmin",
+          "use-pg-schema",
+          "use-pg-delta",
+          "strict-coverage",
+          "output",
+          "file",
+          "schema",
+        ],
+      },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      explicitLinkedSide("from"),
+      explicitLinkedSide("to"),
+      explicitNamedProjectSide("from"),
+      explicitNamedProjectSide("to"),
+      branchResolution,
+    ),
+  ),
 );

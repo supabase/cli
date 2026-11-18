@@ -10,17 +10,26 @@ that carries the **`open-for-contribution`** label. This is enforced by the
 [`Contribution Gate`](./workflows/contribution-gate.yml) workflow, whose decision logic
 lives in [`scripts/contribution-gate.ts`](./scripts/contribution-gate.ts).
 
-The gate runs **reactively on each PR** so a non-conforming PR is closed right away, and
-can also be **swept across every open PR on demand** via the workflow's _Run workflow_
-button.
+The gate sweeps **every open PR every 15 minutes**, at minutes 7, 22, 37, and 52 of
+each hour (UTC), and can also run manually. GitHub can delay or drop scheduled runs,
+so enforcement has no fixed response time. Opening, reopening, or editing a PR does
+not trigger an immediate run.
 
-A pull request is **auto-closed with an explanatory comment** when the author is external
-and any of these is true:
+Both scheduled and manual sweeps run only from the default branch. They execute
+repository code, never PR code, and share a concurrency group to prevent overlap.
+The schedule starts once this workflow reaches the default branch.
+
+During a sweep, a pull request is **closed with an explanatory comment** when the author
+is external and any of these is true:
 
 - no issue is linked (via a closing keyword such as `Closes #123`, or the PR's
   Development sidebar), or
 - the linked issue is closed, or
 - the linked issue is missing the `open-for-contribution` label.
+
+Sweeps also catch issue closures and label removals without a PR edit. Reopening a
+PR does not bypass the policy: link a qualifying issue before reopening, or the
+next sweep will comment and close it again.
 
 Authors whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`, and bot
 accounts, are **exempt** — Supabase maintainers can keep working from Linear tickets that
@@ -28,9 +37,9 @@ aren't public on GitHub.
 
 ### Running the gate manually
 
-Use **Actions → Contribution Gate → Run workflow** to sweep all open PRs on demand — for
-example right after bulk-applying `open-for-contribution` labels, so the whole backlog is
-re-evaluated at once instead of waiting for each PR's next edit. Set the **`dry_run`**
+Use **Actions → Contribution Gate → Run workflow** from the default branch to sweep
+all open PRs on demand, for example after bulk-applying `open-for-contribution` labels.
+Runs from other branches are skipped. Set the **`dry_run`**
 input to `true` first to log each PR's decision in the run output without commenting on or
 closing anything; run again with `dry_run` unchecked to apply the decisions.
 

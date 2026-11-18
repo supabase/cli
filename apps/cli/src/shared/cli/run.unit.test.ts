@@ -46,6 +46,13 @@ describe("extractCommandPath", () => {
     ).toEqual(["functions", "serve"]);
   });
 
+  it("skips a --stack selector and its value placed before the leaf", () => {
+    expect(extractCommandPath(["functions", "--stack", "feature", "serve"])).toEqual([
+      "functions",
+      "serve",
+    ]);
+  });
+
   it("skips the built-in --log-level flag and its value", () => {
     expect(extractCommandPath(["--log-level", "error", "functions", "serve"])).toEqual([
       "functions",

@@ -48,6 +48,13 @@ Runtime resolvers read shared helpers from `local-config-helpers.ts`, never buil
 `resolveEmailTemplateContentPath` rejects absolute paths, traversal, and
 symlinks escaping the project root; every `content_path` consumer gets this containment.
 
+## Description Markdown
+
+Command, short, argument, flag, and example descriptions allow paragraphs, inline Markdown, and
+code blocks. Other block structures, HTML, and images fail the command-tree authoring check.
+Follow the [description contract](docs/README.md#command-description-markdown) for rendering
+limits; put richer content in reference page bodies.
+
 ## CLI compatibility
 
 The established CLI surface is a contract: command paths, flags, output text and streams,
@@ -104,6 +111,20 @@ rather than deleting it; `db remote commit` is the reference:
   `telemetry.json` read and write under `SUPABASE_HOME`.
 - Test every tombstone through the real parser with and without its old flags, asserting the
   `RemovedSurfaceError` message and suggestion.
+
+## Reference Overlays
+
+Website-only explanations stay in `apps/cli/docs/supabase/`. Command definitions own invocation examples.
+Overlays are human-authored or edited under explicit human instruction. Do not add, rewrite, or remove
+an overlay without explicit authorization to edit it. A command implementation request does not grant
+that authorization, even when general instructions require documentation updates.
+
+When command behavior changes, inspect the affected overlays, including those absent from the diff.
+When overlay claims change, check them against the implementation. Report contradictions with the
+existing claim, its location, and implementation evidence. Check defaults, prerequisites, side effects,
+confirmation behavior, limitations, and recovery instructions. Do not turn this check into requests
+for more coverage, new sections, or stylistic rewrites. Report the discrepancy and wait for authorization
+before editing. Do not infer authorship or authorization from prose style or absent PR metadata.
 
 ## Config values
 

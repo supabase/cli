@@ -125,6 +125,8 @@ import { StackNativeEngineError } from "../../../command-internal/stack-local-da
 import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
 
 interface SetupOpts {
+  /** `--stack`. */
+  readonly stack?: string;
   readonly usePgDelta?: boolean;
   readonly env?: Readonly<Record<string, string>>;
   readonly format?: OutputFormat;
@@ -592,6 +594,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       workdir,
       projectId: opts.projectId ?? Option.some("test"),
       ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
+      ...(opts.stack === undefined ? {} : { stack: opts.stack }),
     }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(
@@ -1378,6 +1381,35 @@ describe("db diff", () => {
         apiRequests: () => branchApi.requests,
       };
     },
+  });
+
+  describe("explicit --from and --to with --stack", () => {
+    it.effect(
+      "rejects --stack on the legacy backend instead of diffing the default database",
+      () => {
+        const s = setup(tmp.current, { stack: "feature" });
+        return Effect.gen(function* () {
+          const error = yield* dbDiff(
+            flags({ from: Option.some("migrations"), to: Option.some("local") }),
+          ).pipe(Effect.provide(s.layer), Effect.flip);
+          expect(error.message).toBe("--stack requires the experimental stack backend.");
+          expect(s.explicitDiffCalls).toEqual([]);
+        });
+      },
+    );
+
+    it.effect("rejects --stack when neither side is the local database", () => {
+      const s = setup(tmp.current, { stack: "feature" });
+      return Effect.gen(function* () {
+        const error = yield* dbDiff(
+          flags({ from: Option.some("migrations"), to: Option.some("remote") }),
+        ).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))), Effect.flip);
+        expect(error.message).toBe(
+          "--stack selects a local stack, but neither --from nor --to is local.",
+        );
+        expect(s.explicitDiffCalls).toEqual([]);
+      });
+    });
   });
 
   describe("explicit --from and --to values", () => {

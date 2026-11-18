@@ -84,13 +84,14 @@ import {
   parseSpecifier,
 } from "../../../../command-internal/stack-lock.ts";
 import {
-  StackApi,
-  stackCapabilityForService,
-  StackTargetResolver,
+  describeStackSelector,
   failedOutcomesDetail,
   mapTargetError,
   rejectStackOutput,
-  validateStackTarget,
+  selectStack,
+  StackApi,
+  stackCapabilityForService,
+  StackTargetResolver,
 } from "../../../../command-internal/stack-target.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
@@ -449,12 +450,12 @@ const settingChangeLines = (
 const dedupe = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)];
 
 /**
- * The exact `supabase stack destroy` invocation that recreates this stack. Always targets
- * `--stack-id`: a `--stack <name>` destroy re-resolves the name against the caller's current
- * `--workdir`, which can point at a different project's stack of the same name. Omits `--yes` on
- * purpose, since destroying deletes local database data (details in `SIDE_EFFECTS.md`).
+ * The exact `supabase stack destroy` invocation that recreates this stack. Always targets the
+ * full ID: a name re-resolves against the caller's current `--workdir`, which can point at a
+ * different project's stack of the same name. Omits `--yes` on purpose, since destroying deletes
+ * local database data (details in `SIDE_EFFECTS.md`).
  */
-const destroyCommandFor = (id: string): string => `supabase stack destroy --stack-id ${id}`;
+const destroyCommandFor = (id: string): string => `supabase stack destroy --stack ${id}`;
 
 /** The revert clause for the editable keys among a rejection's changes, or `undefined` for none. */
 const revertAdvice = (editableKeys: ReadonlyArray<string>): string | undefined =>
@@ -508,7 +509,7 @@ const incompatibleChange = (
     );
   // A non-editable change blocks start whatever else changed, so destroy is the only way out.
   const suggestion = replannable
-    ? `Run \`supabase stack stop --stack-id ${stackIdentity.id}\`, then \`supabase stack start --stack-id ${stackIdentity.id}\` to apply the new ports.`
+    ? `Run \`supabase stack stop --stack ${stackIdentity.id}\`, then \`supabase stack start --stack ${stackIdentity.id}\` to apply the new ports.`
     : nonEditable.length > 0 || revert === undefined
       ? `This CLI release starts a different ${nonEditable.join(" and ")} than the saved stack. Run ${destroyClause}`
       : `${revert} to keep the stack and its data, or run ${destroyClause}`;
@@ -589,17 +590,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))),
     );
     const exclusions = yield* validateExclusions(flags.exclude);
-    yield* validateStackTarget({
-      stack: Option.getOrUndefined(flags.stack),
-      stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))));
+    const selected = yield* selectStack(flags.stack);
     const target = yield* resolver
-      .resolve({
-        projectRoot: settings.workdir,
-        ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
-        ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
-        runtime: flags.runtime,
-      })
+      .resolve({ projectRoot: settings.workdir, ...selected, runtime: flags.runtime })
       .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))));
     const configFile = yield* loadConfigFileRef(target.projectRoot);
     const runtime = yield* RuntimeInfo;
@@ -721,7 +714,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               : stack.stop.pipe(
                   Effect.catch((error) =>
                     output.raw(
-                      `Failed to stop stack host ${stack.id}: ${error.message}. Run supabase stack stop --stack-id ${stack.id} to stop it.\n`,
+                      `Failed to stop stack host ${stack.id}: ${error.message}. Run supabase stack stop --stack ${stack.id} to stop it.\n`,
                       "stderr",
                     ),
                   ),
@@ -743,8 +736,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       {
         explicitWorkdir: settings.explicitWorkdir,
         projectRoot: target.projectRoot,
-        ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
-        ...(Option.isSome(flags.stackId) ? { stackId: stack.id } : {}),
+        /* A stack selected by ID keeps its full ID, which stays unique as more stacks are added. */
+        ...(target.name !== undefined
+          ? { stack: target.name }
+          : selected.stack === undefined
+            ? {}
+            : { stack: stack.id }),
       },
       currentShellPlatform(),
     );
@@ -783,8 +780,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           `\n${renderStackSummary(report.views, credentials)}\n${gray(`Runtime: ${selectedRuntime}`, process.stdout)}\nRun ${statusPointer} to export these values as environment variables.\n`,
         );
       });
+    const named = describeStackSelector(selected);
+    const selectedFlags = named === undefined ? "" : ` ${named.flags}`;
     const runtimeNotice =
-      target.id === undefined ? automaticRuntimeNotice(target.runtime, selectedRuntime) : undefined;
+      target.id === undefined
+        ? automaticRuntimeNotice(target.runtime, selectedRuntime, selectedFlags)
+        : undefined;
     if (runtimeNotice !== undefined) yield* output.info(runtimeNotice);
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
@@ -1041,7 +1042,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             instance.destroy.pipe(
               Effect.catch((error) =>
                 output.raw(
-                  `Failed to remove initial ${instance.service} instance ${instance.id}: ${error.message}. Run supabase stack destroy --stack-id ${stack.id} before retrying.\n`,
+                  `Failed to remove initial ${instance.service} instance ${instance.id}: ${error.message}. Run supabase stack destroy --stack ${stack.id} before retrying.\n`,
                   "stderr",
                 ),
               ),
@@ -1051,7 +1052,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       }).pipe(
         Effect.catch((error) =>
           output.raw(
-            `Failed to clean up initial stack ${stack.id}: ${error.message}. Run supabase stack destroy --stack-id ${stack.id} before retrying.\n`,
+            `Failed to clean up initial stack ${stack.id}: ${error.message}. Run supabase stack destroy --stack ${stack.id} before retrying.\n`,
             "stderr",
           ),
         ),

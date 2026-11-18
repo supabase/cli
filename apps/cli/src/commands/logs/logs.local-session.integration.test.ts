@@ -14,7 +14,6 @@ const flags: LogsFlags = {
   remote: Option.none(),
   projectRef: Option.none(),
   stack: Option.none(),
-  stackId: Option.none(),
   service: [],
   resource: Option.none(),
   kind: Option.none(),

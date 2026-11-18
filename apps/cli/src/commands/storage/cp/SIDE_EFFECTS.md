@@ -55,7 +55,8 @@ override family are legacy backend only. `SUPABASE_AUTH_SERVICE_ROLE_KEY` is leg
 for the local target; on a remote project a non-empty shell value skips the api-keys call under either
 backend. `SUPABASE_ACCESS_TOKEN`,
 `SUPABASE_PROJECT_ID`, and `SUPABASE_EXPERIMENTAL_STACK` (backend selection) apply to either
-backend — same roles as `storage ls`.
+backend; `SUPABASE_STACK` selects the local stack on the stack backend — same
+roles as `storage ls`.
 `SUPABASE_PROJECT_ID` supplies the ref for a bare `--remote` and the parent project for `--remote=<branch>`.
 
 `storage` is an experimental command: `cp` requires `--experimental`
