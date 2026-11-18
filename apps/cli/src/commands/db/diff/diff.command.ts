@@ -128,10 +128,6 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
       command: "supabase db diff --schema public,extensions",
       description: "Diff only the public and extensions schemas",
     },
-    {
-      command: "supabase db diff --use-migra",
-      description: "Use the legacy migra engine for this diff",
-    },
   ]),
   withPermissions(
     compose(

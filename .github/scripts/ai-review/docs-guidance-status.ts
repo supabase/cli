@@ -9,7 +9,6 @@ export type GuidanceManifest = {
 export function isReferenceSource(path: string): boolean {
   return (
     /^apps\/cli\/docs\/supabase\/.*\.md$/.test(path) ||
-    path === "apps/cli/docs/templates/examples.yaml" ||
     (/^apps\/cli\/src\/.*\.ts$/.test(path) && !/\.(?:test|spec)\.ts$/.test(path))
   );
 }

@@ -56,9 +56,8 @@ resolve -> docs-guidance ---+                   +-> adjudicate -> post-review
 ### CLI reference prose
 
 After authorization, a separate read-only `docs-guidance` job conservatively
-selects reference sources from the resolved PR head's merge-base diff. Overlays under `apps/cli/docs/supabase/`,
-`apps/cli/docs/templates/examples.yaml`, and non-test TypeScript under
-`apps/cli/src/` qualify. Generated YAML and unrelated paths do not trigger a
+selects reference sources from the resolved PR head's merge-base diff. Overlays under `apps/cli/docs/supabase/`
+and non-test TypeScript under `apps/cli/src/` qualify. Generated YAML and unrelated paths do not trigger a
 fetch. Style findings are limited to changed reference prose, not every selected file.
 
 For relevant changes, the trusted collector resolves `supabase/supabase` master

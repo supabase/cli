@@ -91,16 +91,6 @@ const startRuntimeLayer = Layer.mergeAll(
 export const startCommand = Command.make("start", config).pipe(
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
-  Command.withExamples([
-    {
-      command: "supabase start -x gotrue,imgproxy",
-      description: "Start without the Auth and image proxy services",
-    },
-    {
-      command: "supabase start --ignore-health-check",
-      description: "Start even if service health checks fail",
-    },
-  ]),
   withPermissions({
     operations: [],
     noApiEffectFlags: ["exclude", "ignore-health-check", "preview"],
