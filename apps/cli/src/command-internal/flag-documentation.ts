@@ -6,7 +6,6 @@ export interface FlagDocumentationShape {
   readonly defaultValue?: string;
   readonly choices?: ReadonlyArray<string>;
   readonly required?: boolean;
-  readonly hidden?: boolean;
   /** Website compatibility labels need not describe an actual runtime default. */
   readonly helpDefault?: string | false;
 }

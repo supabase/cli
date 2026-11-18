@@ -26,12 +26,12 @@ const config = {
     Flag.withDefault(false),
   ),
   cacheControl: Flag.String("cache-control").pipe(
-    Flag.withDescription('Custom Cache-Control header for HTTP upload. (default "max-age=3600")'),
+    Flag.withDescription("Custom Cache-Control header for HTTP upload."),
     Flag.annotate(FlagDocumentation, { defaultValue: "max-age=3600" }),
     Flag.optional,
   ),
   contentType: Flag.String("content-type").pipe(
-    Flag.withDescription('Custom Content-Type header for HTTP upload. (default "auto-detect")'),
+    Flag.withDescription("Custom Content-Type header for HTTP upload."),
     Flag.annotate(FlagDocumentation, { defaultValue: "auto-detect" }),
     Flag.optional,
   ),
@@ -40,7 +40,7 @@ const config = {
     // Declared as a string, not `Flag.Int`, so the raw token reaches the parser below;
     // `withMetavar` keeps the `--jobs, -j integer` help token.
     Flag.withMetavar("integer"),
-    Flag.withDescription("Maximum number of parallel jobs. (default 1)"),
+    Flag.withDescription("Maximum number of parallel jobs."),
     Flag.annotate(FlagDocumentation, { defaultValue: "1" }),
     // `--jobs` is a uint: a non-uint token must fail at parse time, before the
     // experimental gate, the handler, or any telemetry, with the exact message and original

@@ -45,7 +45,7 @@ const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
   projectId: deprecatedProjectIdFlag,
   lang: Flag.Literals("lang", GEN_TYPES_LANGUAGES).pipe(
-    Flag.withDescription("Output language of the generated types. (default typescript)"),
+    Flag.withDescription("Output language of the generated types."),
     Flag.withDefault("typescript"),
   ),
   schema: Flag.String("schema").pipe(
@@ -64,7 +64,7 @@ const config = {
     Flag.withDefault(false),
   ),
   queryTimeout: Flag.String("query-timeout").pipe(
-    Flag.withDescription("Maximum timeout allowed for the database query. (default 15s)"),
+    Flag.withDescription("Maximum timeout allowed for the database query."),
     Flag.withDefault("15s"),
   ),
 } as const;

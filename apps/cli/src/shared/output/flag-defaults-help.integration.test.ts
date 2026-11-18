@@ -13,6 +13,22 @@ const child = Command.make(
   "child",
   {
     count: Flag.Int("count").pipe(Flag.withDescription("Count."), Flag.withDefault(42)),
+    disabled: Flag.Boolean("disabled").pipe(Flag.withDefault(false)),
+    zero: Flag.Int("zero").pipe(Flag.withDefault(0)),
+    empty: Flag.String("empty").pipe(Flag.atLeast(0), Flag.withDefault([])),
+    labeled: Flag.Boolean("labeled").pipe(
+      Flag.withDefault(false),
+      Flag.annotate(FlagDocumentation, { helpDefault: "false" }),
+    ),
+    stringFalse: Flag.String("string-false").pipe(Flag.withDefault("false")),
+    stringZero: Flag.String("string-zero").pipe(Flag.withDefault("0")),
+    stringArray: Flag.String("string-array").pipe(Flag.withDefault("[]")),
+    branch: Flag.String("branch").pipe(
+      Flag.withDefault("main"),
+      Flag.withDescription("Select the default branch for previews"),
+    ),
+    literal: Flag.String("literal").pipe(Flag.withDefault("*daily* _raw_ `code` [x](url)")),
+    repeated: Flag.String("repeated").pipe(Flag.withDefault("first"), Flag.atLeast(2)),
     effectful: Flag.String("effectful").pipe(Flag.withDefault(Effect.die("default executed"))),
     config: Flag.String("config").pipe(Flag.withFallbackConfig(Config.String("HELP_SECRET"))),
     handler: Flag.String("handler").pipe(
@@ -22,10 +38,6 @@ const child = Command.make(
     sub: Flag.String("sub").pipe(
       Flag.optional,
       Flag.annotate(FlagDocumentation, { defaultValue: "anonymous", helpDefault: false }),
-    ),
-    authored: Flag.String("authored").pipe(
-      Flag.withDefault("old"),
-      Flag.withDescription("Authored (default old)"),
     ),
     hidden: Flag.String("hidden").pipe(Flag.withDefault("hidden-value"), Flag.withHidden),
   },
@@ -37,10 +49,14 @@ const root = Command.make("fixture").pipe(
   Command.withSubcommands([child]),
 );
 
-const helpFor = (formatter: CliOutput.Formatter) =>
+const helpFor = (
+  formatter: CliOutput.Formatter,
+  command: Command.Command<"fixture", never, unknown> = root,
+  args: ReadonlyArray<string> = ["child", "--help"],
+) =>
   Effect.gen(function* () {
     const { console, calls } = fakeConsole();
-    yield* Command.runWith(root, { version: "test" })(["child", "--help"]).pipe(
+    yield* Command.runWith(command, { version: "test" })(args).pipe(
       Effect.provide(
         Layer.mergeAll(
           emptyEnv(),
@@ -59,7 +75,7 @@ describe("flag defaults in help", () => {
       const command = Command.make(
         "fixture",
         {
-          value: Flag.Literals("value", ["a", "b"]).pipe(
+          value: Flag.Literals("value", ["a", "b", "c"]).pipe(
             Flag.withDefault("b"),
             Flag.annotate(FlagDocumentation, { defaultValue: "a", choices: ["a"] }),
           ),
@@ -72,10 +88,10 @@ describe("flag defaults in help", () => {
       );
       yield* Command.runWith(command, { version: "test" })([]).pipe(Effect.provide(emptyEnv()));
       expect(yield* Ref.get(observed)).toEqual({ value: "b", omitted: Option.none() });
-      yield* Command.runWith(command, { version: "test" })(["--value", "b"]).pipe(
+      yield* Command.runWith(command, { version: "test" })(["--value", "c"]).pipe(
         Effect.provide(emptyEnv()),
       );
-      expect(yield* Ref.get(observed)).toEqual({ value: "b", omitted: Option.none() });
+      expect(yield* Ref.get(observed)).toEqual({ value: "c", omitted: Option.none() });
     }),
   );
 
@@ -87,17 +103,107 @@ describe("flag defaults in help", () => {
           textCliOutputFormatter({ rootCommand: root, args: ["child", "--help"] }),
         );
         expect(text).toContain("Count. (default: 42)");
+        const row = (name: string) => text.split("\n").find((line) => line.includes(`--${name} `));
+        for (const name of ["disabled", "zero", "empty", "repeated"]) {
+          expect(row(name)).toBeDefined();
+          expect(row(name)).not.toContain("(default:");
+        }
+        expect(row("labeled")).toContain("(default: false)");
+        expect(row("string-false")).toContain("(default: false)");
+        expect(row("string-zero")).toContain("(default: 0)");
+        expect(row("string-array")).toContain("(default: [])");
         expect(text).toContain("(default: handler-value)");
         expect(text).toContain("(default: shared-value)");
         expect(text).toContain("(default: global-mode)");
-        expect(text).toContain("Authored (default old)");
-        expect(text).not.toContain("Authored (default old) (default:");
         expect(text).not.toContain("anonymous");
         expect(text).not.toContain("hidden-value");
         expect(text).not.toContain("default executed");
         expect(text).not.toContain("HELP_SECRET");
       }),
   );
+
+  it.effect("preserves descriptive prose alongside the default value", () =>
+    Effect.gen(function* () {
+      const text = yield* helpFor(
+        textCliOutputFormatter({ rootCommand: root, args: ["child", "--help"] }),
+      );
+      expect(text).toContain("Select the default branch for previews (default: main)");
+    }),
+  );
+
+  it.effect("appends string defaults literally after Markdown rendering", () =>
+    Effect.gen(function* () {
+      const text = yield* helpFor(
+        textCliOutputFormatter({ rootCommand: root, args: ["child", "--help"] }),
+      );
+      expect(text).toContain("(default: *daily* _raw_ `code` [x](url))");
+    }),
+  );
+
+  it.effect("shows shared defaults on the declaring command's own help", () =>
+    Effect.gen(function* () {
+      const text = yield* helpFor(
+        textCliOutputFormatter({ rootCommand: root, args: ["--help"] }),
+        root,
+        ["--help"],
+      );
+      expect(text).toContain("--shared");
+      expect(text).toContain("(default: shared-value)");
+      expect(text).not.toContain("INHERITED FLAGS");
+    }),
+  );
+
+  it.effect("uses the declaration owning each local and inherited row", () =>
+    Effect.gen(function* () {
+      const leaf = Command.make("leaf", {
+        suppressed: Flag.String("suppressed").pipe(
+          Flag.withDefault("local-suppressed"),
+          Flag.annotate(FlagDocumentation, { helpDefault: false }),
+        ),
+        absent: Flag.String("absent").pipe(Flag.optional),
+        local: Flag.String("local").pipe(Flag.withDefault("local-value")),
+      });
+      const middle = Command.make("middle").pipe(
+        Command.withSharedFlags({
+          inherited: Flag.String("inherited").pipe(Flag.withDefault("near-value")),
+        }),
+        Command.withSubcommands([leaf]),
+      );
+      const fixture = Command.make("fixture").pipe(
+        Command.withSharedFlags({
+          suppressed: Flag.String("suppressed").pipe(Flag.withDefault("ancestor-suppressed")),
+          absent: Flag.String("absent").pipe(Flag.withDefault("ancestor-absent")),
+          local: Flag.String("local").pipe(Flag.withDefault("ancestor-local")),
+          inherited: Flag.String("inherited").pipe(Flag.withDefault("root-value")),
+        }),
+        Command.withSubcommands([Command.make("spacer").pipe(Command.withSubcommands([middle]))]),
+      );
+      const text = yield* helpFor(
+        textCliOutputFormatter({
+          rootCommand: fixture,
+          args: ["spacer", "middle", "leaf", "--help"],
+        }),
+        fixture,
+        ["spacer", "middle", "leaf", "--help"],
+      );
+      expect(text).toContain("--suppressed");
+      expect(text).toContain("--absent");
+      expect(text).toContain("(default: local-value)");
+      expect(text).toContain("(default: root-value)");
+      expect(text).not.toContain("ancestor-");
+      expect(text).not.toContain("local-suppressed");
+      expect(text).not.toContain("near-value");
+    }),
+  );
+
+  it("rejects direct shared and child name collisions", () => {
+    expect(() =>
+      Command.make("fixture").pipe(
+        Command.withSharedFlags({ value: Flag.String("value") }),
+        Command.withSubcommands([Command.make("child", { value: Flag.String("value") })]),
+      ),
+    ).toThrow('Duplicate flag name "value" in parent command "fixture" and subcommand "child"');
+  });
 
   it.effect("keeps JSON help flag fields and descriptions unchanged", () =>
     Effect.gen(function* () {

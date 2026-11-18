@@ -78,7 +78,7 @@ const config = {
   ),
   limit: Flag.Int("limit").pipe(
     Flag.withDescription(
-      "Initial filtered history count (default 100, maximum 1000). SQL controls its own LIMIT.",
+      "Initial filtered history count (maximum 1000). SQL controls its own LIMIT.",
     ),
     Flag.filter(
       (value) => value >= 1 && value <= 1000,

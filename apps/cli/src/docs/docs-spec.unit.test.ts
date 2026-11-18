@@ -114,6 +114,14 @@ describe("docsFlagDoc", () => {
     expect(docsFlagDoc(["supabase", "fixture"], flag)?.required).toBeUndefined();
   });
 
+  it("keeps per-occurrence defaults out of collection documentation", () => {
+    const flag = Flag.String("value").pipe(Flag.withDefault("first"), Flag.atLeast(2));
+    expect(docsFlagDoc(["supabase", "fixture"], flag)).toMatchObject({
+      required: true,
+      default_value: "[]",
+    });
+  });
+
   it("does not run effectful defaults or config lookups to build docs", () => {
     const flags = [
       Flag.String("value").pipe(
@@ -133,6 +141,7 @@ describe("docsFlagDoc", () => {
     [Flag.String("value").pipe(Flag.optional), undefined],
     [Flag.String("value").pipe(Flag.atLeast(0)), undefined],
     [Flag.String("value").pipe(Flag.atLeast(2)), true],
+    [Flag.String("value").pipe(Flag.withDefault("first"), Flag.atLeast(2)), true],
   ])("derives required badges from flag cardinality: %s", (flag, required) => {
     expect(docsFlagDoc(["supabase", "fixture"], flag)?.required).toBe(required);
   });
@@ -148,12 +157,6 @@ describe("docsFlagDoc", () => {
       accepted_values: [{ id: "a", name: "a", type: "[ a ]" }],
     });
     expect(docsFlagDoc(["supabase", "fixture"], flag.pipe(Flag.withHidden))).toBeUndefined();
-    expect(
-      docsFlagDoc(
-        ["supabase", "fixture"],
-        flag.pipe(Flag.annotate(FlagDocumentation, { hidden: true })),
-      ),
-    ).toBeUndefined();
   });
 
   it("renders --remote with the value hint its declaration carries", () => {

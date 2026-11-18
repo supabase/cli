@@ -8,29 +8,39 @@ import {
   userGlobalFlagParams,
 } from "../../docs/docs-introspection.ts";
 
-function defaultsFor(params: ReadonlyArray<Param.AnyFlag>): ReadonlyMap<string, string> {
-  const defaults = new Map<string, string>();
+function defaultsFor(
+  params: ReadonlyArray<Param.AnyFlag>,
+): ReadonlyMap<string, string | undefined> {
+  const defaults = new Map<string, string | undefined>();
   for (const param of params) {
     const unwrapped = unwrapParam(param);
-    if (unwrapped === undefined) continue;
-    const { helpDefault } = flagDocumentation(unwrapped.single);
-    if (helpDefault === false) continue;
-    const value = helpDefault ?? flagDefault(unwrapped);
-    if (value !== undefined && value !== "") defaults.set(unwrapped.single.name, value);
+    if (unwrapped === undefined || unwrapped.single.hidden) continue;
+    const { name } = unwrapped.single;
+    // Row ownership wins even when its declaration has no printable default.
+    if (defaults.has(name)) continue;
+    const { helpDefault, defaultValue } = flagDocumentation(unwrapped.single);
+    const typeDefault = Option.exists(
+      unwrapped.defaultValue,
+      (value) => value === false || value === 0 || (Array.isArray(value) && value.length === 0),
+    );
+    const value =
+      helpDefault === false ||
+      (helpDefault === undefined && defaultValue === undefined && typeDefault)
+        ? undefined
+        : (helpDefault ?? flagDefault(unwrapped));
+    defaults.set(name, value === "" ? undefined : value);
   }
   return defaults;
 }
 
 function withDefaults(
   flags: ReadonlyArray<HelpDoc.FlagDoc>,
-  defaults: ReadonlyMap<string, string>,
+  defaults: ReadonlyMap<string, string | undefined>,
 ): ReadonlyArray<HelpDoc.FlagDoc> {
   return flags.map((flag) => {
     const value = defaults.get(flag.name);
     if (value === undefined) return flag;
     const description = Option.getOrElse(flag.description, () => "");
-    // Authored descriptions already carrying a default keep their established wording.
-    if (/\bdefault\b/i.test(description)) return flag;
     return {
       ...flag,
       description: Option.some(`${description}${description === "" ? "" : " "}(default: ${value})`),
@@ -65,13 +75,18 @@ export function withFlagDefaults(
     ...doc,
     flags: withDefaults(
       doc.flags,
-      defaultsFor([...inherited, ...commandInternals(current).config.flags]),
+      // Effect prefers local rows, then deduplicates inherited rows root-first.
+      defaultsFor([...commandInternals(current).config.flags, ...inherited]),
     ),
     ...(doc.inheritedFlags === undefined
       ? {}
-      : { inheritedFlags: withDefaults(doc.inheritedFlags, defaultsFor(inherited)) }),
+      : {
+          inheritedFlags: withDefaults(doc.inheritedFlags, defaultsFor(inherited)),
+        }),
     ...(doc.globalFlags === undefined
       ? {}
-      : { globalFlags: withDefaults(doc.globalFlags, defaultsFor(globals)) }),
+      : {
+          globalFlags: withDefaults(doc.globalFlags, defaultsFor(globals)),
+        }),
   };
 }

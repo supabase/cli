@@ -59,8 +59,8 @@ export function unwrapParam(param: Param.Any): UnwrappedParam | undefined {
 
   while (!Param.isSingle(current)) {
     if (!isWrappedParam(current)) return undefined;
-    if (current._tag === "Optional") isOptional = true;
-    if (isFallbackParam(current) && current.fallback) {
+    if (!isVariadic && current._tag === "Optional") isOptional = true;
+    if (!isVariadic && isFallbackParam(current) && current.fallback) {
       isOptional = true;
       defaultValue =
         current.fallback._tag === "Default" ? Option.some(current.fallback.value) : Option.none();

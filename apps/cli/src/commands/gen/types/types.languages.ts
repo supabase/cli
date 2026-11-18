@@ -55,8 +55,7 @@ export const mergeUserOptions = (
 };
 
 const languageFlag = (spec: LanguageFlagSpec): Flag.Flag<GenTypesLanguageFlagValue> => {
-  const help =
-    spec.default === undefined ? spec.help : `${spec.help} (default ${String(spec.default)})`;
+  const { help } = spec;
   switch (spec.kind) {
     case "boolean":
       return Flag.Boolean(spec.name).pipe(Flag.withDescription(help), Flag.optional);

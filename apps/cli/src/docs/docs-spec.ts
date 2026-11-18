@@ -188,7 +188,7 @@ export function docsFlagDoc(
   }
   const { single, isVariadic } = unwrapped;
   const documentation = flagDocumentation(single);
-  if (single.hidden || documentation.hidden) return undefined;
+  if (single.hidden) return undefined;
 
   let acceptedValues: ReadonlyArray<DocsAcceptedValue> | undefined;
   let enumType: string | undefined;

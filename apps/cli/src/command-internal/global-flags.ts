@@ -45,7 +45,7 @@ export const OutputFlag = GlobalFlag.Setting("output")({
 /** The TS-only `--output-format` global, accepted on any subcommand. */
 export const OutputFormatFlag = GlobalFlag.Setting("output-format")({
   flag: Flag.Literals("output-format", ["text", "json", "stream-json"]).pipe(
-    Flag.withDescription("Output format: text (default), json, or stream-json (NDJSON)"),
+    Flag.withDescription("Output format: text, json, or stream-json (NDJSON)"),
     Flag.annotate(FlagDocumentation, { defaultValue: "text" }),
     Flag.optional,
   ),
@@ -116,7 +116,7 @@ export const CreateTicketFlag = GlobalFlag.Setting("create-ticket")({
 
 export const AgentFlag = GlobalFlag.Setting("agent")({
   flag: Flag.Literals("agent", ["auto", "yes", "no"] as const).pipe(
-    Flag.withDescription("Override agent detection: yes, no, or auto (default auto)"),
+    Flag.withDescription("Override agent detection: yes, no, or auto"),
     Flag.withDefault("auto" as const),
   ),
 });

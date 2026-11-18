@@ -44,13 +44,14 @@ export function textCliOutputFormatter(
     formatHelpDoc: (doc) => {
       const colors = supportsColor(stream, !agentMode);
       const help = CliOutput.defaultFormatter({ colors });
-      const rendered = withHelpMarkdown(
-        withOptionalSubcommandUsage(
-          withRemoteFlagUsage(
-            withFlagDefaults(labelSubcommands(doc, context?.rootCommand), context?.rootCommand),
+      const rendered = withFlagDefaults(
+        withHelpMarkdown(
+          withOptionalSubcommandUsage(
+            withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
           ),
+          colors,
         ),
-        colors,
+        context?.rootCommand,
       );
       // Effect indents only the first line of the description section.
       const text = help.formatHelpDoc({
