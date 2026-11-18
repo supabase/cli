@@ -73,7 +73,6 @@ const fixtureSpec = () => {
 const derived = deriveApiCommands({
   spec: fixtureSpec(),
   generated: Object.keys(FIXTURE_OPERATIONS),
-  pollTargets: {},
   nouns: { fixture: fixtureNoun },
   operationIdMap: openApiOperationIdMap,
   handWrittenTopLevel: new Set(),

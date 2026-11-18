@@ -85,7 +85,7 @@ error).
 - The failure and timeout hint names the command that re-reads the state. When the polled read is a
   generated command, the hint names it with the identity the wait polled with, for example
   `supabase <noun> <read> --<identity-flag> <id> --remote=<ref>`. When the polled read is a hidden
-  poll target, the hint names its inspect command from `pollTargets` with only `--remote=<ref>`.
+  read, the hint names the command its `poll.inspect` operation generates, with only `--remote=<ref>`.
 - With `--wait`, stdout carries the final read response instead of the change response.
 
 ## Exit Codes

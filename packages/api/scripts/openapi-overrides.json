@@ -1294,19 +1294,18 @@
         "error": "/data/attributes/status_error"
       }
     },
-    "$comment": "The deployed specification still gives the setup read the `warehouse status` command identity, which the consolidated status operation now owns."
+    "$comment": "The setup read is polled by `warehouse enable --wait` and has no command of its own; `inspect` names the consolidated status read."
   },
   {
     "op": "replace",
     "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1setups~1current/get/x-operation",
     "value": {
-      "group": "warehouse.setups",
-      "method": "get",
       "poll": {
         "status": "/data/attributes/status",
         "succeeded": ["succeeded"],
         "failed": ["failed"],
-        "error": "/data/attributes/status_error"
+        "error": "/data/attributes/status_error",
+        "inspect": "v2-get-warehouse-status"
       }
     }
   }

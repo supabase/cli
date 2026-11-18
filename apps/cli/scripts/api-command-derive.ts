@@ -1,10 +1,6 @@
 import type { OperationId } from "@supabase/api/effect";
 import { Cause, Exit, Predicate, Schema } from "effect";
-import {
-  verbVocabulary,
-  type ApiCommandPoll,
-  type ApiNoun,
-} from "../src/commands/api/api-command-policy.ts";
+import { verbVocabulary, type ApiNoun } from "../src/commands/api/api-command-policy.ts";
 import type {
   ApiCommandBinding,
   ApiCommandEntry,
@@ -65,29 +61,77 @@ const StatusMapping = {
   error: Schema.optionalKey(Schema.String),
 };
 
-interface XOperation {
-  readonly group: string;
-  readonly method: string;
-  readonly poll?: ApiCommandPoll;
-}
+/** How to tell that the resource a read operation returns has settled. */
+type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "failed" | "error">;
 
-const XOperationSchema: Schema.Codec<XOperation> = Schema.Struct({
-  group: Schema.String,
-  method: Schema.String,
-  poll: Schema.optionalKey(Schema.Struct(StatusMapping)),
+const XOperationSchema = Schema.Struct({
+  group: Schema.optionalKey(Schema.String),
+  method: Schema.optionalKey(Schema.String),
+  poll: Schema.optionalKey(
+    Schema.Struct({ ...StatusMapping, inspect: Schema.optionalKey(Schema.String) }),
+  ),
 });
 
 const decodeXOperation = Schema.decodeUnknownExit(XOperationSchema, {
   onExcessProperty: "error",
 });
 
+/** A named command, or a poll-only read that never becomes a command. */
+type ParsedXOperation =
+  | {
+      readonly kind: "named";
+      readonly group: string;
+      readonly method: string;
+      readonly poll?: ApiCommandPoll;
+    }
+  | { readonly kind: "pollOnly"; readonly poll: ApiCommandPoll; readonly inspect: string }
+  | { readonly kind: "invalid"; readonly reason: string };
+
+const statusMapping = (poll: ApiCommandPoll): ApiCommandPoll => ({
+  status: poll.status,
+  succeeded: poll.succeeded,
+  failed: poll.failed,
+  ...(poll.error === undefined ? {} : { error: poll.error }),
+});
+
+const parseXOperation = (block: unknown): ParsedXOperation => {
+  const decoded = decodeXOperation(block);
+  if (Exit.isFailure(decoded)) return { kind: "invalid", reason: Cause.pretty(decoded.cause) };
+  const { group, method, poll } = decoded.value;
+  if (group === undefined && method === undefined) {
+    if (poll === undefined) {
+      return { kind: "invalid", reason: "set group and method, or a poll-only read's poll" };
+    }
+    if (poll.inspect === undefined || poll.inspect === "") {
+      return {
+        kind: "invalid",
+        reason: "a poll-only read must set poll.inspect to the operation that inspects its state",
+      };
+    }
+    return { kind: "pollOnly", poll: statusMapping(poll), inspect: poll.inspect };
+  }
+  if (group === undefined || method === undefined) {
+    return { kind: "invalid", reason: "a command name needs both group and method" };
+  }
+  if (poll?.inspect !== undefined) {
+    return {
+      kind: "invalid",
+      reason: "poll.inspect belongs on a poll-only read, not on a named operation",
+    };
+  }
+  return {
+    kind: "named",
+    group,
+    method,
+    ...(poll === undefined ? {} : { poll: statusMapping(poll) }),
+  };
+};
+
 interface DeriveInput {
   /** The parsed OpenAPI document. */
   readonly spec: JsonObject;
-  /** Operation ids that generate commands; `x-operation` on any other operation is ignored. */
+  /** Operation ids that generate commands; the roots whose response `links` are followed. */
   readonly generated: ReadonlyArray<string>;
-  /** Hidden polling operation id to the generated operation whose command inspects its state. */
-  readonly pollTargets: Readonly<Record<string, string>>;
   readonly nouns: Readonly<Record<string, ApiNoun>>;
   /** Kebab-case operation id to the camelCase key of the typed client's `operationDefinitions`. */
   readonly operationIdMap: Readonly<Record<string, OperationId>>;
@@ -522,56 +566,24 @@ const readMetadata = (
       problems.push(`${operationId}: no command name; set x-operation group and method`);
       continue;
     }
-    const decoded = decodeXOperation(block);
-    if (Exit.isFailure(decoded)) {
-      problems.push(`${operationId}: invalid x-operation: ${Cause.pretty(decoded.cause)}`);
+    const parsed = parseXOperation(block);
+    if (parsed.kind === "invalid") {
+      problems.push(`${operationId}: invalid x-operation: ${parsed.reason}`);
       continue;
     }
-    const { group, method, poll } = decoded.value;
+    if (parsed.kind === "pollOnly") {
+      problems.push(
+        `${operationId}: a poll-only read cannot be generated; give it group and method or remove it from the generated operations`,
+      );
+      continue;
+    }
+    const { group, method, poll } = parsed;
     metadata.set(operationId, { group, method, ...(poll === undefined ? {} : { poll }) });
     if (poll !== undefined && operation.method !== "GET") {
       problems.push(`${operationId}: poll belongs on a read operation, not ${operation.method}`);
     }
   }
   return metadata;
-};
-
-/** Reads each internal polling target's `poll` and checks its map entry against the generated operations. */
-const readPollTargets = (
-  operations: ReadonlyMap<string, Operation>,
-  generated: ReadonlyArray<string>,
-  targets: Readonly<Record<string, string>>,
-  problems: Array<string>,
-): ReadonlyMap<string, ApiCommandPoll> => {
-  const polls = new Map<string, ApiCommandPoll>();
-  for (const [targetId, inspectId] of Object.entries(targets)) {
-    const fail = (reason: string) => problems.push(`${targetId}: ${reason}`);
-    const target = operations.get(targetId);
-    if (target === undefined) {
-      fail("polling target has no operation in the spec");
-      continue;
-    }
-    if (generated.includes(targetId)) {
-      fail("polling target is also a generated operation; remove it from pollTargets");
-    }
-    if (!generated.includes(inspectId)) {
-      fail(`inspect operation "${inspectId}" is not a generated operation`);
-    }
-    const block = target.node["x-operation"];
-    if (block === undefined) {
-      fail("polling target has no x-operation poll");
-      continue;
-    }
-    const decoded = decodeXOperation(block);
-    if (Exit.isFailure(decoded)) {
-      fail(`invalid x-operation: ${Cause.pretty(decoded.cause)}`);
-    } else if (decoded.value.poll === undefined) {
-      fail("polling target declares no poll");
-    } else {
-      polls.set(targetId, decoded.value.poll);
-    }
-  }
-  return polls;
 };
 
 const requireExperimental = (operation: Operation, fail: (reason: string) => void): void => {
@@ -582,12 +594,31 @@ const requireExperimental = (operation: Operation, fail: (reason: string) => voi
 
 const requireOneWait = (
   ownPoll: ApiCommandPoll | undefined,
-  linked: ApiCommandWait | undefined,
+  linkedRead: string | undefined,
   fail: (reason: string) => void,
 ): void => {
-  if (ownPoll !== undefined && linked !== undefined) {
-    fail(`declares poll and also links to the polled operation "${linked.read}"; use one`);
+  if (ownPoll !== undefined && linkedRead !== undefined) {
+    fail(`declares poll and also links to the polled operation "${linkedRead}"; use one`);
   }
+};
+
+/** The first operation declaring `poll` that an operation's 2xx response `links` target. */
+const polledLinkTarget = (
+  spec: JsonObject,
+  operations: ReadonlyMap<string, Operation>,
+  operation: Operation,
+): string | undefined => {
+  const responses = asRecord(operation.node.responses) ?? {};
+  for (const code of Object.keys(responses).sort()) {
+    if (!code.startsWith("2")) continue;
+    const links = asRecord(asRecord(resolve(spec, responses[code]))?.links) ?? {};
+    for (const rawLink of Object.values(links)) {
+      const targetId = asString(asRecord(resolve(spec, rawLink))?.operationId);
+      const target = targetId === undefined ? undefined : operations.get(targetId);
+      if (asRecord(target?.node["x-operation"])?.poll !== undefined) return targetId;
+    }
+  }
+  return undefined;
 };
 
 const pollWait = (
@@ -606,16 +637,23 @@ const pollWait = (
 const RESPONSE_POINTER = /^\$response\.body#(\/.*)$/u;
 const REQUEST_PATH = /^\$request\.path\.(.+)$/u;
 
+/** A poll-only read reached through a response link, with the operation that inspects its state. */
+interface HiddenRead {
+  readonly poll: ApiCommandPoll;
+  readonly inspect: string;
+}
+
 /**
  * The wait a command's 2xx response `links` declare: the one link whose target operation has
- * `poll`. The target is a generated operation or a listed polling target; links without `poll`
- * are ignored.
+ * `poll`. The target is a generated operation or a poll-only read, which is recorded in `hidden`;
+ * links without `poll` are ignored.
  */
 const linkedWait = (
   spec: JsonObject,
   operations: ReadonlyMap<string, Operation>,
-  polls: ReadonlyMap<string, ApiCommandPoll>,
+  metadata: ReadonlyMap<string, OperationMetadata>,
   generated: ReadonlyArray<string>,
+  hidden: Map<string, HiddenRead>,
   operation: Operation,
   fail: (reason: string) => void,
 ): ApiCommandWait | undefined => {
@@ -636,18 +674,27 @@ const linkedWait = (
         fail(`link "${linkName}" targets unknown operation "${targetId}"`);
         continue;
       }
-      const poll = polls.get(targetId);
-      if (poll === undefined) {
-        if (
-          !generated.includes(targetId) &&
-          asRecord(target.node["x-operation"])?.poll !== undefined
-        ) {
+      let poll: ApiCommandPoll | undefined;
+      if (generated.includes(targetId)) {
+        poll = metadata.get(targetId)?.poll;
+      } else {
+        const block = target.node["x-operation"];
+        if (block === undefined) continue;
+        const parsed = parseXOperation(block);
+        if (parsed.kind === "invalid") {
           fail(
-            `link "${linkName}" targets polled operation "${targetId}", which is neither generated nor listed in pollTargets`,
+            `link "${linkName}" targets "${targetId}", whose x-operation is invalid: ${parsed.reason}`,
+          );
+        } else if (parsed.kind === "pollOnly") {
+          poll = parsed.poll;
+          hidden.set(targetId, { poll, inspect: parsed.inspect });
+        } else if (parsed.poll !== undefined) {
+          fail(
+            `link "${linkName}" targets polled operation "${targetId}", which is neither a generated command nor a poll-only read`,
           );
         }
-        continue;
       }
+      if (poll === undefined) continue;
 
       const params: Record<string, string> = {};
       for (const [parameter, expression] of Object.entries(asRecord(link.parameters) ?? {})) {
@@ -689,23 +736,11 @@ const linkedWait = (
 
 /** Derives the generated commands from each operation's `x-operation` and collects every lint failure. */
 export function deriveApiCommands(input: DeriveInput): DeriveResult {
-  const {
-    spec,
-    generated,
-    pollTargets: pollTargetMap,
-    nouns,
-    operationIdMap,
-    handWrittenTopLevel,
-  } = input;
+  const { spec, generated, nouns, operationIdMap, handWrittenTopLevel } = input;
   const operations = collectOperations(spec);
   const problems: Array<string> = [];
   const metadata = readMetadata(operations, generated, problems);
-  const polls = new Map<string, ApiCommandPoll>();
-  for (const [operationId, name] of metadata) {
-    if (name.poll !== undefined) polls.set(operationId, name.poll);
-  }
-  const hiddenPolls = readPollTargets(operations, generated, pollTargetMap, problems);
-  for (const [operationId, poll] of hiddenPolls) polls.set(operationId, poll);
+  const hidden = new Map<string, HiddenRead>();
   const entries: Array<ApiCommandEntry> = [];
   const schemas: Record<string, ApiCommandSchemas> = {};
   const commandOwners = new Map<string, string>();
@@ -1009,9 +1044,9 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       });
     }
 
-    const linked = linkedWait(spec, operations, polls, generated, operation, fail);
+    const linked = linkedWait(spec, operations, metadata, generated, hidden, operation, fail);
     const ownPoll = name.poll;
-    requireOneWait(ownPoll, linked, fail);
+    requireOneWait(ownPoll, linked?.read, fail);
     const wait = linked ?? (ownPoll === undefined ? undefined : pollWait(operationId, {}, ownPoll));
     if (wait !== undefined) {
       lintWait({ spec, operations, operation, wait, fail });
@@ -1074,27 +1109,22 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     left.command.join(" ").localeCompare(right.command.join(" "), "en"),
   );
   const pollTargets: Array<ApiPollTarget> = [];
-  const reached = new Set(
-    entries.flatMap((entry) => (entry.wait === undefined ? [] : [entry.wait.read])),
-  );
-  for (const [operationId, inspectId] of Object.entries(pollTargetMap).toSorted(([a], [b]) =>
+  for (const [operationId, { poll, inspect: inspectId }] of [...hidden].toSorted(([a], [b]) =>
     a.localeCompare(b, "en"),
   )) {
     const operation = operations.get(operationId);
-    const poll = hiddenPolls.get(operationId);
-    if (operation === undefined || poll === undefined) continue;
+    if (operation === undefined) continue;
     const fail = (reason: string) => problems.push(`${operationId}: ${reason}`);
-    if (!reached.has(operationId)) {
-      fail("polling target is not linked from any generated operation; remove it from pollTargets");
-      continue;
-    }
     const definition = operationIdMap[operationId];
     if (definition === undefined) {
       fail("polling target is missing from the typed client; regenerate @supabase/api");
       continue;
     }
     requireExperimental(operation, fail);
-    requireOneWait(poll, linkedWait(spec, operations, polls, generated, operation, fail), fail);
+    requireOneWait(poll, polledLinkTarget(spec, operations, operation), fail);
+    if (!generated.includes(inspectId)) {
+      fail(`inspect operation "${inspectId}" is not a generated operation`);
+    }
     const inspect = entries.find((entry) => entry.operationId === inspectId);
     if (
       inspect !== undefined &&

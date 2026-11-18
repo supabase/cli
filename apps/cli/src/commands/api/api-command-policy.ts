@@ -1,6 +1,5 @@
 import type { OpenApiOperationId } from "@supabase/api/effect";
 import type { ExperimentalFeature } from "../../shared/config/experimental-feature.ts";
-import type { ApiCommandWait } from "./api-command.model.ts";
 
 /** Verbs every generated command may use. */
 export const verbVocabulary = [
@@ -26,10 +25,7 @@ export interface ApiNoun {
   readonly groups?: Readonly<Record<string, string>>;
 }
 
-/** How to tell that the resource a read operation returns has settled. */
-export type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "failed" | "error">;
-
-/** Only these operations generate commands; `x-operation` on any other operation is ignored, except on a `pollTargets` key. */
+/** Only these operations generate commands, and their response `links` lead to the reads a `--wait` polls. */
 export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-get-warehouse-status",
   "v2-get-warehouse-connection",
@@ -37,11 +33,6 @@ export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-disable-warehouse",
   "v2-get-warehouse-teardown",
 ];
-
-/** Hidden polling operations a generated link may target, each with the generated operation whose command inspects its state. */
-export const pollTargets: Readonly<Partial<Record<OpenApiOperationId, OpenApiOperationId>>> = {
-  "v2-get-warehouse-setup": "v2-get-warehouse-status",
-};
 
 export const nouns = {
   warehouse: {

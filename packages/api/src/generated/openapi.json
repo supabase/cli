@@ -12262,13 +12262,12 @@
         "x-fga-permissions": [["database_read"]],
         "x-oauth-scope": "database:read",
         "x-operation": {
-          "group": "warehouse.setups",
-          "method": "get",
           "poll": {
             "status": "/data/attributes/status",
             "succeeded": ["succeeded"],
             "failed": ["failed"],
-            "error": "/data/attributes/status_error"
+            "error": "/data/attributes/status_error",
+            "inspect": "v2-get-warehouse-status"
           }
         },
         "x-scalar-stability": "experimental"
