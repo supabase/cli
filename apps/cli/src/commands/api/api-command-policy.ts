@@ -36,6 +36,8 @@ export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-enable-warehouse",
   "v2-disable-warehouse",
   "v2-get-warehouse-teardown",
+  "v2-list-warehouse-tables",
+  "v2-get-warehouse-table",
 ];
 
 export const nouns = {
@@ -43,6 +45,7 @@ export const nouns = {
     description: "Manage the data warehouse for a project",
     feature: "warehouse",
     groups: {
+      tables: "Inspect tables replicated to Warehouse",
       teardowns: "Inspect Warehouse cleanup operations",
     },
   },

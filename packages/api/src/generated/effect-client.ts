@@ -3140,6 +3140,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    getWarehouseTable: (
+      input: typeof operationDefinitions.v2GetWarehouseTable.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseTable.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseTable">(
+          operationDefinitions.v2GetWarehouseTable,
+          input,
+          options,
+        );
+      }),
     getWarehouseTeardown: (
       input: typeof operationDefinitions.v2GetWarehouseTeardown.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3296,6 +3312,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2ListPrivateLinkAssociations">(
           operationDefinitions.v2ListPrivateLinkAssociations,
+          input,
+          options,
+        );
+      }),
+    listWarehouseTables: (
+      input: typeof operationDefinitions.v2ListWarehouseTables.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListWarehouseTables.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListWarehouseTables">(
+          operationDefinitions.v2ListWarehouseTables,
           input,
           options,
         );

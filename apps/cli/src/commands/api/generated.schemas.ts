@@ -843,7 +843,7 @@ export const apiCommandSchemas = {
                   properties: {
                     apply_lag: {
                       description:
-                        "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+                        "Postgres replication feedback. Null means Postgres reported no value; lag times also become null shortly after a caught-up slot sees no new WAL, while flush_lag_bytes, the WAL not yet confirmed flushed, reads 0. Feedback age measures time since the last response and does not establish how current query results are.",
                       properties: {
                         active: {
                           type: "boolean",
@@ -851,6 +851,11 @@ export const apiCommandSchemas = {
                         feedback_age_ms: {
                           minimum: 0,
                           type: ["number", "null"],
+                        },
+                        flush_lag_bytes: {
+                          maximum: 9007199254740991,
+                          minimum: 0,
+                          type: ["integer", "null"],
                         },
                         flush_lag_ms: {
                           minimum: 0,
@@ -868,6 +873,7 @@ export const apiCommandSchemas = {
                       required: [
                         "active",
                         "feedback_age_ms",
+                        "flush_lag_bytes",
                         "flush_lag_ms",
                         "wal_status",
                         "write_lag_ms",
@@ -952,7 +958,7 @@ export const apiCommandSchemas = {
                           },
                           sync_lag: {
                             description:
-                              "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+                              "Postgres replication feedback. Null means Postgres reported no value; lag times also become null shortly after a caught-up slot sees no new WAL, while flush_lag_bytes, the WAL not yet confirmed flushed, reads 0. Feedback age measures time since the last response and does not establish how current query results are.",
                             properties: {
                               active: {
                                 type: "boolean",
@@ -960,6 +966,11 @@ export const apiCommandSchemas = {
                               feedback_age_ms: {
                                 minimum: 0,
                                 type: ["number", "null"],
+                              },
+                              flush_lag_bytes: {
+                                maximum: 9007199254740991,
+                                minimum: 0,
+                                type: ["integer", "null"],
                               },
                               flush_lag_ms: {
                                 minimum: 0,
@@ -984,6 +995,7 @@ export const apiCommandSchemas = {
                             required: [
                               "active",
                               "feedback_age_ms",
+                              "flush_lag_bytes",
                               "flush_lag_ms",
                               "wal_status",
                               "write_lag_ms",
@@ -1062,6 +1074,133 @@ export const apiCommandSchemas = {
       type: "object",
     },
   },
+  "v2-get-warehouse-table": {
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          properties: {
+            attributes: {
+              properties: {
+                lag_ms: {
+                  description:
+                    "Flush lag in milliseconds that Postgres reports for the slot in replication_feedback. Null when there is no feedback or Postgres reports no recent measurement, which includes a caught-up slot without new WAL; replication_feedback.flush_lag_bytes reads 0 in that case.",
+                  minimum: 0,
+                  type: ["number", "null"],
+                },
+                name: {
+                  description: "Source PostgreSQL table name.",
+                  type: "string",
+                },
+                observed_at: {
+                  description:
+                    "Time the API retrieved the replication state of the table. It does not indicate when data was last synchronized.",
+                  format: "date-time",
+                  pattern:
+                    "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                  type: ["string", "null"],
+                },
+                replication_feedback: {
+                  description:
+                    "Postgres feedback from the replication slot named in source. Null when no feedback is available, including while the pipeline is stopped. Feedback age measures time since the slot last responded and does not establish how current query results are.",
+                  properties: {
+                    active: {
+                      type: "boolean",
+                    },
+                    feedback_age_ms: {
+                      minimum: 0,
+                      type: ["number", "null"],
+                    },
+                    flush_lag_bytes: {
+                      maximum: 9007199254740991,
+                      minimum: 0,
+                      type: ["integer", "null"],
+                    },
+                    flush_lag_ms: {
+                      minimum: 0,
+                      type: ["number", "null"],
+                    },
+                    source: {
+                      description:
+                        "Replication slot that reported the feedback: the table's own sync slot until it follows changes, or the pipeline apply slot once it does.",
+                      enum: ["pipeline_apply", "table_sync"],
+                      type: "string",
+                    },
+                    wal_status: {
+                      enum: ["extended", "lost", null, "reserved", "unknown", "unreserved"],
+                      type: ["string", "null"],
+                    },
+                    write_lag_ms: {
+                      minimum: 0,
+                      type: ["number", "null"],
+                    },
+                  },
+                  required: [
+                    "active",
+                    "feedback_age_ms",
+                    "flush_lag_bytes",
+                    "flush_lag_ms",
+                    "source",
+                    "wal_status",
+                    "write_lag_ms",
+                  ],
+                  type: ["object", "null"],
+                },
+                replication_state: {
+                  description:
+                    "Last replication state the pipeline recorded for the table, also while the pipeline is stopped. Null when none was observed.",
+                  enum: ["copied_table", "copying_table", "error", "following_wal", null, "queued"],
+                  type: ["string", "null"],
+                },
+                schema: {
+                  description: "Source PostgreSQL schema of the table.",
+                  type: "string",
+                },
+                status: {
+                  description:
+                    "Replication status. error means the table failed to replicate; stopped means the pipeline is stopped, stopping or failed, so the table receives no changes; live means the table follows changes; syncing means it is queued, copying or catching up; unknown means the pipeline status or the table state was not observed, for example before replication starts.",
+                  enum: ["error", "live", "stopped", "syncing", "unknown"],
+                  type: "string",
+                },
+                warehouse_name: {
+                  description:
+                    "Quoted, fully qualified name of the replicated table in the Warehouse.",
+                  type: "string",
+                },
+              },
+              required: [
+                "lag_ms",
+                "name",
+                "observed_at",
+                "replication_feedback",
+                "replication_state",
+                "schema",
+                "status",
+                "warehouse_name",
+              ],
+              type: "object",
+            },
+            id: {
+              description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+              maxLength: 10,
+              pattern: "^[1-9]\\d*$",
+              type: "string",
+              examples: ["16385"],
+            },
+            type: {
+              description: "Resource type.",
+              enum: ["warehouse_table"],
+              type: "string",
+            },
+          },
+          required: ["attributes", "id", "type"],
+          type: "object",
+        },
+      },
+      required: ["data"],
+      type: "object",
+    },
+  },
   "v2-get-warehouse-teardown": {
     result: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -1112,6 +1251,144 @@ export const apiCommandSchemas = {
         },
       },
       required: ["data"],
+    },
+  },
+  "v2-list-warehouse-tables": {
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          items: {
+            properties: {
+              attributes: {
+                properties: {
+                  lag_ms: {
+                    description:
+                      "Flush lag in milliseconds that Postgres reports for the slot in replication_feedback. Null when there is no feedback or Postgres reports no recent measurement, which includes a caught-up slot without new WAL; replication_feedback.flush_lag_bytes reads 0 in that case.",
+                    minimum: 0,
+                    type: ["number", "null"],
+                  },
+                  name: {
+                    description: "Source PostgreSQL table name.",
+                    type: "string",
+                  },
+                  observed_at: {
+                    description:
+                      "Time the API retrieved the replication state of the table. It does not indicate when data was last synchronized.",
+                    format: "date-time",
+                    pattern:
+                      "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    type: ["string", "null"],
+                  },
+                  replication_feedback: {
+                    description:
+                      "Postgres feedback from the replication slot named in source. Null when no feedback is available, including while the pipeline is stopped. Feedback age measures time since the slot last responded and does not establish how current query results are.",
+                    properties: {
+                      active: {
+                        type: "boolean",
+                      },
+                      feedback_age_ms: {
+                        minimum: 0,
+                        type: ["number", "null"],
+                      },
+                      flush_lag_bytes: {
+                        maximum: 9007199254740991,
+                        minimum: 0,
+                        type: ["integer", "null"],
+                      },
+                      flush_lag_ms: {
+                        minimum: 0,
+                        type: ["number", "null"],
+                      },
+                      source: {
+                        description:
+                          "Replication slot that reported the feedback: the table's own sync slot until it follows changes, or the pipeline apply slot once it does.",
+                        enum: ["pipeline_apply", "table_sync"],
+                        type: "string",
+                      },
+                      wal_status: {
+                        enum: ["extended", "lost", null, "reserved", "unknown", "unreserved"],
+                        type: ["string", "null"],
+                      },
+                      write_lag_ms: {
+                        minimum: 0,
+                        type: ["number", "null"],
+                      },
+                    },
+                    required: [
+                      "active",
+                      "feedback_age_ms",
+                      "flush_lag_bytes",
+                      "flush_lag_ms",
+                      "source",
+                      "wal_status",
+                      "write_lag_ms",
+                    ],
+                    type: ["object", "null"],
+                  },
+                  replication_state: {
+                    description:
+                      "Last replication state the pipeline recorded for the table, also while the pipeline is stopped. Null when none was observed.",
+                    enum: [
+                      "copied_table",
+                      "copying_table",
+                      "error",
+                      "following_wal",
+                      null,
+                      "queued",
+                    ],
+                    type: ["string", "null"],
+                  },
+                  schema: {
+                    description: "Source PostgreSQL schema of the table.",
+                    type: "string",
+                  },
+                  status: {
+                    description:
+                      "Replication status. error means the table failed to replicate; stopped means the pipeline is stopped, stopping or failed, so the table receives no changes; live means the table follows changes; syncing means it is queued, copying or catching up; unknown means the pipeline status or the table state was not observed, for example before replication starts.",
+                    enum: ["error", "live", "stopped", "syncing", "unknown"],
+                    type: "string",
+                  },
+                  warehouse_name: {
+                    description:
+                      "Quoted, fully qualified name of the replicated table in the Warehouse.",
+                    type: "string",
+                  },
+                },
+                required: [
+                  "lag_ms",
+                  "name",
+                  "observed_at",
+                  "replication_feedback",
+                  "replication_state",
+                  "schema",
+                  "status",
+                  "warehouse_name",
+                ],
+                type: "object",
+              },
+              id: {
+                description:
+                  "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+                maxLength: 10,
+                pattern: "^[1-9]\\d*$",
+                type: "string",
+                examples: ["16385"],
+              },
+              type: {
+                description: "Resource type.",
+                enum: ["warehouse_table"],
+                type: "string",
+              },
+            },
+            required: ["attributes", "id", "type"],
+            type: "object",
+          },
+          type: "array",
+        },
+      },
+      required: ["data"],
+      type: "object",
     },
   },
 } as const satisfies Readonly<Record<string, ApiCommandSchemas>>;

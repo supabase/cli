@@ -33,4 +33,8 @@ describe("renderResponseText", () => {
       ["Name  n", "Limits", "  Max  1", "  Nested", "    Deep  yes", ""].join("\n"),
     );
   });
+
+  it("prints a clear line for an empty resource collection", () => {
+    expect(renderResponseText({ data: [] })).toBe("No results\n");
+  });
 });
