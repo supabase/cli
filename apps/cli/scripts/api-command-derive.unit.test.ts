@@ -60,12 +60,10 @@ const handWritten = (
   tree: {
     groups?: ReadonlyArray<string>;
     leaves?: ReadonlyArray<string>;
-    sealed?: ReadonlyArray<string>;
   } = {},
 ) => ({
   groups: new Set(tree.groups ?? ["db"]),
   leaves: new Set(tree.leaves),
-  sealed: new Set(tree.sealed),
 });
 
 const derive = (
@@ -1575,12 +1573,6 @@ describe("deriveApiCommands", () => {
         deep,
         { leaves: ["thing sub"] },
         'create-thing: command "thing sub create" needs "thing sub" as a group, but it is a hand-written command',
-      ],
-      [
-        "a group path that is a sealed hand-written group",
-        deep,
-        { groups: ["thing", "thing sub"], sealed: ["thing sub"] },
-        'create-thing: command "thing sub create" cannot join the hand-written group "thing sub", which wraps its own subcommands',
       ],
     ])("rejects %s", (_label, operations, tree, problem) => {
       const result = derive(operations, undefined, {

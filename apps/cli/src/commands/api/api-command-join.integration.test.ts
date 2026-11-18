@@ -67,7 +67,6 @@ const derived = deriveApiCommands({
   handWritten: {
     groups: new Set(["fixture", "fixture inner"]),
     leaves: new Set(["fixture ping", "fixture inner pong"]),
-    sealed: new Set(),
   },
 });
 

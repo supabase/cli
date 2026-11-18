@@ -3,11 +3,7 @@ import { Console, Data, Effect, FileSystem, Path, Predicate, Schema, Stream } fr
 import type { Command } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { rootCommandForFeatures } from "../src/cli/root.ts";
-import {
-  generatedOperations,
-  nouns,
-  sealedGroups,
-} from "../src/commands/api/api-command-policy.ts";
+import { generatedOperations, nouns } from "../src/commands/api/api-command-policy.ts";
 import { openApiOperationIdMap } from "@supabase/api/effect";
 import { renderApiCommandReference } from "./api-command-reference.ts";
 import {
@@ -62,7 +58,7 @@ const handWrittenCommands = Effect.fn("ApiCommands.walkHandWritten")(function* (
     "handWritten.groups": found.groups.size,
     "handWritten.leaves": found.leaves.size,
   });
-  return { ...found, sealed: sealedGroups } satisfies HandWrittenCommands;
+  return found satisfies HandWrittenCommands;
 });
 
 /** Formats in memory with the repo's oxfmt config so the committed files match `pnpm fmt`. */

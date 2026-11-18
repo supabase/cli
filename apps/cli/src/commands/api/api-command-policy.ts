@@ -29,12 +29,6 @@ export interface ApiNoun {
   readonly groups?: Readonly<Record<string, string>>;
 }
 
-/**
- * Hand-written groups that wrap their own subcommands after `Command.withSubcommands`, which a
- * generated command cannot join; each entry is a space-joined group path.
- */
-export const sealedGroups: ReadonlySet<string> = new Set(["stack"]);
-
 /** Only these operations generate commands, and their response `links` lead to the reads a `--wait` polls. */
 export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-get-warehouse-status",

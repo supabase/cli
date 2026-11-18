@@ -25,8 +25,9 @@ A generated command joins the hand-written group of the same name, at any depth,
 `warehouse` can sit beside hand-written `warehouse` commands. The generator fails only when a
 generated command path equals a hand-written command or group, or when a group on its path is a
 hand-written command. A hand-written group is described by its own code, so the nouns table gives a
-description only to groups the generator creates. A group that wraps its own subcommands after
-`Command.withSubcommands` (listed in `sealedGroups`) cannot be joined.
+description only to groups the generator creates. Joining rebuilds the group, so a hand-written
+group carries only metadata (descriptions, flags, subcommands) and provides layers on each
+subcommand: a `Command.provide` on the group itself would be bypassed for every subcommand.
 
 ## Files Read
 

@@ -123,8 +123,6 @@ export interface HandWrittenCommands {
   readonly groups: ReadonlySet<string>;
   /** Paths of the commands that have none. */
   readonly leaves: ReadonlySet<string>;
-  /** Groups a generated command cannot join. */
-  readonly sealed: ReadonlySet<string>;
 }
 
 interface DeriveInput {
@@ -810,11 +808,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       if (handWritten.leaves.has(groupKey)) {
         fail(
           `command "${commandKey}" needs "${groupKey}" as a group, but it is a hand-written command`,
-        );
-      }
-      if (handWritten.sealed.has(groupKey)) {
-        fail(
-          `command "${commandKey}" cannot join the hand-written group "${groupKey}", which wraps its own subcommands`,
         );
       }
       if (depth < 2) continue;
