@@ -6,6 +6,7 @@ import { GlobalFlag } from "effect/cli";
 import type { Command, Param, Primitive } from "effect/cli";
 import type { PlatformError } from "effect/PlatformError";
 import process from "node:process";
+import { deprecatedShortDescription } from "../command-internal/command-access-policy.ts";
 import { outputFormatsForCommand } from "../command-internal/output-formats.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
 import { REMOTE_FLAG_NAME } from "../command-internal/target/remote-vocabulary.ts";
@@ -842,7 +843,7 @@ function helpArgumentCandidates(
   const visibleSubcommands = flattenSubcommands(resolved).filter((sub) => !sub.unlisted);
   const candidates: Array<CompletionCandidate> = visibleSubcommands.map((sub) => ({
     name: sub.name,
-    description: sub.shortDescription ?? sub.description,
+    description: deprecatedShortDescription(sub) ?? sub.shortDescription ?? sub.description,
   }));
   // `help` is included when nothing after it resolved, since it's one of root's own subcommands.
   if (matchedPath.length === 0) {
@@ -973,7 +974,7 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
       directive = CompletionDirective.NoFileComp;
       const subcommandCandidates: Array<CompletionCandidate> = visibleSubcommands.map((sub) => ({
         name: sub.name,
-        description: sub.shortDescription ?? sub.description,
+        description: deprecatedShortDescription(sub) ?? sub.shortDescription ?? sub.description,
       }));
       // `help` isn't a real command node in this tree; synthesize it as a candidate, but
       // only at root, not recursively on descendants.

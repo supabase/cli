@@ -61,7 +61,7 @@ import { currentShellPlatform } from "../../../../../command-internal/shell-quot
 import { rejectStackSelectorOnLegacy } from "../../../../../command-internal/stack-target.ts";
 import { warnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { appendExtensionDeclarations } from "../declarative.extension-repair.ts";
-import { requirePgDelta } from "../declarative.gate.ts";
+import { pgDeltaAccess } from "../declarative.gate.ts";
 import {
   type DeclarativeRunContext,
   type DeclarativeSyncResult,
@@ -106,8 +106,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     if ((yield* currentStackBackend).kind === "stack") yield* stackRequireSelected;
     const toml = yield* readDbConfig(fs, path, cliSettings.workdir);
     // Gate before the mutex check below — order matters; see
-    // requirePgDelta's doc comment for why.
-    yield* requirePgDelta({
+    // pgDeltaAccess's doc comment for why.
+    yield* pgDeltaAccess.check({
       experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
       configPath: toml.configFile.path,

@@ -6,6 +6,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { resolveExperimental } from "./global-flags.ts";
+import { defineExperimentalAccess } from "./command-access-policy.ts";
 
 /**
  * Gates access to experimental commands and their children. Must run before any
@@ -28,7 +29,13 @@ export class ExperimentalRequiredError extends Data.TaggedError("ExperimentalReq
 }
 
 /** Fails with {@link ExperimentalRequiredError} unless experimental is enabled. */
-export const requireExperimental = Effect.gen(function* () {
-  if (yield* resolveExperimental) return;
-  return yield* new ExperimentalRequiredError();
+export const requiredExperimentalAccess = defineExperimentalAccess({
+  experimental: "required",
+  check: Effect.gen(function* () {
+    if (yield* resolveExperimental) return;
+    return yield* new ExperimentalRequiredError();
+  }),
 });
+
+/** Flag-conditional experimental check, without command-level documentation metadata. */
+export const requireExperimental = requiredExperimentalAccess.check;

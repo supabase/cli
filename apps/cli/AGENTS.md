@@ -99,7 +99,7 @@ rather than deleting it; `db remote commit` is the reference:
   `withJsonErrorHandling`. Provide only `commandRuntimeLayer` and `telemetryStateLayer`.
 - Keep the old flag and argument config so existing invocations reach the removal error, not a
   parse error, and register the command with `Command.unlisted`.
-- Delete the handler, its tests, and its docs pages, and drop it from `DOCS_EXCLUDED`.
+- Delete the handler, its tests, and its docs pages, and remove its `withDeprecated` annotation.
 - `SIDE_EFFECTS.md` documents exit 1, the removal message and suggestion, and the post-run
   `telemetry.json` read and write under `SUPABASE_HOME`.
 - Test every tombstone through the real parser with and without its old flags, asserting the

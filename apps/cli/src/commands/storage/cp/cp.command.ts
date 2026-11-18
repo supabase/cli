@@ -8,7 +8,7 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
 import { parseUintBase0 } from "../../../shared/config/parse-uint.ts";
@@ -91,7 +91,7 @@ export const storageCpCommand = Command.make("cp", config).pipe(
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // A non-uint `--jobs` never reaches here: `Flag.mapTryCatch` rejects it at parse time.
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       const telemetryFlags = {
         recursive: flags.recursive,
         cacheControl: flags.cacheControl,
@@ -104,5 +104,6 @@ export const storageCpCommand = Command.make("cp", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "cp"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "selectable", consent: "no" }),
 );

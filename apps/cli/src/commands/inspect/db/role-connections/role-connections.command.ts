@@ -1,4 +1,5 @@
 import { Command } from "effect/cli";
+import { withDeprecated } from "../../../../command-internal/command-access-policy.ts";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbRoleConnections } from "./role-connections.handler.ts";
 import {
@@ -18,11 +19,12 @@ export const inspectDbRoleConnectionsCommand = Command.make(
   Command.withDescription(
     'Show number of active connections for all database roles. Deprecated: use "role-stats" instead.',
   ),
-  Command.withShortDescription("Show role connections (deprecated)"),
+  Command.withShortDescription("Show role connections"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbRoleConnections)),
   Command.provide(inspectDbRuntimeLayer("role-connections")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
   withInspectDbTargetPolicy,
+  withDeprecated,
 );

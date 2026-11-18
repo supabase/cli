@@ -1,4 +1,5 @@
 import { CliOutput } from "effect/cli";
+import { withDeprecatedDescriptions } from "./subcommand-help.ts";
 import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
 import {
   permissionSectionForHelp,
@@ -29,9 +30,10 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
   return {
     ...base,
     formatHelpDoc: (doc) => {
+      const labeled = withDeprecatedDescriptions(doc, context?.rootCommand);
       const text = base.formatHelpDoc(
         withOptionalSubcommandUsage(
-          withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+          withRemoteFlagUsage(labelSubcommands(labeled, context?.rootCommand)),
         ),
       );
       const target = targetHelpFor(doc);
