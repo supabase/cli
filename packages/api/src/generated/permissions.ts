@@ -332,6 +332,11 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["organization_projects_read"]],
     oauthScope: "projects:read",
   },
+  "v2-disable-warehouse": {
+    fga: [["project_admin_write", "database_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-get-warehouse-teardown": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-enable-warehouse": {
     fga: [["project_admin_write", "database_write"]],
     oauthScope: "database:write",
@@ -443,11 +448,6 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v2-organizations-slug-webhooks-endpoints-id-test-post": { fga: [] },
   "v2-organizations-slug-webhooks-deliveries-id-get": { fga: [] },
   "v2-organizations-slug-webhooks-deliveries-id-retry-post": { fga: [] },
-  "v2-disable-warehouse": {
-    fga: [["database_write", "project_admin_write"]],
-    oauthScope: "database:write",
-  },
-  "v2-get-warehouse-teardown": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-get-warehouse-status": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-get-warehouse-connection": { fga: [["database_read"]], oauthScope: "database:read" },
 };

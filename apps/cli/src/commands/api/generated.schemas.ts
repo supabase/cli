@@ -5,53 +5,53 @@ export const apiCommandSchemas = {
   "v2-disable-warehouse": {
     result: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
       properties: {
         data: {
+          type: "object",
           properties: {
+            type: {
+              type: "string",
+              description: "Resource type.",
+              enum: ["warehouse_teardown"],
+            },
+            id: {
+              type: "string",
+              format: "uuid",
+              pattern:
+                "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            },
             attributes: {
+              type: "object",
               properties: {
+                lifecycle_status: {
+                  type: "string",
+                  enum: ["disabling", "disabled", "deletion_failed"],
+                },
+                delete_data: {
+                  type: "boolean",
+                  description:
+                    "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+                },
+                updated_at: {
+                  type: "string",
+                  format: "date-time",
+                  pattern:
+                    "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                },
                 cleanup_error: {
                   description:
                     "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
                   type: ["string", "null"],
                 },
-                delete_data: {
-                  description:
-                    "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
-                  type: "boolean",
-                },
-                lifecycle_status: {
-                  enum: ["deletion_failed", "disabled", "disabling"],
-                  type: "string",
-                },
-                updated_at: {
-                  format: "date-time",
-                  pattern:
-                    "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-                  type: "string",
-                },
               },
-              required: ["cleanup_error", "delete_data", "lifecycle_status", "updated_at"],
-              type: "object",
-            },
-            id: {
-              format: "uuid",
-              pattern:
-                "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-              type: "string",
-            },
-            type: {
-              description: "Resource type.",
-              enum: ["warehouse_teardown"],
-              type: "string",
+              required: ["lifecycle_status", "delete_data", "updated_at", "cleanup_error"],
             },
           },
-          required: ["attributes", "id", "type"],
-          type: "object",
+          required: ["type", "id", "attributes"],
         },
       },
       required: ["data"],
-      type: "object",
     },
   },
   "v2-enable-warehouse": {
@@ -1065,53 +1065,53 @@ export const apiCommandSchemas = {
   "v2-get-warehouse-teardown": {
     result: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
       properties: {
         data: {
+          type: "object",
           properties: {
+            type: {
+              type: "string",
+              description: "Resource type.",
+              enum: ["warehouse_teardown"],
+            },
+            id: {
+              type: "string",
+              format: "uuid",
+              pattern:
+                "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            },
             attributes: {
+              type: "object",
               properties: {
+                lifecycle_status: {
+                  type: "string",
+                  enum: ["disabling", "disabled", "deletion_failed"],
+                },
+                delete_data: {
+                  type: "boolean",
+                  description:
+                    "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+                },
+                updated_at: {
+                  type: "string",
+                  format: "date-time",
+                  pattern:
+                    "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                },
                 cleanup_error: {
                   description:
                     "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
                   type: ["string", "null"],
                 },
-                delete_data: {
-                  description:
-                    "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
-                  type: "boolean",
-                },
-                lifecycle_status: {
-                  enum: ["deletion_failed", "disabled", "disabling"],
-                  type: "string",
-                },
-                updated_at: {
-                  format: "date-time",
-                  pattern:
-                    "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-                  type: "string",
-                },
               },
-              required: ["cleanup_error", "delete_data", "lifecycle_status", "updated_at"],
-              type: "object",
-            },
-            id: {
-              format: "uuid",
-              pattern:
-                "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-              type: "string",
-            },
-            type: {
-              description: "Resource type.",
-              enum: ["warehouse_teardown"],
-              type: "string",
+              required: ["lifecycle_status", "delete_data", "updated_at", "cleanup_error"],
             },
           },
-          required: ["attributes", "id", "type"],
-          type: "object",
+          required: ["type", "id", "attributes"],
         },
       },
       required: ["data"],
-      type: "object",
     },
   },
 } as const satisfies Readonly<Record<string, ApiCommandSchemas>>;

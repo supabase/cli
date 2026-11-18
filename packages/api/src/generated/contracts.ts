@@ -13099,7 +13099,6 @@ export const V2DeployAComputeInstanceOutput = Schema.Struct({
   }),
 });
 export const V2DisableWarehouseInput = Schema.Struct({
-  delete_data: Schema.optionalKey(Schema.Boolean),
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
@@ -13111,27 +13110,11 @@ export const V2DisableWarehouseInput = Schema.Struct({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
+  delete_data: Schema.optionalKey(Schema.Boolean),
 });
 export const V2DisableWarehouseOutput = Schema.Struct({
   data: Schema.Struct({
-    attributes: Schema.Struct({
-      cleanup_error: Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
-        }),
-        Schema.Null,
-      ]),
-      delete_data: Schema.Boolean.annotate({
-        description:
-          "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
-      }),
-      lifecycle_status: Schema.Union([
-        Schema.Literals(["deletion_failed", "disabled", "disabling"]),
-        OpenString,
-      ]),
-      updated_at: Schema.String.annotate({ format: "date-time" }),
-    }),
+    type: Schema.Literal("warehouse_teardown").annotate({ description: "Resource type." }),
     id: Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
@@ -13143,7 +13126,24 @@ export const V2DisableWarehouseOutput = Schema.Struct({
           "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       }),
     ),
-    type: Schema.Literal("warehouse_teardown").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      lifecycle_status: Schema.Union([
+        Schema.Literals(["disabling", "disabled", "deletion_failed"]),
+        OpenString,
+      ]),
+      delete_data: Schema.Boolean.annotate({
+        description:
+          "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+      }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
+      cleanup_error: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
+        }),
+        Schema.Null,
+      ]),
+    }),
   }),
 });
 export const V2DownloadProjectBackupInput = Schema.Struct({
@@ -15022,6 +15022,17 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
   }),
 });
 export const V2GetWarehouseTeardownInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
   operation_id: Schema.optionalKey(
     Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
@@ -15035,38 +15046,10 @@ export const V2GetWarehouseTeardownInput = Schema.Struct({
       }),
     ),
   ),
-  ref: Schema.String.check(
-    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
-  )
-    .check(
-      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
-    )
-    .check(
-      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
-        expected: "a string matching the RegExp ^[a-z]+$",
-      }),
-    ),
 });
 export const V2GetWarehouseTeardownOutput = Schema.Struct({
   data: Schema.Struct({
-    attributes: Schema.Struct({
-      cleanup_error: Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
-        }),
-        Schema.Null,
-      ]),
-      delete_data: Schema.Boolean.annotate({
-        description:
-          "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
-      }),
-      lifecycle_status: Schema.Union([
-        Schema.Literals(["deletion_failed", "disabled", "disabling"]),
-        OpenString,
-      ]),
-      updated_at: Schema.String.annotate({ format: "date-time" }),
-    }),
+    type: Schema.Literal("warehouse_teardown").annotate({ description: "Resource type." }),
     id: Schema.String.annotate({ format: "uuid" }).check(
       Schema.isPattern(
         new RegExp(
@@ -15078,7 +15061,24 @@ export const V2GetWarehouseTeardownOutput = Schema.Struct({
           "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
       }),
     ),
-    type: Schema.Literal("warehouse_teardown").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      lifecycle_status: Schema.Union([
+        Schema.Literals(["disabling", "disabled", "deletion_failed"]),
+        OpenString,
+      ]),
+      delete_data: Schema.Boolean.annotate({
+        description:
+          "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+      }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
+      cleanup_error: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
+        }),
+        Schema.Null,
+      ]),
+    }),
   }),
 });
 export const V2ListAllComputeInstancesInput = Schema.Struct({
