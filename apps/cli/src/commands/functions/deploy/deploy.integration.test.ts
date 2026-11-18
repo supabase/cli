@@ -2278,7 +2278,10 @@ describe("functions deploy", () => {
           }).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(FunctionsDeployFailedError);
-          expect(error).toMatchObject({ entitlement: gatedEntitlement });
+          expect(error).toMatchObject({
+            entitlement: gatedEntitlement,
+            errors: deployStatuses.map((status) => expect.objectContaining({ status })),
+          });
           expect(normalizeCliError(error)).toMatchObject({ entitlement: gatedEntitlement });
           expect(classifyCliCauseActionability(Cause.fail(error)).error_category).toBe(
             "plan_limit",
