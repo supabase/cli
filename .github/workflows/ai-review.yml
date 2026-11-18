@@ -474,8 +474,8 @@ jobs:
           effort: high
           output-schema-file: /tmp/ai-review/findings.schema.json
           output-file: /tmp/ai-review/codex-findings.json
-          # 0.159.1 is the first stable CLI whose model catalog carries gpt-6.1-sol.
-          codex-version: &codex-cli-version "0.159.2"
+          # 0.169.1 is the first stable CLI whose model catalog carries gpt-6.2-sol.
+          codex-version: &codex-cli-version "0.169.1"
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
