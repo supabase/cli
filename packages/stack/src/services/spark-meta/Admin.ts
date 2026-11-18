@@ -89,6 +89,8 @@ export const makeSparkAdmin = (client: HttpClient.HttpClient, url: string, servi
     migrations: request(Schema.Array(Migration), "GET", "/_spark/v1/migrations"),
     applyMigration: (version: string, name: string, sql: string) =>
       request(Schema.Unknown, "POST", "/_spark/v1/migrations", { version, name, sql }),
+    dryRunMigration: (version: string, name: string, sql: string) =>
+      request(ScratchResult, "POST", "/_spark/v1/migrations?dry_run=1", { version, name, sql }),
     schemaVersion: request(SchemaVersion, "GET", "/_spark/v1/schema/version"),
     schema: request(Description, "GET", "/_spark/v1/schema"),
     scratch: (files: ReadonlyArray<{ readonly name: string; readonly sql: string }>) =>

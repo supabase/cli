@@ -9,7 +9,7 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { makeSparkAdmin } from "./Admin.ts";
-import type { Description } from "./Description.ts";
+import type { Column, Description, Table } from "./Description.ts";
 import { makeSparkMetaHandler } from "./Handler.ts";
 
 const todos: Description = {
@@ -86,40 +86,41 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 
 interface SparkCall {
   readonly path: string;
+  readonly dryRun: boolean;
   readonly body: unknown;
 }
 
 /** A Spark admin API double: one description, recorded calls, and canned query rows. */
-const fakeSpark = (options: { readonly unsupported?: boolean } = {}) => {
+const fakeSpark = (
+  options: { readonly unsupported?: boolean; readonly description?: Description } = {},
+) => {
+  const description = options.description ?? todos;
   const calls: Array<SparkCall> = [];
   const reply = (body: unknown, status = 200) => Response.json(body, { status });
+  const statuses = options.unsupported
+    ? [{ index: 0, kind: "CreateFunctionStmt", status: "unsupported", message: "no" }]
+    : [{ index: 0, kind: "CreateStmt", status: "ok" }];
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
-      const path = new URL(request.url).pathname;
+      const url = new URL(request.url);
+      const path = url.pathname;
+      const dryRun = url.searchParams.has("dry_run");
       const raw =
         request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
       const body: unknown = raw === "" ? undefined : decodeJson(raw);
-      calls.push({ path, body });
+      calls.push({ path, dryRun, body });
       const respond = (response: Response) => HttpClientResponse.fromWeb(request, response);
       switch (path) {
         case "/_spark/v1/schema/version":
-          return respond(reply({ schema_version: todos.schema_version }));
+          return respond(reply({ schema_version: description.schema_version }));
         case "/_spark/v1/schema":
-          return respond(reply(todos));
+          return respond(reply(description));
         case "/_spark/v1/migrations":
-          return respond(
-            request.method === "GET"
-              ? reply([{ version: "20260101000000", name: "todos", statements: null }])
-              : reply({ ok: true }),
-          );
+          if (request.method === "GET")
+            return respond(reply([{ version: "20260101000000", name: "todos", statements: null }]));
+          return respond(dryRun ? reply({ dry_run: true, statuses }) : reply({ ok: true }));
         case "/_spark/v1/scratch":
-          return respond(
-            reply({
-              statuses: options.unsupported
-                ? [{ index: 0, kind: "CreateFunctionStmt", status: "unsupported", message: "no" }]
-                : [{ index: 0, kind: "CreateStmt", status: "ok" }],
-            }),
-          );
+          return respond(reply({ statuses }));
         case "/_spark/v1/query":
           return respond(reply([{ id: 1, done: 1, tags: "{a,b}" }]));
         default:
@@ -161,7 +162,14 @@ const withHandler = (spark: ReturnType<typeof fakeSpark>) =>
         Effect.flatMap((response) => {
           const web = HttpServerResponse.toWeb(response);
           return Effect.promise(() => web.text()).pipe(
-            Effect.map((text) => ({ status: web.status, body: decodeJson(text) })),
+            Effect.map((text) => ({
+              status: web.status,
+              contentType: web.headers.get("content-type"),
+              text,
+              body: web.headers.get("content-type")?.startsWith("application/sql")
+                ? text
+                : decodeJson(text),
+            })),
           );
         }),
       );
@@ -298,5 +306,163 @@ it.live("reports an unreachable Spark as a server error rather than a SQL error"
 
     expect(status).toBe(500);
     expect(String(Reflect.get(Object(body), "message"))).toContain("Spark is unreachable");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("dry-runs a migration through Spark and applies nothing", () =>
+  Effect.gen(function* () {
+    const spark = fakeSpark();
+    const { send, migrationsDir, fs } = yield* withHandler(spark);
+
+    const { status, body } = yield* send(
+      "POST",
+      "/v1/projects/default/database/migrations?dry_run=true",
+      { name: "notes", query: "begin; create table public.notes (id bigint primary key); commit;" },
+    );
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      statuses: [
+        {
+          index: 0,
+          kind: "CreateStmt",
+          status: "ok",
+          statement: "create table public.notes (id bigint primary key)",
+        },
+      ],
+    });
+    const migrationCalls = spark.calls.filter((call) => call.path === "/_spark/v1/migrations");
+    expect(migrationCalls.filter((call) => call.body !== undefined)).toMatchObject([
+      { dryRun: true, body: { name: "notes" } },
+    ]);
+    expect(yield* fs.exists(migrationsDir)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("reports a statement Spark cannot run as unsupported in a dry run", () =>
+  Effect.gen(function* () {
+    const { send } = yield* withHandler(fakeSpark({ unsupported: true }));
+
+    const { status, body } = yield* send(
+      "POST",
+      "/v1/projects/default/database/migrations?dry_run=1",
+      { query: "create function public.f() returns int language sql as $$ select 1 $$" },
+    );
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      statuses: [
+        { index: 0, status: "unsupported", statement: expect.stringContaining("create function") },
+      ],
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const idColumn: Column = {
+  name: "id",
+  position: 1,
+  type: "bigint",
+  not_null: true,
+  default: null,
+  identity: "d",
+  generated: null,
+  comment: null,
+};
+const base: Table = {
+  schema: "public",
+  name: "orders",
+  managed: false,
+  rls_enabled: true,
+  rls_forced: false,
+  comment: null,
+  columns: [],
+  constraints: [],
+  indexes: [],
+  policies: [
+    {
+      name: "own",
+      cmd: "*",
+      permissive: true,
+      roles: ["authenticated"],
+      using: "true",
+      check: null,
+    },
+  ],
+};
+
+const shop: Description = {
+  schema_version: "v1",
+  managed_schemas: ["auth"],
+  schemas: [{ name: "public", comment: null }],
+  enums: [],
+  views: [],
+  tables: [
+    {
+      ...base,
+      name: "orders",
+      columns: [idColumn, { ...idColumn, name: "customer_id", position: 2, identity: null }],
+      constraints: [
+        {
+          name: "orders_pkey",
+          type: "p",
+          def: "PRIMARY KEY (id)",
+          columns: ["id"],
+          references: null,
+        },
+        {
+          name: "orders_customer_id_fkey",
+          type: "f",
+          def: "FOREIGN KEY (customer_id) REFERENCES customers(id)",
+          columns: ["customer_id"],
+          references: { schema: "public", table: "customers", columns: ["id"] },
+        },
+      ],
+      indexes: [
+        {
+          name: "orders_customer_id_idx",
+          def: "CREATE INDEX orders_customer_id_idx ON public.orders USING btree (customer_id)",
+          unique: false,
+          constraint: null,
+        },
+        {
+          name: "orders_pkey",
+          def: "CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)",
+          unique: true,
+          constraint: "orders_pkey",
+        },
+      ],
+    },
+    {
+      ...base,
+      name: "customers",
+      rls_enabled: false,
+      columns: [idColumn],
+      policies: [],
+    },
+  ],
+};
+
+it.live("dumps the schema as Postgres DDL with foreign keys after the tables", () =>
+  Effect.gen(function* () {
+    const { send } = yield* withHandler(fakeSpark({ description: shop }));
+
+    const { status, contentType, text } = yield* send("GET", "/v1/projects/default/database/dump");
+
+    expect(status).toBe(200);
+    expect(contentType).toBe("application/sql; charset=utf-8");
+    expect(text).toContain(
+      'create table "public"."orders" (\n  "id" bigint generated by default as identity not null,',
+    );
+    const at = (needle: string) => text.indexOf(needle);
+    expect(at('create table "public"."orders"')).toBeGreaterThan(-1);
+    expect(
+      at('alter table "public"."orders" add constraint "orders_customer_id_fkey"'),
+    ).toBeGreaterThan(at('create table "public"."customers"'));
+    expect(text).toContain("CREATE INDEX orders_customer_id_idx");
+    expect(text).not.toContain("CREATE UNIQUE INDEX orders_pkey");
+    expect(text).toContain('alter table "public"."orders" enable row level security;');
+    expect(text).toContain(
+      'create policy "own" on "public"."orders" as permissive for all to "authenticated" using (true);',
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

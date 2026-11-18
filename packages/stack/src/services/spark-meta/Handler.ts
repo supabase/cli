@@ -25,6 +25,7 @@ import {
   stripComments,
   words,
 } from "./Sql.ts";
+import { renderDump } from "./Dump.ts";
 import { typescript } from "./Typegen.ts";
 
 export interface SparkMetaSettings {
@@ -161,15 +162,78 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     yield* fs.writeFileString(path.join(settings.migrationsDir, file), `${sql.trim()}\n`);
   });
 
+  const isAborted = (message: string | null | undefined) =>
+    message?.includes("current transaction is aborted") === true;
+
+  const prepareStatements = (sql: string) => {
+    // A Spark migration is atomic already, and Spark refuses transaction control inside scripts.
+    const statements = splitSql(sql).filter((s) => !isTransactionControl(s) && !isGrantDo(s));
+    return foldConstraints(statements);
+  };
+
+  /** Runs a migration in a rolled-back transaction on the current database and reports each statement. */
+  const dryRunSchemaChange = Effect.fn("SparkMeta.dryRunSchemaChange")(function* (
+    sql: string,
+    name: string,
+    wanted?: string,
+  ) {
+    const folded = prepareStatements(sql);
+    if ("rejected" in folded)
+      return [
+        {
+          index: 0,
+          kind: "constraint",
+          status: "error",
+          message: folded.rejected.message,
+          statement: oneLine(sql, 200),
+        },
+      ];
+    const forSpark = folded.statements;
+    yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
+    if (forSpark.length === 0) return [];
+    const version = wanted ?? migrationTimestamp(yield* Clock.currentTimeMillis);
+    // Spark dry-runs in one transaction, so every statement after the first refusal comes back
+    // aborted. Re-run without the refused statements to learn what the later ones would do.
+    let current = yield* admin.dryRunMigration(version, name, `${forSpark.join(";\n")};`);
+    let active = forSpark.map((_, index) => index);
+    const refused = new Set<number>();
+    const settled = new Map<number, (typeof current.statuses)[number]>();
+    for (let round = 0; round <= forSpark.length; round += 1) {
+      const statuses = current.statuses.map((s) => ({ ...s, index: active[s.index] ?? s.index }));
+      for (const s of statuses) {
+        if (refused.has(s.index)) continue;
+        // A re-run script has different line numbers than the original.
+        settled.set(s.index, round === 0 ? s : { ...s, line: undefined });
+      }
+      const offender = statuses.find(
+        (s) => (s.status === "unsupported" || s.status === "error") && !isAborted(s.message),
+      );
+      if (offender === undefined || !statuses.some((s) => isAborted(s.message))) break;
+      refused.add(offender.index);
+      active = active.filter((index) => !refused.has(index));
+      if (active.length === 0) break;
+      current = yield* admin.dryRunMigration(
+        version,
+        name,
+        `${active.map((index) => forSpark[index]).join(";\n")};`,
+      );
+    }
+    return [...settled.values()]
+      .sort((a, b) => a.index - b.index)
+      .map(({ line, ...s }) => ({
+        ...s,
+        ...(line === undefined ? {} : { line }),
+        statement: oneLine(forSpark[s.index] ?? "", 200),
+      }));
+  });
+
   /** Applies a schema change as a Spark migration after a dry run on a scratch copy. */
   const applySchemaChange = Effect.fn("SparkMeta.applySchemaChange")(function* (
     sql: string,
     name: string,
     wanted?: string,
   ) {
-    // A Spark migration is atomic already, and Spark refuses transaction control inside scripts.
-    const statements = splitSql(sql).filter((s) => !isTransactionControl(s) && !isGrantDo(s));
-    const folded = foldConstraints(statements);
+    const folded = prepareStatements(sql);
     if ("rejected" in folded) {
       const { code, message, hint } = folded.rejected;
       return yield* rejected(code, message, hint);
@@ -429,8 +493,19 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         Effect.mapError(() => rejected("22P02", "invalid request body")),
       );
       const name = body.name ?? "mcp";
+      if (search.get("dry_run") === "true" || search.get("dry_run") === "1")
+        return json({
+          statuses: yield* dryRunSchemaChange(body.query, name, body.version ?? undefined),
+        });
       const version = yield* applySchemaChange(body.query, name, body.version ?? undefined);
       return json({ version: version ?? null, name }, 201);
+    }
+    if (rest === "/database/dump" && method === "GET") {
+      const model = yield* current;
+      return HttpServerResponse.text(
+        renderDump(model.description, schemaList(search.get("schemas"))),
+        { headers: { ...corsHeaders, "content-type": "application/sql; charset=utf-8" } },
+      );
     }
     if (rest.startsWith("/api-keys") && method === "GET")
       return json([
