@@ -62,7 +62,10 @@ import { POSTGRES_DATA_DIR } from "../../src/command-internal/db-bootstrap/postg
 import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
 import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
-import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
+import {
+  LinkedProjectCache,
+  type LinkedProjectCacheProfile,
+} from "../../src/telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
@@ -376,18 +379,13 @@ export function mockLinkedProjectCacheTracked(): {
   let cachedApiUrl: string | undefined;
   let cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
   const layer = Layer.succeed(LinkedProjectCache, {
-    cache: (
-      ref: string,
-      _workdir?: string,
-      apiUrl?: string,
-      accessToken?: Option.Option<Redacted.Redacted<string>>,
-    ) =>
+    cache: (ref: string, _workdir?: string, profile?: LinkedProjectCacheProfile) =>
       Effect.sync(() => {
         cached = true;
         cacheCount += 1;
         cachedRef = ref;
-        cachedApiUrl = apiUrl;
-        cachedAccessToken = accessToken;
+        cachedApiUrl = profile?.apiUrl;
+        cachedAccessToken = profile?.accessToken;
       }),
   });
   return {

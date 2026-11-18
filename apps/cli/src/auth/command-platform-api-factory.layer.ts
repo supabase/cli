@@ -10,21 +10,26 @@ type CommandPlatformApiDeps =
   typeof makeCommandPlatformApi extends Effect.Effect<infer _A, infer _E, infer R> ? R : never;
 
 /**
- * Captures the surrounding Management API context without resolving an access token; the raw
- * fetch client is provided here so `makeCommandPlatformApi` owns the single typed-API debug
- * wrapper. `dohFetchLayer` overrides `FetchHttpClient.Fetch` so a factory-resolved `--linked`
- * client honours `--dns-resolver https`.
+ * Captures the surrounding Management API context, including its `HttpClient`, without resolving
+ * an access token. Exported as an effect so each layer built from it is memoized separately.
+ */
+export const makeCommandPlatformApiFactory = Effect.gen(function* () {
+  const context = yield* Effect.context<CommandPlatformApiDeps>();
+  const make = yield* makeCommandPlatformApi.pipe(Effect.provideContext(context), Effect.cached);
+
+  return CommandPlatformApiFactory.of({
+    make,
+  });
+});
+
+/**
+ * The lazy factory over a raw fetch client, so `makeCommandPlatformApi` owns the single typed-API
+ * debug wrapper. `dohFetchLayer` overrides `FetchHttpClient.Fetch` so a factory-resolved
+ * `--linked` client honours `--dns-resolver https`.
  */
 export const commandPlatformApiFactoryLayer = Layer.effect(
   CommandPlatformApiFactory,
-  Effect.gen(function* () {
-    const context = yield* Effect.context<CommandPlatformApiDeps>();
-    const make = yield* makeCommandPlatformApi.pipe(Effect.provideContext(context), Effect.cached);
-
-    return CommandPlatformApiFactory.of({
-      make,
-    });
-  }),
+  makeCommandPlatformApiFactory,
 ).pipe(Layer.provide(Layer.fresh(FetchHttpClient.layer)), Layer.provide(dohFetchLayer));
 
 /**

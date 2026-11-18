@@ -1,10 +1,13 @@
-import type * as CliCommand from "effect/cli/Command";
-import { Argument, Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
+
+import {
+  type ContractInput,
+  withContract,
+} from "../../../command-internal/command-contract/command-contract.annotation.ts";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
-import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
@@ -12,36 +15,15 @@ import { linkedProjectCache } from "../../../telemetry/linked-project-cache.laye
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { secretsSetContract } from "./set.contract.ts";
 import { secretsSet } from "./set.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-const config = {
-  ...projectTargetFlags(),
-  envFile: Flag.String("env-file").pipe(
-    Flag.withDescription("Read secrets from a .env file."),
-    Flag.optional,
-  ),
-  secrets: Argument.String("NAME=VALUE").pipe(
-    Argument.withDescription("Secret name=value pairs to set."),
-    Argument.variadic(),
-  ),
-} as const;
+export type SecretsSetFlags = ContractInput<typeof secretsSetContract>;
 
-export type SecretsSetFlags = CliCommand.Command.Config.Infer<typeof config>;
-
-export const secretsSetCommand = Command.make("set", config).pipe(
+export const secretsSetCommand = Command.make("set", secretsSetContract.input).pipe(
   Command.withDescription("Set a secret(s) to the linked Supabase project."),
   Command.withShortDescription("Set a secret(s) on Supabase"),
-  Command.withExamples([
-    {
-      command: "supabase secrets set MY_SECRET=myvalue",
-      description: "Set a secret by name and value",
-    },
-    {
-      command: "supabase secrets set --env-file .env",
-      description: "Set secrets from a .env file",
-    },
-  ]),
   withPermissions(
     compose(
       {
@@ -58,6 +40,7 @@ export const secretsSetCommand = Command.make("set", config).pipe(
   ),
   Command.provide(managementApiRuntimeLayer(["secrets", "set"])),
   Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(config),
+  withCliConfigFlags(secretsSetContract.input),
   withTargetPolicy({ group: "hosted", consent: "no" }),
+  withContract(secretsSetContract),
 );

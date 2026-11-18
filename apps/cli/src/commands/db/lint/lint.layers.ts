@@ -48,7 +48,7 @@ const projectRef = projectRefLayer.pipe(
 );
 
 const linkedProjectCache = linkedProjectCacheLayer.pipe(
-  Layer.provide(credentials),
+  Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
   Layer.provide(httpClient),
   Layer.provide(identityStitchLayer),

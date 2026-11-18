@@ -51,7 +51,7 @@ const projectRef = projectRefLayer.pipe(
 // Exposed so the handler can cache the linked project (GET /v1/projects/{ref})
 // in its post-run finalizer. Shares the single `identityStitchLayer`.
 const linkedProjectCache = linkedProjectCacheLayer.pipe(
-  Layer.provide(credentials),
+  Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
   Layer.provide(httpClient),
   Layer.provide(identityStitchLayer),

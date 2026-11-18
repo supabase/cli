@@ -3,7 +3,7 @@ import { Effect, FileSystem, Layer, Option, Path, type Redacted, Schema } from "
 import * as HttpClient from "effect/http/HttpClient";
 import { publish } from "@supabase/stack/effect";
 
-import { CommandCredentials } from "../auth/command-credentials.service.ts";
+import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
@@ -12,7 +12,10 @@ import { identifyProjectGroups } from "../shared/telemetry/identify-project-grou
 import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
 import { currentProjectStateMode } from "../shared/config/project-state-mode.ts";
-import { LinkedProjectCache } from "./linked-project-cache.service.ts";
+import {
+  LinkedProjectCache,
+  type LinkedProjectCacheProfile,
+} from "./linked-project-cache.service.ts";
 import { block } from "../command-internal/command-permissions/model.ts";
 
 /** `LinkedProjectCache`'s post-run fill. */
@@ -42,8 +45,8 @@ const encodeLinkedProjectCache = Schema.encodeEffect(
  * checkout never gains a `.temp`. No write if the cache already exists (`supabase link` is
  * authoritative in legacy mode), and any API/filesystem/parse error is swallowed.
  *
- * Builds its own typed client per fill rather than consuming `CommandPlatformApi`, which
- * requires a stored token at construction; this layer skips quietly when there is none.
+ * Uses the command's lazy `CommandPlatformApiFactory` client and skips quietly when it can't
+ * build one (no access token). A reconciled-profile caller gets its own client for that profile.
  *
  * The per-ref stack file is a "group-identify once per ref" marker: its presence skips the
  * `v1-get-project` call and the `groupIdentify` on later runs, and nothing else reads it. It is
@@ -58,7 +61,7 @@ export const linkedProjectCacheLayer = Layer.effect(
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
     const cliSettings = yield* CommandSettings;
-    const credentials = yield* CommandCredentials;
+    const platformApi = yield* CommandPlatformApiFactory;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const analytics = yield* Analytics;
@@ -68,13 +71,25 @@ export const linkedProjectCacheLayer = Layer.effect(
     // with the typed client + advisor GETs) so the alias + persist fire at most once per command.
     const { stitch } = yield* IdentityStitch;
 
+    const profileClient = (profile: LinkedProjectCacheProfile, token: Redacted.Redacted<string>) =>
+      makeApiClient(
+        {
+          baseUrl: profile.apiUrl ?? cliSettings.apiUrl,
+          accessToken: token,
+          userAgent: cliSettings.userAgent,
+        },
+        {
+          transformClient: (client) =>
+            Effect.succeed(
+              HttpClient.transform(client, (requestEffect) =>
+                requestEffect.pipe(Effect.tap(stitch)),
+              ),
+            ),
+        },
+      ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+
     return LinkedProjectCache.of({
-      cache: (
-        ref: string,
-        workdir?: string,
-        apiUrl?: string,
-        accessToken?: Option.Option<Redacted.Redacted<string>>,
-      ) =>
+      cache: (ref: string, workdir?: string, profile?: LinkedProjectCacheProfile) =>
         Effect.gen(function* () {
           const stackMode = (yield* currentProjectStateMode) === "stack";
           // The ref names the cache file, so only a well-formed one may reach the path.
@@ -100,31 +115,13 @@ export const linkedProjectCacheLayer = Layer.effect(
             if (Option.isSome(linkedRef) && linkedRef.value !== ref) return;
           }
 
-          // An explicit reconciled-profile token wins outright (`Some` → use, `None` → the
-          // reconciled profile has no token, so skip rather than fall back to a stale profile's
-          // token); otherwise env wins over keyring/file lookup.
-          const tokenOpt =
-            accessToken ??
-            (Option.isSome(cliSettings.accessToken)
-              ? cliSettings.accessToken
-              : yield* credentials.getAccessToken);
-          if (Option.isNone(tokenOpt)) return;
-
-          const api = yield* makeApiClient(
-            {
-              baseUrl: apiUrl ?? cliSettings.apiUrl,
-              accessToken: tokenOpt.value,
-              userAgent: cliSettings.userAgent,
-            },
-            {
-              transformClient: (client) =>
-                Effect.succeed(
-                  HttpClient.transform(client, (requestEffect) =>
-                    requestEffect.pipe(Effect.tap(stitch)),
-                  ),
-                ),
-            },
-          ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+          // A reconciled profile without a token skips rather than fall back to the stale
+          // profile's token.
+          if (profile !== undefined && Option.isNone(profile.accessToken)) return;
+          const api =
+            profile !== undefined && Option.isSome(profile.accessToken)
+              ? yield* profileClient(profile, profile.accessToken.value)
+              : yield* platformApi.make;
           const project = yield* api.v1.getProject({ ref }, { retry: { maxRetries: 0 } });
 
           const linked = {
