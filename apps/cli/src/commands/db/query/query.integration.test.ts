@@ -64,6 +64,7 @@ import type {
 import { HostedMutationConsentRequiredError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import { normalizeCliError } from "../../../shared/output/normalize-error.ts";
 import {
   DbConnection,
   type PgConnInput,
@@ -177,7 +178,9 @@ function mockDbConnection(opts: {
               );
             }
             return opts.queryFails === true
-              ? Effect.fail(new DbExecError({ message: "failed to execute query: boom" }))
+              ? Effect.fail(
+                  new DbExecError({ message: "failed to execute query: boom", code: "42P01" }),
+                )
               : Effect.succeed(opts.result ?? { fields: [], rows: [], commandTag: "CREATE TABLE" });
           }),
       }).pipe(
@@ -810,6 +813,21 @@ describe("db query integration", () => {
     return Effect.gen(function* () {
       const exit = yield* dbQuery(flags({ sql: Option.some("bad") })).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to execute query");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps the SQLSTATE of a failed statement so the error links to its article", () => {
+    const { layer } = setup({ queryFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* dbQuery(flags({ sql: Option.some("bad") })).pipe(Effect.exit);
+      const error = Exit.isFailure(exit)
+        ? exit.cause.reasons.find(Cause.isFailReason)?.error
+        : undefined;
+      expect(normalizeCliError(error)).toMatchObject({
+        code: "DbQueryExecError",
+        message: "failed to execute query: boom",
+        docUrl: expect.stringMatching(/^https:\/\/supabase\.com\/kb\//u),
+      });
     }).pipe(Effect.provide(layer));
   });
 
