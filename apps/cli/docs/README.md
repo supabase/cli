@@ -7,6 +7,32 @@ For CLI contributors, author usage examples with `Command.withExamples` in comma
 Terminal help and the website reference use these same invocations and descriptions, without sample
 output. Examples without descriptions use their invocation as the website title.
 
+## Command Description Markdown
+
+For CLI contributors, command descriptions, short descriptions, argument and flag descriptions,
+and example captions share a Markdown contract across terminal help and the generated reference.
+Use ordinary paragraphs, emphasis, inline code, links, and fenced or indented code blocks.
+Use code blocks for shell instructions that readers need to copy. Put literal placeholders such
+as `--remote=<ref>` and `supabase/notebooks/<name>.json` inside code spans.
+
+Headings, lists, blockquotes, thematic breaks, tables, images, and raw HTML are prohibited in
+these fields. Use paragraph labels instead of headings. Long-form page bodies under `supabase/`
+and command strings in examples are outside this restriction.
+
+Terminal rendering preserves paragraph separation, visible link destinations, and code-block
+line breaks without wrapping or borders. Code blocks receive four spaces of presentation indent;
+the surrounding help formatter can add more. Descriptions containing tabs retain their source
+because Bun expands tabs even inside fenced code. Prefer spaces when authoring new descriptions.
+Unsupported structures also retain their source at runtime, but fail the authoring check.
+JSON output and reference generation receive the original Markdown, not terminal escape codes.
+
+The authoring check runs with CLI unit tests and reports the command path, description field,
+and unsupported structure. From `apps/cli`, run:
+
+```sh
+pnpm run test:unit src/shared/output/description-contract.unit.test.ts
+```
+
 ## Local Preview
 
 For CLI contributors, preview reference changes in the real website before publishing:

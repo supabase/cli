@@ -19,12 +19,13 @@ export interface ColorStream {
  * 2. `CLICOLOR=0` → no colour, unless forced.
  * 3. `CLICOLOR_FORCE` set and not `"0"` → colour even when piped.
  * 4. `CI` non-empty → treated as non-TTY.
- * 5. Otherwise: the stream must be a colour-capable TTY. `hasColors()` is faithful on Bun
- *    TTYs (it also covers `TERM=dumb`) and absent on piped streams.
+ * 5. Otherwise: automatic colour must be allowed and the stream must be a colour-capable TTY.
+ *    `hasColors()` is faithful on Bun TTYs (it also covers `TERM=dumb`) and absent on piped streams.
  *
+ * `allowAutomaticColor=false` disables TTY detection; explicit force still applies.
  * Node's `FORCE_COLOR` is not honored — only the `CLICOLOR*` pair.
  */
-function supportsColor(stream: ColorStream): boolean {
+export function supportsColor(stream: ColorStream, allowAutomaticColor = true): boolean {
   const env = ambientEnvironment();
   if ((env["NO_COLOR"] ?? "") !== "") return false;
   const clicolorForce = env["CLICOLOR_FORCE"] ?? "";
@@ -32,7 +33,7 @@ function supportsColor(stream: ColorStream): boolean {
   if (env["CLICOLOR"] === "0" && !forced) return false;
   if (forced) return true;
   if ((env["CI"] ?? "") !== "") return false;
-  return typeof stream.hasColors === "function" && stream.hasColors();
+  return allowAutomaticColor && typeof stream.hasColors === "function" && stream.hasColors();
 }
 
 /**
