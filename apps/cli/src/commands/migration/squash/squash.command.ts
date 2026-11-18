@@ -15,6 +15,7 @@ import { migrationSquash } from "./squash.handler.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   version: Flag.String("version").pipe(
@@ -41,14 +42,6 @@ export const migrationSquashCommand = Command.make("squash", config).pipe(
       description: "Squash local migrations up to the specified version",
     },
   ]),
-  withPermissions(
-    compose(
-      { operations: [], noApiEffectFlags: ["version"] },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     migrationSquash(flags).pipe(
       withCommandTelemetry({
@@ -67,4 +60,13 @@ export const migrationSquashCommand = Command.make("squash", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["version"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

@@ -4,7 +4,7 @@ import { Clock, Effect, FileSystem, Option, Path, Result, Schema, Stream } from 
 import { gatewayLog } from "@supabase/stack/effect";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
-import { StackTargetResolver, validateStackTarget } from "../../command-internal/stack-target.ts";
+import { missingStackAdvice, StackTargetResolver } from "../../command-internal/stack-target.ts";
 import { parseTargetSelector } from "../../command-internal/target/target-selector.ts";
 import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
 import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
@@ -28,7 +28,7 @@ import { LogsInputError } from "./logs.errors.ts";
 import { browseLogs, useLogsBrowser } from "./logs.browser.ts";
 import { filteredLogsSql, makeRemoteLogsSession } from "./logs.remote-session.ts";
 import { makeLocalLogsSession } from "./logs.local-session.ts";
-import type { LogsFlags, LogsSession } from "./logs.session.ts";
+import type { LogsFlags, LogsSession, StackIdAlias } from "./logs.session.ts";
 import type { LogsSourcesFlags } from "./logs.command.ts";
 
 const resolveLogsCompute = Effect.fn("Logs.resolveCompute")(function* () {
@@ -136,9 +136,24 @@ const localRecord = Schema.Struct({
 const filteredText = (row: Schema.JsonObject) =>
   `${String(row["timestamp"] ?? "—")} ${String(row["service"] ?? row["source"] ?? "logs")} ${String(row["event_message"] ?? row["text"] ?? (Schema.is(localRecord)(row) ? markerText(row) : (row["kind"] ?? "")))}`;
 
-export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
+const STACK_ID_DEPRECATION_LINE = "Flag --stack-id has been deprecated, use --stack instead.";
+
+/** Folds the hidden `--stack-id` that `logs` shipped with into `--stack`. */
+const withStackIdAlias = <F extends StackIdAlias>(flags: F) =>
+  Effect.gen(function* () {
+    if (flags.stackId === undefined || Option.isNone(flags.stackId)) return flags;
+    if (Option.isSome(flags.stack))
+      return yield* new LogsInputError({
+        message: "--stack-id is a deprecated alias of --stack; pass only --stack.",
+      });
+    yield* (yield* Output).raw(`${STACK_ID_DEPRECATION_LINE}\n`, "stderr");
+    return { ...flags, stack: flags.stackId };
+  });
+
+export const logs = Effect.fn("logs")(function* (input: LogsFlags & StackIdAlias) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
+    const flags = yield* withStackIdAlias(input);
     yield* rejectLegacyOutput(undefined);
     const hasSql = Option.isSome(flags.sql) || Option.isSome(flags.file);
     if (Option.isSome(flags.sql) && Option.isSome(flags.file))
@@ -150,8 +165,7 @@ export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
         Option.isSome(flags.resource) ||
         Option.isSome(flags.kind) ||
         Option.isSome(flags.search) ||
-        Option.isSome(flags.stack) ||
-        Option.isSome(flags.stackId))
+        Option.isSome(flags.stack))
     )
       return yield* new LogsInputError({
         message:
@@ -245,17 +259,18 @@ export const logs = Effect.fn("logs")(function* (flags: LogsFlags) {
   }).pipe(Effect.ensuring(telemetry.flush));
 });
 
-export const logsSources = Effect.fn("logs.sources")(function* (flags: LogsSourcesFlags) {
+export const logsSources = Effect.fn("logs.sources")(function* (
+  input: Omit<LogsSourcesFlags, "stackId"> & StackIdAlias,
+) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
+    const flags = yield* withStackIdAlias(input);
     yield* rejectLegacyOutput("sources");
     const target = yield* resolveTarget(flags);
     if (target.kind === "linked") {
       const availableCompute = yield* resolveLogsCompute();
-      if (Option.isSome(flags.stack) || Option.isSome(flags.stackId))
-        return yield* new LogsInputError({
-          message: "--stack and --stack-id are local selectors.",
-        });
+      if (Option.isSome(flags.stack))
+        return yield* new LogsInputError({ message: "--stack is a local selector." });
       if (
         Option.isSome(flags.service) &&
         !hostedSources.some(
@@ -313,18 +328,17 @@ export const logsSources = Effect.fn("logs.sources")(function* (flags: LogsSourc
           "Local log discovery requires the experimental stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml, or use --remote for hosted sources.",
       });
     return yield* Effect.gen(function* () {
-      yield* validateStackTarget({
-        stack: Option.getOrUndefined(flags.stack),
-        stackId: Option.getOrUndefined(flags.stackId),
-      }).pipe(Effect.mapError((error) => new LogsInputError({ message: error.message })));
       const resolver = yield* StackTargetResolver;
       const settings = yield* CommandSettings;
       const target = yield* resolver.resolve({
         projectRoot: settings.workdir,
         runtime: "auto",
-        name: Option.getOrUndefined(flags.stack),
-        id: Option.getOrUndefined(flags.stackId),
+        ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
       });
+      if (target.name !== undefined && target.definition === undefined) {
+        const { message, suggestion } = missingStackAdvice(target.name);
+        return yield* new LogsInputError({ message: `${message} ${suggestion}` });
+      }
       const instances = target.definition?.instances ?? [];
       const requested = Option.getOrUndefined(flags.service);
       const gateway = target.definition !== undefined && hasGatewayLogs(target.definition);

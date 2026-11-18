@@ -5,13 +5,14 @@ The command is available when the `experimental.stack` feature flag is enabled.
 The top-level `supabase status` command uses this handler when the same flag is
 enabled. Routing may read `supabase/config.toml` or `supabase/config.json` to
 select the experimental backend; set `SUPABASE_EXPERIMENTAL_STACK=1` to inspect
-a stack addressed with `--stack-id` when project configuration is missing or
+a stack addressed by `--stack <id>` when project configuration is missing or
 invalid.
 
-Target selection accepts the current project, `--stack <name>`, or
-`--stack-id <id or unique prefix>`. `--stack` and `--stack-id` are mutually exclusive. Explicit
-legacy `-o/--output` values are rejected; use `--output-format` instead, or
-`--env` in place of the `env` value.
+Target selection accepts the current project, or `--stack` by name, else by ID
+or unique ID prefix. `SUPABASE_STACK` stands in for `--stack`, but as an ID it
+only selects a stack of the current project. Explicit legacy `-o/--output`
+values are rejected; use `--output-format` instead, or `--env` in place of the
+`env` value.
 
 Status reads the persisted stack identity and composition membership, then
 observes each service through the saved owner when that owner is reachable. It

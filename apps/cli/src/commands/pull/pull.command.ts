@@ -21,6 +21,7 @@ import { pullRuntimeLayer } from "./pull.layers.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../command-internal/target/target-flags.ts";
+import { noStackSelectorFlags } from "../../command-internal/stack-target.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -120,6 +121,7 @@ export const pullCommand = Command.make("pull", config).pipe(
   ),
   Command.withHandler(pullHandler),
   Command.provide(pullRuntimeLayer),
+  Command.provide(noStackSelectorFlags),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "hosted", consent: "no" }),

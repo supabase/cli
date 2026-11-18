@@ -20,6 +20,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 /**
  * `db dump` has no `--output-format` machine envelope; it streams pg_dump SQL to
@@ -108,27 +109,6 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
       description: "Dump custom roles from the local database",
     },
   ]),
-  withPermissions(
-    compose(
-      {
-        operations: [],
-        noApiEffectFlags: [
-          "dry-run",
-          "data-only",
-          "use-copy",
-          "exclude",
-          "role-only",
-          "keep-comments",
-          "file",
-          "schema",
-        ],
-      },
-      dbConfig,
-      dbConfigPoolerFallback,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     dbDump(flags).pipe(
       withCommandTelemetry({
@@ -158,4 +138,26 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
     consent: "none",
     consentExemptReason: "reads the target and writes only a local dump",
   }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: [
+          "dry-run",
+          "data-only",
+          "use-copy",
+          "exclude",
+          "role-only",
+          "keep-comments",
+          "file",
+          "schema",
+        ],
+      },
+      dbConfig,
+      dbConfigPoolerFallback,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

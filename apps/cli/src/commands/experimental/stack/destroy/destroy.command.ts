@@ -12,13 +12,7 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 const config = {
   stack: Flag.String("stack").pipe(
     Flag.withDescription(
-      "Destroy the stack with this name (defaults to the current project stack).",
-    ),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription(
-      "Destroy an existing stack by id or unique id prefix; repeat to select several. A full id, such as a container's `com.supabase.stack` label, also selects the containers a deleted stack left behind.",
+      "Destroy a stack by name, else by ID or unique ID prefix; repeat to select several. A full ID, such as a container's `com.supabase.stack` label, also selects the containers a deleted stack left behind. Defaults to SUPABASE_STACK, else the current project stack.",
     ),
     Flag.atLeast(0),
   ),
@@ -37,11 +31,11 @@ export const stackDestroyCommand = Command.make("destroy", config).pipe(
       description: "Permanently destroy the feature-a stack",
     },
     {
-      command: "supabase stack destroy --stack-id 019532ab --stack-id 019532cd --yes",
+      command: "supabase stack destroy --stack 019532ab --stack 019532cd --yes",
       description: "Permanently destroy multiple stacks by id or unique id prefix",
     },
   ]),
-  withPermissions({ operations: [], noApiEffectFlags: ["stack", "stack-id"] }),
+  withPermissions({ operations: [], noApiEffectFlags: ["stack"] }),
   Command.withHandler((flags) =>
     stackDestroy(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),

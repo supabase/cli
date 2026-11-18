@@ -56,6 +56,7 @@ import {
   projectCatalogOverlay,
   StackBootstrapError,
 } from "../stack-bootstrap.ts";
+import { selectedStackFlags } from "../stack-target.ts";
 
 /** The local database container is not running. */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
@@ -223,9 +224,10 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     // Bucket creation and object seeding are owned by the CLI, not the stack runtime; the
     // gateway's lazy activation serves requests through `dormant`/`starting`, so seeding never
     // waits for `ready`. See docs/stack-commands.md#storage-and-bucket-seeding.
+    const stackFlags = yield* selectedStackFlags;
     const skipSeeding = (
       reason: string,
-      nextStep = "Run supabase seed buckets once Storage is available.",
+      nextStep = `Run supabase seed buckets${stackFlags} once Storage is available.`,
     ) =>
       output.raw(
         `${yellow("WARNING:")} skipped seeding storage buckets: ${reason} ${nextStep}\n`,
@@ -244,12 +246,16 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         yield* skipSeeding(
           describeStorageCapability(capability),
           decision === "disabled"
-            ? `${enableStorageAdvice(configFile)}, run supabase stack stop followed by supabase stack start without -x storage, then supabase seed buckets.`
+            ? `${enableStorageAdvice(configFile)}, run supabase stack stop${stackFlags} followed by supabase stack start${stackFlags} without -x storage, then supabase seed buckets${stackFlags}.`
             : undefined,
         );
         return;
       }
-      const credentials = yield* stackStorageEndpointFor(opened.value.stack, configFile);
+      const credentials = yield* stackStorageEndpointFor(
+        opened.value.stack,
+        configFile,
+        stackFlags,
+      );
       yield* seedBucketsRun({
         projectRef: "",
         emitSummary: false,

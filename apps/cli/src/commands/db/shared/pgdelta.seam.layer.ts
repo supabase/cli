@@ -23,6 +23,7 @@ import { currentStackBackend } from "../../../command-internal/stack-backend.ts"
 import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
 import { StackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
+import { captureStackSelectorFlags } from "../../../command-internal/stack-target.ts";
 
 const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Record<never, never> =>
   isDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};
@@ -81,6 +82,7 @@ export const declarativeSeamLayer = Layer.effect(
     // closure below can `Effect.provideContext` it and satisfy `DeclarativeSeamShape` without
     // hand-enumerating every transitive dependency.
     const experimentalFlag = yield* ExperimentalFlag;
+    const provideStackSelector = yield* captureStackSelectorFlags;
     const cliArgs = yield* CliArgs;
     const stackCatalogSetup = yield* StackCatalogSetup;
     const cliConfigValues = yield* CliConfigValues;
@@ -91,6 +93,7 @@ export const declarativeSeamLayer = Layer.effect(
         const backend = yield* currentStackBackend;
         if (backend.kind === "stack") {
           return yield* stackEnsurePostgresOnlyStarted().pipe(
+            provideStackSelector,
             Effect.asVoid,
             Effect.scoped,
             Effect.provideContext(context),

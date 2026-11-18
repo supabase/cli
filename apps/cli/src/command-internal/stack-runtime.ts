@@ -63,10 +63,11 @@ export const containerEngineName = (runtime: ContainerEngine) =>
 export const automaticRuntimeNotice = (
   requested: StackRuntime | undefined,
   selected: StackRuntime,
+  stackFlags = "",
 ): string | undefined =>
   requested !== undefined || selected === "docker"
     ? undefined
-    : `Docker didn't answer, so this new stack uses the ${selected === "podman" ? "Podman" : "native"} runtime, which is saved with the stack. To use Docker, start it, then run \`supabase stack destroy\` and start again, or choose a different --stack name with --runtime docker.`;
+    : `Docker didn't answer, so this new stack uses the ${selected === "podman" ? "Podman" : "native"} runtime, which is saved with the stack. To use Docker, start it, then run \`supabase stack destroy${stackFlags}\` and start again, or choose a different --stack name with --runtime docker.`;
 
 /** Returns the requested or saved runtime unchanged; otherwise the first of Docker, Podman, or native that is usable on this host. */
 export const selectStackRuntime = Effect.fn("StackRuntime.select")(function* (

@@ -346,7 +346,7 @@ describe("experimental stack update and saved stack data", () => {
       .filter((message) => message.startsWith("stack "));
 
   const destroy = (stackId: string) =>
-    `run \`supabase stack destroy --stack-id ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
+    `run \`supabase stack destroy --stack ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
 
   const lockedAt =
     (databaseUpstream: string) =>

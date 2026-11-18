@@ -5,6 +5,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
 import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { rejectStackSelectorOnLegacy } from "../../../command-internal/stack-target.ts";
 import { DbStartFromBackupUnsupportedError } from "./start.errors.ts";
 import type { DbStartFlags } from "./start.command.ts";
 
@@ -23,6 +24,7 @@ export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
   const telemetryState = yield* TelemetryState;
 
   const body = Effect.gen(function* () {
+    yield* rejectStackSelectorOnLegacy;
     const backend = yield* currentStackBackend;
     const fromBackup = Option.getOrUndefined(flags.fromBackup);
     yield* Effect.annotateCurrentSpan({
@@ -37,7 +39,7 @@ export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
             "Omit --from-backup, or disable [experimental].stack to restore a Compose backup.",
         });
       }
-      const result = yield* stackEnsurePostgresOnlyStarted();
+      const result = yield* stackEnsurePostgresOnlyStarted({ createSelected: true });
       if (result === "already-running") {
         if (output.format === "text") {
           yield* output.raw("Postgres database is already running.\n", "stderr");

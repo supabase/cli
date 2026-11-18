@@ -24,6 +24,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
@@ -129,30 +130,6 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
       description: "Diff only the public and extensions schemas",
     },
   ]),
-  withPermissions(
-    compose(
-      {
-        operations: [explicitBranchSide("from"), explicitBranchSide("to")],
-        noApiEffectFlags: [
-          "use-migra",
-          "use-pgadmin",
-          "use-pg-schema",
-          "use-pg-delta",
-          "strict-coverage",
-          "output",
-          "file",
-          "schema",
-        ],
-      },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      explicitLinkedSide("from"),
-      explicitLinkedSide("to"),
-      explicitNamedProjectSide("from"),
-      explicitNamedProjectSide("to"),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     dbDiff(flags).pipe(
       withCommandTelemetry({
@@ -181,4 +158,29 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     consent: "none",
     consentExemptReason: "reads the target and writes only local migration files",
   }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      {
+        operations: [explicitBranchSide("from"), explicitBranchSide("to")],
+        noApiEffectFlags: [
+          "use-migra",
+          "use-pgadmin",
+          "use-pg-schema",
+          "use-pg-delta",
+          "strict-coverage",
+          "output",
+          "file",
+          "schema",
+        ],
+      },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      explicitLinkedSide("from"),
+      explicitLinkedSide("to"),
+      explicitNamedProjectSide("from"),
+      explicitNamedProjectSide("to"),
+      branchResolution,
+    ),
+  ),
 );

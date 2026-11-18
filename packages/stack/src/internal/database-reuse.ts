@@ -4,7 +4,7 @@ import { isOrioledbVersion, postgresMajor } from "../Artifacts.ts";
 
 /** Recovery for local database data a stack cannot reuse, worded like the CLI's saved-stack advice. */
 export const recreateStackAdvice = (stackId: string): string =>
-  `run \`supabase stack destroy --stack-id ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
+  `run \`supabase stack destroy --stack ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
 
 /** Recovery that keeps data created at `version` by pinning it again, before the destructive recreate. */
 export const keepOrRecreateAdvice = (stackId: string, service: string, version: string): string =>

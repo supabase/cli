@@ -15,6 +15,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -54,14 +55,6 @@ export const dbResetCommand = Command.make("reset", config).pipe(
       description: "Reset the local database using seed files relative to supabase/",
     },
   ]),
-  withPermissions(
-    compose(
-      { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     dbReset(flags).pipe(
       withCommandTelemetry({
@@ -79,4 +72,13 @@ export const dbResetCommand = Command.make("reset", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

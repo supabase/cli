@@ -476,8 +476,8 @@ stack = true
     }
     expect(completionFlags("stack", "status")).toContain("--override-name");
     expect(completionFlags("stack", "status")).toContain("--env");
-    expect(completionFlags("stack", "status")).toContain("--stack-id");
-    expect(completionFlags("legacy", "status")).not.toContain("--stack-id");
+    expect(completionFlags("stack", "status")).toContain("--stack");
+    expect(completionFlags("legacy", "status")).not.toContain("--stack");
     expect(completionFlags("legacy", "status")).not.toContain("--env");
   });
 });
