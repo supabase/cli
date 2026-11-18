@@ -10,12 +10,11 @@ that carries the **`open-for-contribution`** label. This is enforced by the
 [`Contribution Gate`](./workflows/contribution-gate.yml) workflow, whose decision logic
 lives in [`scripts/contribution-gate.ts`](./scripts/contribution-gate.ts).
 
-The gate runs **reactively on each PR** so a non-conforming PR is closed right away, and
-can also be **swept across every open PR on demand** via the workflow's _Run workflow_
-button.
+The gate runs **manually across every open PR** via the workflow's _Run workflow_
+button. Opening, reopening, or editing a PR does not run the gate.
 
-A pull request is **auto-closed with an explanatory comment** when the author is external
-and any of these is true:
+During a sweep, a pull request is **closed with an explanatory comment** when the author
+is external and any of these is true:
 
 - no issue is linked (via a closing keyword such as `Closes #123`, or the PR's
   Development sidebar), or
@@ -28,9 +27,9 @@ aren't public on GitHub.
 
 ### Running the gate manually
 
-Use **Actions → Contribution Gate → Run workflow** to sweep all open PRs on demand — for
-example right after bulk-applying `open-for-contribution` labels, so the whole backlog is
-re-evaluated at once instead of waiting for each PR's next edit. Set the **`dry_run`**
+Use **Actions → Contribution Gate → Run workflow** from a trusted branch to sweep all open
+PRs on demand, for example after bulk-applying `open-for-contribution` labels. Maintainers
+must run this sweep to enforce the contribution policy. Set the **`dry_run`**
 input to `true` first to log each PR's decision in the run output without commenting on or
 closing anything; run again with `dry_run` unchecked to apply the decisions.
 

@@ -7,17 +7,9 @@
  * repository permission, so private org members count too) and bots are
  * exempt. PRs that don't follow the process are commented on and closed.
  *
- * Two modes, both driven from `main()`:
- *   - single-PR (default): reacts to one PR on `pull_request_target`
- *     (`opened`/`reopened`/`edited`), using the PR_* env vars from the event.
- *   - all-PRs sweep (`GATE_MODE=all`, or the `--all` flag): evaluates every
- *     open PR, for on-demand `workflow_dispatch` runs. Set `DRY_RUN=true` to
- *     log decisions without commenting/closing.
- *
- * The workflow checks out the base branch in both modes, so this only ever
- * executes trusted repository code.
- *
- * Run in CI as: `bun .github/scripts/contribution-gate.ts`.
+ * The manual workflow sweeps every open PR.
+ * Set `DRY_RUN=true` to log decisions without commenting or closing.
+ * Run the workflow from a trusted branch.
  */
 
 export const GATE_LABEL = "open-for-contribution";
@@ -395,50 +387,6 @@ function makeCloser(
   };
 }
 
-/** Single-PR mode: react to the PR carried by a `pull_request_target` event. */
-async function runSinglePr(
-  token: string,
-  owner: string,
-  repo: string,
-  repository: string,
-): Promise<void> {
-  const prNumber = Number(requireEnv("PR_NUMBER"));
-  const authorAssociation = process.env.PR_AUTHOR_ASSOCIATION ?? "NONE";
-  const authorLogin = process.env.PR_AUTHOR_LOGIN ?? "";
-  const isBot = (process.env.PR_AUTHOR_TYPE ?? "User") === "Bot";
-
-  // `author_association` only exposes public org membership, so a private
-  // member must be confirmed via the effective repository permission.
-  let permission: string | undefined;
-  let isInternal = isBot || INTERNAL_ASSOCIATIONS.has(authorAssociation);
-  if (!isInternal) {
-    permission = await fetchAuthorPermission(token, owner, repo, authorLogin);
-    isInternal = isInternalAuthor(authorAssociation, permission);
-  }
-
-  const linkedIssues = await fetchLinkedIssues(token, owner, repo, prNumber);
-  const result = evaluateGate({
-    repository,
-    isInternal,
-    isBot,
-    linkedIssues,
-  });
-
-  console.log(
-    `Contribution gate for PR #${prNumber}: pass=${result.pass} reason=${result.reason} ` +
-      `(author_association=${authorAssociation}, permission=${permission ?? "n/a"}, ` +
-      `bot=${isBot}, linked_issues=${linkedIssues.length})`,
-  );
-
-  if (result.pass || !result.message) {
-    return;
-  }
-
-  const base = `https://api.github.com/repos/${owner}/${repo}`;
-  await makeCloser(token, base, false)(prNumber, result.message);
-  console.log(`Closed PR #${prNumber} (reason=${result.reason}).`);
-}
-
 /** All-PRs mode: sweep every open PR, for on-demand `workflow_dispatch` runs. */
 async function runSweep(
   token: string,
@@ -471,13 +419,8 @@ async function main(): Promise<void> {
   const repository = requireEnv("GITHUB_REPOSITORY");
   const [owner, repo] = repository.split("/");
 
-  const allMode = process.env.GATE_MODE === "all" || process.argv.includes("--all");
-  if (allMode) {
-    const dryRun = /^(1|true)$/i.test(process.env.DRY_RUN ?? "");
-    await runSweep(token, owner!, repo!, repository, dryRun);
-  } else {
-    await runSinglePr(token, owner!, repo!, repository);
-  }
+  const dryRun = /^(1|true)$/i.test(process.env.DRY_RUN ?? "");
+  await runSweep(token, owner!, repo!, repository, dryRun);
 }
 
 if (import.meta.main) {
