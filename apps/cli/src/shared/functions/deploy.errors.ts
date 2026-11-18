@@ -72,7 +72,7 @@ const causeKindSeverity = {
 /** Aggregates the per-function failures of a multi-function API deploy. */
 export class FunctionsDeployFailedError extends AggregateError {
   static readonly [ErrorActionabilityFingerprintId] = "FunctionsDeployFailedError";
-  /** Reports the most severe cause. A plan-gated cause wins regardless of severity, because the classifier reads `entitlement` before this getter. */
+  /** Reports the most severe cause. Not used when a cause is plan-gated: that run always reports `plan_limit`. */
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     const errors: unknown = this.errors;
     let worst: CliErrorActionabilityDeclaration | undefined;
