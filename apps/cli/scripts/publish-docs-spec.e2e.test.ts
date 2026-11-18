@@ -85,7 +85,7 @@ describe("local reference preview", () => {
       expect(exitCode, stderr).toBe(0);
       const written = yield* fs.readFileString(target);
       expect(parse(written)).toEqual(parse(spec));
-      expect(written).toContain("clispec: '001'\n");
+      expect(written).toContain("clispec: '002'\n");
       expect(written.endsWith("\n")).toBe(true);
       expect(stdout).toContain("Wrote CLI reference to ");
       expect(yield* fs.exists(path.join(checkout, ".git"))).toBe(false);
@@ -175,7 +175,7 @@ describe("publish-docs-spec.ts entrypoint", () => {
         runScript(["--version", "1.0.0"], stringify(spec), root),
       );
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("invalid clispec 001 document");
+      expect(result.stderr).toContain("invalid clispec 002 document");
       expect(result.stderr).toContain("flags");
       expect(yield* fs.exists(marker)).toBe(false);
     }).pipe(Effect.provide(BunServices.layer)),
@@ -220,12 +220,12 @@ describe("publish-docs-spec.ts entrypoint", () => {
   }, 30_000);
 
   it("summarizes a valid spec in dry-run mode without publishing", () => {
-    const spec = validSpec("1.0.0");
-    const { exitCode, stdout, stderr } = runScript(["--version", "1.0.0", "--dry-run"], spec);
+    const spec = validSpec("2.0.0");
+    const { exitCode, stdout, stderr } = runScript(["--version", "2.0.0", "--dry-run"], spec);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(
-      `Would publish ${spec.length} bytes to supabase/supabase:apps/docs/spec/cli_v1_commands.yaml on branch cli/ref-doc`,
+      `Would publish ${spec.length} bytes to supabase/supabase:apps/docs/spec/cli_v2_commands.yaml on branch cli/ref-doc`,
     );
   }, 30_000);
 });

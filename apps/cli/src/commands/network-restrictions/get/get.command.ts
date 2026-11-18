@@ -18,6 +18,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { networkRestrictionsGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -25,9 +26,17 @@ const config = {
 
 export type NetworkRestrictionsGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const networkRestrictionsGetCommand = Command.make("get", config).pipe(
-  Command.withDescription("Get the current network restrictions."),
+export const networkRestrictionsGetCommand = makeCommand("get", config).pipe(
+  Command.withDescription(
+    "Shows the CIDR ranges allowed to connect to your project's database, and whether they are applied.",
+  ),
   Command.withShortDescription("Get the current network restrictions"),
+  Command.withExamples([
+    {
+      command: "supabase network-restrictions get --experimental --remote=<project-ref>",
+      description: "Show the allowed CIDR ranges for a project",
+    },
+  ]),
   withPermissions(
     compose(
       {

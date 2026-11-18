@@ -1,6 +1,7 @@
 import type * as CliCommand from "effect/cli/Command";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
@@ -15,12 +16,11 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { configValidate } from "./validate.handler.ts";
 
 const config = {
-  resolveEnv: Flag.Boolean("resolve-env").pipe(
-    Flag.withDescription(
+  resolveEnv: cliFlag("resolve-env", Flag.Boolean, {
+    description:
       "Read the shell and .env files, and check the values env() references supply. Without it, env() values are left unchecked.",
-    ),
-    Flag.withDefault(false),
-  ),
+    default: false,
+  }),
 } as const;
 
 export type ConfigValidateFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -38,7 +38,7 @@ const configValidateHandler = (flags: ConfigValidateFlags) =>
     withJsonErrorHandling,
   );
 
-export const configValidateCommand = Command.make("validate", config).pipe(
+export const configValidateCommand = makeCommand("validate", config).pipe(
   Command.withDescription(
     "Checks the project config file for syntax errors, unknown and removed keys, invalid values and failed validations, and reports every problem with its line. Reads the shell and .env files only with --resolve-env. Never modifies files or contacts the Supabase API. Exits 1 when any error is found.",
   ),

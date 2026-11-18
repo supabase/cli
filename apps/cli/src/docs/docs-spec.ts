@@ -1,21 +1,17 @@
 import { hasOptionalSubcommand } from "../shared/output/optional-subcommand-usage.ts";
 import { Option } from "effect";
 import { stringify } from "yaml";
-import { GlobalFlag } from "effect/cli";
-import type { Command, Param } from "effect/cli";
+import { Command, Completions, GlobalFlag, Param } from "effect/cli";
+import { DOCS_CATEGORIES, readCommandDocs } from "./command-docs.ts";
+import type { CommandDocs, DocsCategory } from "./command-docs.ts";
+import type { BreakingChange } from "./breaking-changes/define.ts";
+import { commandIdOf, docsBreakingChangesFor, migrationGuideMdx } from "./breaking-changes/emit.ts";
+import type { DocsBreakingChange } from "./breaking-changes/emit.ts";
+import { paramDocsOf, registeredParams } from "../shared/cli/cli-params.ts";
+import type { ParamDocs } from "../shared/cli/cli-params.ts";
 import {
-  choiceKeysOf,
-  commandInternals,
-  flattenSubcommands,
-  userGlobalFlagParams,
-} from "./docs-introspection.ts";
-import { unwrapParam } from "../command-internal/param-introspection.ts";
-import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
-import { remoteFlagName } from "../shared/output/target-help.ts";
-import {
-  DOCS_ARG_OVERRIDES,
+  DOCS_CATEGORY,
   DOCS_CHOICE_OVERRIDES,
-  DOCS_DEFAULT_OVERRIDES,
   DOCS_EXCLUDED,
   DOCS_EXCLUDED_FLAGS,
   DOCS_EXPERIMENTAL,
@@ -23,16 +19,20 @@ import {
   DOCS_EXTRA_FLAGS,
   DOCS_INFO_DESCRIPTION,
   DOCS_INFO_TAGS,
-  DOCS_REQUIRED,
   DOCS_TAGS,
 } from "./docs-spec.tables.ts";
 import type { DocsInfoTag } from "./docs-spec.tables.ts";
 
 /**
- * Builds the `clispec 001` document consumed by the supabase.com CLI reference
- * (`apps/docs/spec/cli_v1_commands.yaml`) from the Effect command tree. A command's `id` is
- * its `CommandPath` joined by dashes — the public URL slug and `common-cli-sections.json` join key.
+ * Builds the `clispec 002` document consumed by the supabase.com CLI reference
+ * (`apps/docs/spec/cli_<major>_commands.yaml`) and its sidebar sections from the Effect command
+ * tree. A command's `id` is its `CommandPath` joined by dashes — the public URL slug and the
+ * sections join key.
  *
+ * Command metadata comes from `withDocs` first and the static tables second. Flags and arguments
+ * take their structure from `Completions.fromCommand` and everything else from the `ParamDocs`
+ * their `cli-params.ts` constructor recorded, joined by name through the command's registered
+ * params.
  * Every static-table key and content input is validated against the walked tree at build time,
  * failing the build on stale entries instead of silently degrading the reference.
  */
@@ -70,6 +70,7 @@ export interface DocsCommand {
   readonly usage?: string;
   readonly subcommands: ReadonlyArray<string>;
   readonly flags: ReadonlyArray<DocsFlag>;
+  readonly breaking_changes?: ReadonlyArray<DocsBreakingChange>;
 }
 
 interface DocsInfo {
@@ -86,19 +87,83 @@ interface DocsInfo {
 
 export interface DocsSpec {
   readonly clispec: string;
+  readonly prerelease?: boolean;
   readonly info: DocsInfo;
   readonly flags: ReadonlyArray<DocsFlag>;
   readonly commands: ReadonlyArray<DocsCommand>;
 }
 
+interface DocsMarkdownSection {
+  readonly title: string;
+  readonly id: string;
+  readonly slug: string;
+  readonly isFunc: false;
+  readonly type: "markdown";
+}
+
+interface DocsCommandSection {
+  readonly id: string;
+  readonly title: string;
+  readonly slug: string;
+  readonly type: "cli-command";
+}
+
+interface DocsCategorySection {
+  readonly type: "category";
+  readonly title: string;
+  readonly items: ReadonlyArray<DocsCommandSection>;
+}
+
+/** One entry of the docs-site sidebar file (`common-cli-sections.json` and its per-major siblings). */
+export type DocsSection = DocsMarkdownSection | DocsCategorySection;
+
+export interface DocsBundle {
+  readonly spec: DocsSpec;
+  readonly sections: ReadonlyArray<DocsSection>;
+  /** The generated `migrating-from-v<major - 1>` page; present only when the spec is for a major that has one. */
+  readonly migrationGuide?: string;
+}
+
 export interface DocsSpecInput {
   readonly root: Command.Command.Any;
   readonly version: string;
+  /** Marks the spec as a prerelease major (`next`). */
+  readonly prerelease?: boolean;
+  /** The CLI major the spec documents; defaults to 3. */
+  readonly major?: number;
+  /** Registry of breaking changes to report per command; defaults to none. */
+  readonly breakingChanges?: ReadonlyArray<BreakingChange>;
   /** Overlay markdown keyed by docs-relative POSIX path, e.g. `supabase/db/push.md`. */
   readonly overlays: ReadonlyMap<string, string>;
   /** Examples keyed by doc id, from `docs/templates/examples.yaml`. */
   readonly examples: Readonly<Record<string, ReadonlyArray<DocsExample>>>;
 }
+
+/** Hand-written pages the docs site serves ahead of the command categories. */
+const DOCS_INTRO_SECTIONS: ReadonlyArray<DocsMarkdownSection> = [
+  {
+    title: "Introduction",
+    id: "introduction",
+    slug: "introduction",
+    isFunc: false,
+    type: "markdown",
+  },
+  {
+    title: "Global flags",
+    id: "global-flags",
+    slug: "global-flags",
+    isFunc: false,
+    type: "markdown",
+  },
+];
+
+const migrationSection = (major: number): DocsMarkdownSection => ({
+  title: `Migrating from v${major - 1}`,
+  id: `migrating-from-v${major - 1}`,
+  slug: `migrating-from-v${major - 1}`,
+  isFunc: false,
+  type: "markdown",
+});
 
 /**
  * Overlay file path for a command path — the layout contract of
@@ -143,12 +208,13 @@ function docsEnumTypeString(choices: ReadonlyArray<string>): string {
   return joined.length < DOCS_ENUM_TYPE_MAX_JOINED_LENGTH ? `[ ${joined} ]` : "string";
 }
 
-function docsPrimitiveVarname(
-  single: Param.Single<Param.ParamKind, unknown>,
+function docsVarname(
+  type: Completions.FlagType,
+  typeName: string | undefined,
   isVariadic: boolean,
 ): string | undefined {
-  if (single.typeName !== undefined) return single.typeName;
-  switch (single.primitiveType._tag) {
+  if (typeName !== undefined) return typeName;
+  switch (type._tag) {
     case "Boolean":
       return undefined;
     case "Int":
@@ -162,13 +228,10 @@ function docsPrimitiveVarname(
   }
 }
 
-function docsTypeDefault(
-  single: Param.Single<Param.ParamKind, unknown>,
-  isVariadic: boolean,
-): string {
-  if (single.primitiveType._tag === "Boolean") return "false";
+function docsTypeDefault(type: Completions.FlagType, isVariadic: boolean): string {
+  if (type._tag === "Boolean") return "false";
   if (isVariadic) return "[]";
-  if (single.primitiveType._tag === "Int" || single.primitiveType._tag === "Finite") return "0";
+  if (type._tag === "Int" || type._tag === "Finite") return "0";
   return "";
 }
 
@@ -181,123 +244,183 @@ function docsNormalizeText(text: string): string {
   return text.replaceAll("\t", "    ");
 }
 
-/** Doc for a visible flag; `undefined` for hidden flags; throws on an unrecognizable param. */
-export function docsFlagDoc(
-  commandPath: ReadonlyArray<string>,
-  param: Param.AnyFlag,
-): DocsFlag | undefined {
-  const unwrapped = unwrapParam(param);
-  if (unwrapped === undefined) {
+/**
+ * `--help` shows defaults through a trailing `(default …)` token in the description; the reference
+ * carries the default as its own field, so the token is dropped when one is recorded.
+ */
+function docsStripDefaultToken(description: string, recordedDefault: string | undefined): string {
+  return recordedDefault === undefined
+    ? description
+    : description.replace(/\s*\(default [^)]*\)\.?$/, "");
+}
+
+/** `--help` is built into the parser, so its docs are declared here rather than recorded. */
+const BUILT_IN_FLAG_DOCS: ReadonlyMap<Param.Any, ParamDocs> = new Map([
+  [GlobalFlag.Help.flag, { kind: Param.flagKind, name: "help", required: false, hidden: false }],
+]);
+
+function docsOfParam(commandPath: ReadonlyArray<string>, param: Param.Any): ParamDocs {
+  const docs = paramDocsOf(param) ?? BUILT_IN_FLAG_DOCS.get(param);
+  if (docs === undefined) {
     throw new Error(
-      `docs-spec.ts: a flag on "${commandPath.join(" ")}" wraps an unrecognized Param variant — effect's Param union may have changed; the spec cannot be built without dropping it silently.`,
+      `docs-spec.ts: a param on "${commandPath.join(" ")}" was not built with cliFlag/cliArgument (shared/cli/cli-params.ts), so it has no docs metadata.`,
     );
   }
-  const { single, isVariadic } = unwrapped;
-  if (single.hidden) return undefined;
+  return docs;
+}
 
-  const docId = commandPath.join("-");
-  const overrideKey = `${docId} ${single.name}`;
+/** The docs of `params` keyed by name, for joining with completion descriptors. */
+function docsByName(
+  commandPath: ReadonlyArray<string>,
+  params: ReadonlyArray<Param.Any>,
+  kind: Param.ParamKind,
+): ReadonlyMap<string, ParamDocs> {
+  return new Map(
+    params
+      .map((param) => docsOfParam(commandPath, param))
+      .filter((docs) => docs.kind === kind)
+      .map((docs) => [docs.name, docs]),
+  );
+}
+
+function lookupDocs(
+  commandPath: ReadonlyArray<string>,
+  index: ReadonlyMap<string, ParamDocs>,
+  name: string,
+): ParamDocs {
+  const docs = index.get(name);
+  if (docs === undefined) {
+    throw new Error(
+      `docs-spec.ts: "${commandPath.join(" ")}" completion descriptor lists "${name}", which matches none of the command's registered params.`,
+    );
+  }
+  return docs;
+}
+
+/**
+ * Completion descriptors for flags `Completions.fromCommand` does not reach on its own (global
+ * flags), read through the same public walk by wrapping them in a throwaway command.
+ */
+function describeFlags(
+  params: ReadonlyArray<Param.AnyFlag>,
+): ReadonlyArray<Completions.FlagDescriptor> {
+  const config = Object.fromEntries(params.map((param, index) => [`flag${index}`, param]));
+  return Completions.fromCommand(Command.make("flags", config)).flags;
+}
+
+/** Doc for one visible flag: structure from its completion descriptor, the rest from its docs. */
+function docsFlagFrom(
+  commandPath: ReadonlyArray<string>,
+  descriptor: Completions.FlagDescriptor,
+  docs: ParamDocs,
+): DocsFlag {
+  const isVariadic = docs.variadicMin !== undefined;
+  const overrideKey = `${commandPath.join("-")} ${descriptor.name}`;
 
   let acceptedValues: ReadonlyArray<DocsAcceptedValue> | undefined;
   let enumType: string | undefined;
-  const choices = DOCS_CHOICE_OVERRIDES[overrideKey] ?? choiceKeysOf(single.primitiveType);
+  const choices =
+    DOCS_CHOICE_OVERRIDES[overrideKey] ??
+    (descriptor.type._tag === "Choice" ? descriptor.type.values : undefined);
   if (choices !== undefined) {
     enumType = docsEnumTypeString(choices);
     const type = enumType;
     acceptedValues = choices.map((value) => ({ id: value, name: value, type }));
   }
 
-  const varname = enumType ?? docsPrimitiveVarname(single, isVariadic);
+  const varname = enumType ?? docsVarname(descriptor.type, docs.metavar, isVariadic);
 
-  const shorthand = single.aliases.find((alias) => alias.length === 1);
+  const shorthand = descriptor.aliases.find((alias) => alias.length === 1);
+  // A boolean flag with a value hint takes an optional `=value`, as `--remote` does.
   const longName =
-    isRemoteFlag(single) && single.typeName !== undefined
-      ? remoteFlagName(single.typeName)
-      : `${single.name}${varname === undefined ? "" : ` <${varname}>`}`;
+    descriptor.type._tag === "Boolean" && docs.metavar !== undefined
+      ? `${descriptor.name}[=${docs.metavar}]`
+      : `${descriptor.name}${varname === undefined ? "" : ` <${varname}>`}`;
   const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${longName}`;
 
-  const required = DOCS_REQUIRED.has(overrideKey);
-
   return {
-    id: single.name,
+    id: descriptor.name,
     name,
-    description: docsNormalizeText(Option.getOrElse(single.description, () => "")),
-    ...(required ? { required: true } : {}),
-    default_value: DOCS_DEFAULT_OVERRIDES[overrideKey] ?? docsTypeDefault(single, isVariadic),
+    description: docsNormalizeText(
+      docsStripDefaultToken(descriptor.description ?? "", docs.default),
+    ),
+    ...(docs.required ? { required: true } : {}),
+    default_value: docs.default ?? docsTypeDefault(descriptor.type, isVariadic),
     ...(acceptedValues === undefined ? {} : { accepted_values: acceptedValues }),
   };
 }
 
-function docsArgumentUsage(
+/** Docs for the visible flags among `params`, in declaration order; hidden flags are dropped. */
+function docsFlagsOf(
   commandPath: ReadonlyArray<string>,
-  param: Param.AnyArgument,
+  params: ReadonlyArray<Param.AnyFlag>,
+): ReadonlyArray<DocsFlag> {
+  const index = docsByName(commandPath, params, Param.flagKind);
+  return describeFlags(params).map((descriptor) =>
+    docsFlagFrom(commandPath, descriptor, lookupDocs(commandPath, index, descriptor.name)),
+  );
+}
+
+/** Doc for one flag param on `commandPath`; `undefined` when the flag is hidden. */
+export function docsFlagDoc(
+  commandPath: ReadonlyArray<string>,
+  param: Param.AnyFlag,
+): DocsFlag | undefined {
+  return docsFlagsOf(commandPath, [param])[0];
+}
+
+function docsArgumentUsage(
+  descriptor: Completions.ArgumentDescriptor,
+  docs: ParamDocs,
 ): string | undefined {
-  const unwrapped = unwrapParam(param);
-  if (unwrapped === undefined) {
-    throw new Error(
-      `docs-spec.ts: an argument on "${commandPath.join(" ")}" wraps an unrecognized Param variant — effect's Param union may have changed; the spec cannot be built without dropping it silently.`,
-    );
-  }
-  const { single, isOptional, isVariadic, variadicMin } = unwrapped;
-  if (single.hidden) return undefined;
-  const optional = isOptional || (isVariadic && variadicMin === 0);
-  const rendered = optional ? `[${single.name}]` : `<${single.name}>`;
-  return isVariadic ? `${rendered} ...` : rendered;
+  if (docs.hidden) return undefined;
+  const rendered = docs.required ? `<${descriptor.name}>` : `[${descriptor.name}]`;
+  return docs.variadicMin === undefined ? rendered : `${rendered} ...`;
 }
 
-function docsVisibleChildren(command: Command.Command.Any): ReadonlyArray<Command.Command.Any> {
-  return flattenSubcommands(command)
-    .filter((child) => !child.unlisted)
-    .toSorted((a, b) => docsCompare(a.name, b.name));
-}
-
-function walkDocsCommands(
-  root: Command.Command.Any,
-  onCommand: (
-    command: Command.Command.Any,
-    path: ReadonlyArray<string>,
-    inheritedParams: ReadonlyArray<Param.AnyFlag>,
-    children: ReadonlyArray<Command.Command.Any>,
-    publishedChildren: ReadonlyArray<Command.Command.Any>,
-  ) => void,
-  onExcluded?: (path: ReadonlyArray<string>) => void,
-): void {
-  const visit = (
-    command: Command.Command.Any,
-    path: ReadonlyArray<string>,
-    inheritedParams: ReadonlyArray<Param.AnyFlag>,
-  ): void => {
-    if (DOCS_EXCLUDED.has(path.join("-"))) {
-      onExcluded?.(path);
-      return;
-    }
-    const children = docsVisibleChildren(command);
-    const publishedChildren = children.filter(
-      (child) => !DOCS_EXCLUDED.has([...path, child.name].join("-")),
-    );
-    onCommand(command, path, inheritedParams, children, publishedChildren);
-    const childInherited = [
-      ...inheritedParams,
-      ...commandInternals(command).contextConfig.flags,
-      ...userGlobalFlagParams(command),
-    ];
-    for (const child of children) visit(child, [...path, child.name], childInherited);
-  };
-  for (const child of docsVisibleChildren(root)) visit(child, ["supabase", child.name], []);
-}
-
-/** Published command IDs and their children, excluding the root and hidden subtrees. */
+/** Published command IDs and their children, using the same exclusions as `buildDocsSpec`. */
 export function docsCommandTree(
   root: Command.Command.Any,
 ): ReadonlyMap<string, ReadonlyArray<string>> {
   const tree = new Map<string, ReadonlyArray<string>>();
-  walkDocsCommands(root, (_command, path, _inherited, _children, publishedChildren) => {
+  const published = (command: Command.Command.Any, path: ReadonlyArray<string>) =>
+    docsVisibleChildren(command)
+      .map((child) => ({ child, path: [...path, child.name] }))
+      .filter(
+        ({ child, path }) =>
+          !DOCS_EXCLUDED.has(path.join("-")) && docsOf(child)?.deprecated === undefined,
+      );
+  const visit = (command: Command.Command.Any, path: ReadonlyArray<string>): void => {
+    const children = published(command, path);
     tree.set(
       path.join("-"),
-      publishedChildren.map((child) => [...path, child.name].join("-")),
+      children.map((entry) => entry.path.join("-")),
     );
-  });
+    for (const entry of children) visit(entry.child, entry.path);
+  };
+  for (const entry of published(root, ["supabase"])) visit(entry.child, entry.path);
   return tree;
+}
+
+function docsVisibleChildren(command: Command.Command.Any): ReadonlyArray<Command.Command.Any> {
+  return command.subcommands
+    .flatMap((group) => group.commands)
+    .filter((child) => !child.unlisted)
+    .toSorted((a, b) => docsCompare(a.name, b.name));
+}
+
+function docsChildDescriptor(
+  descriptor: Completions.CommandDescriptor,
+  childPath: ReadonlyArray<string>,
+): Completions.CommandDescriptor {
+  const name = childPath.at(-1);
+  const child = descriptor.subcommands.find((candidate) => candidate.name === name);
+  if (child === undefined) {
+    throw new Error(
+      `docs-spec.ts: Completions.fromCommand has no descriptor for listed command "${childPath.join(" ")}".`,
+    );
+  }
+  return child;
 }
 
 /** First line of a command's long description, for the listing summary fallback. */
@@ -329,45 +452,53 @@ function docsExperimentalFlag(rootFlags: ReadonlyArray<DocsFlag>): DocsFlag {
   };
 }
 
+function docsOf(command: Command.Command.Any): CommandDocs | undefined {
+  return Option.getOrUndefined(readCommandDocs(command));
+}
+
+/** Fails when a `withDocs` field and its legacy table or content source both describe `docId`. */
+function assertSingleSource(docId: string, field: string, legacy: string, both: boolean): void {
+  if (both) {
+    throw new Error(
+      `docs-spec.ts: "${docId}" sets withDocs ${field} and still has a ${legacy} entry; remove the ${legacy} entry.`,
+    );
+  }
+}
+
+/** Builds the spec alone; see {@link buildDocsBundle}. */
 export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
+  return buildDocsBundle(input).spec;
+}
+
+/** Builds the `clispec 002` spec and the sidebar sections that index it. */
+export function buildDocsBundle(input: DocsSpecInput): DocsBundle {
+  const major = input.major ?? 3;
+  const registry = input.breakingChanges ?? [];
   const rootPath = ["supabase"];
-  const rootFlagParams: ReadonlyArray<Param.AnyFlag> = [
-    ...userGlobalFlagParams(input.root),
+  const rootFlags = docsFlagsOf(rootPath, [
+    ...registeredParams(input.root).global,
     GlobalFlag.Help.flag,
-  ];
-  const rootFlags = rootFlagParams
-    .map((param) => docsFlagDoc(rootPath, param))
-    .filter((flag) => flag !== undefined)
-    .toSorted((a, b) => docsCompare(a.id, b.id));
+  ]).toSorted((a, b) => docsCompare(a.id, b.id));
   const experimentalFlag = docsExperimentalFlag(rootFlags);
   const { required: _experimentalRequired, ...experimentalOptionalFlag } = experimentalFlag;
   const rootFlagIds = new Set(rootFlags.map((flag) => flag.id));
 
   const commands: Array<DocsCommand> = [];
+  const categories = new Map<string, DocsCategory>();
   const emittedIds = new Set<string>();
   const skippedExcludedIds = new Set<string>();
+  const deprecatedIds = new Set<string>();
   const seenFlagKeys = new Set<string>(rootFlags.map((flag) => `supabase ${flag.id}`));
   const consumedExcludedFlagKeys = new Set<string>();
-  const consumedArgOverrideIds = new Set<string>();
   const consumedExtraFlagIds = new Set<string>();
   const consumedExperimentalIds = new Set<string>();
+  const consumedCategoryIds = new Set<string>();
   const consumedOverlayPaths = new Set<string>();
   const allowedOrphanOverlayPaths = new Set<string>();
 
-  /**
-   * Builds the visible flag docs for a command's params, dropping hidden flags and
-   * `DOCS_EXCLUDED_FLAGS` entries. Does not record `seenFlagKeys` itself — callers record
-   * only the flags that reach the output, so table validation reflects the published spec,
-   * not intermediate candidates.
-   */
-  const flagDocsFor = (
-    commandPath: ReadonlyArray<string>,
-    params: ReadonlyArray<Param.AnyFlag>,
-  ): ReadonlyArray<DocsFlag> => {
-    const docId = commandPath.join("-");
-    return params
-      .map((param) => docsFlagDoc(commandPath, param))
-      .filter((flag) => flag !== undefined)
+  /** Drops `DOCS_EXCLUDED_FLAGS` entries and sorts by id. */
+  const publishedFlags = (docId: string, flags: ReadonlyArray<DocsFlag>): ReadonlyArray<DocsFlag> =>
+    flags
       .filter((flag) => {
         const key = `${docId} ${flag.id}`;
         if (DOCS_EXCLUDED_FLAGS.has(key)) {
@@ -377,31 +508,83 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
         return true;
       })
       .toSorted((a, b) => docsCompare(a.id, b.id));
+
+  /** Deprecated children are kept out of the reference and their parent's subcommand list. */
+  const isExcluded = (child: Command.Command.Any, childPath: ReadonlyArray<string>): boolean => {
+    const childId = childPath.join("-");
+    const fromTable = DOCS_EXCLUDED.has(childId);
+    const fromDocs = docsOf(child)?.deprecated !== undefined;
+    assertSingleSource(childId, "deprecated", "DOCS_EXCLUDED", fromTable && fromDocs);
+    if (fromTable) skippedExcludedIds.add(childId);
+    if (fromTable || fromDocs) deprecatedIds.add(childId);
+    if (fromTable || fromDocs) allowedOrphanOverlayPaths.add(docsOverlayPath(childPath));
+    return fromTable || fromDocs;
   };
+
+  interface Inherited {
+    /** Ancestors' `withSharedFlags` params, which the descriptor already lists after local flags. */
+    readonly shared: ReadonlyArray<Param.AnyFlag>;
+    /** Non-root ancestors' own global flags (e.g. `seed`'s `--remote`), absent from descriptors. */
+    readonly global: ReadonlyArray<Param.AnyFlag>;
+    readonly category: DocsCategory | undefined;
+  }
 
   const visit = (
     command: Command.Command.Any,
+    descriptor: Completions.CommandDescriptor,
     commandPath: ReadonlyArray<string>,
-    inheritedParams: ReadonlyArray<Param.AnyFlag>,
-    children: ReadonlyArray<Command.Command.Any>,
-    publishedChildren: ReadonlyArray<Command.Command.Any>,
+    inherited: Inherited,
   ): void => {
     const docId = commandPath.join("-");
-    const internals = commandInternals(command);
+    const docs = docsOf(command);
+    const children = docsVisibleChildren(command);
+    const registered = registeredParams(command);
     const optionalSubcommand = hasOptionalSubcommand(command);
     const isExecutable = children.length === 0 || optionalSubcommand;
     emittedIds.add(docId);
 
+    const tableCategory = DOCS_CATEGORY[docId];
+    if (tableCategory !== undefined) consumedCategoryIds.add(docId);
+    assertSingleSource(
+      docId,
+      "category",
+      "DOCS_CATEGORY",
+      docs !== undefined && tableCategory !== undefined,
+    );
+    const category = docs?.category ?? tableCategory ?? inherited.category;
+    if (category === undefined) {
+      throw new Error(
+        `docs-spec.ts: command "${docId}" has no docs category — add withDocs({ category }) to it or a DOCS_CATEGORY entry for its top-level command.`,
+      );
+    }
+    categories.set(docId, category);
+
     const overlayPath = docsOverlayPath(commandPath);
     const overlay = input.overlays.get(overlayPath);
     if (overlay !== undefined) consumedOverlayPaths.add(overlayPath);
+    assertSingleSource(
+      docId,
+      "body",
+      "docs/supabase overlay",
+      docs?.body !== undefined && overlay !== undefined,
+    );
     const description = docsNormalizeText(
-      overlay === undefined ? (command.description ?? "") : docsStripOverlayHeading(overlay),
+      docs?.body ??
+        (overlay === undefined ? (command.description ?? "") : docsStripOverlayHeading(overlay)),
     );
 
     const flags: Array<DocsFlag> = [];
     if (isExecutable) {
-      const declared = flagDocsFor(commandPath, internals.config.flags);
+      const localIndex = docsByName(commandPath, registered.own, Param.flagKind);
+      const sharedIndex = docsByName(commandPath, inherited.shared, Param.flagKind);
+      const declared = publishedFlags(
+        docId,
+        descriptor.flags
+          .filter((flag) => localIndex.has(flag.name))
+          .map((flag) =>
+            docsFlagFrom(commandPath, flag, lookupDocs(commandPath, localIndex, flag.name)),
+          ),
+      );
       const declaredIds = new Set(declared.map((flag) => flag.id));
       const extraFlags = DOCS_EXTRA_FLAGS[docId];
       if (extraFlags !== undefined) {
@@ -416,32 +599,42 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       const own = [...declared, ...(extraFlags ?? [])].toSorted((a, b) => docsCompare(a.id, b.id));
       own.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...own);
-      if (DOCS_EXPERIMENTAL.has(docId)) {
-        consumedExperimentalIds.add(docId);
-        flags.push(experimentalFlag);
-      }
+
+      const experimentalInTable = DOCS_EXPERIMENTAL.has(docId);
+      assertSingleSource(
+        docId,
+        "experimental",
+        "DOCS_EXPERIMENTAL",
+        docs?.experimental !== undefined && experimentalInTable,
+      );
+      if (experimentalInTable) consumedExperimentalIds.add(docId);
+      if (docs?.experimental ?? experimentalInTable) flags.push(experimentalFlag);
       if (DOCS_EXPERIMENTAL_OPTIONAL.has(docId)) {
         consumedExperimentalIds.add(docId);
         flags.push(experimentalOptionalFlag);
       }
+
       const ownIds = new Set(own.map((flag) => flag.id));
-      const inherited = flagDocsFor(commandPath, inheritedParams).filter(
-        (flag) => !ownIds.has(flag.id) && !rootFlagIds.has(flag.id),
-      );
-      inherited.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
-      flags.push(...inherited);
+      const inheritedFlags = publishedFlags(docId, [
+        ...descriptor.flags
+          .filter((flag) => !localIndex.has(flag.name))
+          .map((flag) =>
+            docsFlagFrom(commandPath, flag, lookupDocs(commandPath, sharedIndex, flag.name)),
+          ),
+        ...docsFlagsOf(commandPath, inherited.global),
+      ]).filter((flag) => !ownIds.has(flag.id) && !rootFlagIds.has(flag.id));
+      inheritedFlags.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
+      flags.push(...inheritedFlags);
     }
 
     let usage: string | undefined;
     if (isExecutable) {
-      const argOverride = DOCS_ARG_OVERRIDES[docId];
-      if (argOverride !== undefined) consumedArgOverrideIds.add(docId);
-      const argUsages =
-        argOverride !== undefined
-          ? [argOverride]
-          : internals.config.arguments
-              .map((param) => docsArgumentUsage(commandPath, param))
-              .filter((part) => part !== undefined);
+      const argIndex = docsByName(commandPath, registered.own, Param.argumentKind);
+      const argUsages = descriptor.arguments
+        .map((argument) =>
+          docsArgumentUsage(argument, lookupDocs(commandPath, argIndex, argument.name)),
+        )
+        .filter((part) => part !== undefined);
       usage = [
         ...commandPath,
         ...argUsages,
@@ -458,17 +651,34 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     }
 
     const fromYaml = input.examples[docId];
+    assertSingleSource(
+      docId,
+      "examples",
+      "examples.yaml",
+      docs?.examples !== undefined && fromYaml !== undefined,
+    );
     const commandExamples =
-      fromYaml !== undefined && fromYaml.length > 0
-        ? fromYaml
-        : command.examples.length > 0
-          ? command.examples.map((example, index) => ({
-              id: `example-${index + 1}`,
-              name: example.description ?? example.command,
-              code: example.command,
-            }))
-          : undefined;
+      docs?.examples !== undefined
+        ? docs.examples.map((example) => ({
+            id: example.id,
+            name: example.name ?? example.code,
+            code: example.code,
+            ...(example.response === undefined ? {} : { response: example.response }),
+          }))
+        : fromYaml !== undefined && fromYaml.length > 0
+          ? fromYaml
+          : command.examples.length > 0
+            ? command.examples.map((example, index) => ({
+                id: `example-${index + 1}`,
+                name: example.description ?? example.command,
+                code: example.command,
+              }))
+            : undefined;
 
+    const visibleChildren = children.filter(
+      (child) => !isExcluded(child, [...commandPath, child.name]),
+    );
+    const breakingChanges = docsBreakingChangesFor(registry, docId, major);
     commands.push({
       id: docId,
       title: commandPath.join(" "),
@@ -478,34 +688,61 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       tags: tags ?? [],
       links: [],
       ...(usage === undefined ? {} : { usage }),
-      subcommands: publishedChildren.map((child) => [...commandPath, child.name].join("-")),
+      subcommands: visibleChildren.map((child) => [...commandPath, child.name].join("-")),
       flags,
+      ...(breakingChanges.length === 0 ? {} : { breaking_changes: breakingChanges }),
     });
+
+    const childInherited: Inherited = {
+      shared: [...inherited.shared, ...registered.shared],
+      global: [...inherited.global, ...registered.global],
+      category,
+    };
+    for (const child of visibleChildren) {
+      const childPath = [...commandPath, child.name];
+      visit(child, docsChildDescriptor(descriptor, childPath), childPath, childInherited);
+    }
   };
 
-  walkDocsCommands(input.root, visit, (path) => {
-    skippedExcludedIds.add(path.join("-"));
-    allowedOrphanOverlayPaths.add(docsOverlayPath(path));
-  });
+  const rootDescriptor = Completions.fromCommand(input.root);
+  for (const child of docsVisibleChildren(input.root)) {
+    const childPath = ["supabase", child.name];
+    if (isExcluded(child, childPath)) continue;
+    visit(child, docsChildDescriptor(rootDescriptor, childPath), childPath, {
+      shared: [],
+      global: [],
+      category: undefined,
+    });
+  }
 
   validateDocsTables({
     emittedIds,
     skippedExcludedIds,
     seenFlagKeys,
     consumedExcludedFlagKeys,
-    consumedArgOverrideIds,
     consumedExtraFlagIds,
     consumedExperimentalIds,
+    consumedCategoryIds,
   });
+  for (const change of registry) {
+    for (const command of change.commands) {
+      if (!emittedIds.has(commandIdOf(command))) {
+        throw new Error(
+          `docs-spec.ts: breaking change "${change.id}" lists "${command}", which is not a published command.`,
+        );
+      }
+    }
+  }
   validateDocsContent(input, {
     emittedIds,
-    skippedExcludedIds,
+    deprecatedIds,
     consumedOverlayPaths,
     allowedOrphanOverlayPaths,
   });
 
-  return {
-    clispec: "001",
+  const spec: DocsSpec = {
+    clispec: "002",
+    ...(input.prerelease === true ? { prerelease: true } : {}),
     info: {
       id: "cli",
       version: input.version,
@@ -513,13 +750,51 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       language: "sh",
       source: "https://github.com/supabase/cli",
       bugs: "https://github.com/supabase/cli/issues",
-      spec: "https://github.com/supabase/spec/cli_v1_commands.yaml",
+      spec: `https://github.com/supabase/supabase/blob/master/apps/docs/spec/cli_v${major}_commands.yaml`,
       description: DOCS_INFO_DESCRIPTION,
       tags: DOCS_INFO_TAGS,
     },
     flags: rootFlags,
     commands,
   };
+  const guideChanges = registry.filter((change) => change.major === major);
+  const hasGuide = guideChanges.length > 0;
+  return {
+    spec,
+    sections: buildDocsSections(commands, categories, hasGuide ? major : undefined),
+    ...(hasGuide ? { migrationGuide: migrationGuideMdx(major, guideChanges) } : {}),
+  };
+}
+
+/** Intro pages, then one category per `DOCS_CATEGORIES` entry in order, listing its commands in tree order. */
+function buildDocsSections(
+  commands: ReadonlyArray<DocsCommand>,
+  categories: ReadonlyMap<string, DocsCategory>,
+  guideMajor: number | undefined,
+): ReadonlyArray<DocsSection> {
+  const categorySections = Object.entries(DOCS_CATEGORIES)
+    .toSorted(([, a], [, b]) => a.order - b.order)
+    .flatMap(([category, { title }]): ReadonlyArray<DocsCategorySection> => {
+      const items = commands
+        .filter((command) => categories.get(command.id) === category)
+        .map((command) => ({
+          id: command.id,
+          title: command.title,
+          slug: command.id,
+          type: "cli-command" as const,
+        }));
+      return items.length === 0 ? [] : [{ type: "category", title, items }];
+    });
+  return [
+    ...DOCS_INTRO_SECTIONS,
+    ...(guideMajor === undefined ? [] : [migrationSection(guideMajor)]),
+    ...categorySections,
+  ];
+}
+
+/** Serializes the sidebar sections as the docs repo stores them. */
+export function stringifyDocsSections(sections: ReadonlyArray<DocsSection>): string {
+  return `${JSON.stringify(sections, null, 2)}\n`;
 }
 
 /**
@@ -547,16 +822,16 @@ function validateDocsTables(seen: {
   readonly skippedExcludedIds: ReadonlySet<string>;
   readonly seenFlagKeys: ReadonlySet<string>;
   readonly consumedExcludedFlagKeys: ReadonlySet<string>;
-  readonly consumedArgOverrideIds: ReadonlySet<string>;
   readonly consumedExtraFlagIds: ReadonlySet<string>;
   readonly consumedExperimentalIds: ReadonlySet<string>;
+  readonly consumedCategoryIds: ReadonlySet<string>;
 }): void {
   const stale: Array<string> = [];
-  for (const key of Object.keys(DOCS_DEFAULT_OVERRIDES)) {
-    if (!seen.seenFlagKeys.has(key)) stale.push(`DOCS_DEFAULT_OVERRIDES: "${key}"`);
-  }
   for (const id of Object.keys(DOCS_TAGS)) {
     if (!seen.emittedIds.has(id)) stale.push(`DOCS_TAGS: "${id}"`);
+  }
+  for (const id of Object.keys(DOCS_CATEGORY)) {
+    if (!seen.consumedCategoryIds.has(id)) stale.push(`DOCS_CATEGORY: "${id}"`);
   }
   for (const id of DOCS_EXPERIMENTAL) {
     if (!seen.consumedExperimentalIds.has(id)) stale.push(`DOCS_EXPERIMENTAL: "${id}"`);
@@ -575,14 +850,8 @@ function validateDocsTables(seen: {
   for (const id of DOCS_EXCLUDED) {
     if (!seen.skippedExcludedIds.has(id)) stale.push(`DOCS_EXCLUDED: "${id}"`);
   }
-  for (const key of DOCS_REQUIRED) {
-    if (!seen.seenFlagKeys.has(key)) stale.push(`DOCS_REQUIRED: "${key}"`);
-  }
   for (const key of DOCS_EXCLUDED_FLAGS) {
     if (!seen.consumedExcludedFlagKeys.has(key)) stale.push(`DOCS_EXCLUDED_FLAGS: "${key}"`);
-  }
-  for (const id of Object.keys(DOCS_ARG_OVERRIDES)) {
-    if (!seen.consumedArgOverrideIds.has(id)) stale.push(`DOCS_ARG_OVERRIDES: "${id}"`);
   }
   if (stale.length > 0) {
     throw new Error(
@@ -601,7 +870,7 @@ function validateDocsContent(
   input: DocsSpecInput,
   seen: {
     readonly emittedIds: ReadonlySet<string>;
-    readonly skippedExcludedIds: ReadonlySet<string>;
+    readonly deprecatedIds: ReadonlySet<string>;
     readonly consumedOverlayPaths: ReadonlySet<string>;
     readonly allowedOrphanOverlayPaths: ReadonlySet<string>;
   },
@@ -613,7 +882,7 @@ function validateDocsContent(
     }
   }
   for (const docId of Object.keys(input.examples)) {
-    if (!seen.emittedIds.has(docId) && !seen.skippedExcludedIds.has(docId)) {
+    if (!seen.emittedIds.has(docId) && !seen.deprecatedIds.has(docId)) {
       orphaned.push(`examples.yaml: "${docId}"`);
     }
   }

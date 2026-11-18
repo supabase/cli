@@ -13,6 +13,7 @@ import { computeList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
+import { makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -20,7 +21,7 @@ const config = {
 
 export type ComputeListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const computeListCommand = Command.make("list", config).pipe(
+export const computeListCommand = makeCommand("list", config).pipe(
   Command.withDescription(
     "List this project's compute, deployed or not: the union of the project config file's entries and what the Compute API reports.",
   ),

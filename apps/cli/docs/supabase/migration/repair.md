@@ -1,14 +1,18 @@
 ## supabase-migration-repair
 
-Repairs the migration history table.
+Mark migrations as applied or reverted in the migration history table, without running them. Use it when the local files and the history of a database are out of sync.
 
-By default, it repairs your local database. Pass `--remote` to repair the linked project, which requires running `supabase link`. Pass `--remote=<ref|branch|url>` to repair another project, a branch of the linked project, or a specific database. Repairing a hosted database asks for confirmation before it changes anything (the default answer is No); pass `--yes` to confirm in scripts and other non-interactive runs.
+It repairs the local database by default. Pass `--remote` to repair the linked project, which requires running `supabase link`. Pass `--remote=<ref|branch|url>` to repair another project, a branch of the linked project, or a specific database.
+
+Repairing a hosted database asks for confirmation before it changes anything (the default answer is No). Pass `--yes` to confirm in scripts and other non-interactive runs.
 
 `--linked`, `--project-ref`, `--db-url` and `--local` still work in v3 but are deprecated and removed in v4; use `--remote`.
 
-If your local and remote migration history goes out of sync, you can repair the remote history by marking specific migrations as `--status applied` or `--status reverted`. Marking as `reverted` will delete an existing record from the migration history table while marking as `applied` will insert a new record.
+Marking a migration as `reverted` deletes its record from the migration history table, and marking it as `applied` inserts a new record.
 
-For example, your migration history may look like the table below, with missing entries in either local or remote.
+## Example
+
+Your migration history may look like the table below, with entries missing on either the local or the remote side.
 
 ```bash
 $ supabase migration list --remote

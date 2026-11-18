@@ -19,7 +19,7 @@ const command = {
 };
 const example = { id: "basic", name: "Basic usage", code: "supabase example" };
 const spec = {
-  clispec: "001",
+  clispec: "002",
   info: {
     id: "cli",
     version: "1.0.0",
@@ -57,7 +57,7 @@ const inspectRoot = Command.make("supabase").pipe(
   Command.withSubcommands([
     Command.make("inspect").pipe(
       Command.withSubcommands([
-        Command.make("db").pipe(Command.withSubcommands([Command.make("cache-hit")])),
+        Command.make("db").pipe(Command.withSubcommands([Command.make("index-sizes")])),
       ]),
     ),
   ]),
@@ -80,12 +80,12 @@ it.effect("omits excluded commands from both coverage and parent links", () =>
     const error = yield* validateDocsSpec(
       stringify({
         ...inspectSpec,
-        commands: [...inspectSpec.commands, { ...command, id: "supabase-inspect-db-cache-hit" }],
+        commands: [...inspectSpec.commands, { ...command, id: "supabase-inspect-db-index-sizes" }],
       }),
       "1.0.0",
       inspectRoot,
     ).pipe(Effect.flip);
-    expect(error.message).toContain("unexpected: supabase-inspect-db-cache-hit");
+    expect(error.message).toContain("unexpected: supabase-inspect-db-index-sizes");
   }),
 );
 
@@ -181,7 +181,7 @@ it.effect.each([
     "type",
   ],
   ["invalid info", { ...spec, info: { ...spec.info, title: 42 } }, "title"],
-  ["invalid marker", { ...spec, clispec: "002" }, "clispec"],
+  ["invalid marker", { ...spec, clispec: "001" }, "clispec"],
 ] as const)("rejects %s", ([, input, message]) =>
   Effect.gen(function* () {
     const error = yield* validateDocsSpec(stringify(input), "1.0.0", root).pipe(Effect.flip);

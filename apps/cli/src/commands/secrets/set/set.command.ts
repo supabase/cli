@@ -14,24 +14,27 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { secretsSet } from "./set.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  envFile: Flag.String("env-file").pipe(
-    Flag.withDescription("Read secrets from a .env file."),
-    Flag.optional,
-  ),
-  secrets: Argument.String("NAME=VALUE").pipe(
-    Argument.withDescription("Secret name=value pairs to set."),
-    Argument.variadic(),
-  ),
+  envFile: cliFlag("env-file", Flag.String, {
+    description: "Read secrets from a .env file.",
+    optional: true,
+  }),
+  secrets: cliArgument("NAME=VALUE", repeated(Argument.String), {
+    description: "Secret NAME=VALUE pairs to set.",
+    docs: { required: true },
+  }),
 } as const;
 
 export type SecretsSetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const secretsSetCommand = Command.make("set", config).pipe(
-  Command.withDescription("Set a secret(s) to the linked Supabase project."),
-  Command.withShortDescription("Set a secret(s) on Supabase"),
+export const secretsSetCommand = makeCommand("set", config).pipe(
+  Command.withDescription(
+    "Set one or more secrets on the linked project, from `NAME=VALUE` pairs or a `.env` file. Edge Functions read them as environment variables.\n\nThe confirmation lists the secret names, never their values. Pass `--yes` in scripts and CI.",
+  ),
+  Command.withShortDescription("Set secrets on the linked project"),
   Command.withExamples([
     {
       command: "supabase secrets set MY_SECRET=myvalue",

@@ -8,17 +8,18 @@ import { stackStatus } from "./status.handler.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  stack: Flag.String("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Inspect an existing stack by id or unique id prefix."),
-    Flag.optional,
-  ),
-  env: Flag.Boolean("env").pipe(
-    Flag.withDescription("Export connection URLs and credentials as environment variables."),
-    Flag.withDefault(false),
-  ),
+  stack: cliFlag("stack", Flag.String, { description: "Inspect a named stack.", optional: true }),
+  stackId: cliFlag("stack-id", Flag.String, {
+    description: "Inspect an existing stack by id or unique id prefix.",
+    optional: true,
+  }),
+  env: cliFlag("env", Flag.Boolean, {
+    description: "Export connection URLs and credentials as environment variables.",
+    default: false,
+  }),
   overrideName: stringSliceFlag(
     "override-name",
     "Rename an exported variable: API_URL=NEXT_PUBLIC_SUPABASE_URL (requires --env).",
@@ -27,7 +28,7 @@ const config = {
 
 export type StackStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const stackStatusCommand = Command.make("status", config).pipe(
+export const stackStatusCommand = makeCommand("status", config).pipe(
   Command.withDescription("Show the state of a managed local Supabase stack."),
   Command.withShortDescription("Show stack status"),
   Command.withExamples([

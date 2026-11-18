@@ -14,20 +14,33 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  includeAll: Flag.Boolean("include-all").pipe(
-    Flag.withDescription("Include all migrations not found in the migration history table."),
-    Flag.withDefault(false),
-  ),
+  includeAll: cliFlag("include-all", Flag.Boolean, {
+    description: "Include all migrations not found in the migration history table.",
+    default: false,
+  }),
   ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 
 export type MigrationUpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const migrationUpCommand = Command.make("up", config).pipe(
-  Command.withDescription("Apply pending migrations to a database."),
+export const migrationUpCommand = makeCommand("up", config).pipe(
+  Command.withDescription(
+    "Apply local migrations that are not yet in the migration history of a database. Unlike db push, it only runs migrations and does not push roles, seeds, or vault secrets.",
+  ),
   Command.withShortDescription("Apply pending migrations to a database"),
+  Command.withExamples([
+    {
+      command: "supabase migration up",
+      description: "Apply pending migrations to the local database",
+    },
+    {
+      command: "supabase migration up --remote --include-all",
+      description: "Apply all missing migrations to the linked project",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["include-all"] },

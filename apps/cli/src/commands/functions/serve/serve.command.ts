@@ -15,6 +15,7 @@ import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const functionsServeRuntimeLayer = Layer.mergeAll(
@@ -28,50 +29,65 @@ const functionsServeRuntimeLayer = Layer.mergeAll(
 );
 
 const config = {
-  noVerifyJwt: Flag.Boolean("no-verify-jwt").pipe(
-    Flag.withDescription("Disable JWT verification for the Function."),
-    Flag.optional,
+  noVerifyJwt: cliFlag("no-verify-jwt", Flag.Boolean, {
+    description: "Disable JWT verification for the functions.",
+    optional: true,
+  }),
+  envFile: cliFlag("env-file", Flag.String, {
+    description:
+      "Path to an env file that overrides `supabase/functions/.env` and per-function `.env` files.",
+    optional: true,
+  }),
+  importMap: cliFlag("import-map", Flag.String, {
+    description: "Path to an import map file.",
+    optional: true,
+  }),
+  inspect: cliFlag("inspect", Flag.Boolean, {
+    description: "Alias of `--inspect-mode brk`.",
+    default: false,
+  }),
+  inspectMode: cliFlag(
+    "inspect-mode",
+    (name) => Flag.Literals(name, FUNCTIONS_SERVE_INSPECT_MODES),
+    { description: "Activate the inspector in the given mode for debugging.", optional: true },
   ),
-  envFile: Flag.String("env-file").pipe(
-    Flag.withDescription(
-      "Path to an env file. Overrides supabase/functions/.env and per-Function .env files.",
-    ),
-    Flag.optional,
-  ),
-  importMap: Flag.String("import-map").pipe(
-    Flag.withDescription("Path to import map file."),
-    Flag.optional,
-  ),
-  inspect: Flag.Boolean("inspect").pipe(
-    Flag.withDescription("Alias of --inspect-mode brk."),
-    Flag.withDefault(false),
-  ),
-  inspectMode: Flag.Literals("inspect-mode", FUNCTIONS_SERVE_INSPECT_MODES).pipe(
-    Flag.withDescription("Activate inspector capability for debugging."),
-    Flag.optional,
-  ),
-  inspectMain: Flag.Boolean("inspect-main").pipe(
-    Flag.withDescription("Allow inspecting the main worker."),
-    Flag.withDefault(false),
-  ),
-  all: Flag.Boolean("all").pipe(
-    Flag.withDescription("Serve all Functions."),
-    Flag.withDefault(true),
-    Flag.withHidden,
-  ),
+  inspectMain: cliFlag("inspect-main", Flag.Boolean, {
+    description: "Allow inspecting the main worker; requires an inspect flag.",
+    default: false,
+  }),
+  all: cliFlag("all", Flag.Boolean, {
+    description: "Serve all functions.",
+    default: true,
+    hidden: true,
+  }),
 } as const;
 
 const commandConfig = {
   ...config,
-  functionNames: Argument.String("Function name").pipe(
-    Argument.withDescription("Legacy Function names. All Functions are served."),
-    Argument.variadic(),
-  ),
+  functionNames: cliArgument("Function name", repeated(Argument.String), {
+    description: "Legacy function names; all functions are served regardless.",
+  }),
 } as const;
 
-export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
-  Command.withDescription("Serve all Functions locally."),
-  Command.withShortDescription("Serve all Functions locally"),
+export const functionsServeCommand = makeCommand("serve", commandConfig).pipe(
+  Command.withDescription(
+    "Run all Edge Functions in `supabase/functions` locally, so you can test them before deploying.",
+  ),
+  Command.withShortDescription("Serve Edge Functions locally"),
+  Command.withExamples([
+    {
+      command: "supabase functions serve",
+      description: "Serve all functions locally",
+    },
+    {
+      command: "supabase functions serve --env-file .env.local",
+      description: "Serve with a custom env file",
+    },
+    {
+      command: "supabase functions serve --inspect-mode brk",
+      description: "Serve with the inspector paused at the first line",
+    },
+  ]),
   withPermissions({
     operations: [],
     noApiEffectFlags: [

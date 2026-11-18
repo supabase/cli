@@ -1,6 +1,8 @@
 import { Context, Option } from "effect";
 import { Command, Flag, Param } from "effect/cli";
 
+import { recordParamDocs } from "../shared/cli/cli-params.ts";
+
 import { sameDocumentValue } from "./cli-config-document.ts";
 import type { CliConfigCodec, CliConfigKey } from "./cli-config-key.ts";
 import { CliConfigFlagConflictError } from "./cli-config.errors.ts";
@@ -118,6 +120,13 @@ export const makeCliConfigKeyFlag = <A, X, F extends CliConfigFlagDeclaration>(
   const aliased =
     options.alias === undefined ? described : described.pipe(Flag.withAlias(options.alias));
   const flag = options.hidden === true ? aliased.pipe(Flag.withHidden) : aliased;
+  recordParamDocs(flag, {
+    kind: Param.flagKind,
+    name: options.name,
+    required: false,
+    hidden: options.hidden === true,
+    ...(key.codec.kind === "commaList" ? { variadicMin: 0 } : {}),
+  });
   bindings.set(flag, {
     flag: options.name,
     path: key.path,

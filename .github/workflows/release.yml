@@ -419,8 +419,11 @@ jobs:
           if [[ "$DRY_RUN" == "true" ]]; then
             args+=(--dry-run)
           fi
-          bun scripts/generate-docs-spec.ts "$VERSION" \
-            | bun scripts/publish-docs-spec.ts --version "$VERSION" "${args[@]}"
+          major="${VERSION#v}"
+          major="${major%%.*}"
+          bun scripts/generate-docs-spec.ts "$VERSION" --major "$major" \
+            | bun scripts/publish-docs-spec.ts --version "$VERSION" \
+              --spec-path "apps/docs/spec/cli_v${major}_commands.yaml" "${args[@]}"
       - name: Publish the config schemas
         id: schemas
         continue-on-error: true

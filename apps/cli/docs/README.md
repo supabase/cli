@@ -2,44 +2,36 @@
 
 Source content for the [CLI reference](https://supabase.com/docs/reference/cli) published on the Supabase docs site.
 
-- `supabase/` — long-form command descriptions, one file per command path
-- `templates/examples.yaml` — per-command usage examples, keyed by doc id
+- `withDocs` on a `*.command.ts` (`src/docs/command-docs.ts`) — sidebar category, page body
+  imported from the sibling `*.docs.md`, examples, experimental and deprecated markers
+- `cliFlag`, `cliArgument` and `makeCommand` (`src/shared/cli/cli-params.ts`) — every flag
+  and argument is built through them, which records its default, required badge,
+  visibility and variadic minimum for the reference
+- `supabase/` — long-form command descriptions, one file per command path, for commands without
+  a `withDocs` body
+- `templates/examples.yaml` — per-command usage examples, keyed by doc id, for commands without
+  `withDocs` examples
 
 ## Local Preview
 
-For CLI contributors, preview reference changes in the real website before publishing:
+```bash
+bun scripts/generate-docs-spec.ts [--prerelease] [--sections common-cli-v3-sections.json] > cli_v3_commands.yaml
+```
 
-1. Clone [supabase/supabase](https://github.com/supabase/supabase) into a separate directory.
-   Follow the docs app's [local setup instructions](https://github.com/supabase/supabase/blob/master/apps/docs/DEVELOPERS.md#local-setup)
-   to install its dependencies and configure the development environment.
-2. In this CLI repository, install dependencies with `pnpm install --frozen-lockfile`, then run
-   `pnpm exec turbo run @supabase/config#build` from the repository root.
-3. From this repository's `apps/cli` directory, generate and write the preview:
+The spec is `clispec 002`. `--sections` also writes the docs-site sidebar, generated from the
+`DOCS_CATEGORIES` categories, so it is never edited by hand. To preview both in a local
+supabase/supabase checkout, first run `pnpm install --frozen-lockfile` and
+`pnpm exec turbo run @supabase/config#build` from the repository root, then:
 
-   ```bash
-   set -o pipefail
-   bun scripts/generate-docs-spec.ts 0.0.0 | bun scripts/publish-docs-spec.ts --version 0.0.0 --local /absolute/path/to/supabase
-   ```
+```bash
+bun scripts/publish-docs-spec.ts --local ../../../supabase --version v2
+bun scripts/publish-docs-spec.ts --local ../../../supabase --version v3 --prerelease
+```
 
-   Replace the path with the root of your `supabase/supabase` checkout. A relative path resolves
-   from the current directory. Both version arguments must match; `0.0.0` is a preview value.
+The v2 preview reuses this tree's command bodies, so it is only a layout preview; the published
+v2 reference comes from the v2 release branch.
 
-4. Start that checkout's docs app using its linked local setup instructions, then visit
-   `/docs/reference/cli/supabase-init` on the local server to inspect a rendered command page.
-   Rerun the pipe after changing CLI documentation.
-
-`--local` overwrites `apps/docs/spec/cli_v1_commands.yaml` in the supplied checkout using the
-same formatting as release publishing. Save any edits to that file first. If formatting fails,
-the file contains the unformatted generated spec; fix the error and rerun the pipe. The target
-directory must already exist. Local mode does not clone, commit, push, or open a PR, and needs no GitHub
-credentials. Add `--dry-run` to validate the input and print the destination without writing.
-
-This preview writes only the command-reference spec, not sidebar entries or JSON Schemas.
-New commands still need an entry in the website's
-[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json)
-to appear in the reference.
-
-## Release Publishing
+## Release
 
 Before writing a local preview or running Git, the publisher validates the generated `clispec 001`
 fields, including flags and examples. Command IDs and subcommand links must match the documented
@@ -53,6 +45,10 @@ and opens a PR when none is open. When the spec is already published and a PR is
 or not needed, the run is a no-op.
 Later releases add commits on top of an open `cli/ref-doc` PR instead of rewriting it, so
 fixes committed onto the branch survive.
+
+The release PR carries only the spec, so new commands also need an entry in
+the major's sidebar file in `apps/docs/spec/` (`common-cli-sections.json` for v2,
+`common-cli-v3-sections.json` for v3); copy it from the `--sections` output.
 
 To publish by hand, run the same pipe the job runs:
 
@@ -88,10 +84,12 @@ bun scripts/publish-schemas.ts --version <version> [--dry-run]
 
 ## Maintenance
 
-When adding or changing a command or flag, update the matching entries in
-`src/docs/docs-spec.tables.ts` — each table's doc comment says
-when it applies: `TAGS`, `DEFAULT_OVERRIDES`, `REQUIRED`, `EXPERIMENTAL` (and
-`_OPTIONAL`), `EXCLUDED` (whole commands), `EXCLUDED_FLAGS`, `ARG_OVERRIDES`,
-`CHOICE_OVERRIDES`, `EXTRA_FLAGS`. The spec build fails on entries that no
-longer resolve against the command tree, but new commands and flags must be
-added by hand — nothing detects a missing entry for a new surface.
+Describe a new command with `withDocs` and declare its flags and arguments with `cliFlag` and
+`cliArgument` inside a `makeCommand` config; `cli-params.unit.test.ts` fails on any param built
+another way. A default the handler applies, or a required badge on a parse-optional flag, goes in
+the constructor's `docs` field. Commands not yet migrated still read
+`src/docs/docs-spec.tables.ts` — each table's doc comment says when it applies: `TAGS`,
+`CATEGORY`, `EXPERIMENTAL` (and `_OPTIONAL`), `EXCLUDED` (whole commands), `EXCLUDED_FLAGS`,
+`CHOICE_OVERRIDES`, `EXTRA_FLAGS`. The spec build fails on entries that no longer resolve
+against the command tree, on a command described by both `withDocs` and a table, and on a
+command with no category.

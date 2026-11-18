@@ -1,7 +1,5 @@
 ## supabase-status
 
-Shows status of the Supabase local development stack.
+Prints the URLs, keys, and database connection string of the running local stack. The stack must already be running, started with `supabase start` or `supabase db start`.
 
-Requires the local development stack to be started by running `supabase start` or `supabase db start`.
-
-You can export the connection parameters for [initializing supabase-js](https://supabase.com/docs/reference/javascript/initializing) locally by specifying the `-o env` flag. Supported parameters include `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY`.
+To export the connection parameters for [initializing supabase-js](https://supabase.com/docs/reference/javascript/initializing) locally, pass `-o env`. The output includes `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY`.

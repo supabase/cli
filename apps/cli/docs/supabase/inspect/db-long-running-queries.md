@@ -1,6 +1,6 @@
 # db-long-running-queries
 
-This command displays currently running queries, that have been running for longer than 5 minutes, descending by duration. Very long running queries can be a source of multiple issues, such as preventing DDL statements completing or vacuum being unable to update `relfrozenxid`.
+List queries that have been running for longer than 5 minutes, longest first. Very long-running queries can prevent DDL statements from completing or stop vacuum from updating `relfrozenxid`.
 
 ```
   PID  │     DURATION    │                                         QUERY

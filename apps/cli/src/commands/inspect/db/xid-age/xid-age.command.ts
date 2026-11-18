@@ -10,8 +10,9 @@ import {
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { makeCommand } from "../../../../shared/cli/cli-params.ts";
 
-export const inspectDbXidAgeCommand = Command.make("xid-age", INSPECT_DB_FLAGS).pipe(
+export const inspectDbXidAgeCommand = makeCommand("xid-age", INSPECT_DB_FLAGS).pipe(
   Command.withDescription(
     "Lists user tables with their transaction ID (XID) age, oldest first. " +
       "Transactions remaining is the headroom to a 2 billion threshold, below PostgreSQL's ~2.1 billion wraparound limit. " +
@@ -19,6 +20,13 @@ export const inspectDbXidAgeCommand = Command.make("xid-age", INSPECT_DB_FLAGS).
       "Tables older than 1.5 billion transactions should be treated as urgent.",
   ),
   Command.withShortDescription("Show XID age for user tables"),
+  Command.withExamples([
+    { command: "supabase inspect db xid-age", description: "Show XID age on the local database" },
+    {
+      command: "supabase inspect db xid-age --remote",
+      description: "Show XID age on the linked project",
+    },
+  ]),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbXidAge)),
   Command.provide(inspectDbRuntimeLayer("xid-age")),

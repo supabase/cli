@@ -25,7 +25,8 @@ src/commands/<command>/
   SIDE_EFFECTS.md        # required compatibility contract
 ```
 
-Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Handler
+Register every command in `src/cli/root.ts`. Build commands, flags and arguments with `makeCommand`, `cliFlag` and `cliArgument` so the
+reference records their metadata; see the [reference docs guide](docs/README.md). Keep `.format.ts` and `.encoders.ts` pure. Handler
 phase spans are named `<command>.<phase>`; see the root tracing rule. Read `src/shared/` and the
 command-level infrastructure under
 `src/config/`, `src/auth/`, `src/telemetry/`, `src/output/`, and `src/command-internal/` before

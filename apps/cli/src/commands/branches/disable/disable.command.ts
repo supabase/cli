@@ -12,6 +12,7 @@ import { branchesDisable } from "./disable.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags({ parent: true }),
@@ -19,9 +20,17 @@ const config = {
 
 export type BranchesDisableFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const branchesDisableCommand = Command.make("disable", config).pipe(
-  Command.withDescription("Disable preview branching for the linked project."),
+export const branchesDisableCommand = makeCommand("disable", config).pipe(
+  Command.withDescription(
+    "Turn off preview branching for the linked project.\n\nAsks for confirmation before changing anything; pass `--yes` in scripts and CI.",
+  ),
   Command.withShortDescription("Disable preview branching"),
+  Command.withExamples([
+    {
+      command: "supabase branches disable",
+      description: "Disable preview branching for the linked project",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [{ operationId: "v1-disable-preview-branching", kind: "required" }] },

@@ -12,18 +12,22 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { snippetsDownload } from "./download.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  snippetId: Argument.String("snippet-id").pipe(
-    Argument.withDescription("ID of the SQL snippet to download."),
-  ),
+  snippetId: cliArgument("snippet-id", Argument.String, {
+    description: "ID of the SQL snippet to download.",
+    required: true,
+  }),
   ...projectTargetFlags(),
 };
 export type SnippetsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const snippetsDownloadCommand = Command.make("download", config).pipe(
-  Command.withDescription("Download contents of the specified SQL snippet."),
-  Command.withShortDescription("Download contents of a SQL snippet"),
+export const snippetsDownloadCommand = makeCommand("download", config).pipe(
+  Command.withDescription(
+    "Print the SQL of a snippet to stdout, so you can redirect it to a file. JSON output returns the full snippet payload instead.",
+  ),
+  Command.withShortDescription("Download a SQL snippet"),
   Command.withExamples([
     {
       command: "supabase snippets download <snippet-id>",

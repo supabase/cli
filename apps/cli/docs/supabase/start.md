@@ -1,13 +1,11 @@
 ## supabase-start
 
-Starts the Supabase local development stack.
+Runs the Supabase local development stack (Postgres, Auth, Storage, Studio, and more) in Docker. Requires a `supabase/config.toml`, which `supabase init` creates.
 
-Requires `supabase/config.toml` to be created in your current working directory by running `supabase init`.
+All service containers start by default. Skip the ones you don't need with `-x`, either as a comma-separated list such as `-x gotrue,imgproxy` or by repeating the flag.
 
-All service containers are started by default. You can exclude those not needed by passing in `-x` flag. To exclude multiple containers, either pass in a comma separated string, such as `-x gotrue,imgproxy`, or specify `-x` flag multiple times.
+> Starting all services needs at least 7GB of RAM.
 
-> It is recommended to have at least 7GB of RAM to start all services.
+The CLI health-checks the started containers. Pass `--ignore-health-check` to continue past unhealthy services.
 
-Health checks are automatically added to verify the started containers. Use `--ignore-health-check` flag to ignore these errors.
-
-> If the CLI is running inside a dev container with the Docker socket bind-mounted, set the `SUPABASE_SERVICES_HOSTNAME` environment variable to the hostname reachable from inside that container, such as `host.docker.internal`.
+> If the CLI runs inside a dev container with the Docker socket bind-mounted, set `SUPABASE_SERVICES_HOSTNAME` to a hostname reachable from inside that container, such as `host.docker.internal`.

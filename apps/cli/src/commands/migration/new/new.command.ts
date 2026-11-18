@@ -7,18 +7,22 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationNewRuntimeLayer } from "../migration.layers.ts";
 import { migrationNew } from "./new.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  migrationName: Argument.String("migration name").pipe(
-    Argument.withDescription("Name for the new migration file."),
-  ),
+  migrationName: cliArgument("migration name", Argument.String, {
+    description: "Name for the new migration file.",
+    required: true,
+  }),
 } as const;
 
 export type MigrationNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const migrationNewCommand = Command.make("new", config).pipe(
-  Command.withDescription("Create an empty migration script."),
-  Command.withShortDescription("Create an empty migration script"),
+export const migrationNewCommand = makeCommand("new", config).pipe(
+  Command.withDescription(
+    "Create an empty, timestamped SQL file in supabase/migrations for you to fill in. Output from other commands, such as db diff, can be piped to it.",
+  ),
+  Command.withShortDescription("Create an empty migration file"),
   withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
     migrationNew(flags).pipe(withCommandTelemetry(), withJsonErrorHandling),

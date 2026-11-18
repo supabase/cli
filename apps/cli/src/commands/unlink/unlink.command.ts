@@ -30,8 +30,19 @@ const unlinkRuntimeLayer = Layer.mergeAll(
 );
 
 export const unlinkCommand = Command.make("unlink").pipe(
-  Command.withDescription("Unlink a Supabase project."),
-  Command.withShortDescription("Unlink a Supabase project"),
+  Command.withDescription(
+    "Remove the link between the local project and its hosted Supabase project. " +
+      "Use it before linking to a different project.\n\n" +
+      "The command deletes the local `supabase/.temp` directory and the stored database password " +
+      "for the linked project. Your access token is left untouched.",
+  ),
+  Command.withShortDescription("Unlink from the hosted Supabase project"),
+  Command.withExamples([
+    {
+      command: "supabase unlink",
+      description: "Unlink the current directory from its hosted project",
+    },
+  ]),
   withPermissions({ operations: [] }),
   Command.withHandler(() => unlink().pipe(withCommandTelemetry(), withJsonErrorHandling)),
   Command.provide(unlinkRuntimeLayer),

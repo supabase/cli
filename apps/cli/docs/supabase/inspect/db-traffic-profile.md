@@ -1,14 +1,14 @@
-# db-traffic-profile
+## db-traffic-profile
 
-This command analyzes table I/O patterns to show read/write activity ratios based on block-level operations. It combines data from PostgreSQL's `pg_stat_user_tables` (for tuple operations) and `pg_statio_user_tables` (for block I/O) to categorize each table's workload profile.
+Show how read-heavy or write-heavy each table is, based on block-level I/O. It combines tuple operations from `pg_stat_user_tables` with block I/O from `pg_statio_user_tables`.
 
-The command classifies tables into categories:
+Each table gets one of these categories:
 
-- **Read-Heavy** - Read operations are more than 5x write operations (e.g., 1:10, 1:50)
-- **Write-Heavy** - Write operations are more than 20% of read operations (e.g., 1:2, 1:4, 2:1, 10:1)
-- **Balanced** - Mixed workload where writes are between 20% and 500% of reads
-- **Read-Only** - Only read operations detected
-- **Write-Only** - Only write operations detected
+- **Read-Heavy**: read operations are more than 5x write operations (for example 1:10 or 1:50).
+- **Write-Heavy**: write operations are more than 20% of read operations (for example 1:2, 1:4, 2:1 or 10:1).
+- **Balanced**: mixed workload where writes are between 20% and 500% of reads.
+- **Read-Only**: only read operations detected.
+- **Write-Only**: only write operations detected.
 
 ```
 SCHEMA │ TABLE        │ BLOCKS READ │ WRITE TUPLES │ BLOCKS WRITE │ ACTIVITY RATIO
@@ -20,4 +20,4 @@ public │ cache_data   │     123,456 │             0│            0 │ Re
 auth   │ audit_logs   │           0 │        98,234│       12,341 │ Write-Only
 ```
 
-**Note:** This command only displays tables that have had both read and write activity. Tables with no I/O operations are not shown. The classification ratio threshold (default: 5:1) determines when a table is considered "heavy" in one direction versus balanced.
+Only tables with both read and write activity are shown. The ratio threshold that separates "heavy" from balanced is 5:1.

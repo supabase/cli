@@ -8,6 +8,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { whoami } from "./whoami.handler.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { makeCommand } from "../../shared/cli/cli-params.ts";
 
 const config = {};
 export type WhoamiFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -21,7 +22,7 @@ export const whoamiHandler = (flags: WhoamiFlags) =>
     withJsonErrorHandling,
   );
 
-export const whoamiCommand = Command.make("whoami", config).pipe(
+export const whoamiCommand = makeCommand("whoami", config).pipe(
   Command.withDescription("Show information about the currently logged-in user."),
   Command.withShortDescription("Show the current user"),
   Command.withExamples([

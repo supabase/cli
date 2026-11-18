@@ -49,22 +49,21 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness"
   };
 
   function extractDeclaredFlags(filePath: string, source: string): Array<DeclaredFlag> {
-    const callRegex = /\bFlag\.([A-Z]\w*)\(|\.flag\(\{/g;
+    const callRegex =
+      /\bcliFlag\(\s*"([a-zA-Z0-9-]+)",\s*(?:repeated\(\s*)?(?:\(\w+\)\s*=>\s*)?(?:Flag\.([A-Z]\w*))?|\bFlag\.([A-Z]\w*)\(\s*"([a-zA-Z0-9-]+)"|\.flag\(\{\s*name:\s*"([a-zA-Z0-9-]+)"/g;
+    // Name declared as a literal string (e.g. `cliFlag("schema", Flag.String, ...)` or
+    // `.flag({ name: "sql-paths" })`); a name passed as an identifier doesn't match and is
+    // silently skipped — see INDIRECT_NAME_FILES above.
     const calls = Array.from(source.matchAll(callRegex), (match) => ({
       index: match.index,
-      kind: match[1],
+      name: (match[1] ?? match[4] ?? match[5])!,
+      kind: match[1] !== undefined ? (match[2] ?? "") : match[3],
     }));
 
     const declared: Array<DeclaredFlag> = [];
     for (let i = 0; i < calls.length; i++) {
       const current = calls[i]!;
-
-      // Name declared as a literal string (e.g. `Flag.String("schema")` or
-      // `.flag({ name: "sql-paths" })`); a name passed as an identifier doesn't match and is
-      // silently skipped — see INDIRECT_NAME_FILES above.
-      const remainder = source.slice(current.index);
-      const nameMatch = remainder.match(/^(?:Flag\.\w+\(|\.flag\(\{\s*name:)\s*"([a-zA-Z0-9-]+)"/);
-      if (!nameMatch || !consumesValue(current.kind, nameMatch[1]!)) continue;
+      if (!consumesValue(current.kind, current.name)) continue;
 
       // The alias, if any, is somewhere in the `.pipe(...)` chain or options object between
       // this flag declaration and the next one.
@@ -76,7 +75,7 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness"
 
       declared.push({
         file: filePath,
-        name: nameMatch[1]!,
+        name: current.name,
         alias: aliasMatch?.[1] ?? aliasMatch?.[2],
       });
     }

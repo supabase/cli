@@ -13,17 +13,19 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsNew } from "./new.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const AUTH_MODE_VALUES = ["none", "apikey", "user"] as const;
 
 const config = {
-  functionName: Argument.String("Function name").pipe(
-    Argument.withDescription("Name of the Function to create."),
-  ),
-  auth: Flag.Literals("auth", AUTH_MODE_VALUES).pipe(
-    Flag.withDescription("use a specific auth mode"),
-    Flag.withDefault("apikey" as const),
-  ),
+  functionName: cliArgument("Function name", Argument.String, {
+    description: "Name of the function to create.",
+    required: true,
+  }),
+  auth: cliFlag("auth", (name) => Flag.Literals(name, AUTH_MODE_VALUES), {
+    description: "Auth mode to scaffold the function with.",
+    default: "apikey" as const,
+  }),
 } as const;
 
 export type FunctionsNewFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -39,9 +41,21 @@ const functionsNewRuntimeLayer = Layer.mergeAll(
   stdinLayer,
 );
 
-export const functionsNewCommand = Command.make("new", config).pipe(
-  Command.withDescription("Create a new Function locally."),
-  Command.withShortDescription("Create a new Function locally"),
+export const functionsNewCommand = makeCommand("new", config).pipe(
+  Command.withDescription(
+    "Scaffold a starter Edge Function in `supabase/functions/<name>`, ready to edit and serve locally.",
+  ),
+  Command.withShortDescription("Create an Edge Function locally"),
+  Command.withExamples([
+    {
+      command: "supabase functions new my-function",
+      description: "Create a new function",
+    },
+    {
+      command: "supabase functions new my-function --auth user",
+      description: "Create a function with the user auth mode",
+    },
+  ]),
   withPermissions({ operations: [], noApiEffectFlags: ["auth"] }),
   Command.withHandler((flags) =>
     functionsNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),

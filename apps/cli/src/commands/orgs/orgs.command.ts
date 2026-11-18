@@ -6,7 +6,7 @@ import { orgsListCommand } from "./list/list.command.ts";
 // summary and the `supabase orgs --help` long description. No trailing
 // period.
 export const orgsCommand = Command.make("orgs").pipe(
-  Command.withDescription("Manage Supabase organizations"),
-  Command.withShortDescription("Manage Supabase organizations"),
+  Command.withDescription("List the organizations you belong to and create new ones."),
+  Command.withShortDescription("Manage organizations"),
   Command.withSubcommands([orgsListCommand, orgsCreateCommand]),
 );

@@ -34,7 +34,7 @@ const KIND_BY_GROUP: Readonly<Record<string, TargetKind | undefined>> = {
 };
 
 /** The flag's display name once its value hint is known: `remote[=<ref|branch>]`. */
-export const remoteFlagName = (hint: string): string => `${REMOTE_FLAG_NAME}[=${hint}]`;
+const remoteFlagName = (hint: string): string => `${REMOTE_FLAG_NAME}[=${hint}]`;
 
 export interface TargetHelp {
   readonly scope: string;

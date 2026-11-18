@@ -1,4 +1,5 @@
 import { Flag } from "effect/cli";
+import { cliFlag } from "../../shared/cli/cli-params.ts";
 
 /**
  * `--no-descriptions` flag shared by all four completion subcommands.
@@ -6,7 +7,7 @@ import { Flag } from "effect/cli";
  * `Flag.Boolean` auto-derives a `--no-no-descriptions` negation from the name, which
  * harmlessly resolves back to the same `false` default.
  */
-export const CompletionNoDescriptionsFlagDef = Flag.Boolean("no-descriptions").pipe(
-  Flag.withDescription("disable completion descriptions"),
-  Flag.withDefault(false),
-);
+export const CompletionNoDescriptionsFlagDef = cliFlag("no-descriptions", Flag.Boolean, {
+  description: "Omit descriptions from the generated completions.",
+  default: false,
+});

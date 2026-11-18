@@ -1,6 +1,7 @@
 import { V1CreateAProjectInput } from "@supabase/api/effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withDocs } from "../../../docs/command-docs.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
   compose,
@@ -14,6 +15,7 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsCreate } from "./create.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const AWS_REGIONS = [
   "ap-east-1",
@@ -63,53 +65,53 @@ const INSTANCE_SIZES = [
 ] as const;
 
 const config = {
-  name: Argument.String("name").pipe(
-    Argument.withDescription("Name of the project to create."),
-    Argument.optional,
-  ),
-  orgId: Flag.String("org-id").pipe(
-    Flag.withDescription("Organization ID to create the project in."),
-    Flag.optional,
-  ),
-  dbPassword: Flag.String("db-password").pipe(
-    Flag.withDescription("Database password of the project."),
-    Flag.optional,
-  ),
-  region: Flag.Literals("region", AWS_REGIONS).pipe(
-    Flag.withDescription("Select a region close to you for the best performance."),
-    Flag.optional,
-  ),
-  size: Flag.Literals("size", INSTANCE_SIZES).pipe(
-    Flag.withDescription("Select a desired instance size for your project."),
-    Flag.optional,
-  ),
-  highAvailability: Flag.Boolean("high-availability").pipe(
-    Flag.withDescription("Enable high availability for the project."),
-    Flag.optional,
-  ),
+  name: cliArgument("name", Argument.String, {
+    description: "Name of the project to create.",
+    optional: true,
+  }),
+  orgId: cliFlag("org-id", Flag.String, {
+    description: "Organization ID to create the project in.",
+    optional: true,
+  }),
+  dbPassword: cliFlag("db-password", Flag.String, {
+    description: "Database password for the project.",
+    optional: true,
+  }),
+  region: cliFlag("region", (name) => Flag.Literals(name, AWS_REGIONS), {
+    description: "Region to host the project in, ideally close to your users.",
+    optional: true,
+  }),
+  size: cliFlag("size", (name) => Flag.Literals(name, INSTANCE_SIZES), {
+    description: "Instance size of the project.",
+    optional: true,
+  }),
+  highAvailability: cliFlag("high-availability", Flag.Boolean, {
+    description: "Enable high availability for the project.",
+    optional: true,
+  }),
   // Hidden and `--experimental`-gated: the upstream OpenAPI spec marks these fields deprecated
   // even though the API accepts them, restored via `packages/api/scripts/openapi-overrides.json`.
-  releaseChannel: Flag.Literals("release-channel", RELEASE_CHANNELS).pipe(
-    Flag.withDescription("Select a release channel for the project."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
-  postgresEngine: Flag.Literals("postgres-engine", POSTGRES_ENGINES).pipe(
-    Flag.withDescription("Select the Postgres engine for the project."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
-  interactive: Flag.Boolean("interactive").pipe(
-    Flag.withDescription("Enables interactive mode."),
-    Flag.withAlias("i"),
-    Flag.optional,
-    Flag.withHidden,
-  ),
-  plan: Flag.String("plan").pipe(
-    Flag.withDescription("Select a plan that suits your needs."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
+  releaseChannel: cliFlag("release-channel", (name) => Flag.Literals(name, RELEASE_CHANNELS), {
+    description: "Release channel of the project.",
+    optional: true,
+    hidden: true,
+  }),
+  postgresEngine: cliFlag("postgres-engine", (name) => Flag.Literals(name, POSTGRES_ENGINES), {
+    description: "Postgres engine of the project.",
+    optional: true,
+    hidden: true,
+  }),
+  interactive: cliFlag("interactive", Flag.Boolean, {
+    description: "Prompt for missing values in an interactive terminal.",
+    alias: "i",
+    optional: true,
+    hidden: true,
+  }),
+  plan: cliFlag("plan", Flag.String, {
+    description: "Plan to create the project on.",
+    optional: true,
+    hidden: true,
+  }),
 };
 // `--interactive` is read as `interactive ?? true`: absent and `true` can prompt, `false` cannot;
 // an optional boolean can't be tested with `is`, so the present entry names the value in its context.
@@ -120,9 +122,12 @@ const interactivePicker = withContext(
 
 export type ProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const projectsCreateCommand = Command.make("create", config).pipe(
-  Command.withDescription("Create a project on Supabase."),
+export const projectsCreateCommand = makeCommand("create", config).pipe(
+  Command.withDescription(
+    "Create a new Supabase project in an organization.\n\nIn an interactive terminal the command prompts for missing values. Without one, you must pass the project name, `--org-id`, `--db-password` and `--region`.",
+  ),
   Command.withShortDescription("Create a project"),
+  withDocs({ category: "projects" }),
   Command.withExamples([
     {
       command:

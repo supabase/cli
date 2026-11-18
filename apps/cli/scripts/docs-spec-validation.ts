@@ -20,9 +20,9 @@ const Flag = Schema.Struct({
   ),
 });
 
-// The emitted clispec 001 subset consumed by supabase/supabase's Reference.sections.tsx.
+// The emitted clispec 002 subset consumed by supabase/supabase's Reference.sections.tsx.
 const Spec = Schema.Struct({
-  clispec: Schema.Literal("001"),
+  clispec: Schema.Literal("002"),
   info: Schema.Struct({
     id: Schema.NonEmptyString,
     version: Schema.NonEmptyString,
@@ -75,7 +75,7 @@ export const validateDocsSpec = Effect.fn("Docs.validateSpec")(function* (
   });
   const spec = yield* Schema.decodeUnknownEffect(Spec)(parsed).pipe(
     Effect.mapError(
-      (cause) => new InvalidDocsSpec({ message: `invalid clispec 001 document: ${cause.message}` }),
+      (cause) => new InvalidDocsSpec({ message: `invalid clispec 002 document: ${cause.message}` }),
     ),
   );
   if (spec.info.version !== version) {

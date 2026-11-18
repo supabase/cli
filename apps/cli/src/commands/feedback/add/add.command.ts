@@ -11,20 +11,17 @@ import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackAdd } from "./add.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { cliArgument, cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  message: Argument.String("message").pipe(
-    Argument.withDescription(
-      "Freeform feedback. Bare words are joined with spaces. 1000 character limit.",
-    ),
-    Argument.variadic(),
-  ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription(
+  message: cliArgument("message", repeated(Argument.String), {
+    description: "Freeform feedback. Bare words are joined with spaces. 1000 character limit.",
+  }),
+  projectRef: cliFlag("project-ref", Flag.String, {
+    description:
       "Project ref to attribute the feedback to (defaults to SUPABASE_PROJECT_ID, then the linked project).",
-    ),
-    Flag.optional,
-  ),
+    optional: true,
+  }),
 } as const;
 
 export type FeedbackAddArgs = CliCommand.Command.Config.Infer<typeof config>;
@@ -41,8 +38,10 @@ export const feedbackAddHandler = (args: FeedbackAddArgs) =>
     withJsonErrorHandling,
   );
 
-export const feedbackAddCommand = Command.make("add", config).pipe(
-  Command.withDescription("Send quick feedback about the Supabase CLI to the Supabase team."),
+export const feedbackAddCommand = makeCommand("add", config).pipe(
+  Command.withDescription(
+    "Send a short note about a papercut, bug, or idea. The CLI prints a deletion token you can use to remove the feedback later.",
+  ),
   Command.withShortDescription("Send feedback to the Supabase team"),
   Command.withExamples([
     {

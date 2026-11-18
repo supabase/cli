@@ -14,6 +14,7 @@ import {
  */
 import { Data } from "effect";
 import { Flag } from "effect/cli";
+import { cliFlag, repeated } from "../shared/cli/cli-params.ts";
 
 const QUOTE = 0x22; // "
 const COMMA = 0x2c; // ,
@@ -253,13 +254,15 @@ export function parseStringSliceFlag(rawValues: ReadonlyArray<string>): Readonly
 export function stringSliceFlag(
   name: string,
   description: string,
-  options?: { readonly alias?: string },
+  options?: { readonly alias?: string; readonly hidden?: true },
 ) {
   const alias = options?.alias;
   const flagLabel = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
-  const base = Flag.String(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
-  return (alias === undefined ? base : base.pipe(Flag.withAlias(alias))).pipe(
-    Flag.mapTryCatch(
+  return cliFlag(name, repeated(Flag.String, { min: 0 }), {
+    description,
+    ...(alias === undefined ? {} : { alias }),
+    ...(options?.hidden === undefined ? {} : { hidden: options.hidden }),
+    parse: Flag.mapTryCatch(
       (rawValues) => parseStringSliceFlag(rawValues),
       (err) =>
         err instanceof StringSliceFlagParseError
@@ -268,5 +271,5 @@ export function stringSliceFlag(
             ? err.message
             : String(err),
     ),
-  );
+  });
 }

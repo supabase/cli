@@ -12,22 +12,24 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { ssoShow } from "./show.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
-  metadata: Flag.Boolean("metadata").pipe(
-    Flag.withDescription("Show SAML 2.0 XML Metadata only"),
-    Flag.withDefault(false),
-  ),
-  providerId: Argument.String("provider-id").pipe(
-    Argument.withDescription("The ID of the SSO identity provider to show."),
-  ),
+  metadata: cliFlag("metadata", Flag.Boolean, {
+    description: "Print only the SAML 2.0 Metadata XML.",
+    default: false,
+  }),
+  providerId: cliArgument("provider-id", Argument.String, {
+    description: "The ID of the SSO identity provider to show.",
+    required: true,
+  }),
 };
 export type SsoShowFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const ssoShowCommand = Command.make("show", config).pipe(
+export const ssoShowCommand = makeCommand("show", config).pipe(
   Command.withDescription(
-    "Provides the information about an established connection to an identity provider. You can use --metadata to obtain the raw SAML 2.0 Metadata XML document stored in your project's configuration.",
+    "Shows the settings of a connected identity provider. Use `--metadata` to print the raw SAML 2.0 Metadata XML stored in your project instead.",
   ),
   Command.withShortDescription("Show information about an SSO identity provider"),
   Command.withExamples([

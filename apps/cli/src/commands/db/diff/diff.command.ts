@@ -24,73 +24,66 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
   // off whether the flag was passed; engine selection uses its value.
-  useMigra: Flag.Boolean("use-migra").pipe(
-    Flag.withDescription("Use migra to generate schema diff."),
-    Flag.optional,
-  ),
-  usePgAdmin: Flag.Boolean("use-pgadmin").pipe(
-    Flag.withDescription("Use pgAdmin to generate schema diff."),
-    Flag.optional,
-  ),
+  useMigra: cliFlag("use-migra", Flag.Boolean, {
+    description: "Use the legacy migra engine to generate the schema diff.",
+    optional: true,
+  }),
+  usePgAdmin: cliFlag("use-pgadmin", Flag.Boolean, {
+    description: "Use pgAdmin to generate the schema diff.",
+    optional: true,
+  }),
   // Kept parsed (and hidden) only so using it produces an actionable removal error instead of
   // an unknown-flag parse error; see diff.handler.ts.
-  usePgSchema: Flag.Boolean("use-pg-schema").pipe(
-    Flag.withDescription("Removed: use the default pg-delta engine or --use-migra instead."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
+  usePgSchema: cliFlag("use-pg-schema", Flag.Boolean, {
+    description: "Removed: use the default pg-delta engine or --use-migra instead.",
+    optional: true,
+    hidden: true,
+  }),
   usePgDelta: CliConfigKeys.experimental.pgdelta.enabled.flag({
     name: "use-pg-delta",
-    description: "Use pg-delta to generate schema diff.",
+    description: "Use pg-delta to generate the schema diff.",
   }),
-  strictCoverage: Flag.Boolean("strict-coverage").pipe(
-    Flag.withDescription(
-      "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
-    ),
-    Flag.withDefault(false),
-  ),
-  from: Flag.String("from").pipe(
-    Flag.withDescription(
-      "Diff from local, migrations, remote (always the linked project), a project ref, a branch, or a Postgres URL.",
-    ),
-    Flag.optional,
-  ),
-  to: Flag.String("to").pipe(
-    Flag.withDescription(
-      "Diff to local, migrations, remote (always the linked project), a project ref, a branch, or a Postgres URL.",
-    ),
-    Flag.optional,
-  ),
-  output: Flag.String("output").pipe(
-    Flag.withAlias("o"),
-    Flag.withDescription(
-      "Write flattened explicit diff SQL to a file for review; this is not a portable apply script.",
-    ),
-    Flag.optional,
-  ),
+  strictCoverage: cliFlag("strict-coverage", Flag.Boolean, {
+    description:
+      "Fail when pg-delta finds schema objects it cannot manage, instead of leaving them unmanaged.",
+    default: false,
+  }),
+  from: cliFlag("from", Flag.String, {
+    description:
+      "Source of the diff: local, migrations, remote (always the linked project), a project ref, a branch, or a Postgres URL.",
+    optional: true,
+  }),
+  to: cliFlag("to", Flag.String, {
+    description:
+      "Target of the diff: local, migrations, remote (always the linked project), a project ref, a branch, or a Postgres URL.",
+    optional: true,
+  }),
+  output: cliFlag("output", Flag.String, {
+    description:
+      "Write the flattened diff SQL of --from and --to mode to a file for review; it is not a portable apply script.",
+    alias: "o",
+    optional: true,
+  }),
   ...targetFlags({ subject: "database", dbUrl: true }),
-  file: Flag.String("file").pipe(
-    Flag.withAlias("f"),
-    Flag.withDescription(
-      "In normal mode, names and saves the complete schema diff as a new migration; it does not filter objects. Ignored with --from/--to.",
-    ),
-    Flag.optional,
-  ),
-  schema: Flag.String("schema").pipe(
-    Flag.withAlias("s"),
-    Flag.withDescription("Comma separated list of schema to include."),
-    Flag.atLeast(0),
-    // `--schema`/`-s` CSV-parses each value; use the shared helper so quoted
-    // commas survive and malformed CSV fails at parse time.
-    Flag.mapTryCatch(
+  file: cliFlag("file", Flag.String, {
+    description:
+      "Save the complete schema diff as a new migration with this name; ignored with --from and --to.",
+    alias: "f",
+    optional: true,
+  }),
+  schema: cliFlag("schema", repeated(Flag.String, { min: 0 }), {
+    description: "Comma-separated list of schemas to include.",
+    alias: "s",
+    parse: Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
-  ),
+  }),
 } as const;
 
 export type DbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -114,11 +107,11 @@ const explicitBranchSide = (flag: "from" | "to") =>
     context: `--${flag} is a branch name or UUID, not local, migrations, remote, a project ref or a URL`,
   }) as const;
 
-export const dbDiffCommand = Command.make("diff", config).pipe(
+export const dbDiffCommand = makeCommand("diff", config).pipe(
   Command.withDescription(
-    "Compares a shadow built from supabase/migrations with a live database (the local database by default, or the one --remote selects). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
+    "Compare a shadow database built from supabase/migrations with a live database, the local one by default or the one --remote selects. Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; -f saves the complete diff as a migration, and --from/--to output is flattened review SQL, not a portable apply script.",
   ),
-  Command.withShortDescription("Diffs a database for schema changes"),
+  Command.withShortDescription("Diff a database for schema changes"),
   withPermissions(
     compose(
       {

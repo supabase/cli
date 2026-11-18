@@ -7,13 +7,14 @@ import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { completionBash } from "./bash.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   noDescriptions: CompletionNoDescriptionsFlagDef,
 } as const;
 export type CompletionBashFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const completionBashCommand = Command.make("bash", config).pipe(
+export const completionBashCommand = makeCommand("bash", config).pipe(
   Command.withDescription(
     "Generate the autocompletion script for the bash shell.\n\n" +
       "This script depends on the 'bash-completion' package.\n" +
@@ -27,7 +28,13 @@ export const completionBashCommand = Command.make("bash", config).pipe(
       "\tsupabase completion bash > $(brew --prefix)/etc/bash_completion.d/supabase\n\n" +
       "You will need to start a new shell for this setup to take effect.",
   ),
-  Command.withShortDescription("Generate the autocompletion script for bash"),
+  Command.withShortDescription("Generate the Bash completion script"),
+  Command.withExamples([
+    {
+      command: "source <(supabase completion bash)",
+      description: "Load completions in the current bash session",
+    },
+  ]),
   withPermissions({ operations: [], noApiEffectFlags: ["no-descriptions"] }),
   Command.withHandler((flags) =>
     completionBash(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),

@@ -1,8 +1,10 @@
 ## db-bloat
 
-This command displays an estimation of table "bloat" - Due to Postgres' [MVCC](https://www.postgresql.org/docs/current/mvcc.html) when data is updated or deleted new rows are created and old rows are made invisible and marked as "dead tuples". Usually the [autovaccum](https://supabase.com/docs/guides/platform/database-size#vacuum-operations) process will asynchronously clean the dead tuples. Sometimes the autovaccum is unable to work fast enough to reduce or prevent tables from becoming bloated. High bloat can slow down queries, cause excessive IOPS and waste space in your database.
+Estimate how much space each table and index wastes on dead tuples. Use it to find relations where autovacuum is not keeping up.
 
-Tables with a high bloat ratio should be investigated to see if there are vacuuming is not quick enough or there are other issues.
+When data is updated or deleted, Postgres keeps the old row versions as "dead tuples" under [MVCC](https://www.postgresql.org/docs/current/mvcc.html) until [autovacuum](https://supabase.com/docs/guides/platform/database-size#vacuum-operations) cleans them. High bloat can slow queries, cause excessive IOPS, and waste space.
+
+Investigate tables with a high bloat ratio to see whether vacuuming is too slow or something else is wrong.
 
 ```
     TYPE  │ SCHEMA NAME │        OBJECT NAME         │ BLOAT │ WASTE

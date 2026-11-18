@@ -16,6 +16,7 @@ import { branchesGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 // `get.handler.ts` skips the api-keys and pooler calls for `-o pretty`, and with no `-o` when the output format is text.
 const MACHINE_OUTPUT: ReadonlyArray<{
@@ -47,20 +48,27 @@ const MACHINE_OUTPUT: ReadonlyArray<{
 ];
 
 const config = {
-  name: Argument.String("name").pipe(
-    Argument.withDescription("Branch name or ID."),
-    Argument.optional,
-  ),
+  name: cliArgument("name", Argument.String, { description: "Branch name or ID.", optional: true }),
   ...projectTargetFlags({ parent: true }),
 } as const;
 
 export type BranchesGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const branchesGetCommand = Command.make("get", config).pipe(
+export const branchesGetCommand = makeCommand("get", config).pipe(
   Command.withDescription(
-    "Retrieve details of the specified preview branch.\n\nNote: For the main branch, password-dependent fields (POSTGRES_URL, POSTGRES_URL_NON_POOLING) are not populated because production database credentials are not retrievable via API.",
+    "Show the details of a preview branch, including its connection settings.\n\nFor the main branch, the password-dependent fields (POSTGRES_URL, POSTGRES_URL_NON_POOLING) are not populated because production database credentials cannot be retrieved through the API.",
   ),
-  Command.withShortDescription("Retrieve details of a preview branch"),
+  Command.withShortDescription("Show details of a preview branch"),
+  Command.withExamples([
+    {
+      command: "supabase branches get my-branch",
+      description: "Show the details of a preview branch",
+    },
+    {
+      command: "supabase branches get my-branch --output-format json",
+      description: "Show the details as JSON",
+    },
+  ]),
   withPermissions(
     compose(
       {

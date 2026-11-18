@@ -1,6 +1,7 @@
 import { Effect, Option, Redacted, Result } from "effect";
 import { Flag, GlobalFlag, Param, Primitive } from "effect/cli";
 
+import { cliFlag } from "../../shared/cli/cli-params.ts";
 import { parseRemoteValue, type RemoteValue, type RemoteValueRejection } from "./remote-value.ts";
 import { REMOTE_FLAG_NAME } from "./remote-vocabulary.ts";
 import type { ResolvedTarget } from "./resolve-target.ts";
@@ -103,42 +104,40 @@ export const isRemoteFlag = (single: Param.Single<Param.ParamKind, unknown>): bo
 
 /** `--remote`: the linked project when bare, else the project, branch or database it names. */
 const remoteFlag = (variant: RemoteFlagVariant): Flag.Flag<Option.Option<RemoteValue>> =>
-  Param.makeSingle({
-    kind: Param.flagKind,
-    name: REMOTE_FLAG_NAME,
-    primitiveType: remotePrimitive(variant),
-    typeName: valueHintOf(variant),
-  }).pipe(Flag.withDescription(remoteDescription(variant)), Flag.optional);
+  cliFlag(
+    REMOTE_FLAG_NAME,
+    (name) =>
+      Param.makeSingle({ kind: Param.flagKind, name, primitiveType: remotePrimitive(variant) }),
+    { description: remoteDescription(variant), metavar: valueHintOf(variant), optional: true },
+  );
 
 const localFlag = () =>
-  Flag.Boolean("local").pipe(
-    Flag.withDescription(
-      "Deprecated, removed in v4: local is the default, so --local is not needed.",
-    ),
-    Flag.withDefault(false),
-    Flag.withHidden,
-  );
+  cliFlag("local", Flag.Boolean, {
+    description: "Deprecated, removed in v4: local is the default, so --local is not needed.",
+    default: false,
+    hidden: true,
+  });
 
 const linkedFlag = () =>
-  Flag.Boolean("linked").pipe(
-    Flag.withDescription("Deprecated, removed in v4: use --remote."),
-    Flag.withDefault(false),
-    Flag.withHidden,
-  );
+  cliFlag("linked", Flag.Boolean, {
+    description: "Deprecated, removed in v4: use --remote.",
+    default: false,
+    hidden: true,
+  });
 
 const dbUrlFlag = () =>
-  Flag.String("db-url").pipe(
-    Flag.withDescription("Deprecated, removed in v4: use --remote=<db-url>."),
-    Flag.optional,
-    Flag.withHidden,
-  );
+  cliFlag("db-url", Flag.String, {
+    description: "Deprecated, removed in v4: use --remote=<db-url>.",
+    optional: true,
+    hidden: true,
+  });
 
 const projectRefFlag = () =>
-  Flag.String("project-ref").pipe(
-    Flag.withDescription("Deprecated, removed in v4: use --remote=<ref>."),
-    Flag.optional,
-    Flag.withHidden,
-  );
+  cliFlag("project-ref", Flag.String, {
+    description: "Deprecated, removed in v4: use --remote=<ref>.",
+    optional: true,
+    hidden: true,
+  });
 
 type TargetFlagDeclarations = {
   readonly remote: Flag.Flag<Option.Option<RemoteValue>>;
@@ -240,8 +239,8 @@ export const readSeedTargetFlags = Effect.fnUntraced(function* () {
 });
 
 /** Hidden alias of `--remote=<ref>`, accepted only by `gen types`. */
-export const deprecatedProjectIdFlag = Flag.String("project-id").pipe(
-  Flag.withDescription("Deprecated, removed in v4: use --remote=<ref>."),
-  Flag.optional,
-  Flag.withHidden,
-);
+export const deprecatedProjectIdFlag = cliFlag("project-id", Flag.String, {
+  description: "Deprecated, removed in v4: use --remote=<ref>.",
+  optional: true,
+  hidden: true,
+});

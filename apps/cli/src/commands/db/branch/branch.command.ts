@@ -6,6 +6,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const REMOVED_SUGGESTION =
   "Local database branches are no longer supported. For hosted preview branches, see `supabase branches --help`.";
@@ -18,11 +19,11 @@ const withRemovedBranchTargetPolicy = withTargetPolicy({
 
 /** A tombstoned `db branch` leaf taking an optional `<branch name>` positional. */
 function removedBranchLeaf(name: string, argDescription: string) {
-  return Command.make(name, {
-    branchName: Argument.String("branch name").pipe(
-      Argument.withDescription(argDescription),
-      Argument.optional,
-    ),
+  return makeCommand(name, {
+    branchName: cliArgument("branch name", Argument.String, {
+      description: argDescription,
+      optional: true,
+    }),
   } as const).pipe(
     Command.withDescription("Removed: local database branches are no longer supported."),
     Command.withShortDescription("Removed: local database branches are no longer supported"),
@@ -41,7 +42,7 @@ const dbBranchCreateCommand = removedBranchLeaf("create", "Name for the new bran
 const dbBranchDeleteCommand = removedBranchLeaf("delete", "Name of the branch to delete.");
 const dbBranchSwitchCommand = removedBranchLeaf("switch", "Name of the branch to switch to.");
 
-const dbBranchListCommand = Command.make("list", {}).pipe(
+const dbBranchListCommand = makeCommand("list", {}).pipe(
   Command.withDescription("Removed: local database branches are no longer supported."),
   Command.withShortDescription("Removed: local database branches are no longer supported"),
   // Removed: fails before any Management API call, so no flag changes what it calls.

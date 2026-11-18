@@ -5,21 +5,22 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackRestart } from "./restart.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  stack: Flag.String("stack").pipe(
-    Flag.withDescription("Restart a named stack (defaults to the current project stack)."),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Restart an existing stack by id or unique id prefix."),
-    Flag.optional,
-  ),
+  stack: cliFlag("stack", Flag.String, {
+    description: "Restart a named stack (defaults to the current project stack).",
+    optional: true,
+  }),
+  stackId: cliFlag("stack-id", Flag.String, {
+    description: "Restart an existing stack by id or unique id prefix.",
+    optional: true,
+  }),
 } as const;
 
 export type StackRestartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const stackRestartCommand = Command.make("restart", config).pipe(
+export const stackRestartCommand = makeCommand("restart", config).pipe(
   Command.withDescription(
     "Restart an existing managed local Supabase stack using its saved configuration, including the previous start's service selection and activation policy. Project config changes are not applied.",
   ),

@@ -20,6 +20,7 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigUpdate } from "./update.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 /**
  * CSV-splits each occurrence into config overrides, failing at parse time with a
@@ -27,29 +28,42 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
  */
 export const postgresConfigUpdateConfigFlag = stringSliceFlag(
   "config",
-  "Config overrides specified as a 'key=value' pair",
+  "Config override as a `key=value` pair, comma-separated or repeated.",
 );
 
 const config = {
   ...projectTargetFlags(),
   config: postgresConfigUpdateConfigFlag,
-  replaceExistingOverrides: Flag.Boolean("replace-existing-overrides").pipe(
-    Flag.withDescription(
+  replaceExistingOverrides: cliFlag("replace-existing-overrides", Flag.Boolean, {
+    description:
       "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.",
-    ),
-    Flag.withDefault(false),
-  ),
-  noRestart: Flag.Boolean("no-restart").pipe(
-    Flag.withDescription("Do not restart the database after updating config."),
-    Flag.withDefault(false),
-  ),
+    default: false,
+  }),
+  noRestart: cliFlag("no-restart", Flag.Boolean, {
+    description: "Do not restart the database after updating config.",
+    default: false,
+  }),
 } as const;
 
 export type PostgresConfigUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
-  Command.withDescription("Update Postgres database config."),
+export const postgresConfigUpdateCommand = makeCommand("update", config).pipe(
+  Command.withDescription(
+    "Sets Postgres setting overrides for your project. By default they merge with existing overrides, and the database restarts afterwards unless you pass `--no-restart`.",
+  ),
   Command.withShortDescription("Update Postgres database config"),
+  Command.withExamples([
+    {
+      command:
+        "supabase postgres-config update --config work_mem=100MB --experimental --remote=<project-ref>",
+      description: "Set a Postgres config override",
+    },
+    {
+      command:
+        "supabase postgres-config update --config work_mem=100MB --replace-existing-overrides --no-restart --experimental --remote=<project-ref>",
+      description: "Replace all overrides without restarting",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["config", "no-restart"] },

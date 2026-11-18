@@ -15,6 +15,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -22,17 +23,17 @@ const config = {
     name: "password",
     alias: "p",
     description:
-      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+      "Database password for the project selected with --remote; ignored for the local database and database URLs.",
   }),
 } as const;
 
 export type MigrationListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const migrationListCommand = Command.make("list", config).pipe(
+export const migrationListCommand = makeCommand("list", config).pipe(
   Command.withDescription(
-    "List local migration files and the migration history of the target database.",
+    "Compare the migration files in supabase/migrations with the migration history of a database, to see which migrations are missing on either side.",
   ),
-  Command.withShortDescription("List local files and the target database's migration history"),
+  Command.withShortDescription("List local and applied migrations"),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: [] },

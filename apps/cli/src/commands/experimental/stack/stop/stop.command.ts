@@ -5,25 +5,26 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackStop } from "./stop.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  all: Flag.Boolean("all").pipe(
-    Flag.withDescription("Stop every readable managed stack."),
-    Flag.optional,
-  ),
-  stack: Flag.String("stack").pipe(
-    Flag.withDescription("Stop the stack with this name (defaults to the current project stack)."),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Stop an existing stack by id or unique id prefix."),
-    Flag.optional,
-  ),
+  all: cliFlag("all", Flag.Boolean, {
+    description: "Stop every readable managed stack.",
+    optional: true,
+  }),
+  stack: cliFlag("stack", Flag.String, {
+    description: "Stop the stack with this name (defaults to the current project stack).",
+    optional: true,
+  }),
+  stackId: cliFlag("stack-id", Flag.String, {
+    description: "Stop an existing stack by id or unique id prefix.",
+    optional: true,
+  }),
 } as const;
 
 export type StackStopFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const stackStopCommand = Command.make("stop", config).pipe(
+export const stackStopCommand = makeCommand("stop", config).pipe(
   Command.withDescription("Stop a managed local Supabase stack while preserving its data."),
   Command.withShortDescription("Stop a managed local stack"),
   Command.withExamples([

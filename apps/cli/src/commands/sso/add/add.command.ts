@@ -15,57 +15,50 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoAdd } from "./add.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 // `--domains` is a CSV string-slice flag; malformed CSV reports a diagnostic (see `stringSliceFlag`).
 export const ssoAddDomainsFlag = stringSliceFlag(
   "domains",
-  "Comma separated list of email domains to associate with the added identity provider.",
+  "Email domains to associate with the identity provider, comma-separated or repeated.",
 );
 
 const config = {
   ...projectTargetFlags(),
   // No `Flag.optional`: `--type` is required, enforced by the CLI parser.
-  type: Flag.Literals("type", ["saml"] as const).pipe(
-    Flag.withAlias("t"),
-    Flag.withDescription("Type of identity provider (according to supported protocol)."),
-  ),
+  type: cliFlag("type", (name) => Flag.Literals(name, ["saml"] as const), {
+    description: "Type of identity provider, based on its protocol.",
+    alias: "t",
+    required: true,
+  }),
   domains: ssoAddDomainsFlag,
-  metadataFile: Flag.String("metadata-file").pipe(
-    Flag.withDescription(
-      "File containing a SAML 2.0 Metadata XML document describing the identity provider.",
-    ),
-    Flag.optional,
-  ),
-  metadataUrl: Flag.String("metadata-url").pipe(
-    Flag.withDescription(
-      "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.",
-    ),
-    Flag.optional,
-  ),
-  skipUrlValidation: Flag.Boolean("skip-url-validation").pipe(
-    Flag.withDescription(
-      "Skip local validation of the SAML 2.0 Metadata URL (HTTPS requirement, live GET probe, and UTF-8 body decode). Use in air-gapped CI where the IDP is not reachable from the build agent.",
-    ),
-    Flag.withDefault(false),
-  ),
-  attributeMappingFile: Flag.String("attribute-mapping-file").pipe(
-    Flag.withDescription(
-      "File containing a JSON mapping between SAML attributes to custom JWT claims.",
-    ),
-    Flag.optional,
-  ),
-  nameIdFormat: Flag.Literals("name-id-format", SSO_NAME_ID_FORMATS).pipe(
-    Flag.withDescription(
-      "URI reference representing the classification of string-based identifier information.",
-    ),
-    Flag.optional,
-  ),
+  metadataFile: cliFlag("metadata-file", Flag.String, {
+    description: "Path to a SAML 2.0 Metadata XML file describing the identity provider.",
+    optional: true,
+  }),
+  metadataUrl: cliFlag("metadata-url", Flag.String, {
+    description: "URL of a SAML 2.0 Metadata XML document describing the identity provider.",
+    optional: true,
+  }),
+  skipUrlValidation: cliFlag("skip-url-validation", Flag.Boolean, {
+    description:
+      "Skip local validation of the metadata URL, such as in CI where the identity provider is unreachable.",
+    default: false,
+  }),
+  attributeMappingFile: cliFlag("attribute-mapping-file", Flag.String, {
+    description: "Path to a JSON file mapping SAML attributes to custom JWT claims.",
+    optional: true,
+  }),
+  nameIdFormat: cliFlag("name-id-format", (name) => Flag.Literals(name, SSO_NAME_ID_FORMATS), {
+    description: "SAML name ID format URI used to identify users.",
+    optional: true,
+  }),
 };
 export type SsoAddFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const ssoAddCommand = Command.make("add", config).pipe(
+export const ssoAddCommand = makeCommand("add", config).pipe(
   Command.withDescription(
-    "Add and configure a new connection to a SSO identity provider to your Supabase project.",
+    "Connects a SAML 2.0 identity provider to your project. Provide its metadata with `--metadata-url` or `--metadata-file`.",
   ),
   Command.withShortDescription("Add a new SSO identity provider"),
   Command.withExamples([

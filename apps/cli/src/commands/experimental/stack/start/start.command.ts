@@ -13,6 +13,7 @@ import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 const excludeFlag = stringSliceFlag(
   "exclude",
@@ -22,33 +23,36 @@ const excludeFlag = stringSliceFlag(
 
 const config = {
   exclude: excludeFlag,
-  stack: Flag.String("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Open an existing stack by id or unique id prefix."),
-    Flag.optional,
+  stack: cliFlag("stack", Flag.String, { description: "Name this stack.", optional: true }),
+  stackId: cliFlag("stack-id", Flag.String, {
+    description: "Open an existing stack by id or unique id prefix.",
+    optional: true,
+  }),
+  runtime: cliFlag(
+    "runtime",
+    (name) => Flag.Literals(name, ["auto", "docker", "podman", "native"] as const),
+    {
+      description:
+        "Runtime to use for a new stack. auto selects Docker, then Podman, then native, based on what is available.",
+      default: "auto" as const,
+    },
   ),
-  runtime: Flag.Literals("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
-    Flag.withDescription(
-      "Runtime to use for a new stack. auto selects Docker, then Podman, then native, based on what is available.",
-    ),
-    Flag.withDefault("auto" as const),
-  ),
-  preparation: Flag.Literals("preparation", ["background", "on-demand"] as const).pipe(
-    Flag.withDescription("Artifact preparation policy."),
-    Flag.withDefault("background" as const),
+  preparation: cliFlag(
+    "preparation",
+    (name) => Flag.Literals(name, ["background", "on-demand"] as const),
+    { description: "Artifact preparation policy.", default: "background" as const },
   ),
   frozen: frozenFlag,
-  eager: Flag.Boolean("eager").pipe(
-    Flag.withDescription(
+  eager: cliFlag("eager", Flag.Boolean, {
+    description:
       "Activate all enabled capabilities before returning and disable automatic idle stops.",
-    ),
-    Flag.withDefault(false),
-  ),
+    default: false,
+  }),
 } as const;
 
 export type StackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const stackStartCommand = Command.make("start", config).pipe(
+export const stackStartCommand = makeCommand("start", config).pipe(
   Command.withDescription(
     "Create or resume a managed local Supabase stack using the project config file when present. " +
       "Without a config file, default settings are used and no file is created. " +

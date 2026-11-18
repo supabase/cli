@@ -104,7 +104,7 @@ describe("respondToComplete", () => {
     const outputCandidates = result?.candidates.filter((c) => c.name === "--output");
     expect(outputCandidates).toHaveLength(1);
     expect(outputCandidates?.[0]?.description).toBe(
-      "Write flattened explicit diff SQL to a file for review; this is not a portable apply script.",
+      "Write the flattened diff SQL of --from and --to mode to a file for review; it is not a portable apply script.",
     );
   });
 
@@ -246,7 +246,7 @@ describe("respondToComplete", () => {
         candidates: [
           {
             name: "--custom-hostname",
-            description: "The custom hostname to use for your Supabase project.",
+            description: "The custom hostname to use for the project.",
           },
         ],
         directive: CompletionDirective.Default,
@@ -266,7 +266,7 @@ describe("respondToComplete", () => {
         candidates: [
           {
             name: "--desired-subdomain",
-            description: "The desired vanity subdomain to use for your Supabase project.",
+            description: "The vanity subdomain to use for the project.",
           },
         ],
         directive: CompletionDirective.Default,
@@ -1088,7 +1088,7 @@ describe("collectInScopeFlags", () => {
     const outputFlags = flags.filter((flag) => flag.name === "output");
     expect(outputFlags).toHaveLength(1);
     expect(outputFlags[0]?.description).toBe(
-      "Write flattened explicit diff SQL to a file for review; this is not a portable apply script.",
+      "Write the flattened diff SQL of --from and --to mode to a file for review; it is not a portable apply script.",
     );
   });
 

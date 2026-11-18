@@ -1,6 +1,7 @@
 import type * as CliCommand from "effect/cli/Command";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
@@ -14,10 +15,10 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { configConvert } from "./convert.handler.ts";
 
 const config = {
-  dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Print the converted config.jsonc to stdout without writing any file."),
-    Flag.withDefault(false),
-  ),
+  dryRun: cliFlag("dry-run", Flag.Boolean, {
+    description: "Print the converted config.jsonc to stdout without writing any file.",
+    default: false,
+  }),
 } as const;
 
 export type ConfigConvertFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -35,7 +36,7 @@ const configConvertHandler = (flags: ConfigConvertFlags) =>
     withJsonErrorHandling,
   );
 
-export const configConvertCommand = Command.make("convert", config).pipe(
+export const configConvertCommand = makeCommand("convert", config).pipe(
   Command.withDescription(
     "Converts supabase/config.toml to supabase/config.jsonc, carrying comments over, and moves the TOML file to supabase/config.toml.bak. Everyone on the project needs Supabase CLI 3.1.0 or later.",
   ),

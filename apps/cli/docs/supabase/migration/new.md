@@ -1,7 +1,5 @@
 ## supabase-migration-new
 
-Creates a new migration file locally.
+Create an empty migration file for you to fill in. Output from other commands, such as `db diff`, can be piped to `migration new <name>` through stdin.
 
-A `supabase/migrations` directory will be created if it does not already exists in your current `workdir`. All schema migration files must be created in this directory following the pattern `<timestamp>_<name>.sql`.
-
-Outputs from other commands like `db diff` may be piped to `migration new <name>` via stdin.
+The command creates the `supabase/migrations` directory in your current `workdir` if it does not exist. Every migration file in this directory is named `<timestamp>_<name>.sql`.

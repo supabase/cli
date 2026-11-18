@@ -15,26 +15,39 @@ import { migrationSquash } from "./squash.handler.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  version: Flag.String("version").pipe(
-    Flag.withDescription("Squash up to the specified version."),
-    Flag.optional,
-  ),
+  version: cliFlag("version", Flag.String, {
+    description: "Squash up to the specified migration version.",
+    optional: true,
+  }),
   ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description:
-      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+      "Database password for the project selected with --remote; ignored for the local database and database URLs.",
   }),
 } as const;
 
 export type MigrationSquashFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const migrationSquashCommand = Command.make("squash", config).pipe(
-  Command.withDescription("Squash migrations to a single file."),
-  Command.withShortDescription("Squash migrations to a single file"),
+export const migrationSquashCommand = makeCommand("squash", config).pipe(
+  Command.withDescription(
+    "Combine your local migrations into one file, which removes repeated changes to the same schema from your history. Data statements are not kept and must be re-added by hand.",
+  ),
+  Command.withShortDescription("Squash migrations into a single file"),
+  Command.withExamples([
+    {
+      command: "supabase migration squash",
+      description: "Squash all local migrations into the latest file",
+    },
+    {
+      command: "supabase migration squash --version 20240101000000",
+      description: "Squash migrations up to a given version",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [], noApiEffectFlags: ["version"] },

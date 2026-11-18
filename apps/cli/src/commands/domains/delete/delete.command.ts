@@ -14,16 +14,17 @@ import { domainsDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
   // Kept parsed (and hidden) only so using it produces the removal error instead of an
   // unknown-flag parse error.
-  includeRawOutput: Flag.Boolean("include-raw-output").pipe(
-    Flag.withDescription("Removed: use -o json instead."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
+  includeRawOutput: cliFlag("include-raw-output", Flag.Boolean, {
+    description: "Removed: use -o json instead.",
+    optional: true,
+    hidden: true,
+  }),
 } as const;
 
 const COMMAND_PATH = ["domains", "delete"];
@@ -31,8 +32,10 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 
 export type DomainsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const domainsDeleteCommand = Command.make("delete", config).pipe(
-  Command.withDescription("Deletes the custom hostname config for your project."),
+export const domainsDeleteCommand = makeCommand("delete", config).pipe(
+  Command.withDescription(
+    "Removes the custom hostname configuration so the project is served only on its Supabase-provisioned domain. Use it to start over, or to move to a vanity subdomain.",
+  ),
   Command.withShortDescription("Delete the custom hostname config"),
   Command.withExamples([
     {

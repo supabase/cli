@@ -1,11 +1,11 @@
 ## supabase-functions
 
-Manage Supabase Edge Functions.
+Create, serve, deploy and delete Edge Functions, the server-side TypeScript functions that run close to your users on a Deno-compatible edge runtime. They suit webhooks, custom API endpoints, data validation and personalized content, without deploying or scaling a traditional server.
 
-Supabase Edge Functions are server-less functions that run close to your users.
+The runtime needs no package management, starts quickly and is secure by default.
 
-Edge Functions allow you to execute custom server-side code without deploying or scaling a traditional server. They're ideal for handling webhooks, custom API endpoints, data validation, and serving personalized content.
+Commands that change the hosted project, `functions deploy` (including `--prune`) and `functions delete`, print the `Target:` line and then ask for confirmation before changing anything. The default answer is no. `functions deploy` asks one question covering every function it deploys and every function `--prune` deletes.
 
-Edge Functions are written in TypeScript and run on Deno compatible edge runtime, which is a secure runtime with no package management needed, fast cold starts, and built-in security.
+Piped answers are never read, so scripts, JSON runs and agents must pass `--yes` or set `SUPABASE_YES` in the shell. A `SUPABASE_YES` in `supabase/.env` does not count.
 
-Commands that change the hosted project — `functions deploy` (including `--prune`) and `functions delete` — print the `Target:` line, then ask for confirmation before changing anything; the default answer is no. `functions deploy` asks one question covering every function it will deploy and every function `--prune` will delete. Piped answers are never read, so scripts, JSON runs and agents must pass `--yes` or set `SUPABASE_YES` in the shell (a `SUPABASE_YES` in `supabase/.env` does not count). `functions list` and `functions download` only read and never ask.
+`functions list` and `functions download` only read and never ask.

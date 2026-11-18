@@ -15,22 +15,33 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
-  outputDir: Flag.String("output-dir").pipe(
-    Flag.withDescription("Path to save CSV files in."),
-    Flag.withDefault("."),
-  ),
+  outputDir: cliFlag("output-dir", Flag.String, {
+    description: "Directory to create the dated report folder in.",
+    default: ".",
+  }),
 } as const;
 
 export type InspectReportFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const inspectReportCommand = Command.make("report", config).pipe(
+export const inspectReportCommand = makeCommand("report", config).pipe(
   Command.withDescription(
-    "Generate a CSV output for all inspect commands. It reports on the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
+    "Run every inspect query and write each result to its own CSV file in a dated folder, then check the results against a set of rules and print a summary. It reports on the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
   ),
-  Command.withShortDescription("Generate a CSV output for all inspect commands"),
+  Command.withShortDescription("Export all inspect results as CSV files"),
+  Command.withExamples([
+    {
+      command: "supabase inspect report",
+      description: "Write CSV reports for the local database",
+    },
+    {
+      command: "supabase inspect report --remote --output-dir ./reports",
+      description: "Write CSV reports for the linked project to ./reports",
+    },
+  ]),
   withPermissions(
     compose({ operations: [], noApiEffectFlags: ["output-dir"] }, dbConfig, branchResolution),
   ),

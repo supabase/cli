@@ -9,7 +9,9 @@ import { branchesDeleteCommand } from "./delete/delete.command.ts";
 import { branchesDisableCommand } from "./disable/disable.command.ts";
 
 export const branchesCommand = Command.make("branches").pipe(
-  Command.withDescription("Manage Supabase preview branches."),
+  Command.withDescription(
+    "Create, inspect, update, pause and delete the preview branches of the linked project. Each preview branch is an isolated environment for testing changes.",
+  ),
   Command.withShortDescription("Manage preview branches"),
   Command.withSubcommands([
     branchesListCommand,

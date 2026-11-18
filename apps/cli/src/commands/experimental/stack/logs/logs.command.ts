@@ -6,50 +6,44 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackLogs } from "./logs.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand, repeated } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  stack: Flag.String("stack").pipe(
-    Flag.withDescription(
-      "Select an existing stack by name (defaults to the current project stack).",
-    ),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Read logs from an existing stack by id or unique id prefix."),
-    Flag.optional,
-  ),
-  service: Flag.String("service").pipe(
-    Flag.withDescription(
+  stack: cliFlag("stack", Flag.String, {
+    description: "Select an existing stack by name (defaults to the current project stack).",
+    optional: true,
+  }),
+  stackId: cliFlag("stack-id", Flag.String, {
+    description: "Read logs from an existing stack by id or unique id prefix.",
+    optional: true,
+  }),
+  service: cliFlag("service", repeated(Flag.String, { min: 0 }), {
+    description:
       "Read one service kind, instance ID, or gateway (shared API requests); repeat to select several. Defaults to composition members and gateway.",
-    ),
-    Flag.atLeast(0),
-  ),
-  follow: Flag.Boolean("follow").pipe(
-    Flag.withAlias("f"),
-    Flag.withDescription(
+  }),
+  follow: cliFlag("follow", Flag.Boolean, {
+    description:
       "After the history, keep streaming new lines until interrupted; requires a running stack.",
-    ),
-    Flag.withDefault(false),
-  ),
-  tail: Flag.Int("tail").pipe(
-    Flag.filter(
+    alias: "f",
+    default: false,
+  }),
+  tail: cliFlag("tail", Flag.Int, {
+    description:
+      "Number of retained lines to print across the selected services (default 200); 0 prints none.",
+    parse: Flag.filter(
       (tail) => tail >= 0,
       (tail) => `Expected --tail to be 0 or more, got ${tail}`,
     ),
-    Flag.withDescription(
-      "Number of retained lines to print across the selected services (default 200); 0 prints none.",
-    ),
-    Flag.withDefault(200),
-  ),
-  since: Flag.String("since").pipe(
-    Flag.withDescription(
+    default: 200,
+  }),
+  since: cliFlag("since", Flag.String, {
+    description:
       "Only print lines since a duration ago (10m, 1h30m), an ISO-8601 time, or start for each service's latest launch.",
-    ),
-    Flag.optional,
-  ),
+    optional: true,
+  }),
 } as const;
 
-export const stackLogsCommand = Command.make("logs", config).pipe(
+export const stackLogsCommand = makeCommand("logs", config).pipe(
   Command.withDescription(
     "Deprecated; removed in v4. Use supabase logs instead. Print retained service logs and exit; with --follow, keep streaming new lines. History is readable while the stack is stopped.",
   ),

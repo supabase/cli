@@ -13,29 +13,30 @@ import { stop } from "./stop.handler.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../shared/cli/cli-params.ts";
 
 const config = {
-  projectId: Flag.String("project-id").pipe(
-    Flag.withDescription("Local project ID to stop."),
-    Flag.optional,
-  ),
+  projectId: cliFlag("project-id", Flag.String, {
+    description: "Local project ID to stop.",
+    optional: true,
+  }),
   // Hidden for backward compatibility: `--backup=false` is equivalent to `--no-backup`.
-  backup: Flag.Boolean("backup").pipe(
-    Flag.withDescription("Backs up the current database before stopping."),
-    Flag.withDefault(true),
-    Flag.withHidden,
-  ),
-  noBackup: Flag.Boolean("no-backup").pipe(
-    Flag.withDescription("Deletes all data volumes after stopping."),
-    Flag.withDefault(false),
-  ),
+  backup: cliFlag("backup", Flag.Boolean, {
+    description: "Back up the current database before stopping.",
+    default: true,
+    hidden: true,
+  }),
+  noBackup: cliFlag("no-backup", Flag.Boolean, {
+    description: "Delete all data volumes after stopping.",
+    default: false,
+  }),
   // `Option<boolean>` so presence means "explicitly set": `--project-id`/`--all` are mutually
   // exclusive whenever both were explicitly set, regardless of `--all`'s value. A plain
   // `Flag.Boolean` couldn't distinguish `--project-id x --all=false` from `--project-id x` alone.
-  all: Flag.Boolean("all").pipe(
-    Flag.withDescription("Stop all local Supabase instances from all projects across the machine."),
-    Flag.optional,
-  ),
+  all: cliFlag("all", Flag.Boolean, {
+    description: "Stop the local Supabase stacks of every project on this machine.",
+    optional: true,
+  }),
 } as const;
 
 export type StopFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -51,9 +52,9 @@ const stopRuntimeLayer = Layer.mergeAll(
   commandRuntimeLayer(["stop"]),
 );
 
-export const stopCommand = Command.make("stop", config).pipe(
-  Command.withDescription("Stop all local Supabase containers."),
-  Command.withShortDescription("Stop all local Supabase containers"),
+export const stopCommand = makeCommand("stop", config).pipe(
+  Command.withDescription("Stop the Supabase local development stack and its containers."),
+  Command.withShortDescription("Stop the local Supabase stack"),
   withPermissions({
     operations: [],
     noApiEffectFlags: ["project-id", "backup", "no-backup", "all"],

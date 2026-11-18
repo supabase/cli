@@ -12,6 +12,7 @@ import { branchesList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags({ parent: true }),
@@ -19,9 +20,21 @@ const config = {
 
 export type BranchesListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const branchesListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List all preview branches of the linked project."),
+export const branchesListCommand = makeCommand("list", config).pipe(
+  Command.withDescription(
+    "Show the preview branches of the linked project. Use it to find the name or ID that the other `branches` commands take.",
+  ),
   Command.withShortDescription("List all preview branches"),
+  Command.withExamples([
+    {
+      command: "supabase branches list",
+      description: "List all preview branches of the linked project",
+    },
+    {
+      command: "supabase branches list --output-format json",
+      description: "List preview branches as JSON",
+    },
+  ]),
   withPermissions(
     compose(
       { operations: [{ operationId: "v1-list-all-branches", kind: "required" }] },

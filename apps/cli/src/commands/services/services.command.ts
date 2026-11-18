@@ -11,13 +11,22 @@ import type * as CliCommand from "effect/cli/Command";
 import { services } from "./services.handler.ts";
 import { servicesRuntimeLayer } from "./services.layers.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../shared/cli/cli-params.ts";
 
 const config = {};
 export type ServicesFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const servicesCommand = Command.make("services", config).pipe(
-  Command.withDescription("Show versions of all Supabase services."),
-  Command.withShortDescription("Show versions of all Supabase services"),
+export const servicesCommand = makeCommand("services", config).pipe(
+  Command.withDescription(
+    "Show the version of each Supabase service in your local stack and, when the project is linked, the version running on the hosted project. Use it to spot a local stack that lags behind.",
+  ),
+  Command.withShortDescription("Show Supabase service versions"),
+  Command.withExamples([
+    {
+      command: "supabase services",
+      description: "Show local and linked service versions",
+    },
+  ]),
   withPermissions(
     compose(
       withContext(

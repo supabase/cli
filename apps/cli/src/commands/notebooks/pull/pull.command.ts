@@ -12,14 +12,14 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { notebookCreate, notebookRead, notebooksList } from "../notebooks.shared.ts";
 import { notebooksPull } from "./pull.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliArgument, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  notebookId: Argument.String("Notebook id").pipe(
-    Argument.withDescription(
-      "UUID of the notebook to replace locally. Pulls only locally missing notebooks if omitted.",
-    ),
-    Argument.optional,
-  ),
+  notebookId: cliArgument("Notebook id", Argument.String, {
+    description:
+      "UUID of the notebook to replace locally; pulls only missing notebooks when omitted.",
+    optional: true,
+  }),
   ...projectTargetFlags(),
 } as const;
 
@@ -30,11 +30,11 @@ export type NotebooksPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const notebooksPullHandler = (flags: NotebooksPullFlags) =>
   notebooksPull(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling);
 
-export const notebooksPullCommand = Command.make("pull", config).pipe(
+export const notebooksPullCommand = makeCommand("pull", config).pipe(
   Command.withDescription(
-    "Write the linked Supabase project's notebooks into supabase/notebooks. Without a notebook id, existing local files are preserved and only missing notebooks are written.",
+    "Write the notebooks of the linked project to `supabase/notebooks`.\n\nWithout a notebook id, existing local files are kept and only missing notebooks are written.",
   ),
-  Command.withShortDescription("Pull notebooks from Supabase"),
+  Command.withShortDescription("Pull notebooks from a project"),
   Command.withExamples([
     {
       command: "supabase notebooks pull",

@@ -5,8 +5,10 @@ import { genBearerJwtCommand } from "./bearer-jwt/bearer-jwt.command.ts";
 import { genKeysCommand } from "./keys/keys.command.ts";
 
 export const genCommand = Command.make("gen").pipe(
-  Command.withDescription("Run code generation tools."),
-  Command.withShortDescription("Run code generation tools"),
+  Command.withDescription(
+    "Generate typed definitions from your database schema, JWT signing keys and Bearer tokens.",
+  ),
+  Command.withShortDescription("Generate types, keys and tokens"),
   Command.withSubcommands([
     genTypesCommand,
     genSigningKeyCommand,

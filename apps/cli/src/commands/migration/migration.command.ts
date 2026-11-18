@@ -8,8 +8,10 @@ import { migrationDownCommand } from "./down/down.command.ts";
 import { migrationFetchCommand } from "./fetch/fetch.command.ts";
 
 export const migrationCommand = Command.make("migration").pipe(
-  Command.withDescription("Manage database migration scripts."),
-  Command.withShortDescription("Manage database migration scripts"),
+  Command.withDescription(
+    "Create, list, apply, squash, and repair the SQL migration files in supabase/migrations and the migration history of a database.",
+  ),
+  Command.withShortDescription("Manage database migrations"),
   Command.withAlias("migrations"),
   Command.withSubcommands([
     migrationListCommand,

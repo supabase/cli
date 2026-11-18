@@ -1,7 +1,7 @@
 ## supabase-functions-new
 
-Creates a new Edge Function with boilerplate code in the `supabase/functions` directory.
+Scaffold a starter Edge Function in `supabase/functions/<name>`, ready to edit and serve locally.
 
-This command generates a starter TypeScript file with the necessary Deno imports and a basic function structure. The function is created as a new directory with the name you specify, containing an `index.ts` file with the function code.
+The function is a new directory with the name you specify, containing an `index.ts` with the Deno imports and a basic function structure.
 
-After creating the function, you can edit it locally and then use `supabase functions serve` to test it before deploying with `supabase functions deploy`.
+After creating the function, edit it, test it with `supabase functions serve`, then publish it with `supabase functions deploy`.

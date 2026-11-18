@@ -8,20 +8,24 @@ import { stackInstall } from "./install.handler.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  runtime: Flag.Literals("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
-    Flag.withDescription(
-      "Runtime to download artifacts for. auto selects Docker, then Podman, then native, based on what is available. native downloads archives; docker and podman pull images.",
-    ),
-    Flag.withDefault("auto" as const),
+  runtime: cliFlag(
+    "runtime",
+    (name) => Flag.Literals(name, ["auto", "docker", "podman", "native"] as const),
+    {
+      description:
+        "Runtime to download artifacts for. auto selects Docker, then Podman, then native, based on what is available. native downloads archives; docker and podman pull images.",
+      default: "auto" as const,
+    },
   ),
   frozen: frozenFlag,
 } as const;
 
 export type StackInstallFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const stackInstallCommand = Command.make("install", config).pipe(
+export const stackInstallCommand = makeCommand("install", config).pipe(
   Command.withDescription(
     "Resolve the local service versions in supabase/supabase.lock and download everything the lock pins for the chosen runtime, without creating or starting a stack. " +
       "A missing or out-of-date lock is resolved and written; --frozen (or CI with an existing lock) fails instead.",

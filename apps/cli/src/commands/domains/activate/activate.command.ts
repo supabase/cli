@@ -14,16 +14,17 @@ import { domainsActivate } from "./activate.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
   // Kept parsed (and hidden) only so using it produces the removal error instead of an
   // unknown-flag parse error.
-  includeRawOutput: Flag.Boolean("include-raw-output").pipe(
-    Flag.withDescription("Removed: use -o json instead."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
+  includeRawOutput: cliFlag("include-raw-output", Flag.Boolean, {
+    description: "Removed: use -o json instead.",
+    optional: true,
+    hidden: true,
+  }),
 } as const;
 
 const COMMAND_PATH = ["domains", "activate"];
@@ -31,9 +32,9 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 
 export type DomainsActivateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const domainsActivateCommand = Command.make("activate", config).pipe(
+export const domainsActivateCommand = makeCommand("activate", config).pipe(
   Command.withDescription(
-    "Activates the custom hostname configuration for a project. This reconfigures your Supabase project to respond to requests on your custom hostname. After the custom hostname is activated, your project's auth services will no longer function on the Supabase-provisioned subdomain.",
+    "Makes your project respond to requests on its custom hostname. After activation, your project's auth services no longer work on the Supabase-provisioned subdomain.",
   ),
   Command.withShortDescription("Activate the custom hostname for a project"),
   Command.withExamples([

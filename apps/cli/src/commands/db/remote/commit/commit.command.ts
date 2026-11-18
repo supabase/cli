@@ -8,30 +8,30 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand, repeated } from "../../../../shared/cli/cli-params.ts";
 
 const config = {
-  schema: Flag.String("schema").pipe(
-    Flag.withAlias("s"),
-    Flag.withDescription("Comma separated list of schema to include."),
-    Flag.atLeast(0),
-  ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription("Connect using the specified Postgres URL (must be percent-encoded)."),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Connect to the linked project."),
-    Flag.withDefault(false),
-  ),
+  schema: cliFlag("schema", repeated(Flag.String, { min: 0 }), {
+    description: "Comma-separated list of schemas to include.",
+    alias: "s",
+  }),
+  dbUrl: cliFlag("db-url", Flag.String, {
+    description: "Connect using the specified Postgres URL (must be percent-encoded).",
+    optional: true,
+  }),
+  linked: cliFlag("linked", Flag.Boolean, {
+    description: "Connect to the linked project.",
+    default: false,
+  }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description:
-      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+      "Database password for the project selected with --remote; ignored for the local database and database URLs.",
   }),
 } as const;
 
-export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
+export const dbRemoteCommitCommand = makeCommand("commit", config).pipe(
   Command.withDescription("Removed: use `supabase db pull --remote` instead."),
   Command.withShortDescription("Removed: use `db pull --remote` instead"),
   // Removed: fails before any Management API call, so no flag changes what it calls.

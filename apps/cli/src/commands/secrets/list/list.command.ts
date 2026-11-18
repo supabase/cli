@@ -12,6 +12,7 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { secretsList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -19,9 +20,11 @@ const config = {
 
 export type SecretsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const secretsListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List all secrets in the linked project."),
-  Command.withShortDescription("List all secrets on Supabase"),
+export const secretsListCommand = makeCommand("list", config).pipe(
+  Command.withDescription(
+    "Show the names and digests of the secrets set on the linked project. Secret values are never shown.",
+  ),
+  Command.withShortDescription("List secrets on the linked project"),
   Command.withExamples([
     {
       command: "supabase secrets list",

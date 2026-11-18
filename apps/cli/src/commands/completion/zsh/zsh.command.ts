@@ -7,13 +7,14 @@ import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { completionZsh } from "./zsh.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   noDescriptions: CompletionNoDescriptionsFlagDef,
 } as const;
 export type CompletionZshFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const completionZshCommand = Command.make("zsh", config).pipe(
+export const completionZshCommand = makeCommand("zsh", config).pipe(
   Command.withDescription(
     "Generate the autocompletion script for the zsh shell.\n\n" +
       "If shell completion is not already enabled in your environment you will need\n" +
@@ -28,7 +29,13 @@ export const completionZshCommand = Command.make("zsh", config).pipe(
       "\tsupabase completion zsh > $(brew --prefix)/share/zsh/site-functions/_supabase\n\n" +
       "You will need to start a new shell for this setup to take effect.",
   ),
-  Command.withShortDescription("Generate the autocompletion script for zsh"),
+  Command.withShortDescription("Generate the Zsh completion script"),
+  Command.withExamples([
+    {
+      command: "source <(supabase completion zsh)",
+      description: "Load completions in the current zsh session",
+    },
+  ]),
   withPermissions({ operations: [], noApiEffectFlags: ["no-descriptions"] }),
   Command.withHandler((flags) =>
     completionZsh(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),

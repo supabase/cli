@@ -15,6 +15,7 @@ import { encryptionUpdateRootKey } from "./update-root-key.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -30,9 +31,21 @@ const updateRuntime = Layer.mergeAll(
   stdinLayer.pipe(Layer.provide(ttyLayer)),
 );
 
-export const encryptionUpdateRootKeyCommand = Command.make("update-root-key", config).pipe(
-  Command.withDescription("Update root encryption key of a Supabase project"),
+export const encryptionUpdateRootKeyCommand = makeCommand("update-root-key", config).pipe(
+  Command.withDescription(
+    "Replace the root encryption key of the project with a new one. The new key is read from a masked prompt, or from piped stdin when there is no terminal.\n\nAsks for confirmation before changing anything; pass `--yes` in scripts and CI.",
+  ),
   Command.withShortDescription("Update the root encryption key"),
+  Command.withExamples([
+    {
+      command: "supabase encryption update-root-key",
+      description: "Update the root encryption key, entering the new key at the prompt",
+    },
+    {
+      command: 'echo "<new-root-key>" | supabase encryption update-root-key --yes',
+      description: "Update the root encryption key from stdin without confirmation",
+    },
+  ]),
   withPermissions(
     compose(
       {

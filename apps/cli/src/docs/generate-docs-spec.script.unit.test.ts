@@ -32,7 +32,7 @@ describe("generate-docs-spec.ts entrypoint", () => {
         const { stdout, stderr } = yield* Effect.sync(() => runScript([]));
         expect(stderr).toBe("");
         const spec = yield* validateDocsSpec(stdout, "latest", rootCommand);
-        expect(spec.clispec).toBe("001");
+        expect(spec.clispec).toBe("002");
         expect(spec.info.version).toBe("latest");
       }),
     30_000,

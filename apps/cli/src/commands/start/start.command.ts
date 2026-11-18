@@ -23,6 +23,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { start } from "./start.handler.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand } from "../../shared/cli/cli-params.ts";
 
 /**
  * A string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
@@ -30,21 +31,21 @@ import { withTargetPolicy } from "../../command-internal/target/target-policy.ts
  */
 export const startExcludeFlag = stringSliceFlag(
   "exclude",
-  `Names of containers to not start. [${START_EXCLUDABLE_KEYS.join(",")}]`,
+  `Containers to skip, as repeated flags or a comma-separated list. [${START_EXCLUDABLE_KEYS.join(",")}]`,
   { alias: "x" },
 );
 
 const config = {
   exclude: startExcludeFlag,
-  ignoreHealthCheck: Flag.Boolean("ignore-health-check").pipe(
-    Flag.withDescription("Ignore unhealthy services and exit 0"),
-    Flag.withDefault(false),
-  ),
-  preview: Flag.Boolean("preview").pipe(
-    Flag.withDescription("Connect to feature preview branch"),
-    Flag.withDefault(false),
-    Flag.withHidden,
-  ),
+  ignoreHealthCheck: cliFlag("ignore-health-check", Flag.Boolean, {
+    description: "Ignore unhealthy services and exit 0.",
+    default: false,
+  }),
+  preview: cliFlag("preview", Flag.Boolean, {
+    description: "Connect to the feature preview branch.",
+    default: false,
+    hidden: true,
+  }),
 } as const;
 
 export type StartFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -88,9 +89,9 @@ const startRuntimeLayer = Layer.mergeAll(
   stdinLayer,
 );
 
-export const startCommand = Command.make("start", config).pipe(
-  Command.withDescription("Start containers for Supabase local development."),
-  Command.withShortDescription("Start local Supabase stack"),
+export const startCommand = makeCommand("start", config).pipe(
+  Command.withDescription("Start the Supabase local development stack in Docker containers."),
+  Command.withShortDescription("Start the local Supabase stack"),
   withPermissions({
     operations: [],
     noApiEffectFlags: ["exclude", "ignore-health-check", "preview"],

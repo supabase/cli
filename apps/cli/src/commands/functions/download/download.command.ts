@@ -18,29 +18,30 @@ import { functionsDownload } from "./download.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { cliArgument, cliFlag, makeCommand } from "../../../shared/cli/cli-params.ts";
 
 const config = {
-  functionName: Argument.String("Function name").pipe(
-    Argument.withDescription("Name of the Function to download. Downloads all if omitted."),
-    Argument.optional,
-  ),
+  functionName: cliArgument("Function name", Argument.String, {
+    description: "Name of the function to download; downloads all when omitted.",
+    optional: true,
+  }),
   ...projectTargetFlags(),
-  useApi: Flag.Boolean("use-api").pipe(
-    Flag.withDescription("Unbundle functions server-side without using Docker."),
-    Flag.withDefault(false),
-  ),
-  useDocker: Flag.Boolean("use-docker").pipe(
-    Flag.withDescription("Use Docker to unbundle functions locally."),
-    Flag.withDefault(true),
-    Flag.withHidden,
-  ),
+  useApi: cliFlag("use-api", Flag.Boolean, {
+    description: "Unbundle functions server-side without using Docker.",
+    default: false,
+  }),
+  useDocker: cliFlag("use-docker", Flag.Boolean, {
+    description: "Unbundle functions locally using Docker.",
+    default: true,
+    hidden: true,
+  }),
   // Kept parsed (and hidden) only so using it produces an actionable removal error instead of
   // an unknown-flag parse error; see `functionsDownloadLegacyBundleHandler`.
-  legacyBundle: Flag.Boolean("legacy-bundle").pipe(
-    Flag.withDescription("Removed: use --use-api instead."),
-    Flag.optional,
-    Flag.withHidden,
-  ),
+  legacyBundle: cliFlag("legacy-bundle", Flag.Boolean, {
+    description: "Removed; use `--use-api` instead.",
+    optional: true,
+    hidden: true,
+  }),
 } as const;
 
 export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -62,11 +63,11 @@ const functionsDownloadLegacyBundleHandler = (flags: FunctionsDownloadFlags) => 
   ).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling, Effect.provide(removedFlagLayer));
 };
 
-export const functionsDownloadCommand = Command.make("download", config).pipe(
+export const functionsDownloadCommand = makeCommand("download", config).pipe(
   Command.withDescription(
-    "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
+    "Download the source code of deployed Edge Functions from the linked project. Downloads every function when you omit the name.",
   ),
-  Command.withShortDescription("Download a Function from Supabase"),
+  Command.withShortDescription("Download Edge Functions from a project"),
   Command.withExamples([
     {
       command: "supabase functions download hello-world",

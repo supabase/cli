@@ -20,6 +20,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { cliFlag, makeCommand, repeated } from "../../../shared/cli/cli-params.ts";
 
 /**
  * `db dump` has no `--output-format` machine envelope; it streams pg_dump SQL to
@@ -37,67 +38,65 @@ const onRunFailure = (error: DbDumpRunError) =>
   });
 
 const config = {
-  dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Prints the pg_dump script that would be executed."),
-    Flag.withDefault(false),
-  ),
+  dryRun: cliFlag("dry-run", Flag.Boolean, {
+    description: "Print the pg_dump script that would run, without running it.",
+    default: false,
+  }),
   // Mutually-exclusive-group flags (data-only/role-only/keep-comments) are modelled as
   // `Option` so presence, not value, drives validation — `--data-only=false` still counts as set.
-  dataOnly: Flag.Boolean("data-only").pipe(
-    Flag.withDescription("Dumps only data records."),
-    Flag.optional,
-  ),
-  useCopy: Flag.Boolean("use-copy").pipe(
-    Flag.withDescription("Use copy statements in place of inserts."),
-    Flag.withDefault(false),
-  ),
-  exclude: Flag.String("exclude").pipe(
-    Flag.withAlias("x"),
-    Flag.withDescription("List of schema.tables to exclude from data-only dump."),
-    Flag.atLeast(0),
-    // CSV string-slice value; quoted commas survive, malformed CSV fails at parse time.
-    Flag.mapTryCatch(
+  dataOnly: cliFlag("data-only", Flag.Boolean, {
+    description: "Dump only data records.",
+    optional: true,
+  }),
+  useCopy: cliFlag("use-copy", Flag.Boolean, {
+    description: "Use COPY statements instead of INSERT statements.",
+    default: false,
+  }),
+  exclude: cliFlag("exclude", repeated(Flag.String, { min: 0 }), {
+    description: "Comma-separated list of schema.table names to exclude from a data-only dump.",
+    alias: "x",
+    parse: Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
-  ),
-  roleOnly: Flag.Boolean("role-only").pipe(
-    Flag.withDescription("Dumps only cluster roles."),
-    Flag.optional,
-  ),
-  keepComments: Flag.Boolean("keep-comments").pipe(
-    Flag.withDescription("Keeps commented lines from pg_dump output."),
-    Flag.optional,
-  ),
-  file: Flag.String("file").pipe(
-    Flag.withAlias("f"),
-    Flag.withDescription("File path to save the dumped contents."),
-    Flag.optional,
-  ),
+  }),
+  roleOnly: cliFlag("role-only", Flag.Boolean, {
+    description: "Dump only cluster roles.",
+    optional: true,
+  }),
+  keepComments: cliFlag("keep-comments", Flag.Boolean, {
+    description: "Keep commented lines from the pg_dump output.",
+    optional: true,
+  }),
+  file: cliFlag("file", Flag.String, {
+    description: "File path to save the dumped contents to.",
+    alias: "f",
+    optional: true,
+  }),
   ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description:
-      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
+      "Database password for the project selected with --remote; ignored for the local database and database URLs.",
   }),
-  schema: Flag.String("schema").pipe(
-    Flag.withAlias("s"),
-    Flag.withDescription("Comma separated list of schema to include."),
-    Flag.atLeast(0),
-    // --schema/-s is a CSV string-slice value; same CSV semantics as --exclude above.
-    Flag.mapTryCatch(
+  schema: cliFlag("schema", repeated(Flag.String, { min: 0 }), {
+    description: "Comma-separated list of schemas to include.",
+    alias: "s",
+    parse: Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
-  ),
+  }),
 } as const;
 
 export type DbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const dbDumpCommand = Command.make("dump", config).pipe(
-  Command.withDescription("Dumps data or schemas from a database."),
-  Command.withShortDescription("Dumps data or schemas from a database"),
+export const dbDumpCommand = makeCommand("dump", config).pipe(
+  Command.withDescription(
+    "Export the schema, data, or custom roles of a database to a SQL script with pg_dump. Use it to back up a database or to copy it to another project.",
+  ),
+  Command.withShortDescription("Dump data or schemas from a database"),
   withPermissions(
     compose(
       {
