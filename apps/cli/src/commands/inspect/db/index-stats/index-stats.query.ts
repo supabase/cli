@@ -5,6 +5,7 @@ const SQL = `-- Combined index statistics: size, usage percent, seq scans, mark 
 WITH idx_sizes AS (
   SELECT
     i.indexrelid AS oid,
+    i.indrelid AS table_oid,
     FORMAT('%I.%I', n.nspname, c.relname) AS name,
     FORMAT('%I.%I', tn.nspname, tc.relname) AS table_name,
     (
@@ -23,6 +24,7 @@ WITH idx_sizes AS (
 idx_usage AS (
   SELECT
     indexrelid AS oid,
+    relid AS table_oid,
     idx_scan::bigint AS idx_scans
   FROM pg_stat_user_indexes ui
   WHERE NOT schemaname LIKE ANY($1)
@@ -43,7 +45,7 @@ usage_pct AS (
       ELSE ROUND(100.0 * u.idx_scans / (s.seq_scans + u.idx_scans), 1)
     END AS percent_used
   FROM idx_usage u
-  LEFT JOIN seq_usage s ON s.oid = u.oid
+  LEFT JOIN seq_usage s ON s.oid = u.table_oid
 )
 SELECT
   s.name,
@@ -56,7 +58,7 @@ SELECT
   CASE WHEN COALESCE(u.idx_scans, 0) = 0 THEN true ELSE false END AS unused
 FROM idx_sizes s
 LEFT JOIN idx_usage u ON u.oid = s.oid
-LEFT JOIN seq_usage sq ON sq.oid = s.oid
+LEFT JOIN seq_usage sq ON sq.oid = s.table_oid
 LEFT JOIN usage_pct up ON up.oid = s.oid
 ORDER BY s.index_size_bytes DESC`;
 
