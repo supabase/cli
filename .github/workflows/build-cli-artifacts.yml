@@ -33,11 +33,7 @@ on:
         type: number
         default: 4
     secrets:
-      SENTRY_DSN:
-        required: false
       POSTHOG_API_KEY:
-        required: false
-      POSTHOG_ENDPOINT:
         required: false
       DF_FIREWALL_TOKEN:
         required: false
@@ -52,9 +48,8 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       VERSION: ${{ inputs.version }}
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+      POSTHOG_ENDPOINT: ${{ vars.POSTHOG_ENDPOINT }}
       # Fail the build if the macOS signing tool is missing — release artifacts
       # must be signed (CLI-1621). Local builds without rcodesign degrade to a
       # warning instead.
