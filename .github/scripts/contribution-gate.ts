@@ -7,12 +7,9 @@
  * repository permission, so private org members count too) and bots are
  * exempt. PRs that don't follow the process are commented on and closed.
  *
- * Scheduled and manual runs use `GATE_MODE=all` to sweep every open PR.
- * Set `DRY_RUN=true` with that mode to log decisions without commenting or closing.
+ * Scheduled and manual runs sweep every open PR.
+ * Set `DRY_RUN=true` to log decisions without commenting or closing.
  * The workflow runs only from the default branch.
- *
- * Standalone invocation also supports a single PR through the PR_* environment
- * variables when `GATE_MODE=all` and `--all` are absent; no workflow uses that mode.
  */
 
 export const GATE_LABEL = "open-for-contribution";
@@ -390,50 +387,6 @@ function makeCloser(
   };
 }
 
-/** Evaluate one PR supplied through the PR_* environment variables. */
-async function runSinglePr(
-  token: string,
-  owner: string,
-  repo: string,
-  repository: string,
-): Promise<void> {
-  const prNumber = Number(requireEnv("PR_NUMBER"));
-  const authorAssociation = process.env.PR_AUTHOR_ASSOCIATION ?? "NONE";
-  const authorLogin = process.env.PR_AUTHOR_LOGIN ?? "";
-  const isBot = (process.env.PR_AUTHOR_TYPE ?? "User") === "Bot";
-
-  // `author_association` only exposes public org membership, so a private
-  // member must be confirmed via the effective repository permission.
-  let permission: string | undefined;
-  let isInternal = isBot || INTERNAL_ASSOCIATIONS.has(authorAssociation);
-  if (!isInternal) {
-    permission = await fetchAuthorPermission(token, owner, repo, authorLogin);
-    isInternal = isInternalAuthor(authorAssociation, permission);
-  }
-
-  const linkedIssues = await fetchLinkedIssues(token, owner, repo, prNumber);
-  const result = evaluateGate({
-    repository,
-    isInternal,
-    isBot,
-    linkedIssues,
-  });
-
-  console.log(
-    `Contribution gate for PR #${prNumber}: pass=${result.pass} reason=${result.reason} ` +
-      `(author_association=${authorAssociation}, permission=${permission ?? "n/a"}, ` +
-      `bot=${isBot}, linked_issues=${linkedIssues.length})`,
-  );
-
-  if (result.pass || !result.message) {
-    return;
-  }
-
-  const base = `https://api.github.com/repos/${owner}/${repo}`;
-  await makeCloser(token, base, false)(prNumber, result.message);
-  console.log(`Closed PR #${prNumber} (reason=${result.reason}).`);
-}
-
 /** Sweep every open PR for scheduled and manual workflow runs. */
 async function runSweep(
   token: string,
@@ -466,13 +419,8 @@ async function main(): Promise<void> {
   const repository = requireEnv("GITHUB_REPOSITORY");
   const [owner, repo] = repository.split("/");
 
-  const allMode = process.env.GATE_MODE === "all" || process.argv.includes("--all");
-  if (allMode) {
-    const dryRun = /^(1|true)$/i.test(process.env.DRY_RUN ?? "");
-    await runSweep(token, owner!, repo!, repository, dryRun);
-  } else {
-    await runSinglePr(token, owner!, repo!, repository);
-  }
+  const dryRun = /^(1|true)$/i.test(process.env.DRY_RUN ?? "");
+  await runSweep(token, owner!, repo!, repository, dryRun);
 }
 
 if (import.meta.main) {

@@ -46,6 +46,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GATE_MODE: all
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
         run: bun .github/scripts/contribution-gate.ts
