@@ -103,13 +103,19 @@ Returns the sorting and partitioning rules saved for one replicated table, by so
 
 Update the layout of a table replicated to Warehouse
 
-Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. Historical files and replication progress are preserved; table resets are not supported. Acceptance and application_status do not establish catalog convergence: read the layout to inspect desired and observed rules. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects; inspect the saved layout and pipeline state before retrying.
+Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. True resets and recopies the selected table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table. Acceptance and application_status do not establish catalog convergence or completion of recopy: read the layout to inspect desired and observed rules and monitor table replication separately. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects, including a completed reset; inspect the saved layout, pipeline and table state before retrying.
 
 - Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
 - Feature: `warehouse`.
 - Request: `PATCH /v2/projects/{ref}/warehouse/tables/{table_id}/layout` (`v2-update-warehouse-table-layout`), success 202 json.
 - Body: JSON envelope `data.type = warehouse_table_layout`, fields under `data.attributes`.
 - Positional argument `<table-id>`, bound to path parameter `table_id`.
+
+### Flags
+
+| Flag            | Type    | Required | Repeatable | Binds to                            |
+| --------------- | ------- | -------- | ---------- | ----------------------------------- |
+| `--reset-table` | boolean | no       | no         | body `/data/attributes/reset_table` |
 
 ## `supabase warehouse tables list`
 

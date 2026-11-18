@@ -290,7 +290,7 @@ export const apiCommands = [
     apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
     summary: "Update the layout of a table replicated to Warehouse",
     description:
-      "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. Historical files and replication progress are preserved; table resets are not supported. Acceptance and application_status do not establish catalog convergence: read the layout to inspect desired and observed rules. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects; inspect the saved layout and pipeline state before retrying.",
+      "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. True resets and recopies the selected table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table. Acceptance and application_status do not establish catalog convergence or completion of recopy: read the layout to inspect desired and observed rules and monitor table replication separately. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects, including a completed reset; inspect the saved layout, pipeline and table state before retrying.",
     readOnly: false,
     feature: "warehouse",
     body: {
@@ -306,7 +306,16 @@ export const apiCommands = [
       name: "table-id",
       description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
     },
-    flags: [],
+    flags: [
+      {
+        name: "reset-table",
+        type: "boolean",
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to false, preserving historical files and replication progress. True resets and recopies this table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table.",
+      },
+    ],
     bindings: [
       {
         location: "path",
@@ -318,6 +327,13 @@ export const apiCommands = [
         name: "table_id",
         source: "argument",
         argument: "table-id",
+      },
+      {
+        location: "body",
+        name: "reset_table",
+        pointer: "/data/attributes/reset_table",
+        source: "flag",
+        flag: "reset-table",
       },
     ],
   },

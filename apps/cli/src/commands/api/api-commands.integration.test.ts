@@ -530,36 +530,50 @@ describe("generated warehouse commands", () => {
       },
     };
 
-    it.effect("sends a typed layout file and preserves the backend acceptance document", () => {
-      const response = {
-        data: {
-          type: "warehouse_table_layout",
-          id: "16385",
-          attributes: {
-            pipeline_id: "pipeline-1",
-            schema: "public",
-            name: "events",
-            desired: body.data.attributes,
-            application_status: "waiting_for_start",
-            reset_table: false,
-            observation_status: "not_requested",
-            observed: null,
-            future_state: { reason: null },
+    it.effect.each([
+      { flags: [], reset: {} },
+      { flags: ["--reset-table"], reset: { reset_table: true } },
+      { flags: ["--reset-table", "false"], reset: { reset_table: false } },
+    ])(
+      "sends a typed layout file with reset option $flags and preserves backend state",
+      ({ flags, reset }) => {
+        const response = {
+          data: {
+            type: "warehouse_table_layout",
+            id: "16385",
+            attributes: {
+              pipeline_id: "pipeline-1",
+              schema: "public",
+              name: "events",
+              desired: body.data.attributes,
+              application_status: "waiting_for_start",
+              reset_table: reset.reset_table ?? false,
+              observation_status: "not_requested",
+              observed: null,
+              future_state: { reason: null },
+            },
           },
-        },
-      };
-      const file = `${tempRoot.current}/layout.json`;
-      const { sent, out, run } = setup([...argv, "--file", file], {
-        yes: true,
-        route: () => ({ status: 202, body: response }),
-      });
-      return Effect.gen(function* () {
-        yield* (yield* FileSystem.FileSystem).writeFileString(file, encodeJson(body));
-        yield* run;
-        expect(sent).toEqual([{ method: "PATCH", path: layoutPath, search: "", body }]);
-        expect(decodeJson(out.stdoutText)).toEqual(response);
-      }).pipe(Effect.provide(BunServices.layer));
-    });
+        };
+        const file = `${tempRoot.current}/layout.json`;
+        const { sent, out, run } = setup([...argv, "--file", file, ...flags], {
+          yes: true,
+          route: () => ({ status: 202, body: response }),
+        });
+        return Effect.gen(function* () {
+          yield* (yield* FileSystem.FileSystem).writeFileString(file, encodeJson(body));
+          yield* run;
+          expect(sent).toEqual([
+            {
+              method: "PATCH",
+              path: layoutPath,
+              search: "",
+              body: { data: { ...body.data, attributes: { ...body.data.attributes, ...reset } } },
+            },
+          ]);
+          expect(decodeJson(out.stdoutText)).toEqual(response);
+        }).pipe(Effect.provide(BunServices.layer));
+      },
+    );
 
     it.effect(
       "previews an explicit clear while preserving omitted settings without sending a request",
@@ -582,8 +596,10 @@ describe("generated warehouse commands", () => {
       },
     );
 
-    it.effect("rejects a table reset before making a hosted request", () => {
-      const reset = { data: { type: "warehouse_table_layout", attributes: { reset_table: true } } };
+    it.effect("rejects a non-boolean reset before making a hosted request", () => {
+      const reset = {
+        data: { type: "warehouse_table_layout", attributes: { reset_table: "true" } },
+      };
       const { sent, run } = setup([...argv, "--body", encodeJson(reset)], {
         yes: true,
         route: accepted,

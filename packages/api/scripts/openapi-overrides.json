@@ -1825,7 +1825,7 @@
                   "type": "string"
                 },
                 "reset_table": {
-                  "description": "Whether the backend layout command requested a table reset.",
+                  "description": "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
                   "type": "boolean"
                 },
                 "schema": {
@@ -1901,7 +1901,7 @@
     "op": "add",
     "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1tables~1{table_id}~1layout/patch",
     "value": {
-      "description": "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. Historical files and replication progress are preserved; table resets are not supported. Acceptance and application_status do not establish catalog convergence: read the layout to inspect desired and observed rules. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects; inspect the saved layout and pipeline state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "description": "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. True resets and recopies the selected table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table. Acceptance and application_status do not establish catalog convergence or completion of recopy: read the layout to inspect desired and observed rules and monitor table replication separately. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects, including a completed reset; inspect the saved layout, pipeline and table state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
       "operationId": "v2-update-warehouse-table-layout",
       "parameters": [
         {
@@ -2009,7 +2009,7 @@
               }
             }
           },
-          "description": "Warehouse or pipeline mutation conflict"
+          "description": "Warehouse or pipeline mutation conflict, or reset requested without initial sync"
         },
         "429": {
           "content": {
@@ -2029,7 +2029,7 @@
               }
             }
           },
-          "description": "Layout update unavailable or outcome uncertain; inspect the saved layout and pipeline state before retrying"
+          "description": "Layout update unavailable or outcome uncertain; inspect the saved layout, pipeline and table state before retrying"
         }
       },
       "security": [
@@ -2168,6 +2168,10 @@
                   },
                   "nullable": true,
                   "type": "array"
+                },
+                "reset_table": {
+                  "description": "Defaults to false, preserving historical files and replication progress. True resets and recopies this table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table.",
+                  "type": "boolean"
                 },
                 "sort_by": {
                   "description": "Omit to preserve sorting, null to clear it, or supply the complete sort selector.",

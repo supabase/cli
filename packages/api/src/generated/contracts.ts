@@ -15322,7 +15322,8 @@ export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
         description: "Warehouse replication pipeline identity.",
       }),
       reset_table: Schema.Boolean.annotate({
-        description: "Whether the backend layout command requested a table reset.",
+        description:
+          "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
       }),
       schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
     }),
@@ -20361,6 +20362,12 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
           Schema.Null,
         ]),
       ),
+      reset_table: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Defaults to false, preserving historical files and replication progress. True resets and recopies this table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table.",
+        }),
+      ),
       sort_by: Schema.optionalKey(
         Schema.Union(
           [
@@ -20509,7 +20516,8 @@ export const V2UpdateWarehouseTableLayoutOutput = Schema.Struct({
         description: "Warehouse replication pipeline identity.",
       }),
       reset_table: Schema.Boolean.annotate({
-        description: "Whether the backend layout command requested a table reset.",
+        description:
+          "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
       }),
       schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
     }),
@@ -24523,7 +24531,7 @@ export const operationDefinitions = {
   v2UpdateWarehouseTableLayout: {
     id: "v2UpdateWarehouseTableLayout",
     description:
-      "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. Historical files and replication progress are preserved; table resets are not supported. Acceptance and application_status do not establish catalog convergence: read the layout to inspect desired and observed rules. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects; inspect the saved layout and pipeline state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. True resets and recopies the selected table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table. Acceptance and application_status do not establish catalog convergence or completion of recopy: read the layout to inspect desired and observed rules and monitor table replication separately. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects, including a completed reset; inspect the saved layout, pipeline and table state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "PATCH",
     path: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
     pathParams: ["ref", "table_id"],

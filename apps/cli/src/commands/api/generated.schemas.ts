@@ -1440,7 +1440,8 @@ export const apiCommandSchemas = {
                   type: "string",
                 },
                 reset_table: {
-                  description: "Whether the backend layout command requested a table reset.",
+                  description:
+                    "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
                   type: "boolean",
                 },
                 schema: {
@@ -1775,6 +1776,11 @@ export const apiCommandSchemas = {
                     },
                     type: ["array", "null"],
                   },
+                  reset_table: {
+                    description:
+                      "Defaults to false, preserving historical files and replication progress. True resets and recopies this table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table.",
+                    type: "boolean",
+                  },
                   sort_by: {
                     anyOf: [
                       {
@@ -2102,7 +2108,8 @@ export const apiCommandSchemas = {
                   type: "string",
                 },
                 reset_table: {
-                  description: "Whether the backend layout command requested a table reset.",
+                  description:
+                    "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
                   type: "boolean",
                 },
                 schema: {
