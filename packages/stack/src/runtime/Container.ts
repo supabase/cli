@@ -603,29 +603,38 @@ export const makeContainerRuntime = (options: {
     });
 
     const loggedStderr = Effect.fn("Container.loggedStderr")(function* (name: string) {
-      const text = yield* Effect.scoped(
+      const collected = yield* Ref.make<ReadonlyArray<Uint8Array>>([]);
+      yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawner.spawn(command(["logs", name]));
-          const [, stderr, code] = yield* Effect.all(
+          const [, , code] = yield* Effect.all(
             [
               child.stdout.pipe(Stream.runDrain),
-              child.stderr.pipe(Stream.decodeText, Stream.mkString),
+              child.stderr.pipe(
+                Stream.runForEach((bytes) => Ref.update(collected, (chunks) => [...chunks, bytes])),
+              ),
               child.exitCode,
             ],
             { concurrency: "unbounded" },
           );
           yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
-          return Number(code) === 0 ? stderr : "";
+          if (Number(code) !== 0) yield* Ref.set(collected, []);
         }),
       ).pipe(
         Effect.timeout("10 seconds"),
         Effect.tapError((cause) =>
           Effect.logDebug(`Could not read logs of container ${name}`, cause),
         ),
-        Effect.orElseSucceed(() => ""),
+        Effect.ignore,
       );
-      yield* Effect.annotateCurrentSpan("container.stderr_recovered_bytes", text.length);
-      return text;
+      const chunks = yield* Ref.get(collected);
+      const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+      chunks.reduce((offset, chunk) => {
+        bytes.set(chunk, offset);
+        return offset + chunk.byteLength;
+      }, 0);
+      yield* Effect.annotateCurrentSpan("container.stderr_recovered_bytes", bytes.byteLength);
+      return bytes;
     });
     // An attach session can end before relaying a failed process's stderr, so a failure with no
     // attached stderr reports what the engine logged for the container instead.
@@ -642,8 +651,8 @@ export const makeContainerRuntime = (options: {
               Stream.unwrap(
                 Effect.gen(function* () {
                   if ((yield* Ref.get(relayed)) || (yield* exitCode) === 0) return Stream.empty;
-                  const text = yield* loggedStderr(name);
-                  return text === "" ? Stream.empty : Stream.make(new TextEncoder().encode(text));
+                  const bytes = yield* loggedStderr(name);
+                  return bytes.byteLength === 0 ? Stream.empty : Stream.make(bytes);
                 }),
               ),
             ),
