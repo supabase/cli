@@ -8,7 +8,7 @@ Dumps the local database by default. Pass `--remote` to dump the linked project,
 
 Runs `pg_dump` in a container with additional flags to exclude Supabase managed schemas. The ignored schemas include auth, storage, and those created by extensions.
 
-The default dump does not contain any data or custom roles. To dump those contents explicitly, specify either the `--data-only` and `--role-only` flag.
+The default dump does not contain any data or custom roles.
 
 ### Note on Privilege Migration
 

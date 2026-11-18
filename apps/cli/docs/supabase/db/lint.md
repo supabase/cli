@@ -8,8 +8,6 @@ Lints the local database by default, which requires the local development stack 
 
 Runs the `plpgsql_check` extension against the local database (native or container) to check for errors in all schemas. The default lint level is `warning` and can be raised to error via the `--level` flag.
 
-To lint against specific schemas only, pass in the `--schema` flag.
-
 The `--fail-on` flag can be used to control when the command should exit with a non-zero status code. The possible values are:
 
 - `none` (default): Always exit with a zero status code, regardless of lint results.

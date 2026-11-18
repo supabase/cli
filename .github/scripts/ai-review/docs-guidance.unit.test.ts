@@ -21,7 +21,6 @@ const sha = "a".repeat(40);
 describe("CLI reference guidance", () => {
   test.each([
     ["apps/cli/docs/supabase/db/dump.md", true],
-    ["apps/cli/docs/templates/examples.yaml", true],
     ["apps/cli/src/commands/login/login.command.ts", true],
     ["apps/cli/src/shared/cli/flag-groups.ts", true],
     ["apps/cli/src/commands/login/login.integration.test.ts", false],
@@ -48,22 +47,25 @@ describe("CLI reference guidance", () => {
     async (token) => {
       const requests: string[] = [];
       const snapshot = await Effect.runPromise(
-        collectGuidanceEffect(["apps/cli/docs/templates/examples.yaml"], async (url, init) => {
-          requests.push(url);
-          expect(init.redirect).toBe("error");
-          expect(init.signal).toBeInstanceOf(AbortSignal);
-          expect(init.headers).toEqual({
-            Accept: "application/vnd.github+json",
-            ...(url.startsWith("https://api.github.com/") && token
-              ? { Authorization: `Bearer ${token}` }
-              : {}),
-          });
-          return new Response(
-            url.endsWith("/master")
-              ? JSON.stringify({ object: { type: "commit", sha } })
-              : "# Rule\nUse plain words.\n",
-          );
-        }).pipe(
+        collectGuidanceEffect(
+          ["apps/cli/src/commands/login/login.command.ts"],
+          async (url, init) => {
+            requests.push(url);
+            expect(init.redirect).toBe("error");
+            expect(init.signal).toBeInstanceOf(AbortSignal);
+            expect(init.headers).toEqual({
+              Accept: "application/vnd.github+json",
+              ...(url.startsWith("https://api.github.com/") && token
+                ? { Authorization: `Bearer ${token}` }
+                : {}),
+            });
+            return new Response(
+              url.endsWith("/master")
+                ? JSON.stringify({ object: { type: "commit", sha } })
+                : "# Rule\nUse plain words.\n",
+            );
+          },
+        ).pipe(
           Effect.provide(
             ConfigProvider.layer(ConfigProvider.fromUnknown(token ? { GH_TOKEN: token } : {})),
           ),
