@@ -396,7 +396,7 @@ describe("domains get integration", () => {
       });
       expect(api.requests).toHaveLength(1);
       assertPermissionDrift({ command: "domains get", requests: api.requests });
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -411,7 +411,7 @@ describe("domains get integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
       expect(analytics.captured).toHaveLength(0);
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
     }).pipe(Effect.provide(layer));
   });
 
