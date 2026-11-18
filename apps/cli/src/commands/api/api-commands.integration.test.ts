@@ -434,6 +434,52 @@ describe("generated warehouse commands", () => {
       });
     });
   });
+  describe("warehouse tables get", () => {
+    const tablePath = `/v2/projects/${VALID_REF}/warehouse/tables/16385`;
+    const body = {
+      data: {
+        id: "16385",
+        type: "warehouse_table",
+        attributes: {
+          schema: "public",
+          name: "orders",
+          warehouse_name: '"public"."orders"',
+          status: "live",
+          replication_state: "following_wal",
+          lag_ms: 120,
+          observed_at: "2026-11-17T10:00:00Z",
+          replication_feedback: {
+            source: "pipeline_apply",
+            active: true,
+            wal_status: "reserved",
+            write_lag_ms: 80,
+            flush_lag_ms: 120,
+            flush_lag_bytes: 2048,
+            feedback_age_ms: 5,
+          },
+        },
+      },
+    };
+
+    it.effect(
+      "requests the table by OID and renders its attributes and replication feedback",
+      () => {
+        const { out, sent, run } = setup(["warehouse", "tables", "get", "16385"], {
+          route: ok(body),
+          stdoutIsTty: true,
+        });
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toEqual([{ method: "GET", path: tablePath, search: "", body: undefined }]);
+          expect(out.stdoutText).toMatch(/Warehouse table/);
+          expect(out.stdoutText).toMatch(/Name\s+orders/);
+          expect(out.stdoutText).toMatch(/Replication state\s+following_wal/);
+          expect(out.stdoutText).toMatch(/Replication feedback\n\s+Source\s+pipeline_apply/);
+          expect(out.stdoutText).toMatch(/Flush lag bytes\s+2048/);
+        });
+      },
+    );
+  });
   describe("warehouse connection", () => {
     const connectionPath = `/v2/projects/${VALID_REF}/warehouse/connection`;
     const host = `${VALID_REF}.warehouse.example.invalid`;

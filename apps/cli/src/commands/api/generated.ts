@@ -215,6 +215,40 @@ export const apiCommands = [
     ],
   },
   {
+    command: ["warehouse", "tables", "get"],
+    operationId: "v2-get-warehouse-table",
+    definition: "v2GetWarehouseTable",
+    method: "GET",
+    apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}",
+    summary: "Get a table replicated to Warehouse",
+    description:
+      "Returns one source table selected for Warehouse replication by its source OID, from the same observations and with the same status and freshness attributes as the Warehouse tables list. Returns 404 when the table is not selected for replication, including when Warehouse is not set up, its publication is missing, or it is being disabled.",
+    readOnly: true,
+    feature: "warehouse",
+    response: {
+      status: 200,
+      kind: "json",
+    },
+    argument: {
+      name: "table-id",
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+    },
+    flags: [],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "path",
+        name: "table_id",
+        source: "argument",
+        argument: "table-id",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "tables", "list"],
     operationId: "v2-list-warehouse-tables",
     definition: "v2ListWarehouseTables",

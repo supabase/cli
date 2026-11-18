@@ -111,6 +111,7 @@ const shapeOf = (schema: unknown): unknown => {
 const PATTERN_SAMPLES: Readonly<Record<string, string>> = {
   "^[a-f0-9]{64}$": "ab".repeat(32),
   "^[a-z]+$": "zyxwvutsrqponmlkjihg",
+  "^[1-9]\\d*$": "16385",
   "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$":
     "7579647f-2cdc-466c-982e-425958a2f985",
 };
@@ -197,6 +198,15 @@ const inputsOf = (
   });
   return [...queries, ...fields];
 };
+
+/** The path parameters besides `ref`, each supplied as a positional argument. */
+const positionalsOf = (operation: SpecOperation) =>
+  operation.parameters
+    .filter((parameter) => parameter["in"] === "path" && parameter["name"] !== "ref")
+    .map((parameter) => ({
+      name: String(parameter["name"]),
+      sample: String(sampleOf(parameter["schema"])),
+    }));
 
 const argvOf = (inputs: ReadonlyArray<Input>): ReadonlyArray<string> =>
   inputs.flatMap((input) =>
@@ -330,13 +340,26 @@ describe("generated command bindings", () => {
     const { operationId } = row.api;
     const operation = operationOf(operationId);
     const inputs = inputsOf(operation, row.api.bindings);
-    const expectedPath = operation.template.replace("{ref}", VALID_REF);
+    const positionals = positionalsOf(operation);
+    const expectedPath = positionals.reduce(
+      (path, { name, sample }) => path.replace(`{${name}}`, sample),
+      operation.template.replace("{ref}", VALID_REF),
+    );
 
     describe(row.path.join(" "), () => {
       it("binds the path reference and every other input to the spec's location", () => {
-        expect(operation.template.match(/\{[^}]+\}/g)).toEqual(["{ref}"]);
+        expect(operation.template.match(/\{[^}]+\}/g)).toEqual([
+          "{ref}",
+          ...positionals.map(({ name }) => `{${name}}`),
+        ]);
         const expected = [
           { location: "path", name: "ref", source: "target" },
+          ...positionals.map(({ name }) => ({
+            location: "path",
+            name,
+            source: "argument",
+            argument: generated.find((entry) => entry.operationId === operationId)?.argument?.name,
+          })),
           ...inputs.map((input) =>
             input.location === "query"
               ? { location: "query", name: input.field, source: "flag", flag: input.flag }
@@ -356,7 +379,11 @@ describe("generated command bindings", () => {
 
       it.effect("sends every input at its binding", () =>
         Effect.gen(function* () {
-          const requests = yield* send(row.path, argvOf(inputs), operation.responseStatus);
+          const requests = yield* send(
+            row.path,
+            [...positionals.map(({ sample }) => sample), ...argvOf(inputs)],
+            operation.responseStatus,
+          );
           expect(requests).toHaveLength(1);
           const [request] = requests;
           expect(request?.method).toBe(operation.method);
@@ -371,7 +398,11 @@ describe("generated command bindings", () => {
       it.effect("sends only the inputs the spec requires when no other flag is given", () =>
         Effect.gen(function* () {
           const required = inputs.filter((input) => input.required);
-          const requests = yield* send(row.path, argvOf(required), operation.responseStatus);
+          const requests = yield* send(
+            row.path,
+            [...positionals.map(({ sample }) => sample), ...argvOf(required)],
+            operation.responseStatus,
+          );
           expect(requests).toHaveLength(1);
           const [request] = requests;
           expect(Object.fromEntries(new URLSearchParams(request?.search))).toEqual(

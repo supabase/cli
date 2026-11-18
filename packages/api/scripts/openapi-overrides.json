@@ -1211,6 +1211,268 @@
     "$comment": "The Warehouse tables listing contract is not yet in the deployed Management API specification."
   },
   {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1tables~1{table_id}",
+    "value": {
+      "get": {
+        "description": "Returns one source table selected for Warehouse replication by its source OID, from the same observations and with the same status and freshness attributes as the Warehouse tables list. Returns 404 when the table is not selected for replication, including when Warehouse is not set up, its publication is missing, or it is being disabled.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-get-warehouse-table",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+            "in": "path",
+            "name": "table_id",
+            "required": true,
+            "schema": {
+              "example": "16385",
+              "maxLength": 10,
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseTableResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Table not replicated to Warehouse, or Warehouse DuckLake destination not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse feature, project metadata or table selection unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get a table replicated to Warehouse",
+        "tags": ["Projects Warehouse"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_read"]],
+        "x-oauth-scope": "database:read",
+        "x-operation": {
+          "group": "warehouse.tables",
+          "method": "get"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "$comment": "The Warehouse table inspection contract is not yet in the deployed Management API specification."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseTableResponse_Output",
+    "value": {
+      "properties": {
+        "data": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "lag_ms": {
+                  "description": "Flush lag in milliseconds that Postgres reports for the slot in replication_feedback. Null when there is no feedback or Postgres reports no recent measurement, which includes a caught-up slot without new WAL; replication_feedback.flush_lag_bytes reads 0 in that case.",
+                  "minimum": 0,
+                  "nullable": true,
+                  "type": "number"
+                },
+                "name": {
+                  "description": "Source PostgreSQL table name.",
+                  "type": "string"
+                },
+                "observed_at": {
+                  "description": "Time the API retrieved the replication state of the table. It does not indicate when data was last synchronized.",
+                  "format": "date-time",
+                  "nullable": true,
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                  "type": "string"
+                },
+                "replication_feedback": {
+                  "description": "Postgres feedback from the replication slot named in source. Null when no feedback is available, including while the pipeline is stopped. Feedback age measures time since the slot last responded and does not establish how current query results are.",
+                  "nullable": true,
+                  "properties": {
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "feedback_age_ms": {
+                      "minimum": 0,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "flush_lag_bytes": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "nullable": true,
+                      "type": "integer"
+                    },
+                    "flush_lag_ms": {
+                      "minimum": 0,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "source": {
+                      "description": "Replication slot that reported the feedback: the table's own sync slot until it follows changes, or the pipeline apply slot once it does.",
+                      "enum": ["pipeline_apply", "table_sync"],
+                      "type": "string"
+                    },
+                    "wal_status": {
+                      "enum": ["extended", "lost", null, "reserved", "unknown", "unreserved"],
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "write_lag_ms": {
+                      "minimum": 0,
+                      "nullable": true,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "active",
+                    "feedback_age_ms",
+                    "flush_lag_bytes",
+                    "flush_lag_ms",
+                    "source",
+                    "wal_status",
+                    "write_lag_ms"
+                  ],
+                  "type": "object"
+                },
+                "replication_state": {
+                  "description": "Last replication state the pipeline recorded for the table, also while the pipeline is stopped. Null when none was observed.",
+                  "enum": [
+                    "copied_table",
+                    "copying_table",
+                    "error",
+                    "following_wal",
+                    null,
+                    "queued"
+                  ],
+                  "nullable": true,
+                  "type": "string"
+                },
+                "schema": {
+                  "description": "Source PostgreSQL schema of the table.",
+                  "type": "string"
+                },
+                "status": {
+                  "description": "Replication status. error means the table failed to replicate; stopped means the pipeline is stopped, stopping or failed, so the table receives no changes; live means the table follows changes; syncing means it is queued, copying or catching up; unknown means the pipeline status or the table state was not observed, for example before replication starts.",
+                  "enum": ["error", "live", "stopped", "syncing", "unknown"],
+                  "type": "string"
+                },
+                "warehouse_name": {
+                  "description": "Quoted, fully qualified name of the replicated table in the Warehouse.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "lag_ms",
+                "name",
+                "observed_at",
+                "replication_feedback",
+                "replication_state",
+                "schema",
+                "status",
+                "warehouse_name"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "description": "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+              "example": "16385",
+              "maxLength": 10,
+              "pattern": "^[1-9]\\d*$",
+              "type": "string"
+            },
+            "type": {
+              "description": "Resource type.",
+              "enum": ["warehouse_table"],
+              "type": "string"
+            }
+          },
+          "required": ["attributes", "id", "type"],
+          "type": "object"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    },
+    "$comment": "The Warehouse table inspection contract is not yet in the deployed Management API specification."
+  },
+  {
     "op": "test",
     "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1setups~1current/get/x-operation",
     "value": {

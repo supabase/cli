@@ -451,4 +451,5 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v2-get-warehouse-status": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-get-warehouse-connection": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-list-warehouse-tables": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-table": { fga: [["database_read"]], oauthScope: "database:read" },
 };
