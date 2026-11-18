@@ -641,12 +641,15 @@ describe("deriveApiCommands", () => {
       expect(waitOf(result)).toBeUndefined();
     });
 
-    it("keeps a poll-only read internal and records the command that inspects it", () => {
+    it.each([
+      ["without a command name", hiddenThing],
+      ["with a command name", readWith({ ...poll, inspect: "get-inspect" })],
+    ])("keeps a polled read %s internal when it is not generated", (_label, read) => {
       const result = deriveHidden({
         "create-thing": changeThing(
           link({ ref: "$request.path.ref", thing_id: "$response.body#/data/id" }),
         ),
-        "get-thing": hiddenThing,
+        "get-thing": read,
       });
 
       expect(result.problems).toEqual([]);
@@ -705,27 +708,21 @@ describe("deriveApiCommands", () => {
       expect(result.schemas["get-thing"]).toBeUndefined();
     });
 
-    it("rejects a link to a named polled operation that is not generated", () => {
-      const result = derive({ "create-thing": changeThing(link({})), "get-thing": readThing }, [
-        "create-thing",
-      ]);
+    it.each([
+      ["without a command name", readOf({ poll })],
+      ["with a command name", readThing],
+    ])(
+      "rejects a linked polled read %s that is not generated and sets no inspect",
+      (_label, read) => {
+        const result = deriveHidden({ "create-thing": changeThing(link({})), "get-thing": read });
 
-      expect(result.problems).toEqual([
-        'create-thing: link "setup" targets polled operation "get-thing", which is neither a generated command nor a poll-only read',
-      ]);
-      expect(result.pollTargets).toEqual([]);
-    });
-
-    it("rejects a poll-only read without an inspect operation", () => {
-      const result = deriveHidden({
-        "create-thing": changeThing(link({})),
-        "get-thing": readOf({ poll }),
-      });
-
-      expect(result.problems).toEqual([
-        'create-thing: link "setup" targets "get-thing", whose x-operation is invalid: a poll-only read must set poll.inspect to the operation that inspects its state',
-      ]);
-    });
+        expect(result.problems).toEqual([
+          'create-thing: link "setup" targets polled operation "get-thing", which is not a generated command and sets no poll.inspect',
+        ]);
+        expect(waitOf(result)).toBeUndefined();
+        expect(result.pollTargets).toEqual([]);
+      },
+    );
 
     it.each([
       ["a misspelled poll key", { pool: { ...poll, inspect: "get-inspect" } }, "pool"],
@@ -744,18 +741,19 @@ describe("deriveApiCommands", () => {
       expect(waitOf(result)).toBeUndefined();
     });
 
-    it("rejects inspect on a named operation", () => {
-      const result = derive({
-        "get-thing": readOf({
-          group: "thing",
-          method: "get",
-          poll: { ...poll, inspect: "get-inspect" },
-        }),
-      });
+    it("polls a generated read as its own command even when it sets inspect", () => {
+      const result = derive(
+        {
+          "create-thing": changeThing(link({ thing_id: "$response.body#/data/id" })),
+          "get-thing": readWith({ ...poll, inspect: "get-inspect" }),
+          "get-inspect": inspectThing,
+        },
+        ["create-thing", "get-thing", "get-inspect"],
+      );
 
-      expect(result.problems).toEqual([
-        "get-thing: invalid x-operation: poll.inspect belongs on a poll-only read, not on a named operation",
-      ]);
+      expect(result.problems).toEqual([]);
+      expect(waitOf(result)?.read).toBe("get-thing");
+      expect(result.pollTargets).toEqual([]);
     });
 
     it.each([
@@ -769,7 +767,7 @@ describe("deriveApiCommands", () => {
       ]);
     });
 
-    it("rejects a poll-only read listed as a generated operation", () => {
+    it("rejects a generated operation whose x-operation has no command name", () => {
       const result = derive(
         {
           "create-thing": changeThing(link({})),
@@ -780,7 +778,7 @@ describe("deriveApiCommands", () => {
       );
 
       expect(result.problems).toEqual([
-        "get-thing: a poll-only read cannot be generated; give it group and method or remove it from the generated operations",
+        "get-thing: no command name; set x-operation group and method",
       ]);
     });
 
