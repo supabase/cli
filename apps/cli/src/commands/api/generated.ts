@@ -265,7 +265,7 @@ export const apiCommands = [
     },
     argument: {
       name: "table-id",
-      description: "Source PostgreSQL table OID of a table replicated to Warehouse.",
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
     },
     flags: [],
     bindings: [

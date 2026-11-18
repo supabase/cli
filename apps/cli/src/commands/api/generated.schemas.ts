@@ -1439,7 +1439,7 @@ export const apiCommandSchemas = {
               type: "object",
             },
             id: {
-              description: "Source PostgreSQL table OID of a table replicated to Warehouse.",
+              description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
               maxLength: 10,
               pattern: "^[1-9]\\d*$",
               type: "string",

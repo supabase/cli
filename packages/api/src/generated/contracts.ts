@@ -15317,7 +15317,7 @@ export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
       schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
     }),
     id: Schema.String.annotate({
-      description: "Source PostgreSQL table OID of a table replicated to Warehouse.",
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
     })
       .check(
         Schema.isMaxCodePoints(10).annotate({ expected: "a string with at most 10 code points" }),

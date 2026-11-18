@@ -33104,7 +33104,7 @@
             }
           },
           {
-            "description": "Source PostgreSQL table OID of a table replicated to Warehouse.",
+            "description": "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
             "in": "path",
             "name": "table_id",
             "required": true,
@@ -49634,7 +49634,7 @@
                 "type": "object"
               },
               "id": {
-                "description": "Source PostgreSQL table OID of a table replicated to Warehouse.",
+                "description": "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
                 "example": "16385",
                 "maxLength": 10,
                 "pattern": "^[1-9]\\d*$",
