@@ -18,8 +18,7 @@ import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const flags = (id?: string) => ({
   all: Option.none<boolean>(),
-  stack: Option.none<string>(),
-  stackId: Option.fromUndefinedOr(id),
+  stack: Option.fromUndefinedOr(id),
 });
 const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 const fixture = Effect.fn("StackStopTest.fixture")(function* () {
@@ -54,6 +53,17 @@ describe("stack stop", () => {
         Effect.flip,
       );
       expect(error.message).toBe('No managed stack named "typo" was found for this project.');
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("points an ID-shaped --stack that matches nothing at stack list", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const error = yield* stackStop(flags("deadbeef")).pipe(Effect.provide(f.layer), Effect.flip);
+      expect(error).toMatchObject({
+        message: 'No managed stack is named "deadbeef" in this project or has that ID.',
+        suggestion: "Run `supabase stack list` to see managed stacks and their IDs.",
+      });
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 

@@ -157,7 +157,7 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 project, branch, runtime, and owner availability. Registry entries that cannot be read or decoded
 are skipped with a warning on stderr identifying each stack; only a failure to read the stacks
 directory itself fails discovery.
-The text table shortens readable IDs for scanning; every `--stack-id` accepts that short ID, or any
+The text table shortens readable IDs for scanning; every `--stack` accepts that short ID, or any
 unique prefix of at least 4 characters. Use `--output-format json` or `--output-format stream-json`
 for the complete structured inventory with full IDs.
 
@@ -167,36 +167,36 @@ as remnants.
 
 ## Targeting a named stack from other commands
 
-Every command that reaches the project's local stack accepts `--stack <name>` and `--stack-id <id>`
-and acts on that stack instead of the default one: the `db`, `migration`, `inspect` and `storage`
-commands, `gen types`, `test db`, `seed buckets` and `functions serve`. Commands that never reach a
-stack, such as `migration new` or `functions deploy`, reject the flags.
+Every command that reaches the project's local stack accepts `--stack <name or id>` and acts on that
+stack instead of the default one: the `db`, `migration`, `inspect` and `storage` commands, `gen
+types`, `test db`, `seed buckets` and `functions serve`. Commands that never reach a stack, such as
+`migration new` or `functions deploy`, reject the flag.
 
 ```sh
 supabase start --stack feature-a
 supabase migration up --stack feature-a
-supabase db reset --stack-id 3f9a
+supabase db reset --stack 3f9a
 ```
 
-`--stack` matches the stack name under the current project root and branch, as `stack start` does;
-`--stack-id` takes a full ID or a unique prefix of at least 4 characters from any checkout. Without
-either flag, `SUPABASE_STACK` or `SUPABASE_STACK_ID` selects the stack, so one export per worktree or
-shell covers every command, including `stack start`, `status`, `stop` and `destroy`. Because an export
-outlives `cd`, `SUPABASE_STACK_ID` only selects a stack of the current project; pass `--stack-id` to
-reach another checkout's stack. A flag overrides both variables, and setting both variables is an
-error.
+`--stack` first matches a stack name under the current project root and branch, as `stack start`
+does, then a full ID or a unique ID prefix of at least 4 hex characters from any checkout, so a name
+always wins. Without the flag, `SUPABASE_STACK` selects the stack the same way, so one export per
+worktree or shell covers every command, including `stack start`, `status`, `stop` and `destroy`.
+Because an export outlives `cd`, `SUPABASE_STACK` as an ID only selects a stack of the current
+project; pass `--stack <id>` to reach another checkout's stack. The flag overrides the variable.
 
-A selected stack never falls back to the default stack. An unknown name fails with an error that
-names it and suggests the `supabase start` flags that create it; an unknown ID suggests
-`supabase stack list`. A command that needs the database of a stopped stack fails the same way;
-`db start` starts it instead, and so does `db schema declarative` when it generates or exports the
-schema. Among these commands, only `db start` creates a named stack that does not exist yet.
+A selected stack never falls back to the default stack. A value that matches no stack fails with an
+error that names it and suggests the `supabase start` flag that creates a stack of that name, or
+`supabase stack list` when the value looks like an ID. A command that needs the database of a
+stopped stack fails the same way; `db start` starts it instead, and so does `db schema declarative`
+when it generates or exports the schema. Among these commands, only `db start` creates a named stack
+that does not exist yet.
 
-The flags select a local stack, so combining them with `--remote` (or its deprecated aliases) is an
-error, and so is passing them while the legacy backend is selected; the variables are ignored by
-the legacy backend. Migration files and configuration always come from the current project
-directory. To run several stacks of one project at once, leave their ports out of
-`supabase/config.toml`: a port set there is claimed by every stack of the project.
+The flag selects a local stack, so combining it with `--remote` (or its deprecated aliases) is an
+error, and so is passing it while the legacy backend is selected; the variable is ignored there.
+Migration files and configuration always come from the current project directory. To run several
+stacks of one project at once, leave their ports out of `supabase/config.toml`: a port set there is
+claimed by every stack of the project.
 
 ## Selecting the top-level commands
 
@@ -318,7 +318,7 @@ lint transaction (always rolled back). It does not launch a client binary.
 request lines from the shared API port. Interactive terminals open a browser; press `L`
 to load more records. Pipes and machine output perform one finite read and exit.
 
-Select `--stack <name>` or `--stack-id <id>`. Repeat `--service <kind>` to select
+Select a stack with `--stack <name or id>`. Repeat `--service <kind>` to select
 services, use `--service postgres` for the database, or `--resource <instance-id>`
 for one instance. `--service gateway` reads only request lines. Reads work while
 the stack is stopped and never start an owner or service.
@@ -341,7 +341,7 @@ behavior until removal in v4.
 
 `supabase stack logs` prints the retained stdout/stderr of composition members, plus
 the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
-streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
+streams new lines until interrupted. Select a stack with `--stack <name or id>`; the
 repeatable `--service <kind-or-instance-id>` can include standalone services too, and
 `--service gateway` reads only the request lines. History is read from the persisted
 log files, so it works while the stack is stopped; `--follow` requires a running owner
@@ -459,14 +459,13 @@ with `destroy`.
 
 `supabase stack restart` reuses an existing stack's saved effective configuration. It stops and
 starts the same stack identity, preserving its data. Normal startup may still download missing
-artifacts using its current preparation policy. Select a stack with `--stack <name>` or
-`--stack-id <id>`. The restart handler does not reload project configuration. Set
-`SUPABASE_EXPERIMENTAL_STACK=1` when restarting by ID outside the project or with invalid project
-configuration, so feature routing does not depend on that configuration. Start selection and
-activation flags such as `--exclude` and `--eager` remain in the saved stack configuration;
-`--preparation` applies only to that invocation. A later normal `start` reloads the project
-configuration and current flags.
-An unconfigured stack must be initialized with `supabase stack start` before it can be restarted.
+artifacts using its current preparation policy. Select a stack with `--stack <name or id>`. The
+restart handler does not reload project configuration. Set `SUPABASE_EXPERIMENTAL_STACK=1` when
+restarting by ID outside the project or with invalid project configuration, so feature routing does
+not depend on that configuration. Start selection and activation flags such as `--exclude` and
+`--eager` remain in the saved stack configuration; `--preparation` applies only to that invocation.
+A later normal `start` reloads the project configuration and current flags. An unconfigured stack
+must be initialized with `supabase stack start` before it can be restarted.
 
 `supabase stack start --exclude studio,analytics -x mail` disables those services in the effective
 start configuration without changing the project file. Valid names are `rest`, `auth`, `realtime`,
@@ -482,8 +481,8 @@ failures make the command fail and identify the affected stack IDs with their er
 success or not-running summary is emitted when a stop fails.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack, its data and its Storage
-uploads (`stacks/<stack-id>/uploads`) after confirmation. Use `--yes` for unattended execution. Repeat `--stack-id` to destroy several stacks
-after one confirmation; every id must resolve before anything is destroyed, and a stack that fails
+uploads (`stacks/<stack-id>/uploads`) after confirmation. Use `--yes` for unattended execution. Repeat `--stack` to destroy several stacks
+after one confirmation; every value must resolve before anything is destroyed, and a stack that fails
 to be destroyed does not stop the rest, though the command still fails.
 
 `supabase stack prune` destroys, after one confirmation, the stacks whose project directory no

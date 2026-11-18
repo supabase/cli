@@ -10,6 +10,7 @@ import {
   selectStack,
   StackApi,
   StackTargetResolver,
+  unmatchedStackIdAdvice,
 } from "../../../../command-internal/stack-target.ts";
 import { destroyScope, destroyStacks, stackLocations } from "../stack-destroy.ts";
 import type { StackDestroyFlags } from "./destroy.command.ts";
@@ -27,20 +28,32 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     yield* rejectStackOutput(outputFlag).pipe(
       Effect.mapError(mapTargetError((props) => new StackCommandDestroyError(props))),
     );
-    /* Resolved up front, so `SUPABASE_STACK`/`SUPABASE_STACK_ID` pick the stack to destroy as the flags do. */
-    const selector = yield* selectStack({
-      stack: flags.stack,
-      stackId: Option.fromNullishOr(flags.stackId[0]),
-    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandDestroyError(props))));
+    /* `SUPABASE_STACK` stands in for `--stack`, resolved up front so it picks the stack to destroy. */
+    const selector = yield* selectStack(Option.fromNullishOr(flags.stack[0]));
 
     const resolver = yield* StackTargetResolver;
     const path = yield* Path.Path;
     const locations = stackLocations(path, settings.supabaseHome);
-    const select = Effect.fnUntraced(function* (stackId: string | undefined) {
-      /* A deleted stack carries no project, so only an explicit --stack-id reaches its leftovers. */
+    const select = Effect.fnUntraced(function* (stack: string | undefined) {
+      const resolved = yield* Effect.result(
+        resolver.resolve({
+          projectRoot: settings.workdir,
+          ...(stack === undefined ? {} : { stack }),
+          ...(selector.fromEnv === true ? { fromEnv: true } : {}),
+          runtime: "auto",
+        }),
+      );
+      if (Result.isSuccess(resolved) && resolved.success.id !== undefined)
+        return {
+          id: resolved.success.id,
+          deleted: Option.none(),
+          scope: destroyScope(resolved.success.id, resolved.success.projectRoot),
+        };
+      /* A deleted stack carries no project, so only an explicit full ID no live stack matches
+         reaches its leftovers, even when the project root is missing. */
       const lookup =
-        stackId !== undefined && isStackId(stackId) && selector.idFromEnv !== true
-          ? yield* Effect.result(api.findDeleted({ ...locations, id: stackId }))
+        stack !== undefined && isStackId(stack) && selector.fromEnv !== true
+          ? yield* Effect.result(api.findDeleted({ ...locations, id: stack }))
           : Result.succeedNone;
       const deleted = Result.getOrElse(lookup, Option.none);
       if (Option.isSome(deleted))
@@ -49,56 +62,37 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
           deleted,
           scope: `the containers deleted stack ${deleted.value.id} left behind`,
         };
-      const detail = Result.isFailure(lookup) ? lookup.failure.message : undefined;
-      const target = yield* resolver
-        .resolve({
-          projectRoot: settings.workdir,
-          ...(selector.name === undefined ? {} : { name: selector.name }),
-          ...(stackId === undefined ? {} : { id: stackId }),
-          ...(selector.idFromEnv === true ? { idFromEnv: true } : {}),
-          runtime: "auto",
-        })
-        .pipe(
-          Effect.mapError(
-            mapTargetError(
-              (props) =>
-                new StackCommandDestroyError({
-                  ...props,
-                  ...(detail === undefined ? {} : { detail }),
-                }),
-            ),
-          ),
-        );
-      if (target.id === undefined)
-        return yield* new StackCommandDestroyError({
-          reason: "flags",
-          message:
-            target.name === undefined
-              ? "No managed stack was found for this project."
-              : `No managed stack named "${target.name}" was found for this project.`,
-          suggestion: "Choose an existing --stack name or --stack-id.",
-        });
-      return {
-        id: target.id,
-        deleted,
-        scope: destroyScope(target.id, target.projectRoot),
-      };
+      const detail = Result.isFailure(lookup) ? { detail: lookup.failure.message } : {};
+      if (Result.isFailure(resolved))
+        return yield* mapTargetError(
+          (props) => new StackCommandDestroyError({ ...props, ...detail }),
+        )(resolved.failure);
+      return yield* new StackCommandDestroyError({
+        reason: "flags",
+        message:
+          resolved.success.name === undefined
+            ? "No managed stack was found for this project."
+            : (unmatchedStackIdAdvice(resolved.success.name)?.message ??
+              `No managed stack named "${resolved.success.name}" was found for this project.`),
+        ...detail,
+        suggestion: "Run `supabase stack list` to see managed stacks and their IDs.",
+      });
     });
-    /* Every id resolves before the prompt, so a missing one destroys nothing. */
+    /* Every stack resolves before the prompt, so a missing one destroys nothing. */
     const [resolved, unresolved] = yield* Effect.partition(
-      flags.stackId.length === 0 ? [selector.id] : flags.stackId,
-      (stackId) => select(stackId).pipe(Effect.mapError((error) => ({ stackId, error }))),
+      flags.stack.length === 0 ? [selector.stack] : flags.stack,
+      (stack) => select(stack).pipe(Effect.mapError((error) => ({ stack, error }))),
     );
     const [missing] = unresolved;
     if (missing !== undefined) {
       if (unresolved.length === 1) return yield* missing.error;
       return yield* new StackCommandDestroyError({
         reason: "flags",
-        message: `Failed to resolve ${unresolved.length} --stack-id values.`,
+        message: `Failed to resolve ${unresolved.length} --stack values.`,
         detail: unresolved
           .map(
-            ({ stackId, error }) =>
-              `${stackId}: ${error.message}${error.detail === undefined ? "" : `\n  ${error.detail}`}`,
+            ({ stack, error }) =>
+              `${stack}: ${error.message}${error.detail === undefined ? "" : `\n  ${error.detail}`}`,
           )
           .join("\n"),
         suggestion: "Run `supabase stack list` to see managed stacks and their IDs.",
@@ -106,7 +100,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       });
     }
     const selected = [...new Map(resolved.map((entry) => [entry.id, entry])).values()];
-    const batch = flags.stackId.length > 1;
+    const batch = flags.stack.length > 1;
     const destroyed = yield* destroyStacks(selected, { batch });
     if (output.format !== "text")
       yield* output.success(

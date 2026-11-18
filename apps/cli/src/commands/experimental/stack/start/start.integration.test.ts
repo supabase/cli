@@ -105,7 +105,6 @@ import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-va
 const flags = (exclude: ReadonlyArray<string> = []) => ({
   exclude,
   stack: Option.none<string>(),
-  stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "background" as const,
   frozen: false,
@@ -610,9 +609,13 @@ const layers = (
 ) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
-    resolve: () =>
+    resolve: (input) =>
       Effect.succeed({
         projectRoot: root,
+        /* As the real resolver does, a value that is not the stack's ID prefix names the stack. */
+        ...(input.stack === undefined || fixture.stack.id.startsWith(input.stack)
+          ? {}
+          : { name: input.stack }),
         ...(existing ? { id: fixture.stack.id } : {}),
         runtime: "native" as const,
         hostRunning: existing && fixture.hostRunning,
@@ -1177,10 +1180,10 @@ describe("experimental stack start", () => {
       const byPrefix = mockOutput();
       yield* stackStart({
         ...flags(excluded),
-        stackId: Option.some(fixture.stack.id.slice(0, 8)),
+        stack: Option.some(fixture.stack.id.slice(0, 8)),
       }).pipe(Effect.provide(layers(root, fixture, byPrefix, true, true)));
       expect(byPrefix.stdoutText).toContain(
-        `Run supabase status --env --workdir ${workdir} --stack-id ${fixture.stack.id} to export`,
+        `Run supabase status --env --workdir ${workdir} --stack ${fixture.stack.id} to export`,
       );
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -1989,7 +1992,7 @@ describe("experimental stack start", () => {
         expect(error).toMatchObject({
           reason: "invalid-config",
           message: expect.stringContaining("[api] port: saved"),
-          suggestion: `Run \`supabase stack stop --stack-id ${fixture.stack.id}\`, then \`supabase stack start --stack-id ${fixture.stack.id}\` to apply the new ports.`,
+          suggestion: `Run \`supabase stack stop --stack ${fixture.stack.id}\`, then \`supabase stack start --stack ${fixture.stack.id}\` to apply the new ports.`,
         });
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -2110,12 +2113,10 @@ describe("experimental stack start", () => {
 
         const envelope = yield* machineEnvelope(stdio.stdout[0]);
         expect(envelope.error).toMatchObject({
-          suggestion: expect.stringContaining(
-            `supabase stack destroy --stack-id ${fixture.stack.id}`,
-          ),
+          suggestion: expect.stringContaining(`supabase stack destroy --stack ${fixture.stack.id}`),
         });
         expect(envelope.recreate_command).toBe(
-          `supabase stack destroy --stack-id ${fixture.stack.id}`,
+          `supabase stack destroy --stack ${fixture.stack.id}`,
         );
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -2385,7 +2386,7 @@ describe("experimental stack start", () => {
           reason: "invalid-config",
           message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
           suggestion: expect.stringContaining(
-            `Revert [db] major_version to its saved value to keep the stack and its data, or run \`supabase stack destroy --stack-id ${fixture.stack.id}\` to recreate the stack`,
+            `Revert [db] major_version to its saved value to keep the stack and its data, or run \`supabase stack destroy --stack ${fixture.stack.id}\` to recreate the stack`,
           ),
         });
         expect(error).toMatchObject({ suggestion: expect.stringContaining("database data") });
@@ -2479,7 +2480,7 @@ describe("experimental stack start", () => {
           reason: "invalid-config",
           message: `The saved stack cannot adopt these changes: ${target.changes}`,
           suggestion: expect.stringContaining(
-            `${target.revert} to keep the stack and its data, or run \`supabase stack destroy --stack-id ${fixture.stack.id}\``,
+            `${target.revert} to keep the stack and its data, or run \`supabase stack destroy --stack ${fixture.stack.id}\``,
           ),
         });
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
@@ -2558,9 +2559,7 @@ describe("experimental stack start", () => {
           expect(error.suggestion).toContain(
             "This CLI release starts a different [db] orioledb_version than the saved stack.",
           );
-          expect(error.suggestion).toContain(
-            `supabase stack destroy --stack-id ${fixture.stack.id}`,
-          );
+          expect(error.suggestion).toContain(`supabase stack destroy --stack ${fixture.stack.id}`);
         }
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -2599,9 +2598,7 @@ describe("experimental stack start", () => {
           editable: true,
         },
       ]);
-      expect(envelope.recreate_command).toBe(
-        `supabase stack destroy --stack-id ${fixture.stack.id}`,
-      );
+      expect(envelope.recreate_command).toBe(`supabase stack destroy --stack ${fixture.stack.id}`);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
@@ -2638,11 +2635,11 @@ describe("experimental stack start", () => {
           editable: true,
         },
       ]);
-      expect(event.recreate_command).toBe(`supabase stack destroy --stack-id ${fixture.stack.id}`);
+      expect(event.recreate_command).toBe(`supabase stack destroy --stack ${fixture.stack.id}`);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("always suggests --stack-id for a named stack, naming the stack as plain text", () =>
+  it.effect("always suggests the full ID for a named stack, naming the stack as plain text", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-named-destroy-" });
@@ -2675,7 +2672,7 @@ describe("experimental stack start", () => {
 
       expect(error).toMatchObject({
         suggestion: expect.stringContaining(
-          `supabase stack destroy --stack-id ${fixture.stack.id}\` (stack feature-a)`,
+          `supabase stack destroy --stack ${fixture.stack.id}\` (stack feature-a)`,
         ),
       });
       expect(error).toBeInstanceOf(StackCommandStartError);

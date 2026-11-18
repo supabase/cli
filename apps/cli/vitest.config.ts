@@ -5,7 +5,7 @@ import { configDefaults, defineConfig } from "vitest/config";
 import { E2eSequencer } from "./tests/e2e-sequencer.ts";
 
 /* An exported stack selector would retarget the suites and the CLIs they spawn; empty reads as unset. */
-const UNSET_STACK_SELECTORS = { SUPABASE_STACK: "", SUPABASE_STACK_ID: "" };
+const UNSET_STACK_SELECTORS = { SUPABASE_STACK: "" };
 
 /** E2e files that run concurrently; each stack project picks free ports and its own project id. */
 const e2eWorkersSetting = Effect.runSync(

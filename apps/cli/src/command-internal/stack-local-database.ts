@@ -15,6 +15,7 @@ import { StackApi } from "./stack-api.ts";
 import {
   describeStackSelector,
   selectedStack,
+  unmatchedStackIdAdvice,
   type StackSelectorFlags,
   StackTargetError,
   StackTargetResolver,
@@ -69,7 +70,7 @@ type StackInstances = Effect.Success<Stack["services"]["list"]>;
 const databaseFor = (instances: StackInstances): DatabaseInstance | undefined =>
   instances.find((instance): instance is DatabaseInstance => instance.service === "database");
 
-/** A stopped or missing stack that `--stack`/`--stack-id` or `SUPABASE_STACK`/`SUPABASE_STACK_ID` selected. */
+/** A stopped or missing stack that `--stack` or `SUPABASE_STACK` selected. */
 const selectedNotRunning = (
   selected: { readonly label: string; readonly flags: string },
   state: string,
@@ -95,9 +96,13 @@ const stackForProject = Effect.fn("StackLocalDatabase.stackForProject")(function
     Effect.provide(stackTargetResolverLayer),
   );
   const named = describeStackSelector(selected);
-  if (target.definition === undefined && named !== undefined && options.createSelected !== true)
-    return yield* selectedNotRunning(named, "does not exist for this project");
-  return { selected, named, saved: target.definition };
+  if (target.definition === undefined && named !== undefined && options.createSelected !== true) {
+    const unmatched = unmatchedStackIdAdvice(selected.stack);
+    return yield* unmatched === undefined
+      ? selectedNotRunning(named, "does not exist for this project")
+      : new LocalDbRunningError(unmatched);
+  }
+  return { name: target.name, named, saved: target.definition };
 });
 
 const openProjectStack = Effect.fn("StackLocalDatabase.openProject")(function* () {
@@ -184,7 +189,7 @@ export const stackOpenReadyProject = Effect.gen(function* () {
   return ready;
 });
 
-/** Fails when `--stack`/`--stack-id` or `SUPABASE_STACK`/`SUPABASE_STACK_ID` select a stack that does not exist. */
+/** Fails when `--stack` or `SUPABASE_STACK` selects a stack that does not exist. */
 export const stackRequireSelected = Effect.gen(function* () {
   const selected = yield* selectedStack;
   if (describeStackSelector(selected) === undefined) return;
@@ -304,7 +309,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
   const output = yield* Output;
   /* Checked before the config load, which can resolve and write supabase/supabase.lock. */
   const {
-    selected,
+    name,
     named,
     saved: existing,
   } = yield* stackForProject(options).pipe(
@@ -335,7 +340,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
     const created = yield* api
       .create({
         projectRoot: settings.workdir,
-        ...(selected.name === undefined ? {} : { name: selected.name }),
+        ...(name === undefined ? {} : { name }),
         stateRoot: stateRoot(settings, path),
         cacheRoot: cacheRoot(settings, path),
         runtime,
@@ -380,7 +385,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       )
     )
       return yield* startFailed({
-        message: `The requested database version does not match the saved stack binding. Recreate the local database: supabase stack destroy --stack-id ${stack.id}`,
+        message: `The requested database version does not match the saved stack binding. Recreate the local database: supabase stack destroy --stack ${stack.id}`,
       });
     const savedCredentials = yield* stack.credentials.get.pipe(Effect.mapError(startFailed));
     if (
@@ -459,7 +464,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       database.destroy.pipe(
         Effect.tapError((cause) =>
           output.raw(
-            `Failed to destroy newly created database ${database.id}: ${cause.message}. Run supabase stack destroy --stack-id ${stack.id} to remove the incomplete stack before retrying.\n`,
+            `Failed to destroy newly created database ${database.id}: ${cause.message}. Run supabase stack destroy --stack ${stack.id} to remove the incomplete stack before retrying.\n`,
             "stderr",
           ),
         ),

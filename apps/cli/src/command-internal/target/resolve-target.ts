@@ -60,7 +60,7 @@ const remoteFlagOf = (flags: TargetFlagValues): string =>
           ? "--project-id"
           : "--remote";
 
-/** `--stack`/`--stack-id` name a local stack, so a remote selector beside them is a conflict. */
+/** `--stack` names a local stack, so a remote selector beside it is a conflict. */
 const rejectRemoteStackSelector = Effect.fnUntraced(function* (flags: TargetFlagValues) {
   const flag = yield* passedStackSelectorFlag;
   if (flag === undefined) return;

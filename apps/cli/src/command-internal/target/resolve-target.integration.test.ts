@@ -2,6 +2,7 @@ import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  ConfigProvider,
   Effect,
   Exit,
   FileSystem,
@@ -280,6 +281,20 @@ describe("resolveTarget", () => {
           message: "--stack selects a local stack and cannot be combined with --linked.",
         });
       }),
+    );
+
+    it.effect("ignores SUPABASE_STACK beside --linked and on the legacy backend", () =>
+      Effect.gen(function* () {
+        const linked = yield* run("selectable", { ...none, linked: true }, { backend: "stack" });
+        const legacy = yield* run("selectable", none, { backend: "legacy" });
+        expect(succeeded(linked.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
+        expect(succeeded(legacy.exit)).toEqual({ kind: "local" });
+      }).pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({ SUPABASE_STACK: "feature" }),
+        ),
+      ),
     );
 
     it.effect("rejects --stack combined with --remote", () =>

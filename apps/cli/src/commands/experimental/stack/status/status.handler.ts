@@ -26,7 +26,6 @@ import {
   rejectStackOutput,
   StackApi,
   StackTargetResolver,
-  validateStackTarget,
 } from "../../../../command-internal/stack-target.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
@@ -247,15 +246,13 @@ const render = (
 
 const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
   projectRoot: string,
-  name: string | undefined,
-  id: string | undefined,
+  stack: string | undefined,
 ) {
   const resolver = yield* StackTargetResolver;
   const target = yield* resolver
     .resolve({
       projectRoot,
-      ...(name === undefined ? {} : { name }),
-      ...(id === undefined ? {} : { id }),
+      ...(stack === undefined ? {} : { stack }),
       runtime: "auto",
     })
     .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
@@ -364,21 +361,13 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           }),
       ),
     );
-    yield* validateStackTarget({
-      stack: Option.getOrUndefined(flags.stack),
-      stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
     if (!flags.env && flags.overrideName.length > 0)
       return yield* new StackCommandStatusError({
         reason: "flags",
         message: "--override-name requires --env.",
       });
     const envNames = yield* stackEnvOverrides(flags.overrideName);
-    const target = yield* findTarget(
-      settings.workdir,
-      Option.getOrUndefined(flags.stack),
-      Option.getOrUndefined(flags.stackId),
-    );
+    const target = yield* findTarget(settings.workdir, Option.getOrUndefined(flags.stack));
     const locations = {
       stateRoot: path.join(settings.supabaseHome, "stacks"),
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),

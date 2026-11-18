@@ -10,13 +10,7 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 const config = {
   stack: Flag.String("stack").pipe(
     Flag.withDescription(
-      "Select an existing stack by name (defaults to SUPABASE_STACK, else the current project stack).",
-    ),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription(
-      "Read logs from an existing stack by ID or unique ID prefix (defaults to SUPABASE_STACK_ID).",
+      "Select an existing stack by name, else by ID or unique ID prefix (defaults to SUPABASE_STACK, else the current project stack).",
     ),
     Flag.optional,
   ),
@@ -72,7 +66,7 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["stack", "stack-id", "service", "follow", "tail", "since"],
+    noApiEffectFlags: ["stack", "service", "follow", "tail", "since"],
   }),
   Command.withHandler((flags) =>
     Effect.gen(function* () {

@@ -432,9 +432,8 @@ export function mockCommandSettings(opts: {
   readonly supabaseHome?: string;
   readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
   readonly apiMaxRetries?: Option.Option<number>;
-  /** The `--stack`/`--stack-id` the command was run with; neither by default. */
+  /** The `--stack` the command was run with; none by default. */
   readonly stack?: string;
-  readonly stackId?: string;
 }): Layer.Layer<CommandSettings | StackSelectorFlags> {
   const settings = Layer.succeed(CommandSettings, {
     githubToken: opts.githubToken ?? Option.none(),
@@ -454,10 +453,7 @@ export function mockCommandSettings(opts: {
     userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
     apiMaxRetries: opts.apiMaxRetries ?? Option.none(),
   });
-  const selector = stackSelectorFlagsLayer({
-    stack: Option.fromNullishOr(opts.stack),
-    stackId: Option.fromNullishOr(opts.stackId),
-  });
+  const selector = stackSelectorFlagsLayer({ stack: Option.fromNullishOr(opts.stack) });
   return Layer.mergeAll(settings, selector);
 }
 

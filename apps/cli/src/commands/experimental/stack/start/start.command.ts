@@ -25,13 +25,7 @@ const config = {
   exclude: excludeFlag,
   stack: Flag.String("stack").pipe(
     Flag.withDescription(
-      "Name this stack (defaults to SUPABASE_STACK, else the current project stack).",
-    ),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription(
-      "Open an existing stack by ID or unique ID prefix (defaults to SUPABASE_STACK_ID).",
+      "Open the stack with this name, else by ID or unique ID prefix; a new stack takes this name (defaults to SUPABASE_STACK, else the current project stack).",
     ),
     Flag.optional,
   ),
@@ -76,7 +70,7 @@ export const stackStartCommand = Command.make("start", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["exclude", "stack", "stack-id", "runtime", "preparation", "frozen", "eager"],
+    noApiEffectFlags: ["exclude", "stack", "runtime", "preparation", "frozen", "eager"],
   }),
   Command.withHandler((flags) =>
     stackStart(flags).pipe(

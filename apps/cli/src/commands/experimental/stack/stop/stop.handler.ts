@@ -8,8 +8,8 @@ import {
   StackApi,
   StackTargetResolver,
   rejectStackOutput,
-  validateStackTarget,
   mapTargetError,
+  unmatchedStackIdAdvice,
 } from "../../../../command-internal/stack-target.ts";
 import type { StackStopFlags } from "./stop.command.ts";
 import { StackCommandStopError } from "./stop.errors.ts";
@@ -34,23 +34,18 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
       Effect.mapError(targetError),
     );
-    if (Option.isSome(flags.all) && (Option.isSome(flags.stack) || Option.isSome(flags.stackId)))
+    if (Option.isSome(flags.all) && Option.isSome(flags.stack))
       return yield* new StackCommandStopError({
         reason: "flags",
-        message: "--all cannot be combined with --stack or --stack-id",
+        message: "--all cannot be combined with --stack",
       });
-    yield* validateStackTarget({
-      stack: Option.getOrUndefined(flags.stack),
-      stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(targetError));
     const all = Option.getOrElse(flags.all, () => false);
     const target = all
       ? undefined
       : yield* resolver
           .resolve({
             projectRoot: settings.workdir,
-            ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
-            ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
+            ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
             runtime: "auto",
           })
           .pipe(Effect.mapError(targetError));
@@ -82,7 +77,9 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
       if (target?.name !== undefined)
         return yield* new StackCommandStopError({
           reason: "flags",
-          message: `No managed stack named "${target.name}" was found for this project.`,
+          ...(unmatchedStackIdAdvice(target.name) ?? {
+            message: `No managed stack named "${target.name}" was found for this project.`,
+          }),
         });
       yield* output.success("No managed stack found for this context.", { found: false });
       return;

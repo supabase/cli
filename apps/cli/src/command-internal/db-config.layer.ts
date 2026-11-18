@@ -69,8 +69,9 @@ import { isCheckoutLinked } from "../shared/config/link-snapshot.ts";
 import { rejectTargetPassword } from "./target/target-password.ts";
 import {
   captureStackSelectorFlags,
-  selectedStack,
+  passedStackSelectorFlag,
   STACK_SELECTOR_FLAG_NAMES,
+  StackEnvSelection,
 } from "./stack-target.ts";
 
 const loginRoleEntry = {
@@ -860,17 +861,18 @@ export const dbConfigResolverLayer = Layer.effect(
         const onStackBackend = (yield* currentStackBackend).kind === "stack";
         const stackConn =
           singleHost && onStackBackend && mayBeStackDatabaseHost(conn.host, localHost)
-            ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
+            ? Option.getOrUndefined(
+                yield* Effect.option(
+                  stackDatabaseConn.pipe(Effect.provideService(StackEnvSelection, false)),
+                ),
+              )
             : undefined;
         const onStack = stackConn?.host === conn.host && stackConn.port === conn.port;
-        /* Under a selection, `[db].port` is local only when the selected stack listens on it. */
+        /* Under `--stack`, `[db].port` is local only when the selected stack listens on it. A URL is an
+           explicit target, so `SUPABASE_STACK` never changes how it resolves. */
         const selectsAnother =
           legacyLocal && onStackBackend && stackConn?.port !== conn.port
-            ? yield* selectedStack.pipe(
-                provideStackSelector,
-                Effect.map((selected) => selected.name !== undefined || selected.id !== undefined),
-                Effect.orElseSucceed(() => false),
-              )
+            ? (yield* passedStackSelectorFlag.pipe(provideStackSelector)) !== undefined
             : false;
         const isLocal = onStack || (legacyLocal && !selectsAnother);
         // A local direct URL fills an empty password from the local database's own

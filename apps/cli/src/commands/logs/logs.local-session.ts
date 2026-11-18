@@ -6,11 +6,7 @@ import {
   type StackLogRecord,
 } from "@supabase/stack/effect";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import {
-  missingStackAdvice,
-  StackTargetResolver,
-  validateStackTarget,
-} from "../../command-internal/stack-target.ts";
+import { missingStackAdvice, StackTargetResolver } from "../../command-internal/stack-target.ts";
 import { isFromLaunch, makeHistoryCollector } from "../../command-internal/logs/local-history.ts";
 import { parseSince } from "../../command-internal/logs/since.ts";
 import { hasGatewayLogs } from "../../command-internal/logs/local-sources.ts";
@@ -38,10 +34,6 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
     return yield* new LogsInputError({
       message: "For local logs, select either --resource (instance ID) or --service.",
     });
-  yield* validateStackTarget({
-    stack: Option.getOrUndefined(flags.stack),
-    stackId: Option.getOrUndefined(flags.stackId),
-  }).pipe(Effect.mapError(inputError));
   const settings = yield* CommandSettings;
   const resolver = yield* StackTargetResolver;
   const path = yield* Path.Path;
@@ -50,8 +42,7 @@ export const makeLocalLogsSession = Effect.fn("Logs.local.session")(function* (
     .resolve({
       projectRoot: settings.workdir,
       runtime: "auto",
-      ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
-      ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
+      ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
     })
     .pipe(Effect.mapError(inputError));
   if (target.id === undefined || target.definition === undefined) {

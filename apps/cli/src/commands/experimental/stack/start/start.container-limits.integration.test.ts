@@ -40,7 +40,6 @@ const excluded = [
 const flags = {
   exclude: excluded,
   stack: Option.none<string>(),
-  stackId: Option.none<string>(),
   runtime: "docker" as const,
   preparation: "on-demand" as const,
   frozen: false,
@@ -174,7 +173,6 @@ describe("experimental stack start container limits", () => {
               const out = mockOutput({ format: "json" });
               yield* stackStatus({
                 stack: Option.none(),
-                stackId: Option.none(),
                 env: false,
                 overrideName: [],
               }).pipe(Effect.scoped, Effect.provide(makeLayer(root, out.layer)));

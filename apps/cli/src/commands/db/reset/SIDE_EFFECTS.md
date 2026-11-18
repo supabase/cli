@@ -39,7 +39,7 @@ composition again instead of recreating containers. On a Docker or Podman stack 
 `[api.tls]`, that final start reruns the `api.tls` start check with a fresh nonce; if it fails, the
 stack's services stop and the reset fails with `failed to start local stack services: ` followed by
 the `stack start` api.tls error, which ends ``its services did not stop (<reason>), run `supabase
-stack stop --stack-id <id>` to stop them`` when they don't stop. The reset retains the saved
+stack stop --stack <id>` to stop them`` when they don't stop. The reset retains the saved
 database configuration and composition members; it does
 not rebuild the stack from current config. The catalog overlay provisions the Auth, Storage,
 and Realtime schemas for the saved composition's members, so services excluded at `stack
@@ -54,7 +54,7 @@ activation failure, or an invalid bucket config all print `WARNING: skipped seed
 <next step>` to stderr and exit `0`,
 where the next step is `Run supabase seed buckets once Storage is available.` (or, for
 disabled Storage, to enable `[storage]`, run `supabase stack stop` then `supabase stack start`,
-then `supabase seed buckets`), each carrying the selected `--stack`/`--stack-id`, unless the underlying stack-storage error carries its own
+then `supabase seed buckets`), each carrying the selected `--stack`, unless the underlying stack-storage error carries its own
 suggestion (a missing API gateway endpoint, Auth disabled, or a gateway 502/503), in which case
 that suggestion is printed as the next step instead. The warning is omitted when the project
 configures no `[storage.buckets]` or vector buckets, since there is nothing to seed. The
@@ -206,7 +206,7 @@ otherwise the satellites stay stopped with a warning to run `supabase stop && su
 | `SUPABASE_AUTH_JWT_SECRET` / `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                        | local path: override `auth.jwt_secret` / `auth.service_role_key` (shell or project dotenv, `encrypted:` decrypted) — feeds the recreated Postgres container (jwt secret), the fresh-database setup jobs (both) and the legacy-backend bucket-seed Storage service-role key, same as `seed buckets`. Not consulted on the stack backend, which uses the stack's own service-role JWT                          | no                                                      |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                                               | forces the recreated container/network onto an existing Docker network — legacy backend only                                                                                                                                                                                                                                                                                                                 | no                                                      |
 | `SUPABASE_EXPERIMENTAL_STACK`                                                                                        | `1`/`0` selects the stack backend for the local path, overriding `experimental.stack`                                                                                                                                                                                                                                                                                                                        | no (→ `experimental.stack` → legacy)                    |
-| `SUPABASE_STACK` / `SUPABASE_STACK_ID`                                                                               | stack backend: select the named stack or stack id to reset when `--stack`/`--stack-id` is not passed; `SUPABASE_STACK_ID` only matches a stack of the current project                                                                                                                                                                                                                                        | no (also `--stack`/`--stack-id`)                        |
+| `SUPABASE_STACK`                                                                                                     | stack backend: select the stack to reset, by name or ID, when `--stack` is not passed; as an ID it only matches a stack of the current project                                                                                                                                                                                                                                                               | no (also `--stack`)                                     |
 | `PG*` libpq                                                                                                          | remote TLS, timeout, service; see `db push`                                                                                                                                                                                                                                                                                                                                                                  | no                                                      |
 
 ## Connection loss during migration apply

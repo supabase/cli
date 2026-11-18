@@ -371,7 +371,6 @@ const stackProject = Effect.fn("Contract.stackProject")(function* (
   const start = stackStart({
     exclude: [],
     stack: Option.none(),
-    stackId: Option.none(),
     runtime,
     preparation: "background",
     frozen: false,

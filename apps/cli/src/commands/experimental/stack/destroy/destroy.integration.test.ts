@@ -138,7 +138,7 @@ const fixture = Effect.fn("StackDestroyTest.fixture")(function* (
     output,
     telemetry,
     layer,
-    flags: { stack: Option.none<string>(), stackId: [stack.id] },
+    flags: { stack: [stack.id] },
   };
 });
 
@@ -240,7 +240,7 @@ describe("stack destroy", () => {
           runtime: "native",
         });
 
-        yield* stackDestroy({ ...f.flags, stackId: [f.stack.id.slice(0, 8)] }).pipe(
+        yield* stackDestroy({ ...f.flags, stack: [f.stack.id.slice(0, 8)] }).pipe(
           Effect.provide(f.layer),
         );
 
@@ -275,7 +275,7 @@ describe("stack destroy", () => {
           ),
       });
 
-      yield* stackDestroy({ ...f.flags, stackId: [id] }).pipe(
+      yield* stackDestroy({ ...f.flags, stack: [id] }).pipe(
         Effect.provide(Layer.merge(f.layer, api)),
       );
 
@@ -291,7 +291,42 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.effect("leaves a deleted stack's leftovers alone when only SUPABASE_STACK_ID names it", () =>
+  it.effect("reaches a deleted stack's leftovers by full ID when the project root is missing", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const id = "d".repeat(64);
+      let destroyed = 0;
+      const api = Layer.succeed(StackApi, {
+        ...f.api,
+        findDeleted: () =>
+          Effect.succeed(
+            Option.some({
+              id,
+              destroy: Effect.sync(() => {
+                destroyed += 1;
+              }),
+            }),
+          ),
+      });
+      const missing = mockCommandSettings({
+        workdir: f.path.join(f.root, "deleted-worktree"),
+        supabaseHome: f.root,
+      });
+
+      yield* stackDestroy({ ...f.flags, stack: [id] }).pipe(
+        Effect.provide(
+          Layer.merge(
+            Layer.merge(f.layer, api),
+            Layer.merge(missing, stackTargetResolverLayer.pipe(Layer.provide(missing))),
+          ),
+        ),
+      );
+
+      expect(destroyed).toBe(1);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.effect("leaves a deleted stack's leftovers alone when only SUPABASE_STACK names it", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const id = "d".repeat(64);
@@ -309,16 +344,18 @@ describe("stack destroy", () => {
           ),
       });
 
-      const error = yield* stackDestroy({ ...f.flags, stackId: [] }).pipe(
+      const error = yield* stackDestroy({ ...f.flags, stack: [] }).pipe(
         Effect.provide(Layer.merge(f.layer, api)),
         Effect.provideService(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnvRecord({ SUPABASE_STACK_ID: id }),
+          ConfigProvider.fromEnvRecord({ SUPABASE_STACK: id }),
         ),
         Effect.flip,
       );
 
-      expect(error.message).toBe(`Stack ${id} (from SUPABASE_STACK_ID) was not found`);
+      expect(error.message).toBe(
+        `No managed stack is named "${id}" in this project or has that ID.`,
+      );
       expect(destroyed).toBe(0);
     }).pipe(Effect.provide(live)),
   );
@@ -333,25 +370,30 @@ describe("stack destroy", () => {
         findDeleted: () => Effect.fail(new StackError({ operation: "find", message: unlisted })),
       });
 
-      const error = yield* stackDestroy({ ...f.flags, stackId: [id] }).pipe(
+      const error = yield* stackDestroy({ ...f.flags, stack: [id] }).pipe(
         Effect.provide(Layer.merge(f.layer, api)),
         Effect.flip,
       );
 
       expect(error.reason).toBe("flags");
-      expect(error.message).toContain("was not found");
+      expect(error.message).toBe(
+        `No managed stack is named "${id}" in this project or has that ID.`,
+      );
       expect(error.suggestion).toContain("Run `supabase stack list`");
       expect(error.detail).toBe(unlisted);
 
       const ids = [id, "e".repeat(64)];
-      const batch = yield* stackDestroy({ ...f.flags, stackId: ids }).pipe(
+      const batch = yield* stackDestroy({ ...f.flags, stack: ids }).pipe(
         Effect.provide(Layer.merge(f.layer, api)),
         Effect.flip,
       );
 
       expect(batch.detail).toBe(
         ids
-          .map((stackId) => `${stackId}: Stack ${stackId} was not found\n  ${unlisted}`)
+          .map(
+            (stackId) =>
+              `${stackId}: No managed stack is named "${stackId}" in this project or has that ID.\n  ${unlisted}`,
+          )
           .join("\n"),
       );
     }).pipe(Effect.provide(live)),
@@ -420,7 +462,7 @@ describe("stack destroy", () => {
   );
 
   it.live(
-    "destroys each stack named by repeated --stack-id flags once",
+    "destroys each stack named by repeated --stack flags once",
     () =>
       Effect.gen(function* () {
         const f = yield* fixture(true);
@@ -439,11 +481,11 @@ describe("stack destroy", () => {
         const output = mockOutput({ format: "json" });
 
         yield* runDestroy(Layer.merge(f.layer, output.layer), [
-          "--stack-id",
+          "--stack",
           f.stack.id,
-          "--stack-id",
+          "--stack",
           second.id.slice(0, 8),
-          "--stack-id",
+          "--stack",
           f.stack.id.slice(0, 8),
         ]);
 
@@ -467,16 +509,16 @@ describe("stack destroy", () => {
   );
 
   it.live(
-    "keeps the batch result when repeated --stack-id flags name one stack",
+    "keeps the batch result when repeated --stack flags name one stack",
     () =>
       Effect.gen(function* () {
         const f = yield* fixture(true);
         const output = mockOutput({ format: "json" });
 
         yield* runDestroy(Layer.merge(f.layer, output.layer), [
-          "--stack-id",
+          "--stack",
           f.stack.id,
-          "--stack-id",
+          "--stack",
           f.stack.id.slice(0, 8),
         ]);
 
@@ -497,7 +539,7 @@ describe("stack destroy", () => {
         const f = yield* fixture(true);
         const output = mockOutput({ format: "json" });
 
-        yield* runDestroy(Layer.merge(f.layer, output.layer), ["--stack-id", f.stack.id]);
+        yield* runDestroy(Layer.merge(f.layer, output.layer), ["--stack", f.stack.id]);
 
         expect(output.messages).toContainEqual(
           expect.objectContaining({
@@ -507,29 +549,6 @@ describe("stack destroy", () => {
         );
       }).pipe(Effect.provide(live)),
     { timeout: 60_000 },
-  );
-
-  it.effect("rejects --stack combined with repeated --stack-id flags", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-
-      const error = yield* runDestroy(f.layer, [
-        "--stack",
-        "other",
-        "--stack-id",
-        f.stack.id,
-        "--stack-id",
-        f.stack.id.slice(0, 8),
-      ]).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        reason: "flags",
-        message: "--stack and --stack-id cannot be used together",
-      });
-      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
-        f.stack.id,
-      ]);
-    }).pipe(Effect.provide(live)),
   );
 
   it.effect("asks once for every selected stack and keeps them all when declined", () =>
@@ -542,7 +561,7 @@ describe("stack destroy", () => {
         runtime: "native",
       });
 
-      const error = yield* stackDestroy({ ...f.flags, stackId: [f.stack.id, second.id] }).pipe(
+      const error = yield* stackDestroy({ ...f.flags, stack: [f.stack.id, second.id] }).pipe(
         Effect.provide(f.layer),
         Effect.flip,
       );
@@ -557,7 +576,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.effect("destroys nothing and names every later --stack-id that is not found", () =>
+  it.effect("destroys nothing and names every later --stack that is not found", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const missing = ["0000", "1111", "2222"]
@@ -565,15 +584,17 @@ describe("stack destroy", () => {
         .slice(0, 2);
 
       const error = yield* runDestroy(f.layer, [
-        "--stack-id",
+        "--stack",
         f.stack.id,
-        ...missing.flatMap((id) => ["--stack-id", id]),
+        ...missing.flatMap((id) => ["--stack", id]),
       ]).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         reason: "flags",
-        message: "Failed to resolve 2 --stack-id values.",
-        detail: missing.map((id) => `${id}: Stack ${id} was not found`).join("\n"),
+        message: "Failed to resolve 2 --stack values.",
+        detail: missing
+          .map((id) => `${id}: No managed stack is named "${id}" in this project or has that ID.`)
+          .join("\n"),
       });
       expect(f.output.stderrText).toBe("");
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
@@ -613,9 +634,9 @@ describe("stack destroy", () => {
           runtime: "native",
         });
         const ids = [f.stack.id, second.id];
-        const retry = `"supabase stack destroy --stack-id ${f.stack.id} --stack-id ${second.id} --yes"`;
+        const retry = `"supabase stack destroy --stack ${f.stack.id} --stack ${second.id} --yes"`;
         const destroyWith = (unreachable: ReadonlyArray<string>) =>
-          stackDestroy({ ...f.flags, stackId: ids }).pipe(
+          stackDestroy({ ...f.flags, stack: ids }).pipe(
             Effect.provide(Layer.merge(f.layer, refuseDestroy(f.api, ids, unreachable))),
             Effect.flip,
           );
@@ -657,7 +678,7 @@ describe("stack destroy", () => {
             ),
         });
 
-        yield* stackDestroy({ ...f.flags, stackId: [f.stack.id, id] }).pipe(
+        yield* stackDestroy({ ...f.flags, stack: [f.stack.id, id] }).pipe(
           Effect.provide(Layer.merge(f.layer, api)),
         );
 
@@ -710,7 +731,7 @@ describe("stack destroy", () => {
               processControl.layer,
             ),
           ),
-          ["--stack-id", f.stack.id, "--stack-id", second.id],
+          ["--stack", f.stack.id, "--stack", second.id],
         );
 
         expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual(
@@ -725,7 +746,7 @@ describe("stack destroy", () => {
             code: "ExperimentalStackDestroyError",
             message: "Failed to destroy 1 managed stack(s).",
             detail: `${f.stack.id}: engine refused`,
-            suggestion: `Resolve each error, then run "supabase stack destroy --stack-id ${f.stack.id} --yes" to retry the stacks that failed.`,
+            suggestion: `Resolve each error, then run "supabase stack destroy --stack ${f.stack.id} --yes" to retry the stacks that failed.`,
           },
         });
         expect(processControl.exitCode).toBe(1);
@@ -770,7 +791,7 @@ describe("stack destroy", () => {
               processControl.layer,
             ),
           ),
-          ["--stack-id", f.stack.id, "--stack-id", second.id],
+          ["--stack", f.stack.id, "--stack", second.id],
         );
 
         expect(yield* f.api.discover(f.locations)).toEqual([]);
