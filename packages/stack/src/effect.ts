@@ -80,8 +80,6 @@ export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { apiRoute, sharesApiEndpoint } from "./host/Endpoints.ts";
 export { apiTlsContext } from "./HttpProxy.ts";
 export { gatewayLog };
-/** Resolves the project root, Git branch context and stack name that derive a stack id. */
-export { resolveStackIdentity };
 export { StackError } from "./Rpc.ts";
 /** Atomically writes a file so readers only ever see the prior or the complete new content. */
 export { NamespaceError, publish } from "./StackNamespace.ts";
@@ -1006,12 +1004,14 @@ export const open = Effect.fn("Stack.open")(
 
 /**
  * Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries.
- * `idPrefix` limits both, and the owner probes, to stacks whose id starts with it.
+ * `idPrefix` limits both, and the owner probes, to stacks whose id starts with it. With
+ * `owners: false` nothing is probed and every `host` is undefined.
  */
 export const discover = Effect.fn("Stack.discover")(
   function* (
     options: Pick<StackLocations, "stateRoot"> & {
       readonly idPrefix?: string;
+      readonly owners?: false;
       readonly onInvalidState?: (
         id: string,
         error: StackNamespace.NamespaceError,
@@ -1033,6 +1033,8 @@ export const discover = Effect.fn("Stack.discover")(
       ),
     );
     const saved = (yield* state.list).filter(({ id }) => selected(id));
+    if (options.owners === false)
+      return saved.map((definition) => ({ definition, host: undefined }));
     return yield* Effect.forEach(
       saved,
       (definition) =>

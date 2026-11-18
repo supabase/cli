@@ -11,7 +11,9 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 
 const config = {
   dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("List the orphaned stacks without destroying them."),
+    Flag.withDescription(
+      "List the stacks whose project directory no longer exists without destroying them.",
+    ),
     Flag.withDefault(false),
   ),
 } as const;
@@ -20,17 +22,18 @@ export type StackPruneFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const stackPruneCommand = Command.make("prune", config).pipe(
   Command.withDescription(
-    "Permanently destroy orphaned managed local stacks with their owned data and Storage uploads: those whose project directory no longer exists, such as those of deleted worktrees or moved directories, and those started outside any Git repository in a project directory that has since become its own Git repository. A directory on an unmounted drive counts as missing, so check with --dry-run first.",
+    "Permanently destroy managed local stacks whose project directory no longer exists, such as those of deleted worktrees or moved directories, with their owned data and Storage uploads. A directory on an unmounted drive counts as missing, so check with --dry-run first.",
   ),
-  Command.withShortDescription("Destroy orphaned stacks"),
+  Command.withShortDescription("Destroy stacks whose project directory no longer exists"),
   Command.withExamples([
     {
       command: "supabase stack prune --dry-run",
-      description: "List the orphaned stacks",
+      description: "List the stacks whose project directory no longer exists",
     },
     {
       command: "supabase stack prune --yes",
-      description: "Permanently destroy every orphaned stack, without a prompt",
+      description:
+        "Permanently destroy every stack whose project directory no longer exists, without a prompt",
     },
   ]),
   withPermissions({ operations: [], noApiEffectFlags: ["dry-run"] }),

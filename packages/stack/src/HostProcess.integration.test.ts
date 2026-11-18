@@ -472,6 +472,37 @@ it.live("discovers dead stacks from their free leases without contacting recorde
   ),
 );
 
+it.live("discovers saved stacks without probing a held owner when owners is false", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-no-owners-" });
+      const state = yield* makeTestState(root);
+      const unresponsive = yield* silentListener;
+      yield* state.save({ ...savedStack(root, "held"), id: "held" });
+      yield* state.acquireLease("held");
+      yield* writeStaleHolder(root, "held", {
+        role: "owner",
+        secret: "stale",
+        port: unresponsive.port,
+        pid: process.pid,
+        release: yield* currentRelease,
+        lifetime: "detached",
+        startedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      const entries = yield* discover({ stateRoot: root, owners: false });
+      expect(entries.map(({ definition, host }) => [definition.id, host])).toEqual([
+        ["held", undefined],
+      ]);
+      expect(unresponsive.connections()).toBe(0);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
+);
+
 it.live(
   "starts an owner through an external launcher and keeps it reachable after launcher exit",
   () =>

@@ -5,6 +5,8 @@ opens the stack `--stack` selects by name, else by ID or unique ID prefix, or cr
 project stack, named after a `--stack` value that matches no stack. `SUPABASE_STACK` stands in for
 `--stack`, but as an ID it only selects a stack of the current project. Starting does not create a
 project config file.
+Before creating a stack, start prints `--stack <short id>` for each saved stack with the same
+project root and stack name on another branch, such as one started before `git init`.
 
 ## Configuration and state
 

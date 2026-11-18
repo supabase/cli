@@ -130,7 +130,9 @@ describe("stack prune", () => {
 
         const preview = mockOutput({ format: "text", interactive: false });
         yield* runPrune(f.layer({ yes: false, output: preview }), ["--dry-run"]);
-        expect(preview.stdoutText).toContain("Found 2 orphaned stacks:");
+        expect(preview.stdoutText).toContain(
+          "Found 2 stacks whose project directory no longer exists:",
+        );
         expect(preview.stdoutText).toContain("refs/heads/feature");
         expect(preview.stdoutText).toContain("ordinary-workspace");
         expect(preview.stdoutText).not.toContain("refs/heads/main");
@@ -163,103 +165,7 @@ describe("stack prune", () => {
   );
 
   it.live(
-    "prunes a stack whose directory became a Git repository, not one of a parent repository or another branch",
-    () =>
-      Effect.gen(function* () {
-        const f = yield* fixture();
-        const initialize = (gitDir: string) =>
-          Effect.gen(function* () {
-            yield* f.fs.makeDirectory(gitDir, { recursive: true });
-            yield* f.fs.writeFileString(f.path.join(gitDir, "HEAD"), "ref: refs/heads/main\n");
-          });
-        const initialized = f.path.join(f.home, "initialized");
-        const enclosed = f.path.join(f.home, "parent", "enclosed");
-        const malformed = f.path.join(f.home, "malformed");
-        const plain = f.path.join(f.home, "plain");
-        for (const dir of [initialized, enclosed, malformed, plain])
-          yield* f.fs.makeDirectory(dir, { recursive: true });
-        const fromGitInit = yield* f.create(initialized);
-        const underNewParent = yield* f.create(enclosed);
-        const unreadable = yield* f.create(malformed);
-        const outsideGit = yield* f.create(plain);
-        yield* initialize(f.path.join(initialized, ".git"));
-        yield* initialize(f.path.join(f.home, "parent", ".git"));
-        /* A stray `.git` without HEAD does not make the enclosed directory its own repository. */
-        yield* f.fs.makeDirectory(f.path.join(enclosed, ".git"));
-        yield* f.fs.writeFileString(f.path.join(malformed, ".git"), "not a gitdir\n");
-        /* The repository's own stack stays when it switches branch. */
-        yield* f.fs.writeFileString(
-          f.path.join(f.home, "repo", ".git", "HEAD"),
-          "ref: refs/heads/next\n",
-        );
-
-        const preview = mockOutput({ format: "json" });
-        const listed = yield* stackPrune({ dryRun: true }).pipe(
-          Effect.provide(f.layer({ yes: false, output: preview })),
-        );
-        expect(listed.map(({ id }) => id).sort()).toEqual([...f.orphanIds, fromGitInit.id].sort());
-        expect(preview.stderrText).toContain(
-          `Warning: keeping stack ${unreadable.id}; it could not be checked`,
-        );
-
-        yield* stackPrune({ dryRun: false }).pipe(
-          Effect.provide(f.layer({ yes: true, output: mockOutput({ format: "json" }) })),
-        );
-        expect(yield* f.savedIds).toEqual(
-          [f.kept.id, underNewParent.id, unreadable.id, outsideGit.id].sort(),
-        );
-      }).pipe(Effect.provide(live)),
-    { timeout: 60_000 },
-  );
-
-  it.live(
-    "keeps a stack whose Git metadata can no longer be read when it is about to be destroyed",
-    () =>
-      Effect.gen(function* () {
-        const f = yield* fixture();
-        const linked = f.path.join(f.home, "linked");
-        yield* f.fs.makeDirectory(linked);
-        const fromGitInit = yield* f.create(linked);
-        const gitFile = f.path.join(linked, ".git");
-        const gitDir = f.path.join(f.home, "repo", ".git", "worktrees", "feature");
-        yield* f.fs.writeFileString(gitFile, `gitdir: ${gitDir}\n`);
-        let reads = 0;
-        const output = mockOutput({ format: "json" });
-        const pruned = yield* stackPrune({ dryRun: false }).pipe(
-          Effect.provide(f.layer({ yes: true, output })),
-          Effect.provideService(FileSystem.FileSystem, {
-            ...f.fs,
-            readFileString: (target, encoding) =>
-              Effect.suspend(() => {
-                if (target !== gitFile || ++reads === 1)
-                  return f.fs.readFileString(target, encoding);
-                return Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "PermissionDenied",
-                    module: "FileSystem",
-                    method: "readFileString",
-                    description: "denied",
-                    pathOrDescriptor: target,
-                  }),
-                );
-              }),
-          }),
-        );
-
-        expect(pruned.map(({ id }) => id).sort()).toEqual(f.orphanIds);
-        expect(output.stderrText).toContain(
-          `stack ${fromGitInit.id} at ${linked} and its owned data`,
-        );
-        expect(output.stderrText).toContain(
-          `Warning: keeping stack ${fromGitInit.id}; it could not be checked`,
-        );
-        expect(yield* f.savedIds).toEqual([f.kept.id, fromGitInit.id].sort());
-      }).pipe(Effect.provide(live)),
-    { timeout: 60_000 },
-  );
-
-  it.live(
-    "destroys nothing without confirmation and reports when no stack is orphaned",
+    "destroys nothing without confirmation and reports when no project directory is missing",
     () =>
       Effect.gen(function* () {
         const f = yield* fixture();
@@ -296,7 +202,9 @@ describe("stack prune", () => {
           Effect.provide(f.layer({ yes: false, output: empty, home: emptyHome })),
         );
         expect(none).toEqual([]);
-        expect(empty.stdoutText).toBe("No orphaned stacks found.\n");
+        expect(empty.stdoutText).toBe(
+          "No stacks found whose project directory no longer exists.\n",
+        );
         expect(empty.promptConfirmCalls).toEqual([]);
       }).pipe(Effect.provide(live)),
     { timeout: 60_000 },
@@ -378,7 +286,7 @@ describe("stack prune", () => {
           "Permanently destroy the 2 stacks listed above and their owned data?",
         ]);
         expect(confirmed.stderrText).toContain(
-          `Warning: keeping stack ${unchecked.id}; it could not be checked`,
+          `Warning: keeping stack ${unchecked.id}; its project directory could not be checked`,
         );
         expect(yield* f.savedIds).toEqual([f.kept.id, unchecked.id].sort());
       }).pipe(Effect.provide(live)),
@@ -408,7 +316,7 @@ describe("stack prune", () => {
 
         expect(pruned.map(({ id }) => id)).toEqual([f.moved.id]);
         expect(output.stderrText).toContain(
-          `Warning: keeping stack ${f.deletedWorktree.id}; it is no longer orphaned.`,
+          `Warning: keeping stack ${f.deletedWorktree.id}; its project directory exists again.`,
         );
         expect(output.messages).toContainEqual(
           expect.objectContaining({ data: { dry_run: false, stacks: pruned } }),

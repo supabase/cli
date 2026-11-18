@@ -13,6 +13,10 @@ or unique ID prefix. `SUPABASE_STACK` stands in for `--stack`, but as an ID it
 only selects a stack of the current project. Explicit legacy `-o/--output`
 values are rejected; use `--output-format` instead, or `--env` in place of the
 `env` value.
+When no stack matches the selected name, the not-found suggestion lists
+`--stack <short id>` for each saved stack with the same project root and stack
+name on another branch, such as one started before `git init`. It reads their
+saved state without contacting their owners.
 
 Status reads the persisted stack identity and composition membership, then
 observes each service through the saved owner when that owner is reachable. It

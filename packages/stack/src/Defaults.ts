@@ -1,3 +1,6 @@
+/** The name of a stack started without one. */
+export const DEFAULT_STACK_NAME = "default";
+
 /** JWT secret used by local development services when no secret is configured. */
 export const DEFAULT_LOCAL_JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
 

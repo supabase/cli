@@ -87,6 +87,7 @@ import {
   describeStackSelector,
   failedOutcomesDetail,
   mapTargetError,
+  otherBranchStacks,
   rejectStackOutput,
   selectStack,
   StackApi,
@@ -629,7 +630,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       ),
     );
     if (target.id === undefined || !target.hostRunning) yield* startConfig;
-    if (target.id === undefined) yield* ensurePostgresUser;
+    if (target.id === undefined) {
+      yield* ensurePostgresUser;
+      const others = yield* otherBranchStacks(target.projectRoot, target.name);
+      if (others !== undefined)
+        yield* output.info(
+          `Creating a new stack for this branch. This project has stacks on other branches: ${others}.`,
+        );
+    }
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
     const resolveRequested = (

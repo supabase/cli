@@ -912,6 +912,51 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("names this project's stacks on other branches when creating one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-other-branch-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "other-branch"\n');
+      const fixture = fakeStack();
+      const output = mockOutput();
+      const api = Layer.succeed(StackApi, {
+        create: () => Effect.succeed(fixture.stack),
+        open: () => Effect.die("open must not run"),
+        discover: (options) =>
+          Effect.succeed(
+            options.owners === false
+              ? [
+                  {
+                    definition: {
+                      id: "b".repeat(64),
+                      identity: {
+                        projectRoot: root,
+                        branchContext: "ordinary-workspace",
+                        stackName: "default",
+                      },
+                      runtime: "native" as const,
+                      instances: [],
+                      composition: { members: [], dependencies: [] },
+                      lifetime: "detached" as const,
+                    },
+                    host: undefined,
+                  },
+                ]
+              : [],
+          ),
+        find: () => Effect.die("identity not used"),
+        findDeleted: () => Effect.die("identity not used"),
+      });
+      yield* stackStart(flags()).pipe(
+        Effect.provide(Layer.merge(layers(root, fixture, output, false), api)),
+      );
+      expect(infoMessages(output)).toContain(
+        "Creating a new stack for this branch. This project has stacks on other branches: --stack bbbbbbbb (ordinary-workspace).",
+      );
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect("rejects malformed configuration before creating a stack", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
