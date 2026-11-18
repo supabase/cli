@@ -48,6 +48,13 @@ Runtime resolvers read shared helpers from `local-config-helpers.ts`, never buil
 `resolveEmailTemplateContentPath` rejects absolute paths, traversal, and
 symlinks escaping the project root; every `content_path` consumer gets this containment.
 
+## Description Markdown
+
+Command, short, argument, flag, and example descriptions allow paragraphs, inline Markdown, and
+code blocks. Other block structures, HTML, and images fail the command-tree authoring check.
+Follow the [description contract](docs/README.md#command-description-markdown) for rendering
+limits; put richer content in reference page bodies.
+
 ## CLI compatibility
 
 The established CLI surface is a contract: command paths, flags, output text and streams,

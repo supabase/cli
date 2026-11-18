@@ -1,5 +1,7 @@
 import { CliOutput } from "effect/cli";
 import { withDeprecatedDescriptions } from "./subcommand-help.ts";
+import { supportsColor, type ColorStream } from "../../command-internal/colors.ts";
+import { withHelpMarkdown } from "./help-markdown.ts";
 import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
 import {
   permissionSectionForHelp,
@@ -18,11 +20,21 @@ function stripSingleErrorHeader(text: string): string {
 }
 
 function insertBeforeUsage(text: string, section: string): string {
-  const at = `\n${text}`.indexOf("\nUSAGE\n");
-  return at === -1 ? text : `${text.slice(0, at)}${section}\n\n${text.slice(at)}`;
+  let at = 0;
+  for (const line of text.split("\n")) {
+    if (Bun.stripANSI(line) === "USAGE") {
+      return `${text.slice(0, at)}${section}\n\n${text.slice(at)}`;
+    }
+    at += line.length + 1;
+  }
+  return text;
 }
 
-export function textCliOutputFormatter(context?: CliErrorSuggestionContext): CliOutput.Formatter {
+export function textCliOutputFormatter(
+  context?: CliErrorSuggestionContext,
+  stream: ColorStream = process.stdout,
+  agentMode = false,
+): CliOutput.Formatter {
   const base = CliOutput.defaultFormatter({ colors: false });
   const formatErrorMessage = (error: FormattedCliError) =>
     error.changed ? error.message : stripSingleErrorHeader(base.formatErrors([error.source]));
@@ -31,11 +43,19 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
     ...base,
     formatHelpDoc: (doc) => {
       const labeled = withDeprecatedDescriptions(doc, context?.rootCommand);
-      const text = base.formatHelpDoc(
+      const colors = supportsColor(stream, !agentMode);
+      const help = CliOutput.defaultFormatter({ colors });
+      const rendered = withHelpMarkdown(
         withOptionalSubcommandUsage(
           withRemoteFlagUsage(labelSubcommands(labeled, context?.rootCommand)),
         ),
+        colors,
       );
+      // Effect indents only the first line of the description section.
+      const text = help.formatHelpDoc({
+        ...rendered,
+        description: rendered.description.replace(/\n(?=[^\n])/g, "\n  "),
+      });
       const target = targetHelpFor(doc);
       const withTarget =
         target === undefined ? text : insertBeforeUsage(text, `TARGET\n  ${target.summary}`);
