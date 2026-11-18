@@ -369,6 +369,71 @@ describe("generated warehouse commands", () => {
       });
     });
   });
+  describe("warehouse tables list", () => {
+    const tablesPath = `/v2/projects/${VALID_REF}/warehouse/tables`;
+    const table = (attributes: Readonly<Record<string, unknown>>) => ({
+      type: "warehouse_table",
+      attributes: { schema: "public", ...attributes, observed_at: "2026-11-17T10:00:00Z" },
+    });
+    const body = {
+      data: [
+        {
+          id: "16385",
+          ...table({
+            name: "orders",
+            warehouse_name: '"public"."orders"',
+            status: "live",
+            replication_state: "following_wal",
+            lag_ms: 120,
+            replication_feedback: {
+              source: "pipeline_apply",
+              active: true,
+              wal_status: "reserved",
+              write_lag_ms: 80,
+              flush_lag_ms: 120,
+              flush_lag_bytes: 2048,
+              feedback_age_ms: 5,
+            },
+          }),
+        },
+        {
+          id: "16402",
+          ...table({
+            name: "events",
+            warehouse_name: '"public"."events"',
+            status: "syncing",
+            replication_state: "copying_table",
+            lag_ms: null,
+            replication_feedback: null,
+          }),
+        },
+      ],
+    };
+
+    it.effect("renders one row per table without the nested replication feedback", () => {
+      const { out, sent, run } = setup(["warehouse", "tables", "list"], {
+        route: ok(body),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([{ method: "GET", path: tablesPath, search: "", body: undefined }]);
+        expect(out.stdoutText).toMatch(/16385\s.*orders.*live.*following_wal.*120/);
+        expect(out.stdoutText).toMatch(/16402\s.*events.*syncing.*copying_table/);
+        expect(out.stdoutText).not.toMatch(/pipeline_apply|feedback_age|FEEDBACK/i);
+      });
+    });
+
+    it.effect("passes the document, including replication feedback, through as JSON", () => {
+      const { out, run } = setup(["warehouse", "tables", "list", "-o", "json"], {
+        route: ok(body),
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(decodeJson(out.stdoutText)).toEqual(body);
+      });
+    });
+  });
   describe("warehouse connection", () => {
     const connectionPath = `/v2/projects/${VALID_REF}/warehouse/connection`;
     const host = `${VALID_REF}.warehouse.example.invalid`;

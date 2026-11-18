@@ -132,13 +132,15 @@ const resourceLines = (document: JsonObject): ReadonlyArray<string> | undefined 
   const keys = Object.keys(document);
   const data = document["data"];
   if (keys.length !== 1 || keys[0] !== "data") return undefined;
+  if (Array.isArray(data) && data.length === 0) return ["No results"];
   if (isResource(data)) {
     return [humanize(String(data["type"])), ...blockLines(resourceEntries(data), INDENT)];
   }
   if (Array.isArray(data) && data.length > 0 && data.every(isResource)) {
     const rows = data.map((resource) => Object.fromEntries(resourceEntries(resource)));
-    const columns = unionKeys(rows).filter((column) =>
-      rows.some((row) => isScalar(row[column]) && row[column] !== undefined),
+    const columns = unionKeys(rows).filter(
+      (column) =>
+        rows.every((row) => isScalar(row[column])) && rows.some((row) => row[column] !== undefined),
     );
     return [humanize(String(data[0]?.["type"])), ...objectTable(rows, columns, "")];
   }

@@ -3300,6 +3300,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    listWarehouseTables: (
+      input: typeof operationDefinitions.v2ListWarehouseTables.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListWarehouseTables.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListWarehouseTables">(
+          operationDefinitions.v2ListWarehouseTables,
+          input,
+          options,
+        );
+      }),
     organizationsSlugWebhooksDeliveriesIdGet: (
       input: typeof operationDefinitions.v2OrganizationsSlugWebhooksDeliveriesIdGet.inputSchema.Type,
       options?: SupabaseApiRequestOptions,

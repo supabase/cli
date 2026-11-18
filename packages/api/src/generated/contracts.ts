@@ -14824,6 +14824,20 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
               ),
               Schema.Null,
             ]),
+            flush_lag_bytes: Schema.Union([
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(0).annotate({
+                    expected: "a value greater than or equal to 0",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                    expected: "a value less than or equal to 9007199254740991",
+                  }),
+                ),
+              Schema.Null,
+            ]),
             flush_lag_ms: Schema.Union([
               Schema.Number.check(
                 Schema.isFinite().annotate({ expected: "a finite number" }),
@@ -14853,7 +14867,7 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
             ]),
           }).annotate({
             description:
-              "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+              "Postgres replication feedback. Null means Postgres reported no value; lag times also become null shortly after a caught-up slot sees no new WAL, while flush_lag_bytes, the WAL not yet confirmed flushed, reads 0. Feedback age measures time since the last response and does not establish how current query results are.",
           }),
           Schema.Null,
         ]),
@@ -14944,6 +14958,20 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
                   ),
                   Schema.Null,
                 ]),
+                flush_lag_bytes: Schema.Union([
+                  Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                    .check(
+                      Schema.isGreaterThanOrEqualTo(0).annotate({
+                        expected: "a value greater than or equal to 0",
+                      }),
+                    )
+                    .check(
+                      Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                        expected: "a value less than or equal to 9007199254740991",
+                      }),
+                    ),
+                  Schema.Null,
+                ]),
                 flush_lag_ms: Schema.Union([
                   Schema.Number.check(
                     Schema.isFinite().annotate({ expected: "a finite number" }),
@@ -14973,7 +15001,7 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
                 ]),
               }).annotate({
                 description:
-                  "Postgres replication feedback. Null means unknown. Feedback age measures time since the last response and does not establish how current query results are.",
+                  "Postgres replication feedback. Null means Postgres reported no value; lag times also become null shortly after a caught-up slot sees no new WAL, while flush_lag_bytes, the WAL not yet confirmed flushed, reads 0. Feedback age measures time since the last response and does not establish how current query results are.",
               }),
               Schema.Null,
             ]),
@@ -16069,6 +16097,149 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
           }),
         ),
       }),
+    }),
+  ),
+});
+export const V2ListWarehouseTablesInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2ListWarehouseTablesOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      attributes: Schema.Struct({
+        lag_ms: Schema.Union([
+          Schema.Number.annotate({
+            description:
+              "Flush lag in milliseconds that Postgres reports for the slot in replication_feedback. Null when there is no feedback or Postgres reports no recent measurement, which includes a caught-up slot without new WAL; replication_feedback.flush_lag_bytes reads 0 in that case.",
+          })
+            .check(Schema.isFinite().annotate({ expected: "a finite number" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            ),
+          Schema.Null,
+        ]),
+        name: Schema.String.annotate({ description: "Source PostgreSQL table name." }),
+        observed_at: Schema.Union([
+          Schema.String.annotate({
+            description:
+              "Time the API retrieved the replication state of the table. It does not indicate when data was last synchronized.",
+            format: "date-time",
+          }),
+          Schema.Null,
+        ]),
+        replication_feedback: Schema.Union([
+          Schema.Struct({
+            active: Schema.Boolean,
+            feedback_age_ms: Schema.Union([
+              Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ).check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              ),
+              Schema.Null,
+            ]),
+            flush_lag_bytes: Schema.Union([
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(0).annotate({
+                    expected: "a value greater than or equal to 0",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                    expected: "a value less than or equal to 9007199254740991",
+                  }),
+                ),
+              Schema.Null,
+            ]),
+            flush_lag_ms: Schema.Union([
+              Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ).check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              ),
+              Schema.Null,
+            ]),
+            source: Schema.Union([
+              Schema.Literals(["pipeline_apply", "table_sync"]).annotate({
+                description:
+                  "Replication slot that reported the feedback: the table's own sync slot until it follows changes, or the pipeline apply slot once it does.",
+              }),
+              OpenString,
+            ]),
+            wal_status: Schema.Union([
+              Schema.Union([
+                Schema.Literals(["extended", "lost", "reserved", "unknown", "unreserved"]),
+                Schema.Null,
+              ]),
+              OpenString,
+            ]),
+            write_lag_ms: Schema.Union([
+              Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ).check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              ),
+              Schema.Null,
+            ]),
+          }).annotate({
+            description:
+              "Postgres feedback from the replication slot named in source. Null when no feedback is available, including while the pipeline is stopped. Feedback age measures time since the slot last responded and does not establish how current query results are.",
+          }),
+          Schema.Null,
+        ]),
+        replication_state: Schema.Union([
+          Schema.Union([
+            Schema.Literals(["copied_table", "copying_table", "error", "following_wal", "queued"]),
+            Schema.Null,
+          ]).annotate({
+            description:
+              "Last replication state the pipeline recorded for the table, also while the pipeline is stopped. Null when none was observed.",
+          }),
+          OpenString,
+        ]),
+        schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
+        status: Schema.Union([
+          Schema.Literals(["error", "live", "stopped", "syncing", "unknown"]).annotate({
+            description:
+              "Replication status. error means the table failed to replicate; stopped means the pipeline is stopped, stopping or failed, so the table receives no changes; live means the table follows changes; syncing means it is queued, copying or catching up; unknown means the pipeline status or the table state was not observed, for example before replication starts.",
+          }),
+          OpenString,
+        ]),
+        warehouse_name: Schema.String.annotate({
+          description: "Quoted, fully qualified name of the replicated table in the Warehouse.",
+        }),
+      }),
+      id: Schema.String.annotate({
+        description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+      })
+        .check(
+          Schema.isMaxCodePoints(10).annotate({ expected: "a string with at most 10 code points" }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^[1-9]\\d*$", "u")).annotate({
+            expected: "a string matching the RegExp ^[1-9]\\d*$",
+          }),
+        ),
+      type: Schema.Literal("warehouse_table").annotate({ description: "Resource type." }),
     }),
   ),
 });
@@ -20094,6 +20265,7 @@ export const openApiOperationIdMap = {
   "v2-list-organization-projects": "v2ListOrganizationProjects",
   "v2-list-organization-roles": "v2ListOrganizationRoles",
   "v2-list-private-link-associations": "v2ListPrivateLinkAssociations",
+  "v2-list-warehouse-tables": "v2ListWarehouseTables",
   "v2-organizations-slug-webhooks-deliveries-id-get": "v2OrganizationsSlugWebhooksDeliveriesIdGet",
   "v2-organizations-slug-webhooks-deliveries-id-retry-post":
     "v2OrganizationsSlugWebhooksDeliveriesIdRetryPost",
@@ -23435,6 +23607,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ListPrivateLinkAssociationsInput,
     outputSchema: V2ListPrivateLinkAssociationsOutput,
+  },
+  v2ListWarehouseTables: {
+    id: "v2ListWarehouseTables",
+    description:
+      "Lists the source tables selected for Warehouse replication with their replication status and freshness, from the same observations as the Warehouse status. Freshness comes from the replication slot that carries each table: its own sync slot until it follows changes, then the pipeline apply slot; one slot never stands in for the other. lag_ms is that slot's flush lag. Postgres reports no lag time for a caught-up slot without new WAL, so lag_ms can be null while replication_feedback.flush_lag_bytes is 0; neither is ever filled with zero when unknown. observed_at is when the API read the replication state, not when data last synchronized. A stopped, failed or unreadable pipeline reports its tables as stopped or unknown rather than live, and keeps each table's last recorded state. Returns an empty list when Warehouse is not set up, its publication is missing, or it is being disabled or failed to clean up.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/tables",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListWarehouseTablesInput,
+    outputSchema: V2ListWarehouseTablesOutput,
   },
   v2OrganizationsSlugWebhooksDeliveriesIdGet: {
     id: "v2OrganizationsSlugWebhooksDeliveriesIdGet",

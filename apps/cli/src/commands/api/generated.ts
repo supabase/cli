@@ -215,6 +215,30 @@ export const apiCommands = [
     ],
   },
   {
+    command: ["warehouse", "tables", "list"],
+    operationId: "v2-list-warehouse-tables",
+    definition: "v2ListWarehouseTables",
+    method: "GET",
+    apiPath: "/v2/projects/{ref}/warehouse/tables",
+    summary: "List tables replicated to Warehouse",
+    description:
+      "Lists the source tables selected for Warehouse replication with their replication status and freshness, from the same observations as the Warehouse status. Freshness comes from the replication slot that carries each table: its own sync slot until it follows changes, then the pipeline apply slot; one slot never stands in for the other. lag_ms is that slot's flush lag. Postgres reports no lag time for a caught-up slot without new WAL, so lag_ms can be null while replication_feedback.flush_lag_bytes is 0; neither is ever filled with zero when unknown. observed_at is when the API read the replication state, not when data last synchronized. A stopped, failed or unreadable pipeline reports its tables as stopped or unknown rather than live, and keeps each table's last recorded state. Returns an empty list when Warehouse is not set up, its publication is missing, or it is being disabled or failed to clean up.",
+    readOnly: true,
+    feature: "warehouse",
+    response: {
+      status: 200,
+      kind: "json",
+    },
+    flags: [],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "teardowns", "get"],
     operationId: "v2-get-warehouse-teardown",
     definition: "v2GetWarehouseTeardown",
