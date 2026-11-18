@@ -136,7 +136,7 @@ const resourceLines = (document: JsonObject): ReadonlyArray<string> | undefined 
   if (isResource(data)) {
     return [humanize(String(data["type"])), ...blockLines(resourceEntries(data), INDENT)];
   }
-  if (Array.isArray(data) && data.length > 0 && data.every(isResource)) {
+  if (Array.isArray(data) && data.every(isResource)) {
     const rows = data.map((resource) => Object.fromEntries(resourceEntries(resource)));
     const columns = unionKeys(rows).filter(
       (column) =>
