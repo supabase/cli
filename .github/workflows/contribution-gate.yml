@@ -1,6 +1,8 @@
 name: Contribution Gate
 
 on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
   # Manual sweep over every open PR, e.g. after bulk-applying the
   # `open-for-contribution` label. Set `dry_run` to log decisions without
   # commenting or closing.
@@ -14,27 +16,34 @@ on:
 permissions: {}
 
 concurrency:
-  # Unique per run so two manual sweeps never cancel each other.
-  group: contribution-gate-${{ github.run_id }}
-  cancel-in-progress: true
+  # Serialize sweeps to avoid concurrent comments and closes.
+  group: contribution-gate
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   gate-all:
     name: Contribution Gate (all open PRs)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       pull-requests: write
       issues: read
       contents: read
-    if: github.event_name == 'workflow_dispatch'
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+      github.ref == format('refs/heads/{0}',
+      github.event.repository.default_branch))
     steps:
-      # Run from a trusted branch; the sweep never checks out PR code.
+      # Only default-branch code runs with the write token, never PR code.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: ".bun-version"
+          no-cache: true
       - name: Evaluate contribution gate across all open PRs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
