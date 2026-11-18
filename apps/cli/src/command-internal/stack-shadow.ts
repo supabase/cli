@@ -8,6 +8,7 @@ import { StackApi } from "./stack-api.ts";
 import { initializeStackDatabase } from "./stack-bootstrap.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
 import { selectStackRuntime, type StackRuntime } from "./stack-runtime.ts";
+import { StackEnvSelection } from "./stack-target.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { toPostgresURL } from "./postgres-url.ts";
 import {
@@ -49,9 +50,15 @@ const shadowError = (cause: { readonly message: string }) =>
 const causeMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-/** Selects the shadow runtime: the project stack's saved runtime, otherwise automatic selection. */
+/**
+ * Selects the shadow runtime: the project stack's saved runtime, otherwise automatic selection. The
+ * shadow also serves remote targets, which `SUPABASE_STACK` never changes, so only `--stack` counts.
+ */
 export const stackShadowRuntime = Effect.gen(function* () {
-  return yield* selectStackRuntime(yield* stackProjectRuntime).pipe(
+  const projectRuntime = yield* stackProjectRuntime.pipe(
+    Effect.provideService(StackEnvSelection, false),
+  );
+  return yield* selectStackRuntime(projectRuntime).pipe(
     Effect.mapError(
       (error) =>
         new ShadowDbError({

@@ -4,6 +4,9 @@ import { defaultClientConditions, defaultServerConditions } from "vite";
 import { configDefaults, defineConfig } from "vitest/config";
 import { E2eSequencer } from "./tests/e2e-sequencer.ts";
 
+/* An exported stack selector would retarget the suites and the CLIs they spawn; empty reads as unset. */
+const UNSET_STACK_SELECTORS = { SUPABASE_STACK: "" };
+
 /** E2e files that run concurrently; each stack project picks free ports and its own project id. */
 const e2eWorkersSetting = Effect.runSync(
   Config.String("SUPABASE_E2E_WORKERS").pipe(Config.withDefault("1")),
@@ -97,7 +100,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
-          env: { FORCE_COLOR: "1" },
+          env: { FORCE_COLOR: "1", ...UNSET_STACK_SELECTORS },
         },
       },
       {
@@ -105,6 +108,7 @@ export default defineConfig({
           name: "integration",
           hookTimeout: 120_000,
           include: ["**/*.integration.test.ts"],
+          env: UNSET_STACK_SELECTORS,
           // Integration workers start real service processes and containers.
           maxWorkers: 4,
           sequence: { groupOrder: 1 },
@@ -114,6 +118,7 @@ export default defineConfig({
       {
         test: {
           name: "e2e",
+          env: UNSET_STACK_SELECTORS,
           include: ["**/*.e2e.test.ts"],
           exclude: [...configDefaults.exclude, ...E2E_EXCLUSIVE_FILES],
           fileParallelism: e2eWorkers > 1,
@@ -128,6 +133,7 @@ export default defineConfig({
         test: {
           // Runs after the e2e project, one file at a time.
           name: "e2e-exclusive",
+          env: UNSET_STACK_SELECTORS,
           include: E2E_EXCLUSIVE_FILES,
           fileParallelism: false,
           maxWorkers: 1,
@@ -144,6 +150,7 @@ export default defineConfig({
           // platform. They are never part of the default unit/integration/e2e
           // loop; an explicit run fails fast when required configuration is absent.
           name: "live",
+          env: UNSET_STACK_SELECTORS,
           include: ["**/*.live.test.ts"],
           fileParallelism: false,
           maxWorkers: 1,

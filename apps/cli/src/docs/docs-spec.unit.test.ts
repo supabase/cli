@@ -204,6 +204,14 @@ describe("buildDocsSpec", () => {
     expect(whoami?.description).toBe("Show information about the currently logged-in user.");
   });
 
+  it("lists the stack selector a leaf registers as its own global flag", () => {
+    const { byId } = builtSpec();
+    for (const id of ["supabase-db-reset", "supabase-migration-up", "supabase-gen-types"]) {
+      const flagIds = byId.get(id)?.flags.map((flag) => flag.id) ?? [];
+      expect(flagIds, id).toContain("stack");
+    }
+  });
+
   it("renders link with its overlay description and flag display names", () => {
     const { byId, content } = builtSpec();
     const link = byId.get("supabase-link");

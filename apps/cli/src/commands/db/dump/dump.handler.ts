@@ -163,7 +163,16 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const managedProject =
       backend.kind === "stack" && target.kind === "local"
         ? yield* stackOpenReadyProject.pipe(
-            Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })),
+            Effect.mapError(
+              (cause) =>
+                new DbDumpRunError({
+                  message: cause.message,
+                  ...("suggestion" in cause && cause.suggestion !== undefined
+                    ? { suggestion: cause.suggestion }
+                    : {}),
+                  cause,
+                }),
+            ),
             Effect.map(Option.getOrUndefined),
           )
         : undefined;

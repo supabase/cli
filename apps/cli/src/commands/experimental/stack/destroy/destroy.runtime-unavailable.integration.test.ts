@@ -1,6 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 import { StackError } from "@supabase/stack/effect";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { YesFlag } from "../../../../command-internal/global-flags.ts";
@@ -71,7 +71,7 @@ const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function
     stack,
     output,
     layer,
-    flags: { stack: Option.none<string>(), stackId: [stack.id] },
+    flags: { stack: [stack.id] },
   };
 });
 
@@ -86,9 +86,7 @@ for (const format of ["text", "json"] as const)
 
         expect(failure).toBeInstanceOf(StackCommandDestroyError);
         expect(failure.reason).toBe("runtime");
-        expect(failure.suggestion).toContain(
-          `supabase stack destroy --stack-id ${f.stack.id} --yes`,
-        );
+        expect(failure.suggestion).toContain(`supabase stack destroy --stack ${f.stack.id} --yes`);
         expect(f.output.stdoutText).not.toContain("destroyed");
         expect(f.output.messages.filter(({ type }) => type === "success")).toEqual([]);
         expect(yield* f.api.discover(f.locations)).toHaveLength(1);

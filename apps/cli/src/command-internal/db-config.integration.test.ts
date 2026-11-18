@@ -129,6 +129,7 @@ function buildResolver(
     readonly debugLogger?: Layer.Layer<DebugLogger>;
     readonly configEnv?: Record<string, string | undefined>;
     readonly stackApi?: Layer.Layer<StackApi>;
+    readonly stackSelector?: { readonly stack?: string };
     readonly flagPassword?: string;
     readonly projectId?: string;
     readonly output?: ReturnType<typeof mockOutput>;
@@ -149,6 +150,7 @@ function buildResolver(
       projectHost: opts.projectHost ?? "supabase.co",
       poolerHost: opts.poolerHost,
       projectId: Option.fromNullishOr(opts.projectId),
+      ...opts.stackSelector,
     }),
     opts.dbConnection ?? mockDbConnection,
     opts.debugLogger ?? mockDebugLogger,
@@ -690,7 +692,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
 
   type StackState = "running" | "stopped" | "unregistered";
 
-  const projectStackApi = (root: string, state: StackState) => {
+  const projectStackApi = (root: string, state: StackState, stackName = "default") => {
     const unused = Effect.die("unused by the resolver");
     const database: DatabaseInstance = {
       id: "database-primary",
@@ -757,14 +759,15 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
     return Layer.succeed(StackApi, {
       create: () => unused,
       open: () => Effect.succeed(stack),
-      discover: () => unused,
-      find: () =>
+      discover: () => Effect.succeed([]),
+      find: (options) =>
         Effect.succeed(
-          state !== "unregistered"
+          state !== "unregistered" &&
+            ("id" in options ? options.id === stack.id : (options.name ?? "default") === stackName)
             ? Option.some({
                 definition: {
                   id: stack.id,
-                  identity: { projectRoot: root, branchContext: "main", stackName: "default" },
+                  identity: { projectRoot: root, branchContext: "main", stackName },
                   runtime: "native" as const,
                   instances: [],
                   lifetime: "detached" as const,
@@ -859,6 +862,152 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       );
       expect(resolved.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
       expect(resolved.isLocal).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("connects to the stack --stack names instead of the default stack", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const resolved = yield* resolveConnection(dir, inputFor(localTarget), {
+        stackApi: projectStackApi(dir, "running", "feature"),
+        stackSelector: { stack: "feature" },
+      }).pipe(Effect.provide(stackBackendLayer("stack")));
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.port).toBe(STACK_SQL_PORT);
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("connects to the stack SUPABASE_STACK names when no selector flag is passed", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const resolved = yield* resolveConnection(dir, inputFor(localTarget), {
+        stackApi: projectStackApi(dir, "running", "feature"),
+        configEnv: { SUPABASE_STACK: "feature" },
+      }).pipe(Effect.provide(stackBackendLayer("stack")));
+      expect(resolved.conn.port).toBe(STACK_SQL_PORT);
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("keeps a [db].port url remote when --stack selects another stack", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const resolved = yield* resolveConnection(
+        dir,
+        inputFor(dbUrlTarget("postgresql://postgres:pw@127.0.0.1:54322/postgres")),
+        {
+          stackApi: projectStackApi(dir, "running", "feature"),
+          stackSelector: { stack: "feature" },
+        },
+      ).pipe(Effect.provide(stackBackendLayer("stack")));
+      expect(resolved.isLocal).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("ignores SUPABASE_STACK for an explicit [db].port url", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const resolved = yield* resolveConnection(
+        dir,
+        inputFor(dbUrlTarget("postgresql://postgres@127.0.0.1:54322/postgres")),
+        {
+          stackApi: projectStackApi(dir, "running", "feature"),
+          configEnv: { SUPABASE_STACK: "feature" },
+        },
+      ).pipe(Effect.provide(stackBackendLayer("stack")));
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.password).toBe("postgres");
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("ignores SUPABASE_STACK for a url on the default stack's runtime port", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const resolved = yield* resolveConnection(
+        dir,
+        inputFor(dbUrlTarget(`postgresql://postgres@127.0.0.1:${STACK_SQL_PORT}/postgres`)),
+        { stackApi: projectStackApi(dir, "running"), configEnv: { SUPABASE_STACK: "feature" } },
+      ).pipe(Effect.provide(stackBackendLayer("stack")));
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.password).toBe("stack-password");
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("keeps a localhost url local when the selected stack listens on [db].port", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir(["[db]", `port = ${STACK_SQL_PORT}`, ""].join("\n"));
+      const resolved = yield* resolveConnection(
+        dir,
+        inputFor(dbUrlTarget(`postgresql://postgres:pw@localhost:${STACK_SQL_PORT}/postgres`)),
+        {
+          stackApi: projectStackApi(dir, "running", "feature"),
+          stackSelector: { stack: "feature" },
+        },
+      ).pipe(Effect.provide(stackBackendLayer("stack")));
+      expect(resolved.isLocal).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("points an unmatched ID-shaped --stack at stack list instead of creating it", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const error = yield* resolveConnection(dir, inputFor(localTarget), {
+        stackApi: projectStackApi(dir, "running"),
+        stackSelector: { stack: "abcd1234" },
+      }).pipe(Effect.provide(stackBackendLayer("stack")), Effect.flip);
+      expect(error).toMatchObject({
+        message: 'No managed stack is named "abcd1234" in this project or has that ID.',
+        suggestion: "Run `supabase stack list` to see managed stacks and their IDs.",
+      });
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("joins a missing stack name that starts with - to --stack in the advice", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const error = yield* resolveConnection(dir, inputFor(localTarget), {
+        stackApi: projectStackApi(dir, "running"),
+        configEnv: { SUPABASE_STACK: "-feature" },
+      }).pipe(Effect.provide(stackBackendLayer("stack")), Effect.flip);
+      expect(error).toMatchObject({ suggestion: "Run supabase start --stack=-feature." });
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("never falls back to the default stack when --stack names a missing one", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const error = yield* resolveConnection(dir, inputFor(localTarget), {
+        stackApi: projectStackApi(dir, "running"),
+        stackSelector: { stack: "feature" },
+      }).pipe(Effect.provide(stackBackendLayer("stack")), Effect.flip);
+      expect(error).toMatchObject({
+        message: 'The local stack "feature" does not exist for this project.',
+        suggestion: "Run supabase start --stack feature.",
+      });
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("names a stopped selected stack in the not-running error", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const error = yield* resolveConnection(dir, inputFor(localTarget), {
+        stackApi: projectStackApi(dir, "stopped", "feature"),
+        stackSelector: { stack: "feature" },
+      }).pipe(Effect.provide(stackBackendLayer("stack")), Effect.flip);
+      expect(error).toMatchObject({
+        message: 'The local stack "feature" is not running.',
+        suggestion: "Run supabase start --stack feature.",
+      });
+    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("ignores SUPABASE_STACK on the legacy backend", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir(["[db]", "port = 55555", ""].join("\n"));
+      const resolved = yield* resolveConnection(dir, inputFor(localTarget), {
+        configEnv: { SUPABASE_STACK: "feature" },
+      });
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.port).toBe(55555);
     }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 

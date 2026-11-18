@@ -7,10 +7,11 @@ controls command registration.
 
 ## Selection and configuration
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
-The selectors are mutually exclusive. Missing or unconfigured stacks fail with
-guidance to run `stack start`. Explicit legacy `-o/--output` is rejected in favor
-of `--output-format`.
+Select the current project/branch stack, or `--stack` by name, else by ID or
+unique ID prefix. `SUPABASE_STACK` stands in for `--stack`, but as an ID it only
+selects a stack of the current project. Missing or unconfigured stacks fail with
+guidance to run `stack start`. Explicit legacy `-o/--output` is rejected in
+favor of `--output-format`.
 
 Restart uses saved configuration; it does not load, compare, or apply project
 config changes. To change participating services, use `stack start --exclude`

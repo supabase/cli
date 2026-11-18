@@ -22,11 +22,15 @@ import { logs, logsSources } from "./logs.handler.ts";
 
 const stackFlags = {
   stack: Flag.String("stack").pipe(
-    Flag.withDescription("Select a local stack by name."),
+    Flag.withDescription(
+      "Select a local stack by name, else by ID or unique ID prefix (defaults to SUPABASE_STACK, else the current project stack).",
+    ),
     Flag.optional,
   ),
+  // Hidden: the deprecated alias of --stack that `logs` shipped with; the handler prints the deprecation line.
   stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Select a local stack by ID."),
+    Flag.withDescription("Deprecated: use --stack."),
+    Flag.withHidden,
     Flag.optional,
   ),
 };
