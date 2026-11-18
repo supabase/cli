@@ -225,6 +225,38 @@ describe("container process adapter", { timeout: 120_000 }, () => {
     }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
+  it.live("reports a failed tool's logged stderr when the attach session relays none", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const runtime = yield* makeContainerRuntime({
+          target: containerTarget,
+          root: ".",
+          hostGateway: sharedHostGateway,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeAttachStderrLossSpawner(delegate),
+          ),
+        );
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launchCommand({
+          image,
+          stackId: "e".repeat(64),
+          instanceId: "attach-stderr-loss",
+          env: {},
+          args: ["-e", "console.error('column missing_column does not exist'); process.exit(3)"],
+        });
+        const [stderr, exitCode] = yield* Effect.all(
+          [process.stderr.pipe(Stream.decodeText, Stream.mkString), process.exitCode],
+          { concurrency: "unbounded" },
+        );
+        expect(exitCode).toBe(3);
+        expect(stderr).toContain("missing_column");
+      }),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+  );
+
   it.live("maps the stack host alias to an explicit IPv4 host gateway only", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1938,6 +1970,22 @@ const makeHostGatewayProbeSpawner = (
       );
     });
   });
+
+const makeAttachStderrLossSpawner = (delegate: ChildProcessSpawnerService["Service"]) =>
+  ChildProcessSpawner.make((command) =>
+    ChildProcess.isStandardCommand(command) &&
+    command.command === testEngine &&
+    command.args[0] === "start" &&
+    command.args.includes("--attach")
+      ? delegate
+          .spawn(command)
+          .pipe(
+            Effect.map((handle) =>
+              ChildProcessSpawner.makeHandle({ ...handle, stderr: Stream.empty }),
+            ),
+          )
+      : delegate.spawn(command),
+  );
 
 const makeStopFailureSpawner = (
   delegate: ChildProcessSpawnerService["Service"],

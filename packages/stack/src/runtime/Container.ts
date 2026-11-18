@@ -602,6 +602,55 @@ export const makeContainerRuntime = (options: {
       );
     });
 
+    const loggedStderr = Effect.fn("Container.loggedStderr")(function* (name: string) {
+      const text = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const child = yield* spawner.spawn(command(["logs", name]));
+          const [, stderr, code] = yield* Effect.all(
+            [
+              child.stdout.pipe(Stream.runDrain),
+              child.stderr.pipe(Stream.decodeText, Stream.mkString),
+              child.exitCode,
+            ],
+            { concurrency: "unbounded" },
+          );
+          yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
+          return Number(code) === 0 ? stderr : "";
+        }),
+      ).pipe(
+        Effect.timeout("10 seconds"),
+        Effect.tapError((cause) =>
+          Effect.logDebug(`Could not read logs of container ${name}`, cause),
+        ),
+        Effect.orElseSucceed(() => ""),
+      );
+      yield* Effect.annotateCurrentSpan("container.stderr_recovered_bytes", text.length);
+      return text;
+    });
+    // An attach session can end before relaying a failed process's stderr, so a failure with no
+    // attached stderr reports what the engine logged for the container instead.
+    const withLoggedStderr = (
+      name: string,
+      stderr: Stream.Stream<Uint8Array, ContainerError>,
+      exitCode: Effect.Effect<number, ContainerError>,
+    ): Stream.Stream<Uint8Array, ContainerError> =>
+      Stream.unwrap(
+        Effect.map(Ref.make(false), (relayed) =>
+          stderr.pipe(
+            Stream.tap((bytes) => (bytes.length > 0 ? Ref.set(relayed, true) : Effect.void)),
+            Stream.concat(
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  if ((yield* Ref.get(relayed)) || (yield* exitCode) === 0) return Stream.empty;
+                  const text = yield* loggedStderr(name);
+                  return text === "" ? Stream.empty : Stream.make(new TextEncoder().encode(text));
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+
     const mirrored = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
     const present = (image: string) =>
       run(["image", "inspect", "--format", "{{.Id}}", image]).pipe(
@@ -1200,7 +1249,14 @@ export const makeContainerRuntime = (options: {
                 exitCode,
                 stdin: logProcess.stdin.pipe(Sink.mapError((cause) => errorFor("stdin", cause))),
                 stdout: logProcess.stdout.pipe(Stream.mapError((cause) => errorFor("logs", cause))),
-                stderr: logProcess.stderr.pipe(Stream.mapError((cause) => errorFor("logs", cause))),
+                stderr:
+                  attached === undefined
+                    ? logProcess.stderr.pipe(Stream.mapError((cause) => errorFor("logs", cause)))
+                    : withLoggedStderr(
+                        name,
+                        attached.stderr.pipe(Stream.mapError((cause) => errorFor("logs", cause))),
+                        exitCode,
+                      ),
               };
             }),
           ).pipe(Effect.mapError(wrapFailure));
