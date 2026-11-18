@@ -15191,6 +15191,145 @@ export const V2GetWarehouseTableOutput = Schema.Struct({
     type: Schema.Literal("warehouse_table").annotate({ description: "Resource type." }),
   }),
 });
+export const V2GetWarehouseTableLayoutInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  table_id: Schema.String.check(
+    Schema.isMaxCodePoints(10).annotate({ expected: "a string with at most 10 code points" }),
+  ).check(
+    Schema.isPattern(new RegExp("^[1-9]\\d*$", "u")).annotate({
+      expected: "a string matching the RegExp ^[1-9]\\d*$",
+    }),
+  ),
+});
+export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      desired: Schema.Struct({
+        partition_by: Schema.Union([
+          Schema.Array(
+            Schema.Struct({
+              column: Schema.String.annotate({ description: "Source column name." }),
+              transform: Schema.Union(
+                [
+                  Schema.Struct({ kind: Schema.Literal("identity") }),
+                  Schema.Struct({ kind: Schema.Literal("year") }),
+                  Schema.Struct({ kind: Schema.Literal("month") }),
+                  Schema.Struct({ kind: Schema.Literal("day") }),
+                  Schema.Struct({ kind: Schema.Literal("hour") }),
+                  Schema.Struct({
+                    count: Schema.Number.annotate({ description: "Number of hash buckets." })
+                      .check(Schema.isInt().annotate({ expected: "an integer" }))
+                      .check(
+                        Schema.isLessThanOrEqualTo(2147483647).annotate({
+                          expected: "a value less than or equal to 2147483647",
+                        }),
+                      )
+                      .check(
+                        Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                      ),
+                    kind: Schema.Literal("bucket"),
+                  }),
+                ],
+                { mode: "oneOf" },
+              ),
+            }),
+          ).annotate({
+            description:
+              "Configured partition keys in order. An empty list explicitly clears partitioning; null leaves it unmanaged.",
+          }),
+          Schema.Null,
+        ]),
+        sort_by: Schema.Union(
+          [
+            Schema.Struct({ kind: Schema.Literal("none") }),
+            Schema.Struct({ kind: Schema.Literal("primary_key") }),
+            Schema.Struct({
+              columns: Schema.Array(
+                Schema.Struct({
+                  direction: Schema.Union([Schema.Literals(["asc", "desc"]), OpenString]),
+                  name: Schema.String.annotate({ description: "Source column name." }),
+                  nulls: Schema.Union([
+                    Schema.Union([Schema.Literals(["first", "last"]), Schema.Null]).annotate({
+                      description: "Null placement. Null uses DuckLake's default placement.",
+                    }),
+                    OpenString,
+                  ]),
+                }),
+              ),
+              kind: Schema.Literal("columns"),
+            }),
+            Schema.Null,
+          ],
+          { mode: "oneOf" },
+        ).annotate({
+          description:
+            "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
+        }),
+      }).annotate({
+        description:
+          "Saved layout rules. The replicator applies them on start and hourly, so they can differ from the observed layout.",
+      }),
+      name: Schema.String.annotate({ description: "Source PostgreSQL table name." }),
+      observation_status: Schema.Union([
+        Schema.Literals(["observed", "table_missing", "unavailable"]).annotate({
+          description:
+            "observed when the DuckLake catalog was read, table_missing when the catalog has no table for it yet, and unavailable when the catalog could not be read.",
+        }),
+        OpenString,
+      ]),
+      observed: Schema.Union([
+        Schema.Struct({
+          observed_at: Schema.String.annotate({
+            description: "Time the catalog metadata was read.",
+            format: "date-time",
+          }),
+          partition_by: Schema.Array(
+            Schema.Struct({ column: Schema.String, transform: Schema.String }),
+          ).annotate({
+            description:
+              "Active partition keys in key order, with transforms as the catalog reports them, for example bucket(16).",
+          }),
+          sort_by: Schema.Array(
+            Schema.Struct({
+              direction: Schema.String,
+              expression: Schema.String,
+              nulls: Schema.String,
+            }),
+          ).annotate({
+            description: "Active sort expressions in key order, as the catalog reports them.",
+          }),
+        }).annotate({
+          description:
+            "Layout recorded in the DuckLake catalog, null unless observation_status is observed. Catalog metadata governs files written after it changes and does not establish that existing files are sorted or partitioned.",
+        }),
+        Schema.Null,
+      ]),
+      schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
+    }),
+    id: Schema.String.annotate({
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+    })
+      .check(
+        Schema.isMaxCodePoints(10).annotate({ expected: "a string with at most 10 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[1-9]\\d*$", "u")).annotate({
+          expected: "a string matching the RegExp ^[1-9]\\d*$",
+        }),
+      ),
+    type: Schema.Literal("warehouse_table_layout").annotate({ description: "Resource type." }),
+  }),
+});
 export const V2GetWarehouseTeardownInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -20398,6 +20537,7 @@ export const openApiOperationIdMap = {
   "v2-get-warehouse-setup": "v2GetWarehouseSetup",
   "v2-get-warehouse-status": "v2GetWarehouseStatus",
   "v2-get-warehouse-table": "v2GetWarehouseTable",
+  "v2-get-warehouse-table-layout": "v2GetWarehouseTableLayout",
   "v2-get-warehouse-teardown": "v2GetWarehouseTeardown",
   "v2-list-all-compute-instances": "v2ListAllComputeInstances",
   "v2-list-log-drains": "v2ListLogDrains",
@@ -23627,6 +23767,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetWarehouseTableInput,
     outputSchema: V2GetWarehouseTableOutput,
+  },
+  v2GetWarehouseTableLayout: {
+    id: "v2GetWarehouseTableLayout",
+    description:
+      "Returns the sorting and partitioning rules saved for one replicated table, by source OID, beside the layout the DuckLake catalog records for it. The two are reported separately and can differ: the replicator applies saved rules when it starts and then hourly, and a stopped pipeline applies them on its next start. observation_status reports whether the catalog was read; desired rules are returned even when it was not. A catalog layout governs files written after it changes and does not establish that existing files are sorted or partitioned. Returns 404 when the table is not replicated, including when Warehouse is not set up, is being disabled or failed to clean up.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
+    pathParams: ["ref", "table_id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseTableLayoutInput,
+    outputSchema: V2GetWarehouseTableLayoutOutput,
   },
   v2GetWarehouseTeardown: {
     id: "v2GetWarehouseTeardown",

@@ -249,6 +249,40 @@ export const apiCommands = [
     ],
   },
   {
+    command: ["warehouse", "tables", "layout", "get"],
+    operationId: "v2-get-warehouse-table-layout",
+    definition: "v2GetWarehouseTableLayout",
+    method: "GET",
+    apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
+    summary: "Get the layout of a table replicated to Warehouse",
+    description:
+      "Returns the sorting and partitioning rules saved for one replicated table, by source OID, beside the layout the DuckLake catalog records for it. The two are reported separately and can differ: the replicator applies saved rules when it starts and then hourly, and a stopped pipeline applies them on its next start. observation_status reports whether the catalog was read; desired rules are returned even when it was not. A catalog layout governs files written after it changes and does not establish that existing files are sorted or partitioned. Returns 404 when the table is not replicated, including when Warehouse is not set up, is being disabled or failed to clean up.",
+    readOnly: true,
+    feature: "warehouse",
+    response: {
+      status: 200,
+      kind: "json",
+    },
+    argument: {
+      name: "table-id",
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+    },
+    flags: [],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "path",
+        name: "table_id",
+        source: "argument",
+        argument: "table-id",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "tables", "list"],
     operationId: "v2-list-warehouse-tables",
     definition: "v2ListWarehouseTables",

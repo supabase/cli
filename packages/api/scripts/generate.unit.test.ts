@@ -275,6 +275,15 @@ describe("generate", () => {
     ).toBe("Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null])");
   });
 
+  test("preserves null in nullable oneOf variants without an explicit type", () => {
+    expect(
+      renderOpenApiSchema({
+        oneOf: [{ type: "string", enum: ["none"] }, { type: "integer" }],
+        nullable: true,
+      }),
+    ).toBe('Schema.Union([Schema.Literal("none"), Schema.Int, Schema.Null], { mode: "oneOf" })');
+  });
+
   test("accepts booleans for string-encoded boolean query parameters", () => {
     expect(
       normalizeQueryParameterSchema(

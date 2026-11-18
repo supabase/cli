@@ -88,6 +88,17 @@ Returns one source table selected for Warehouse replication by its source OID, f
 - Request: `GET /v2/projects/{ref}/warehouse/tables/{table_id}` (`v2-get-warehouse-table`), success 200 json.
 - Positional argument `<table-id>`, bound to path parameter `table_id`.
 
+## `supabase warehouse tables layout get`
+
+Get the layout of a table replicated to Warehouse
+
+Returns the sorting and partitioning rules saved for one replicated table, by source OID, beside the layout the DuckLake catalog records for it. The two are reported separately and can differ: the replicator applies saved rules when it starts and then hourly, and a stopped pipeline applies them on its next start. observation_status reports whether the catalog was read; desired rules are returned even when it was not. A catalog layout governs files written after it changes and does not establish that existing files are sorted or partitioned. Returns 404 when the table is not replicated, including when Warehouse is not set up, is being disabled or failed to clean up.
+
+- Access: read-only, no consent.
+- Feature: `warehouse`.
+- Request: `GET /v2/projects/{ref}/warehouse/tables/{table_id}/layout` (`v2-get-warehouse-table-layout`), success 200 json.
+- Positional argument `<table-id>`, bound to path parameter `table_id`.
+
 ## `supabase warehouse tables list`
 
 List tables replicated to Warehouse
