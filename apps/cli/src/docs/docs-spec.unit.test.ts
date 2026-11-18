@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path } from "effect";
+import { Config, Effect, FileSystem, Path } from "effect";
+import { FlagDocumentation } from "../command-internal/flag-documentation.ts";
 import { Command, Flag } from "effect/cli";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -88,6 +89,73 @@ describe("docsStripOverlayHeading", () => {
 });
 
 describe("docsFlagDoc", () => {
+  it.each([
+    [Flag.String("value").pipe(Flag.withDefault("custom")), "custom"],
+    [Flag.Int("value").pipe(Flag.withDefault(42)), "42"],
+    [Flag.String("value").pipe(Flag.withDefault("inner"), Flag.withDefault("outer")), "inner"],
+    [
+      Flag.String("value").pipe(
+        Flag.withDefault("inner"),
+        Flag.withDefault(Effect.die("must not execute")),
+      ),
+      "inner",
+    ],
+    [Flag.Boolean("value").pipe(Flag.withDefault(true)), "true"],
+    [Flag.String("value").pipe(Flag.atLeast(0), Flag.withDefault(["public"])), '["public"]'],
+    [
+      Flag.String("value").pipe(
+        Flag.withDefault("30m"),
+        Flag.map((value) => value.length),
+      ),
+      "30m",
+    ],
+  ])("derives literal defaults without parsing: %s", (flag, expected) => {
+    expect(docsFlagDoc(["supabase", "fixture"], flag)?.default_value).toBe(expected);
+    expect(docsFlagDoc(["supabase", "fixture"], flag)?.required).toBeUndefined();
+  });
+
+  it("does not run effectful defaults or config lookups to build docs", () => {
+    const flags = [
+      Flag.String("value").pipe(
+        Flag.withDefault(Effect.die("must not execute")),
+        Flag.withDefault("outer"),
+      ),
+      Flag.String("value").pipe(Flag.withFallbackConfig(Config.String("DOCS_SECRET"))),
+    ];
+    for (const flag of flags) {
+      expect(docsFlagDoc(["supabase", "fixture"], flag)).toMatchObject({ default_value: "" });
+      expect(docsFlagDoc(["supabase", "fixture"], flag)?.required).toBeUndefined();
+    }
+  });
+
+  it.each([
+    [Flag.String("value"), true],
+    [Flag.String("value").pipe(Flag.optional), undefined],
+    [Flag.String("value").pipe(Flag.atLeast(0)), undefined],
+    [Flag.String("value").pipe(Flag.atLeast(2)), true],
+  ])("derives required badges from flag cardinality: %s", (flag, required) => {
+    expect(docsFlagDoc(["supabase", "fixture"], flag)?.required).toBe(required);
+  });
+
+  it("reads website exceptions from flag-local annotations", () => {
+    const flag = Flag.Literals("value", ["a", "b"]).pipe(
+      Flag.optional,
+      Flag.annotate(FlagDocumentation, { defaultValue: "a", required: true, choices: ["a"] }),
+    );
+    expect(docsFlagDoc(["supabase", "fixture"], flag)).toMatchObject({
+      default_value: "a",
+      required: true,
+      accepted_values: [{ id: "a", name: "a", type: "[ a ]" }],
+    });
+    expect(docsFlagDoc(["supabase", "fixture"], flag.pipe(Flag.withHidden))).toBeUndefined();
+    expect(
+      docsFlagDoc(
+        ["supabase", "fixture"],
+        flag.pipe(Flag.annotate(FlagDocumentation, { hidden: true })),
+      ),
+    ).toBeUndefined();
+  });
+
   it("renders --remote with the value hint its declaration carries", () => {
     const doc = docsFlagDoc(["supabase", "db", "push"], remoteFlag);
 

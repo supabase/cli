@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "./flag-documentation.ts";
 import { Effect, Option } from "effect";
 import { Flag, GlobalFlag } from "effect/cli";
 
@@ -32,6 +33,11 @@ export const OutputFlag = GlobalFlag.Setting("output")({
   flag: Flag.Literals("output", GLOBAL_OUTPUT_FORMATS).pipe(
     Flag.withAlias("o"),
     Flag.withDescription("output format of status variables"),
+    Flag.annotate(FlagDocumentation, {
+      defaultValue: "pretty",
+      helpDefault: false, // Commands select their own format when --output is omitted.
+      choices: ["env", "pretty", "json", "toml", "yaml"],
+    }),
     Flag.optional,
   ),
 });
@@ -40,6 +46,7 @@ export const OutputFlag = GlobalFlag.Setting("output")({
 export const OutputFormatFlag = GlobalFlag.Setting("output-format")({
   flag: Flag.Literals("output-format", ["text", "json", "stream-json"]).pipe(
     Flag.withDescription("Output format: text (default), json, or stream-json (NDJSON)"),
+    Flag.annotate(FlagDocumentation, { defaultValue: "text" }),
     Flag.optional,
   ),
 });

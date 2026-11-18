@@ -14,6 +14,14 @@ function isWrappedParam(param: Param.Any): param is Param.Any & WrappedParam {
   return "param" in param;
 }
 
+interface FallbackParam extends WrappedParam {
+  readonly fallback?: Param.Fallback;
+}
+
+function isFallbackParam(param: Param.Any & WrappedParam): param is Param.Any & FallbackParam {
+  return param._tag === "Transform" && "fallback" in param;
+}
+
 interface VariadicParam {
   readonly min: Option.Option<number>;
 }
@@ -34,6 +42,7 @@ export interface UnwrappedParam {
    * this instead of `isVariadic` when determining whether a flag is required.
    */
   readonly variadicMin: number;
+  readonly defaultValue: Option.Option<unknown>;
 }
 
 /**
@@ -46,10 +55,16 @@ export function unwrapParam(param: Param.Any): UnwrappedParam | undefined {
   let isOptional = false;
   let isVariadic = false;
   let variadicMin = 0;
+  let defaultValue: Option.Option<unknown> = Option.none();
 
   while (!Param.isSingle(current)) {
     if (!isWrappedParam(current)) return undefined;
     if (current._tag === "Optional") isOptional = true;
+    if (isFallbackParam(current) && current.fallback) {
+      isOptional = true;
+      defaultValue =
+        current.fallback._tag === "Default" ? Option.some(current.fallback.value) : Option.none();
+    }
     if (current._tag === "Variadic") {
       isVariadic = true;
       if (isVariadicParam(current)) {
@@ -59,7 +74,7 @@ export function unwrapParam(param: Param.Any): UnwrappedParam | undefined {
     current = current.param;
   }
 
-  return { single: current, isOptional, isVariadic, variadicMin };
+  return { single: current, isOptional, isVariadic, variadicMin, defaultValue };
 }
 
 /**

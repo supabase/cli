@@ -1,5 +1,6 @@
 import { languages, type OptionSpec, type OptionValue, type OptionValues } from "@supabase/typegen";
 import { Option } from "effect";
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Flag } from "effect/cli";
 
 /** A user-facing registry option as one CLI flag, merged across the languages that declare it. */
@@ -81,7 +82,17 @@ export const languageFlagsFor = (
       `@supabase/typegen declares language flags that collide with CLI flags: ${collisions.join(", ")}`,
     );
   }
-  return Object.fromEntries(specs.map((spec) => [spec.name, languageFlag(spec)]));
+  return Object.fromEntries(
+    specs.map((spec) => [
+      spec.name,
+      languageFlag(spec).pipe(
+        Flag.annotate(
+          FlagDocumentation,
+          spec.default === undefined ? {} : { defaultValue: String(spec.default) },
+        ),
+      ),
+    ]),
+  );
 };
 
 /** The values the user set, keyed by option name; unset flags are absent. */
@@ -99,16 +110,6 @@ export const optionValuesFor = (
   }
   return values;
 };
-
-/** Documented defaults keyed the way `DOCS_DEFAULT_OVERRIDES` expects. */
-export const flagDefaultsFor = (
-  specs: ReadonlyArray<LanguageFlagSpec>,
-): Readonly<Record<string, string>> =>
-  Object.fromEntries(
-    specs.flatMap((spec) =>
-      spec.default === undefined ? [] : [[`supabase-gen-types ${spec.name}`, String(spec.default)]],
-    ),
-  );
 
 export const GEN_TYPES_LANGUAGES: ReadonlyArray<string> = languages.map(
   (language) => language.name,
@@ -130,9 +131,6 @@ export const GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES: ReadonlyArray<string> =
 
 export const genTypesLanguageFlags = (reservedFlagNames: Iterable<string>) =>
   languageFlagsFor(GEN_TYPES_LANGUAGE_OPTIONS, reservedFlagNames);
-
-export const genTypesLanguageFlagDefaults = (): Readonly<Record<string, string>> =>
-  flagDefaultsFor(GEN_TYPES_LANGUAGE_OPTIONS);
 
 export const languageOptionValues = (flags: Readonly<Record<string, unknown>>): OptionValues =>
   optionValuesFor(GEN_TYPES_LANGUAGE_OPTIONS, flags);

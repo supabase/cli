@@ -1,6 +1,7 @@
 import { CliOutput } from "effect/cli";
 import { supportsColor, type ColorStream } from "../../command-internal/colors.ts";
 import { withHelpMarkdown } from "./help-markdown.ts";
+import { withFlagDefaults } from "./flag-defaults-help.ts";
 import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
 import {
   permissionSectionForHelp,
@@ -45,7 +46,9 @@ export function textCliOutputFormatter(
       const help = CliOutput.defaultFormatter({ colors });
       const rendered = withHelpMarkdown(
         withOptionalSubcommandUsage(
-          withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+          withRemoteFlagUsage(
+            withFlagDefaults(labelSubcommands(doc, context?.rootCommand), context?.rootCommand),
+          ),
         ),
         colors,
       );

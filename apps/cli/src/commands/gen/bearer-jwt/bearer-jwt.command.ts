@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -19,11 +20,17 @@ const config = {
   // `--role` stays optional at parse time so a missing value is enforced in
   // the handler instead, after telemetry is wired up — see
   // `GenBearerJwtRoleRequiredError`.
-  role: Flag.String("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
-  // The displayed default is cosmetically "anonymous" but the real default
-  // stays "" — an omitted `--sub` never puts a `sub` claim in the token at
-  // all.
-  sub: Flag.String("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
+  role: Flag.String("role").pipe(
+    Flag.withDescription("Postgres role to use."),
+    Flag.annotate(FlagDocumentation, { required: true }),
+    Flag.optional,
+  ),
+  // The website retains its compatibility label; an omitted --sub adds no claim.
+  sub: Flag.String("sub").pipe(
+    Flag.withDescription("User ID to impersonate."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "anonymous", helpDefault: false }),
+    Flag.optional,
+  ),
   exp: Flag.String("exp").pipe(
     Flag.withDescription("Expiry timestamp for this token."),
     Flag.mapTryCatch(
@@ -35,6 +42,7 @@ const config = {
   validFor: Flag.String("valid-for").pipe(
     Flag.withDescription("Validity duration for this token."),
     Flag.withDefault("30m"),
+    Flag.annotate(FlagDocumentation, { defaultValue: "30m0s" }),
     Flag.mapTryCatch(
       (value) => parseBearerJwtValidFor(value),
       (err) => (err instanceof Error ? err.message : String(err)),
