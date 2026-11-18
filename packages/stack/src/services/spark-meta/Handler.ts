@@ -162,9 +162,6 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     yield* fs.writeFileString(path.join(settings.migrationsDir, file), `${sql.trim()}\n`);
   });
 
-  const isAborted = (message: string | null | undefined) =>
-    message?.includes("current transaction is aborted") === true;
-
   const prepareStatements = (sql: string) => {
     // A Spark migration is atomic already, and Spark refuses transaction control inside scripts.
     const statements = splitSql(sql).filter((s) => !isTransactionControl(s) && !isGrantDo(s));
@@ -192,39 +189,8 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
     if (forSpark.length === 0) return [];
     const version = wanted ?? migrationTimestamp(yield* Clock.currentTimeMillis);
-    // Spark dry-runs in one transaction, so every statement after the first refusal comes back
-    // aborted. Re-run without the refused statements to learn what the later ones would do.
-    let current = yield* admin.dryRunMigration(version, name, `${forSpark.join(";\n")};`);
-    let active = forSpark.map((_, index) => index);
-    const refused = new Set<number>();
-    const settled = new Map<number, (typeof current.statuses)[number]>();
-    for (let round = 0; round <= forSpark.length; round += 1) {
-      const statuses = current.statuses.map((s) => ({ ...s, index: active[s.index] ?? s.index }));
-      for (const s of statuses) {
-        if (refused.has(s.index)) continue;
-        // A re-run script has different line numbers than the original.
-        settled.set(s.index, round === 0 ? s : { ...s, line: undefined });
-      }
-      const offender = statuses.find(
-        (s) => (s.status === "unsupported" || s.status === "error") && !isAborted(s.message),
-      );
-      if (offender === undefined || !statuses.some((s) => isAborted(s.message))) break;
-      refused.add(offender.index);
-      active = active.filter((index) => !refused.has(index));
-      if (active.length === 0) break;
-      current = yield* admin.dryRunMigration(
-        version,
-        name,
-        `${active.map((index) => forSpark[index]).join(";\n")};`,
-      );
-    }
-    return [...settled.values()]
-      .sort((a, b) => a.index - b.index)
-      .map(({ line, ...s }) => ({
-        ...s,
-        ...(line === undefined ? {} : { line }),
-        statement: oneLine(forSpark[s.index] ?? "", 200),
-      }));
+    const { statuses } = yield* admin.dryRunMigration(version, name, `${forSpark.join(";\n")};`);
+    return statuses.map((s) => ({ ...s, statement: oneLine(forSpark[s.index] ?? "", 200) }));
   });
 
   /** Applies a schema change as a Spark migration after a dry run on a scratch copy. */
