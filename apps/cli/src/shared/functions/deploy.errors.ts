@@ -7,6 +7,8 @@ import {
   ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../output/normalize-error.ts";
+import { FunctionsApiStatusError } from "./functions-api.errors.ts";
 
 export class ConflictingFunctionDeployFlagsError extends Data.TaggedError(
   "ConflictingFunctionDeployFlagsError",
@@ -86,5 +88,16 @@ export class FunctionsDeployFailedError extends AggregateError {
       }
     }
     return worst ?? actionability.unknown;
+  }
+
+  get entitlement(): PlanGateEntitlement | undefined {
+    const errors: unknown = this.errors;
+    if (!Array.isArray(errors)) return undefined;
+    for (const cause of errors) {
+      if (cause instanceof FunctionsApiStatusError && cause.entitlement !== undefined) {
+        return cause.entitlement;
+      }
+    }
+    return undefined;
   }
 }

@@ -2079,6 +2079,7 @@ describe("functions deploy", () => {
   describe("partial bulk upload failures (INC-699)", () => {
     function setupBulkDeploy(opts: {
       readonly deployStatuses: ReadonlyArray<number>;
+      readonly deployBodies?: ReadonlyArray<unknown>;
       readonly bulkStatuses?: ReadonlyArray<number>;
       readonly functionStatuses?: Readonly<Record<string, string>>;
       readonly apiMaxRetries?: Option.Option<number>;
@@ -2093,12 +2094,15 @@ describe("functions deploy", () => {
           }
           if (request.method === "POST") {
             const status = opts.deployStatuses[deployCalls] ?? 201;
+            const body = opts.deployBodies?.[deployCalls];
             deployCalls += 1;
             const slug = recorded.urlParams.includes("slug=bye-world")
               ? "bye-world"
               : "hello-world";
             if (status !== 201) {
-              return Effect.succeed(jsonResponse(request, status, { message: `rejected ${slug}` }));
+              return Effect.succeed(
+                jsonResponse(request, status, body ?? { message: `rejected ${slug}` }),
+              );
             }
             return Effect.succeed(
               jsonResponse(request, 201, {
@@ -2233,6 +2237,7 @@ describe("functions deploy", () => {
         ).toHaveLength(2);
         expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
+        expect(normalizeCliError(error)).not.toHaveProperty("entitlement");
         assertPermissionDrift({
           command: "functions deploy",
           activeFlags: apiPathFlags,
@@ -2240,6 +2245,47 @@ describe("functions deploy", () => {
         });
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
+
+    const gatedEntitlement = {
+      feature: "function.max_count",
+      upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+    };
+    const gatedBody = {
+      message: "Function limit reached for your plan",
+      error: { code: "entitlement_required", ...gatedEntitlement },
+    };
+
+    it.effect.each([
+      { uploads: "every upload", deployStatuses: [402, 402], deployBodies: [gatedBody, gatedBody] },
+      { uploads: "one upload", deployStatuses: [500, 402], deployBodies: [undefined, gatedBody] },
+    ])(
+      "carries the plan-gate entitlement when $uploads is denied on plan",
+      ({ deployStatuses, deployBodies }) => {
+        const { layer } = setupBulkDeploy({
+          deployStatuses,
+          deployBodies,
+          apiMaxRetries: Option.some(0),
+        });
+
+        return Effect.gen(function* () {
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+          yield* writeLocalFunction(tempRoot.current, "bye-world");
+
+          const error = yield* functionsDeploy({
+            ...baseFlags,
+            functionNames: ["hello-world", "bye-world"],
+          }).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(FunctionsDeployFailedError);
+          expect(error).toMatchObject({ entitlement: gatedEntitlement });
+          expect(normalizeCliError(error)).toMatchObject({ entitlement: gatedEntitlement });
+          expect(classifyCliCauseActionability(Cause.fail(error)).error_category).toBe(
+            "plan_limit",
+          );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
 
     it.effect("fails loudly instead of coercing a function status the API newly reports", () => {
       const { api, layer } = setupBulkDeploy({
