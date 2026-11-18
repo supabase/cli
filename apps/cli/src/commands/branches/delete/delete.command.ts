@@ -11,9 +11,20 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesDelete } from "./delete.handler.ts";
+import { branchesDeleteOutput } from "./delete.output.ts";
+import * as CommandOutput from "../../../command-internal/command-facts/command-output.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
+import {
+  DebugFlag,
+  DnsResolverFlag,
+  OutputFlag,
+  ProfileFlag,
+  WorkdirFlag,
+  YesFlag,
+} from "../../../command-internal/global-flags.ts";
+import { withGlobalFlagsRead } from "../../../command-internal/command-facts/with-global-flags-read.ts";
 
 const config = {
   name: Argument.String("name").pipe(
@@ -37,9 +48,10 @@ export const branchesDeleteCommand = Command.make("delete", config).pipe(
       linkedProjectCache,
     ),
   ),
-  Command.withHandler((flags) =>
-    branchesDelete(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
+  CommandOutput.withHandler(branchesDeleteOutput, branchesDelete, (emitting, flags) =>
+    emitting.pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "delete"])),
   withTargetPolicy({ group: "hosted", consent: "no" }),
+  withGlobalFlagsRead([DebugFlag, DnsResolverFlag, OutputFlag, ProfileFlag, WorkdirFlag, YesFlag]),
 );

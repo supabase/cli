@@ -87,6 +87,23 @@ describe("network-bans experimental gate ", () => {
     });
   }
 
+  for (const { name, args } of leaves) {
+    it.effect(`${name} reports an unsupported -o value before the gate`, () => {
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Command.runWith(testRoot, { version: "0.0.0-test" })([...args, "-o", "csv"]),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("InvalidOutputFormatError");
+          expect(Cause.pretty(exit.cause)).not.toContain("ExperimentalRequiredError");
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
   it.effect(
     "remove: malformed --db-unban-ip CSV fails at parse time with the exact diagnostic, before the gate",
     () => {

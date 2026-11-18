@@ -12,6 +12,11 @@ import { CommandFlagsAnnotation, permissionFlagsOf } from "./permission-flags.ts
 import type { FlagCatalog } from "./permission-flags.ts";
 import { rootCommandForFeatures } from "../../cli/root.ts";
 import { unwrapParam } from "../param-introspection.ts";
+import { ROOT_GLOBAL_FLAGS } from "../global-flags.ts";
+
+const ROOT_FLAG_PARAMS: ReadonlySet<unknown> = new Set(
+  ROOT_GLOBAL_FLAGS.map((entry) => entry.flag),
+);
 
 const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: PermissionVariant }> = [
   { name: "default backend", variant: undefined },
@@ -150,7 +155,11 @@ describe("permission help section across the command tree", () => {
       it("records every flag a command accepts when it declares its permissions", () => {
         for (const [path, node] of executableCommands) {
           const recorded = Context.getOption(node.command.annotations, CommandFlagsAnnotation);
-          const expected = permissionFlagsOf(ownParams(node.command)).map((flag) => flag.name);
+          // A leaf's `withGlobalFlagsRead` redeclares root flags after `withPermissions`; help
+          // already seeds the catalog with every root flag, so those aren't expected here.
+          const expected = permissionFlagsOf(
+            ownParams(node.command).filter((param) => !ROOT_FLAG_PARAMS.has(param)),
+          ).map((flag) => flag.name);
           expect(Option.isSome(recorded), `"${path}" records no flags`).toBe(true);
           expect(
             Option.match(recorded, { onNone: () => [], onSome: (read) => read() }).map(

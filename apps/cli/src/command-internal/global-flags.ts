@@ -134,6 +134,9 @@ export const GLOBAL_FLAGS = [
 /** The flags the root command registers: every global flag plus `--output-format`. */
 export const ROOT_GLOBAL_FLAGS = [OutputFormatFlag, ...GLOBAL_FLAGS] as const;
 
+/** The global flags the root's output layer reads for every command, whatever the leaf declares. */
+export const ROOT_READ_GLOBAL_FLAGS = [OutputFormatFlag, OutputFlag, AgentFlag] as const;
+
 /**
  * Every global flag's current value by name, as telemetry's fallback for a flag missing from a
  * handler's `flags`; empty when `serviceOption` finds no global-flag context.

@@ -64,10 +64,8 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-whoami": ["management-api"],
 };
 
-/** Leaves that require `--experimental`. */
+/** Leaves that require `--experimental` and don't yet declare it with `withStage`. */
 export const DOCS_EXPERIMENTAL: ReadonlySet<string> = new Set([
-  "supabase-network-bans-get",
-  "supabase-network-bans-remove",
   "supabase-network-restrictions-get",
   "supabase-network-restrictions-update",
   "supabase-postgres-config-delete",

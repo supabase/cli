@@ -11,6 +11,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Path } from "effect";
 import process from "node:process";
 import { readDocsContent } from "../src/docs/docs-spec.content.ts";
+import { checkDocsExamples } from "../src/docs/docs-examples.ts";
 import { buildDocsSpec, stringifyDocsSpec } from "../src/docs/docs-spec.ts";
 import { rootCommand } from "../src/cli/root.ts";
 
@@ -34,5 +35,7 @@ const spec = buildDocsSpec({
   overlays: content.overlays,
   examples: content.examples,
 });
+
+await Effect.runPromise(checkDocsExamples(rootCommand, spec));
 
 process.stdout.write(stringifyDocsSpec(spec));

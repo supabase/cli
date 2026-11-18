@@ -1,5 +1,6 @@
 import { CliOutput } from "effect/cli";
 import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
+import { withDeclaredGlobalFlags } from "../../command-internal/command-facts/global-flags-help.ts";
 import {
   permissionSectionForHelp,
   renderPermissionsSection,
@@ -31,7 +32,7 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
     formatHelpDoc: (doc) => {
       const text = base.formatHelpDoc(
         withOptionalSubcommandUsage(
-          withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+          withRemoteFlagUsage(labelSubcommands(withDeclaredGlobalFlags(doc), context?.rootCommand)),
         ),
       );
       const target = targetHelpFor(doc);
