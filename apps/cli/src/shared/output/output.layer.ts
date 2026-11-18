@@ -555,6 +555,7 @@ export const textOutputLayer = Layer.effect(
         detail?: string;
         suggestion?: string;
         entitlement?: PlanGateEntitlement;
+        docUrl?: string;
       }) =>
         Effect.sync(() => {
           // A command failure is terminal, so a still-shown task spinner is dropped.
@@ -583,6 +584,9 @@ export const textOutputLayer = Layer.effect(
             process.stderr.write(
               "Try rerunning the command with --debug to troubleshoot the error.\n",
             );
+          }
+          if (err.docUrl !== undefined) {
+            process.stderr.write(`Learn more: ${err.docUrl}\n`);
           }
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
@@ -662,6 +666,7 @@ export const jsonOutputLayer = Layer.effect(
         detail?: string;
         suggestion?: string;
         entitlement?: PlanGateEntitlement;
+        docUrl?: string;
       }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
@@ -761,6 +766,7 @@ export const streamJsonOutputLayer = Layer.effect(
         detail?: string;
         suggestion?: string;
         entitlement?: PlanGateEntitlement;
+        docUrl?: string;
       }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();

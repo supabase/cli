@@ -97,6 +97,7 @@ interface OutputShape {
     readonly detail?: string;
     readonly suggestion?: string;
     readonly entitlement?: PlanGateEntitlement;
+    readonly docUrl?: string;
   }) => Effect.Effect<void>;
   /**
    * Writes a raw chunk to stdout or stderr without framing.

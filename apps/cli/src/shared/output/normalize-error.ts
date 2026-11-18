@@ -4,6 +4,7 @@ import { Cause, Option } from "effect";
 import { CliError } from "effect/cli";
 import { unwrapNativeFailure } from "../telemetry/error-actionability.ts";
 import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
+import { errorDocUrl } from "./error-doc-url.ts";
 import { stripControlSequences } from "./strip-control-sequences.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
@@ -24,6 +25,8 @@ type NormalizedCliError = {
   readonly detail?: string;
   readonly suggestion?: string;
   readonly entitlement?: PlanGateEntitlement;
+  /** Troubleshooting article for the error, present only when its code has one. */
+  readonly docUrl?: string;
 };
 
 type ErrorRecord = Record<string, unknown>;
@@ -183,26 +186,34 @@ export function normalizeCliError(
     // separator line); `readString` would trim exactly that away.
     const suggestion = readRawString(error, "suggestion");
     const entitlement = readEntitlement(error);
+    const docUrl = errorDocUrl(error, message);
     return {
       code,
       message,
       ...(detail && detail !== message ? { detail } : {}),
       ...(suggestion !== undefined && suggestion.length > 0 ? { suggestion } : {}),
       ...(entitlement === undefined ? {} : { entitlement }),
+      ...(docUrl === undefined ? {} : { docUrl }),
     };
   }
 
   if (error instanceof Error) {
+    const message = error.message || "Unknown error";
+    const docUrl = errorDocUrl(error, message);
     return {
       code: error.name || "Error",
-      message: error.message || "Unknown error",
+      message,
+      ...(docUrl === undefined ? {} : { docUrl }),
     };
   }
 
   if (typeof error === "string" && error.trim().length > 0) {
+    const message = error.trim();
+    const docUrl = errorDocUrl(error, message);
     return {
       code: "UnknownError",
-      message: error.trim(),
+      message,
+      ...(docUrl === undefined ? {} : { docUrl }),
     };
   }
 

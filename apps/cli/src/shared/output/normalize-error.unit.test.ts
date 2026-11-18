@@ -416,6 +416,32 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test("adds docUrl for a tagged error whose message ends in a known SQLSTATE", () => {
+    const normalized = normalizeCliError({
+      _tag: "DbQueryExecError",
+      message: 'ERROR: relation "nope" does not exist (SQLSTATE 42P01)',
+    });
+
+    expect(normalized.docUrl).toMatch(/^https:\/\/supabase\.com\/kb\//u);
+    expect(normalized.message).toBe('ERROR: relation "nope" does not exist (SQLSTATE 42P01)');
+  });
+
+  test("adds docUrl for a plain Error with a driver code, keeping its message", () => {
+    const error = Object.assign(new Error("duplicate key"), { code: "23505" });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "UnknownError",
+      message: "duplicate key",
+      docUrl: expect.stringMatching(/^https:\/\/supabase\.com\/kb\//u),
+    });
+  });
+
+  test("omits docUrl when the error has no article", () => {
+    expect(normalizeCliError({ _tag: "ExampleError", message: "boom" })).not.toHaveProperty(
+      "docUrl",
+    );
+  });
+
   test("formats text output with detail and suggestion", () => {
     const text = formatCliError({
       code: "StackRuntimeError",

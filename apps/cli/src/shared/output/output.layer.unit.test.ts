@@ -263,6 +263,36 @@ describe("Output", () => {
       );
     });
 
+    it.effect("fail prints a Learn more line after the error when a docUrl is given", () => {
+      const writes: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({
+          code: "E_TEST",
+          message: "test error",
+          suggestion: "try again",
+          docUrl: "https://supabase.com/kb/troubleshooting/example",
+        });
+        expect(writes).toEqual([
+          "\x1B[31mtest error\x1B[39m\n",
+          "try again\n",
+          "Learn more: https://supabase.com/kb/troubleshooting/example\n",
+        ]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            process.stderr.write = originalWrite;
+          }),
+        ),
+      );
+    });
+
     it.effect("fail falls back to the --debug suggestion when caller provides none", () => {
       const writes: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
@@ -1251,6 +1281,28 @@ describe("Output", () => {
       },
     );
 
+    it.effect("fail includes docUrl inside the error object when given", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({
+          code: "E_TEST",
+          message: "failed",
+          docUrl: "https://supabase.com/kb/troubleshooting/example",
+        });
+        const parsed = yield* decodeJson(mock.stdout[0]!);
+        expect(parsed).toEqual({
+          _tag: "Error",
+          error: {
+            code: "E_TEST",
+            message: "failed",
+            docUrl: "https://supabase.com/kb/troubleshooting/example",
+          },
+        });
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("fail leaves the envelope unchanged when MachineErrorContext isn't provided", () => {
       const mock = mockStdio();
       const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
@@ -1537,6 +1589,22 @@ describe("Output", () => {
         yield* out.fail({ code: "E_FAIL", message: "boom", suggestion: "try again" });
         expect(mock.stdout).toEqual([
           '{"type":"error","error":{"code":"E_FAIL","message":"boom","suggestion":"try again"},"timestamp":"1970-01-01T00:00:00.000Z"}\n',
+        ]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fail includes docUrl in the error event when given", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({
+          code: "E_FAIL",
+          message: "boom",
+          docUrl: "https://supabase.com/kb/troubleshooting/example",
+        });
+        expect(mock.stdout).toEqual([
+          '{"type":"error","error":{"code":"E_FAIL","message":"boom","docUrl":"https://supabase.com/kb/troubleshooting/example"},"timestamp":"1970-01-01T00:00:00.000Z"}\n',
         ]);
       }).pipe(Effect.provide(layer));
     });
