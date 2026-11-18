@@ -7,9 +7,9 @@
  * repository permission, so private org members count too) and bots are
  * exempt. PRs that don't follow the process are commented on and closed.
  *
- * The manual workflow uses `GATE_MODE=all` to sweep every open PR.
+ * Scheduled and manual runs use `GATE_MODE=all` to sweep every open PR.
  * Set `DRY_RUN=true` with that mode to log decisions without commenting or closing.
- * Run the workflow from a trusted branch.
+ * The workflow runs only from the default branch.
  *
  * Standalone invocation also supports a single PR through the PR_* environment
  * variables when `GATE_MODE=all` and `--all` are absent; no workflow uses that mode.
@@ -434,7 +434,7 @@ async function runSinglePr(
   console.log(`Closed PR #${prNumber} (reason=${result.reason}).`);
 }
 
-/** All-PRs mode: sweep every open PR, for on-demand `workflow_dispatch` runs. */
+/** Sweep every open PR for scheduled and manual workflow runs. */
 async function runSweep(
   token: string,
   owner: string,
