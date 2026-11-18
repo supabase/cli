@@ -28,6 +28,9 @@ jobs:
         env:
           SUPABASE_API_URL: https://api.supabase.com
 
+      - name: Regenerate API commands
+        run: pnpm --filter supabase run api-commands:generate
+
       - name: Format API package
         run: pnpm run fmt:fix
 
