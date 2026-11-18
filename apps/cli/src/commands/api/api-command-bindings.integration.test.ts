@@ -309,7 +309,10 @@ const send = (path: ReadonlyArray<string>, argv: ReadonlyArray<string>, status: 
 const generated: readonly ApiCommandEntry[] = apiCommands;
 
 const surface = await Effect.runPromise(commandSurface());
-const rows = [...Object.values(surface.commands), ...Object.values(surface.variants.warehouse)]
+const rows = [
+  ...Object.values(surface.commands),
+  ...Object.values(surface.variants["warehouse"] ?? {}),
+]
   .flatMap((entry) => (entry.api === undefined ? [] : [{ ...entry, api: entry.api }]))
   .toSorted((a, b) => a.api.operationId.localeCompare(b.api.operationId));
 

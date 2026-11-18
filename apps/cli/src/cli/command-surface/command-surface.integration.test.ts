@@ -9,6 +9,14 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 
 const surface = Effect.runPromise(commandSurface());
 
+const warehouseVariant = Effect.promise(() => surface).pipe(
+  Effect.map(({ variants }) => {
+    const variant = variants["warehouse"];
+    if (variant === undefined) throw new Error("the surface has no warehouse variant");
+    return variant;
+  }),
+);
+
 const titlesOf = (result: unknown): ReadonlyArray<unknown> =>
   typeof result === "object" && result !== null && "anyOf" in result && Array.isArray(result.anyOf)
     ? result.anyOf.map((branch) =>
@@ -43,8 +51,8 @@ describe("command surface", () => {
 
   it.effect("lists exactly the warehouse entries the feature adds", () =>
     Effect.gen(function* () {
-      const { variants } = yield* Effect.promise(() => surface);
-      expect(Object.keys(variants.warehouse)).toEqual([
+      const warehouse = yield* warehouseVariant;
+      expect(Object.keys(warehouse)).toEqual([
         "warehouse",
         "warehouse connection",
         "warehouse disable",
@@ -58,7 +66,7 @@ describe("command surface", () => {
 
   it.effect("extracts one command from any mounted root, keyed like the full walk", () =>
     Effect.gen(function* () {
-      const root = rootCommandForFeatures({ warehouseEnabled: true });
+      const root = rootCommandForFeatures({ apiFeatures: ["warehouse"] });
       const walked = yield* walkCommandSurface(root);
       const single = yield* commandSurfaceEntry(root, ["warehouse", "status"]);
       expect(walked["warehouse status"]).toStrictEqual(single);
@@ -68,8 +76,8 @@ describe("command surface", () => {
 
   it.effect("describes a generated command from its annotations and operation schemas", () =>
     Effect.gen(function* () {
-      const { variants } = yield* Effect.promise(() => surface);
-      const enable = variants.warehouse["warehouse enable"];
+      const warehouse = yield* warehouseVariant;
+      const enable = warehouse["warehouse enable"];
       expect(enable).toMatchObject({
         path: ["warehouse", "enable"],
         target: { group: "hosted", consent: "no" },
@@ -91,8 +99,8 @@ describe("command surface", () => {
 
   it.effect("describes retained-data disable and its linked cleanup read", () =>
     Effect.gen(function* () {
-      const { variants } = yield* Effect.promise(() => surface);
-      const disable = variants.warehouse["warehouse disable"];
+      const warehouse = yield* warehouseVariant;
+      const disable = warehouse["warehouse disable"];
       expect(disable).toMatchObject({
         target: { group: "hosted", consent: "no" },
         stage: { status: "experimental", feature: "warehouse" },
@@ -103,7 +111,7 @@ describe("command surface", () => {
       expect(disable?.flags["wait"]).toMatchObject({ type: "boolean" });
       expect(disable?.flags["timeout"]).toMatchObject({ type: "string" });
       expect(titlesOf(disable?.result)).toEqual(["response", "waited", "dryRun"]);
-      expect(variants.warehouse["warehouse teardowns get"]?.flags["operation-id"]).toMatchObject({
+      expect(warehouse["warehouse teardowns get"]?.flags["operation-id"]).toMatchObject({
         required: false,
       });
     }),
@@ -121,8 +129,8 @@ describe("command surface", () => {
 
   it.effect("separates consolidated status from the identity-bound setup waiter", () =>
     Effect.gen(function* () {
-      const { variants } = yield* Effect.promise(() => surface);
-      const status = variants.warehouse["warehouse status"];
+      const warehouse = yield* warehouseVariant;
+      const status = warehouse["warehouse status"];
       expect(status).toMatchObject({
         api: { operationId: "v2-get-warehouse-status" },
         target: { group: "hosted", consent: "none" },
@@ -132,9 +140,9 @@ describe("command surface", () => {
       expect(status?.flags).not.toHaveProperty("selection-id");
       expect(status?.flags).not.toHaveProperty("wait");
       expect(status?.flags).not.toHaveProperty("timeout");
-      expect(variants.warehouse).not.toHaveProperty("warehouse setups");
-      expect(variants.warehouse).not.toHaveProperty("warehouse setups get");
-      expect(variants.warehouse["warehouse enable"]?.flags).toMatchObject({
+      expect(warehouse).not.toHaveProperty("warehouse setups");
+      expect(warehouse).not.toHaveProperty("warehouse setups get");
+      expect(warehouse["warehouse enable"]?.flags).toMatchObject({
         wait: { type: "boolean" },
         timeout: { type: "string" },
       });
@@ -143,11 +151,8 @@ describe("command surface", () => {
 
   it.effect("declares a waited result only for a command that waits on another read", () =>
     Effect.gen(function* () {
-      const { variants } = yield* Effect.promise(() => surface);
-      expect(titlesOf(variants.warehouse["warehouse status"]?.result)).toEqual([
-        "response",
-        "dryRun",
-      ]);
+      const warehouse = yield* warehouseVariant;
+      expect(titlesOf(warehouse["warehouse status"]?.result)).toEqual(["response", "dryRun"]);
     }),
   );
 

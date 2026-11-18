@@ -478,7 +478,7 @@ const successSchema = (spec: JsonObject, operation: Operation): unknown => {
   return undefined;
 };
 
-const collectOperations = (spec: JsonObject): ReadonlyMap<string, Operation> => {
+export const collectOperations = (spec: JsonObject): ReadonlyMap<string, Operation> => {
   const operations = new Map<string, Operation>();
   for (const [path, rawItem] of Object.entries(asRecord(spec.paths) ?? {})) {
     const pathItem = asRecord(rawItem);

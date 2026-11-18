@@ -59,7 +59,7 @@ import { readCommandStage } from "../../command-internal/command-stage/command-s
 import { apiCommandGroup, apiCommandGroups } from "./runtime.ts";
 import { standardFailureFor } from "../../shared/cli/standard-errors.ts";
 import { EventUpgradeSuggested } from "../../shared/telemetry/event-catalog.ts";
-import { resolveWarehouseEnabled } from "./warehouse-backend.ts";
+import { resolveApiCommandFeatures } from "./api-command-features.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -1481,7 +1481,7 @@ describe("generated warehouse commands", () => {
     const fixtureRoot = (entry: ApiCommandEntry) =>
       Command.make("supabase").pipe(
         Command.withSubcommands([
-          apiCommandGroup("fixture", { description: "Fixture commands", feature: "fixture" }, [
+          apiCommandGroup("fixture", { description: "Fixture commands", feature: "warehouse" }, [
             entry,
           ]),
         ]),
@@ -1524,8 +1524,12 @@ describe("generated warehouse commands", () => {
   });
 
   describe("feature gate", () => {
-    const resolve = (env: Record<string, string>, cwd: string) =>
-      withConfigEnv(env, resolveWarehouseEnabled({ args: ["warehouse"], cwd })).pipe(
+    const resolve = (
+      env: Record<string, string>,
+      cwd: string,
+      args: ReadonlyArray<string> = ["warehouse"],
+    ) =>
+      withConfigEnv(env, resolveApiCommandFeatures({ args, cwd })).pipe(
         Effect.provide(BunServices.layer),
       );
 
@@ -1539,7 +1543,7 @@ describe("generated warehouse commands", () => {
 
     it.effect("is off by default and absent from the tree and completion", () =>
       Effect.gen(function* () {
-        expect(yield* resolve({}, tempRoot.current)).toBe(false);
+        expect(yield* resolve({}, tempRoot.current)).toEqual([]);
         expect(commandTreeFor(undefined).has("warehouse enable")).toBe(false);
         const completion = respondToComplete(rootCommandForFeatures(), ["__complete", "ware"]);
         expect(completion?.candidates ?? []).toHaveLength(0);
@@ -1548,15 +1552,15 @@ describe("generated warehouse commands", () => {
 
     it.effect("is on with SUPABASE_EXPERIMENTAL_WAREHOUSE", () =>
       Effect.gen(function* () {
-        expect(yield* resolve({ SUPABASE_EXPERIMENTAL_WAREHOUSE: "1" }, tempRoot.current)).toBe(
-          true,
-        );
-        const root = rootCommandForFeatures({ warehouseEnabled: true });
+        expect(yield* resolve({ SUPABASE_EXPERIMENTAL_WAREHOUSE: "1" }, tempRoot.current)).toEqual([
+          "warehouse",
+        ]);
+        const root = rootCommandForFeatures({ apiFeatures: ["warehouse"] });
         const completion = respondToComplete(root, ["__complete", "ware"]);
         expect(completion?.candidates).toContainEqual(
           expect.objectContaining({ name: "warehouse" }),
         );
-        const tree = commandTreeFor({ warehouseEnabled: true });
+        const tree = commandTreeFor({ apiFeatures: ["warehouse"] });
         expect(tree.has("warehouse enable")).toBe(true);
         expect(tree.has("warehouse setups get")).toBe(false);
         expect(tree.has("warehouse status")).toBe(true);
@@ -1564,7 +1568,7 @@ describe("generated warehouse commands", () => {
     );
 
     it("marks each mounted leaf with its operation and experimental feature stage", () => {
-      const tree = commandTreeFor({ warehouseEnabled: true });
+      const tree = commandTreeFor({ apiFeatures: ["warehouse"] });
       for (const entry of apiCommands) {
         const command = tree.get(entry.command.join(" "))?.command;
         if (command === undefined) throw new Error(`${entry.command.join(" ")} is not mounted`);
@@ -1580,7 +1584,31 @@ describe("generated warehouse commands", () => {
     it.effect("is on with experimental.warehouse in the project config", () =>
       Effect.gen(function* () {
         yield* withConfig("[experimental]\nwarehouse = true\n");
-        expect(yield* resolve({}, tempRoot.current)).toBe(true);
+        expect(yield* resolve({}, tempRoot.current)).toEqual(["warehouse"]);
+      }),
+    );
+
+    it.effect.each([
+      { name: "root help", args: [], features: ["warehouse"] },
+      {
+        name: "shell completion of the group",
+        args: ["__complete", "ware"],
+        features: ["warehouse"],
+      },
+      { name: "a command of another group", args: ["projects", "list"], features: [] },
+      { name: "completion of another group", args: ["__complete", "projects", ""], features: [] },
+      { name: "the root version flag", args: ["--version"], features: [] },
+    ])("resolves $name by whether it can reach the group", ({ args, features }) =>
+      Effect.gen(function* () {
+        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "1" };
+        expect(yield* resolve(env, tempRoot.current, args)).toEqual(features);
+      }),
+    );
+
+    it.effect("ignores an invalid value when the invocation cannot reach the group", () =>
+      Effect.gen(function* () {
+        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "maybe" };
+        expect(yield* resolve(env, tempRoot.current, ["projects", "list"])).toEqual([]);
       }),
     );
 
@@ -1596,7 +1624,9 @@ describe("generated warehouse commands", () => {
   });
 });
 
-const consentCommand = commandTreeFor({ warehouseEnabled: true }).get("warehouse enable")?.command;
+const consentCommand = commandTreeFor({ apiFeatures: ["warehouse"] }).get(
+  "warehouse enable",
+)?.command;
 
 describeHostedConsent("warehouse enable", {
   ...(consentCommand === undefined ? {} : { command: consentCommand }),
@@ -1612,7 +1642,7 @@ describeHostedConsent("warehouse enable", {
   },
 });
 
-const disableConsentCommand = commandTreeFor({ warehouseEnabled: true }).get(
+const disableConsentCommand = commandTreeFor({ apiFeatures: ["warehouse"] }).get(
   "warehouse disable",
 )?.command;
 describeHostedConsent("warehouse disable", {

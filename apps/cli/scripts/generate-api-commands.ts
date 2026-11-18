@@ -7,7 +7,12 @@ import {
   pollTargets as pollTargetMap,
 } from "../src/commands/api/api-command-policy.ts";
 import { openApiOperationIdMap } from "@supabase/api/effect";
-import { ApiCommandGenerationError, deriveApiCommands } from "./api-command-derive.ts";
+import { renderApiCommandReference } from "./api-command-reference.ts";
+import {
+  ApiCommandGenerationError,
+  collectOperations,
+  deriveApiCommands,
+} from "./api-command-derive.ts";
 
 class ApiCommandFormatError extends Data.TaggedError("ApiCommandFormatError")<{
   readonly message: string;
@@ -102,6 +107,17 @@ const main = Effect.gen(function* () {
   const sortedSchemas = Object.fromEntries(
     Object.entries(schemas).sort(([left], [right]) => left.localeCompare(right, "en")),
   );
+  const operations = collectOperations(spec);
+  const pollRoutes: Record<string, { readonly method: string; readonly path: string }> = {};
+  for (const target of pollTargets) {
+    const operation = operations.get(target.operationId);
+    if (operation === undefined) {
+      return yield* new ApiCommandGenerationError({
+        problems: [`${target.operationId}: polling target has no operation in the spec`],
+      });
+    }
+    pollRoutes[target.operationId] = { method: operation.method, path: operation.path };
+  }
   const outputs = [
     {
       relative: "src/commands/api/generated.ts",
@@ -110,6 +126,10 @@ const main = Effect.gen(function* () {
     {
       relative: "src/commands/api/generated.schemas.ts",
       source: `${HEADER}import type { ApiCommandSchemas } from "./api-command.model.ts";\n\nexport const apiCommandSchemas = ${yield* encodeJson(sortedSchemas)} as const satisfies Readonly<Record<string, ApiCommandSchemas>>;\n`,
+    },
+    {
+      relative: "src/commands/api/generated.md",
+      source: renderApiCommandReference({ entries, pollTargets, pollRoutes }),
     },
   ];
 

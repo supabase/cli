@@ -11,7 +11,7 @@ const srcDir = fileURLToPath(new URL("../..", import.meta.url));
 
 const VARIANTS: ReadonlyArray<PermissionVariant> = [
   undefined,
-  { stackBackend: "stack", computeEnabled: true, warehouseEnabled: true },
+  { stackBackend: "stack", computeEnabled: true, apiFeatures: ["warehouse"] },
 ];
 
 const consentDefaultByLeaf: ReadonlyMap<string, "no" | "yes"> = new Map(

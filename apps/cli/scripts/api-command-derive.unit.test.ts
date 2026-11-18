@@ -41,7 +41,7 @@ const envelope = (attributes: Record<string, unknown>) => ({
 
 const thingNoun: ApiNoun = {
   description: "Manage things",
-  feature: "things",
+  feature: "warehouse",
   groups: { sub: "Manage sub things", "sub.deep": "Manage deep things", status: "Status" },
 };
 

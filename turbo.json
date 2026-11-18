@@ -90,13 +90,17 @@
       "dependsOn": ["@supabase/api#generate"],
       "inputs": [
         "$TURBO_DEFAULT$",
-        "!src/commands/api/generated*.ts",
+        "!src/commands/api/generated*",
         "$TURBO_ROOT$/mise.lock",
         "$TURBO_ROOT$/.oxfmtrc.json",
         "$TURBO_ROOT$/packages/api/src/generated/openapi.json",
         "$TURBO_ROOT$/packages/api/src/generated/contracts.ts"
       ],
-      "outputs": ["src/commands/api/generated.ts", "src/commands/api/generated.schemas.ts"]
+      "outputs": [
+        "src/commands/api/generated.ts",
+        "src/commands/api/generated.schemas.ts",
+        "src/commands/api/generated.md"
+      ]
     },
     "supabase#test:live": {
       "cache": false,

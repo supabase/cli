@@ -1,4 +1,5 @@
 import type { OpenApiOperationId } from "@supabase/api/effect";
+import type { ExperimentalFeature } from "../../shared/config/experimental-feature.ts";
 import type { ApiCommandWait } from "./api-command.model.ts";
 
 /** Verbs every generated command may use. */
@@ -20,7 +21,7 @@ export const verbVocabulary = [
 export interface ApiNoun {
   readonly description: string;
   /** Feature that gates every command under the noun. */
-  readonly feature: string;
+  readonly feature: ExperimentalFeature;
   /** Help text of each sub-group, keyed by its dotted path below the noun, e.g. `"tables.layout"`. */
   readonly groups?: Readonly<Record<string, string>>;
 }

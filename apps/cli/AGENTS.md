@@ -25,6 +25,9 @@ src/commands/<command>/
   SIDE_EFFECTS.md        # required compatibility contract
 ```
 
+Generated Management API commands have no folder of their own: `src/commands/api/` holds their
+shared `SIDE_EFFECTS.md` and the generated per-command `generated.md`.
+
 Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Handler
 phase spans are named `<command>.<phase>`; see the root tracing rule. Read `src/shared/` and the
 command-level infrastructure under
@@ -58,9 +61,11 @@ truth. Update tests and side-effect documentation with intentional behavior chan
 State locations are also public: preserve `~/.supabase/…`, `<workdir>/supabase/.temp/…`, and
 native keyring entries. Do not move or rename them.
 
-Every command has a `SIDE_EFFECTS.md` based on the [template](src/SIDE_EFFECTS_TEMPLATE.md), documenting exact
+Every hand-written command has a `SIDE_EFFECTS.md` based on the [template](src/SIDE_EFFECTS_TEMPLATE.md), documenting exact
 files and formats, API calls and shapes, environment variables, and exit codes. Keep it accurate;
-it is the command compatibility checklist and an input to E2E coverage.
+it is the command compatibility checklist and an input to E2E coverage. Generated API commands are
+covered by the shared [`src/commands/api/SIDE_EFFECTS.md`](src/commands/api/SIDE_EFFECTS.md) and the
+generated [`generated.md`](src/commands/api/generated.md); they get no per-command folder or file.
 
 Every applicable command must preserve these invariants:
 

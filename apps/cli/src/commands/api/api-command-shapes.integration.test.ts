@@ -37,7 +37,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const fixtureNoun: ApiNoun = {
   description: "Fixture commands",
-  feature: "fixture",
+  feature: "warehouse",
   groups: {
     migrations: "Migration fixtures",
     auth: "Auth fixtures",

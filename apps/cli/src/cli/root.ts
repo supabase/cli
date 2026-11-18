@@ -18,7 +18,10 @@ import { stackStopCommand } from "../commands/experimental/stack/stop/stop.comma
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../command-internal/stack-backend.ts";
 import { isFunctionsServePath, stackBackendLayer } from "../command-internal/stack-backend.ts";
-import type { ExperimentalFeatureFlagError } from "../shared/config/experimental-feature.ts";
+import type {
+  ExperimentalFeature,
+  ExperimentalFeatureFlagError,
+} from "../shared/config/experimental-feature.ts";
 import {
   type ProjectStateMode,
   projectStateModeLayer,
@@ -148,7 +151,7 @@ interface RootCommandFeatures {
   readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
-  readonly warehouseEnabled?: boolean;
+  readonly apiFeatures?: ReadonlyArray<ExperimentalFeature>;
 }
 
 /** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
@@ -206,7 +209,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       testCommand,
       unlinkCommand,
       vanitySubdomainsCommand,
-      ...apiCommandGroups(options.warehouseEnabled ? ["warehouse"] : []),
+      ...apiCommandGroups(options.apiFeatures ?? []),
       whoamiCommand,
     ]),
     Command.provide(

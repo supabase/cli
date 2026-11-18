@@ -45,7 +45,7 @@ const readEnv = (name: string) =>
 
 /** Reads one experimental feature, treating unavailable or invalid configuration as unset. */
 export const readExperimentalFeatureConfig = (input: {
-  readonly feature: keyof typeof featureSchemas;
+  readonly feature: ExperimentalFeature;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
 }): Effect.Effect<boolean | undefined, never, FileSystem.FileSystem | Path.Path> =>
@@ -80,12 +80,15 @@ const featureKeys = {
   warehouse: CliConfigKeys.experimental.warehouse,
 } as const;
 
+/** Name of an `experimental.<feature>` config key. */
+export type ExperimentalFeature = keyof typeof featureKeys;
+
 /**
  * Resolves one experimental boolean: a shell boolean override, else the project
  * config. Remotes and project `.env*` files do not apply.
  */
 export const resolveExperimentalFeature = <E, R>(input: {
-  readonly feature: keyof typeof featureKeys;
+  readonly feature: ExperimentalFeature;
   readonly configValue: Effect.Effect<boolean | undefined, E, R>;
 }): Effect.Effect<boolean, E | ExperimentalFeatureFlagError, R | Path.Path> =>
   Effect.gen(function* () {

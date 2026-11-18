@@ -10,6 +10,7 @@ import type {
 } from "../../commands/api/api-command.model.ts";
 import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import type { CommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
+import { nouns } from "../../commands/api/api-command-policy.ts";
 import { apiCommands } from "../../commands/api/generated.ts";
 import { rootCommandForFeatures } from "../root.ts";
 import { flattenSubcommands } from "../../docs/docs-introspection.ts";
@@ -77,9 +78,7 @@ interface CommandSurfaceEntry {
 interface CommandSurface {
   readonly globalFlags: Readonly<Record<string, SurfaceFlag>>;
   readonly commands: Readonly<Record<string, CommandSurfaceEntry>>;
-  readonly variants: {
-    readonly warehouse: Readonly<Record<string, CommandSurfaceEntry>>;
-  };
+  readonly variants: Readonly<Record<string, Readonly<Record<string, CommandSurfaceEntry>>>>;
 }
 
 type CommandRoot = Command.Command.Any;
@@ -280,13 +279,19 @@ export const walkCommandSurface = Effect.fn("CommandSurface.walk")(function* (ro
 /** The default command surface and, per feature, the entries that differ when the feature is on. */
 export const commandSurface = Effect.fn("CommandSurface.build")(function* () {
   const base = yield* walkCommandSurface(rootCommandForFeatures());
-  const warehouse = yield* walkCommandSurface(rootCommandForFeatures({ warehouseEnabled: true }));
-  const differing = Object.entries(warehouse).filter(
-    ([key, entry]) => key in base === false || encodeJson(base[key]) !== encodeJson(entry),
+  const features = [...new Set(Object.values(nouns).map(({ feature }) => feature))];
+  const variants = yield* Effect.forEach(features, (feature) =>
+    Effect.gen(function* () {
+      const walked = yield* walkCommandSurface(rootCommandForFeatures({ apiFeatures: [feature] }));
+      const differing = Object.entries(walked).filter(
+        ([key, entry]) => key in base === false || encodeJson(base[key]) !== encodeJson(entry),
+      );
+      return [feature, sortedRecord(differing)] as const;
+    }),
   );
   return {
     globalFlags: walkGlobalFlags(rootCommandForFeatures()),
     commands: base,
-    variants: { warehouse: sortedRecord(differing) },
+    variants: sortedRecord(variants),
   } satisfies CommandSurface;
 });
