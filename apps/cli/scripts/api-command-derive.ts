@@ -76,15 +76,17 @@ const decodeXOperation = Schema.decodeUnknownExit(XOperationSchema, {
   onExcessProperty: "error",
 });
 
-/** A named command, or a poll-only read that never becomes a command. */
+/**
+ * An `x-operation` block: an optional command name and an optional poll mapping. A name generates
+ * a command only for operations in the generated list.
+ */
 type ParsedXOperation =
   | {
-      readonly kind: "named";
-      readonly group: string;
-      readonly method: string;
+      readonly kind: "valid";
+      readonly name?: { readonly group: string; readonly method: string };
       readonly poll?: ApiCommandPoll;
+      readonly inspect?: string;
     }
-  | { readonly kind: "pollOnly"; readonly poll: ApiCommandPoll; readonly inspect: string }
   | { readonly kind: "invalid"; readonly reason: string };
 
 const statusMapping = (poll: ApiCommandPoll): ApiCommandPoll => ({
@@ -98,34 +100,30 @@ const parseXOperation = (block: unknown): ParsedXOperation => {
   const decoded = decodeXOperation(block);
   if (Exit.isFailure(decoded)) return { kind: "invalid", reason: Cause.pretty(decoded.cause) };
   const { group, method, poll } = decoded.value;
-  if (group === undefined && method === undefined) {
-    if (poll === undefined) {
-      return { kind: "invalid", reason: "set group and method, or a poll-only read's poll" };
-    }
-    if (poll.inspect === undefined || poll.inspect === "") {
-      return {
-        kind: "invalid",
-        reason: "a poll-only read must set poll.inspect to the operation that inspects its state",
-      };
-    }
-    return { kind: "pollOnly", poll: statusMapping(poll), inspect: poll.inspect };
-  }
-  if (group === undefined || method === undefined) {
+  if ((group === undefined) !== (method === undefined)) {
     return { kind: "invalid", reason: "a command name needs both group and method" };
   }
-  if (poll?.inspect !== undefined) {
-    return {
-      kind: "invalid",
-      reason: "poll.inspect belongs on a poll-only read, not on a named operation",
-    };
+  if (group === undefined && poll === undefined) {
+    return { kind: "invalid", reason: "set group and method, poll, or both" };
+  }
+  if (poll?.inspect === "") {
+    return { kind: "invalid", reason: "poll.inspect must name an operation" };
   }
   return {
-    kind: "named",
-    group,
-    method,
+    kind: "valid",
+    ...(group === undefined || method === undefined ? {} : { name: { group, method } }),
     ...(poll === undefined ? {} : { poll: statusMapping(poll) }),
+    ...(poll?.inspect === undefined ? {} : { inspect: poll.inspect }),
   };
 };
+
+/** The hand-written command tree, as space-joined command paths. */
+export interface HandWrittenCommands {
+  /** Paths of the commands that have subcommands. */
+  readonly groups: ReadonlySet<string>;
+  /** Paths of the commands that have none. */
+  readonly leaves: ReadonlySet<string>;
+}
 
 interface DeriveInput {
   /** The parsed OpenAPI document. */
@@ -135,8 +133,8 @@ interface DeriveInput {
   readonly nouns: Readonly<Record<string, ApiNoun>>;
   /** Kebab-case operation id to the camelCase key of the typed client's `operationDefinitions`. */
   readonly operationIdMap: Readonly<Record<string, OperationId>>;
-  /** Top-level command names owned by hand-written commands. */
-  readonly handWrittenTopLevel: ReadonlySet<string>;
+  /** Generated commands join hand-written groups; only an actual path collision fails. */
+  readonly handWritten: HandWrittenCommands;
 }
 
 interface DeriveResult {
@@ -571,14 +569,12 @@ const readMetadata = (
       problems.push(`${operationId}: invalid x-operation: ${parsed.reason}`);
       continue;
     }
-    if (parsed.kind === "pollOnly") {
-      problems.push(
-        `${operationId}: a poll-only read cannot be generated; give it group and method or remove it from the generated operations`,
-      );
+    const { name, poll } = parsed;
+    if (name === undefined) {
+      problems.push(`${operationId}: no command name; set x-operation group and method`);
       continue;
     }
-    const { group, method, poll } = parsed;
-    metadata.set(operationId, { group, method, ...(poll === undefined ? {} : { poll }) });
+    metadata.set(operationId, { ...name, ...(poll === undefined ? {} : { poll }) });
     if (poll !== undefined && operation.method !== "GET") {
       problems.push(`${operationId}: poll belongs on a read operation, not ${operation.method}`);
     }
@@ -637,7 +633,7 @@ const pollWait = (
 const RESPONSE_POINTER = /^\$response\.body#(\/.*)$/u;
 const REQUEST_PATH = /^\$request\.path\.(.+)$/u;
 
-/** A poll-only read reached through a response link, with the operation that inspects its state. */
+/** A polled read that is not a generated command, reached through a response link, with the operation that inspects its state. */
 interface HiddenRead {
   readonly poll: ApiCommandPoll;
   readonly inspect: string;
@@ -645,8 +641,8 @@ interface HiddenRead {
 
 /**
  * The wait a command's 2xx response `links` declare: the one link whose target operation has
- * `poll`. The target is a generated operation or a poll-only read, which is recorded in `hidden`;
- * links without `poll` are ignored.
+ * `poll`. A target that is not a generated operation needs `poll.inspect` and is recorded in
+ * `hidden`; links without `poll` are ignored.
  */
 const linkedWait = (
   spec: JsonObject,
@@ -685,13 +681,13 @@ const linkedWait = (
           fail(
             `link "${linkName}" targets "${targetId}", whose x-operation is invalid: ${parsed.reason}`,
           );
-        } else if (parsed.kind === "pollOnly") {
+        } else if (parsed.poll !== undefined && parsed.inspect === undefined) {
+          fail(
+            `link "${linkName}" targets polled operation "${targetId}", which is not a generated command and sets no poll.inspect`,
+          );
+        } else if (parsed.poll !== undefined && parsed.inspect !== undefined) {
           poll = parsed.poll;
           hidden.set(targetId, { poll, inspect: parsed.inspect });
-        } else if (parsed.poll !== undefined) {
-          fail(
-            `link "${linkName}" targets polled operation "${targetId}", which is neither a generated command nor a poll-only read`,
-          );
         }
       }
       if (poll === undefined) continue;
@@ -736,7 +732,7 @@ const linkedWait = (
 
 /** Derives the generated commands from each operation's `x-operation` and collects every lint failure. */
 export function deriveApiCommands(input: DeriveInput): DeriveResult {
-  const { spec, generated, nouns, operationIdMap, handWrittenTopLevel } = input;
+  const { spec, generated, nouns, operationIdMap, handWritten } = input;
   const operations = collectOperations(spec);
   const problems: Array<string> = [];
   const metadata = readMetadata(operations, generated, problems);
@@ -745,6 +741,23 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
   const schemas: Record<string, ApiCommandSchemas> = {};
   const commandOwners = new Map<string, string>();
   const groupPaths = new Set<string>();
+  const describedNouns = new Set<string>();
+
+  for (const [noun, definition] of Object.entries(nouns)) {
+    if (handWritten.groups.has(noun) && definition.description !== undefined) {
+      problems.push(
+        `noun "${noun}" describes the hand-written group "${noun}"; drop its description`,
+      );
+    }
+    for (const subGroup of Object.keys(definition.groups ?? {})) {
+      const groupKey = [noun, ...subGroup.split(".")].join(" ");
+      if (handWritten.groups.has(groupKey)) {
+        problems.push(
+          `noun "${noun}" describes the hand-written group "${groupKey}"; drop its description`,
+        );
+      }
+    }
+  }
 
   for (const [operationId, name] of metadata) {
     const { group, method } = name;
@@ -778,17 +791,32 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     if (owner !== undefined) fail(`command "${commandKey}" is already generated by ${owner}`);
     commandOwners.set(commandKey, operationId);
     if (groupPaths.has(commandKey)) fail(`command "${commandKey}" is both a command and a group`);
-    for (let depth = 2; depth < command.length; depth += 1) {
+    if (handWritten.leaves.has(commandKey)) {
+      fail(`command "${commandKey}" is already a hand-written command`);
+    }
+    if (handWritten.groups.has(commandKey)) {
+      fail(`command "${commandKey}" is already a hand-written group`);
+    }
+    if (!describedNouns.has(command[0] ?? "")) {
+      describedNouns.add(command[0] ?? "");
+      if (noun.description === undefined && !handWritten.groups.has(command[0] ?? "")) {
+        fail(`noun "${command[0]}" has no description in the nouns table`);
+      }
+    }
+    for (let depth = 1; depth < command.length; depth += 1) {
       const groupKey = command.slice(0, depth).join(" ");
+      if (handWritten.leaves.has(groupKey)) {
+        fail(
+          `command "${commandKey}" needs "${groupKey}" as a group, but it is a hand-written command`,
+        );
+      }
+      if (depth < 2) continue;
       if (commandOwners.has(groupKey)) fail(`command "${groupKey}" is both a command and a group`);
       groupPaths.add(groupKey);
       const subGroup = command.slice(1, depth).join(".");
-      if (noun.groups?.[subGroup] === undefined) {
+      if (noun.groups?.[subGroup] === undefined && !handWritten.groups.has(groupKey)) {
         fail(`group "${subGroup}" has no description in the nouns table`);
       }
-    }
-    if (handWrittenTopLevel.has(command[0] ?? "")) {
-      fail(`command "${commandKey}" collides with the hand-written "${command[0]}" command`);
     }
 
     requireExperimental(operation, fail);

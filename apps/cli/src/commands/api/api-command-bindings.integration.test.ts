@@ -26,7 +26,7 @@ import {
 import type { ApiCommandEntry } from "./api-command.model.ts";
 import { apiCommands } from "./generated.ts";
 import { apiCommandSchemas } from "./generated.schemas.ts";
-import { apiCommandGroups } from "./runtime.ts";
+import { withApiCommands } from "./runtime.ts";
 
 type Json = Readonly<Record<string, unknown>>;
 
@@ -288,7 +288,7 @@ const withApi = (status: number, sent: Array<Sent>) => {
 };
 
 const warehouseRoot = Command.make("supabase").pipe(
-  Command.withSubcommands(apiCommandGroups(["warehouse"])),
+  Command.withSubcommands(withApiCommands([], ["warehouse"])),
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 

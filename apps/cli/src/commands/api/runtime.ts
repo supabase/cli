@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Array as Arr, Cause, Effect, Exit, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { ApiCommandUsageError } from "../../command-internal/command-errors/api-command.errors.ts";
@@ -361,55 +361,106 @@ const leafOf = (entry: ApiCommandEntry, entries: ReadonlyArray<ApiCommandEntry>)
 };
 
 type ApiLeaf = ReturnType<typeof leafOf>;
-type ApiGroup = Command.Command<string, {}, {}, Command.Error<ApiLeaf>, Command.Services<ApiLeaf>>;
+
+/** A command with generated commands merged in: it fails and requires what `C` and the generated leaves do. */
+type WithApi<C> = Command.Command<
+  string,
+  {},
+  {},
+  Command.Error<C> | Command.Error<ApiLeaf>,
+  Command.Services<C> | Command.Services<ApiLeaf>
+>;
+
+type Subcommands = ReadonlyArray<Command.Command.SubcommandEntry>;
+
+/** The noun definitions and entries the generated commands are built from. */
+interface ApiCommandSource {
+  readonly nouns: Readonly<Record<string, ApiNoun>>;
+  readonly entries: ReadonlyArray<ApiCommandEntry>;
+}
 
 const startsWith = (command: ReadonlyArray<string>, prefix: ReadonlyArray<string>): boolean =>
   prefix.every((word, index) => command[index] === word);
 
-const groupOf = (
-  path: ReadonlyArray<string>,
-  description: string,
-  definition: ApiNoun,
-  entries: ReadonlyArray<ApiCommandEntry>,
-): ApiGroup => {
-  const under = entries.filter((entry) => startsWith(entry.command, path));
-  const leaves = under
-    .filter((entry) => entry.command.length === path.length + 1)
-    .map((entry) => leafOf(entry, entries));
-  const children = Object.entries(definition.groups ?? {}).flatMap(([key, childDescription]) => {
-    const childPath = [...path.slice(0, 1), ...key.split(".")];
-    const isChild = childPath.length === path.length + 1 && startsWith(childPath, path);
-    const hasCommands = under.some((entry) => startsWith(entry.command, childPath));
-    return isChild && hasCommands
-      ? [groupOf(childPath, childDescription, definition, entries)]
-      : [];
-  });
-  return Command.make(path[path.length - 1] ?? "").pipe(
-    Command.withDescription(`${description} (experimental)`),
-    Command.withShortDescription(`${description} (experimental)`),
-    Command.withSubcommands([...leaves, ...children]),
-  );
+const leafCache = new WeakMap<ApiCommandEntry, ApiLeaf>();
+
+const cachedLeaf = (entry: ApiCommandEntry, entries: ReadonlyArray<ApiCommandEntry>): ApiLeaf => {
+  const cached = leafCache.get(entry);
+  if (cached !== undefined) return cached;
+  const leaf = leafOf(entry, entries);
+  leafCache.set(entry, leaf);
+  return leaf;
 };
 
-/** The command group of `noun`, with its sub-groups and one leaf per entry whose command sits under it. */
-export const apiCommandGroup = (
-  noun: string,
-  definition: ApiNoun,
-  entries: ReadonlyArray<ApiCommandEntry>,
-) => groupOf([noun], definition.description, definition, entries);
+const groupDescription = (path: ReadonlyArray<string>, noun: ApiNoun): string | undefined =>
+  path.length === 1 ? noun.description : noun.groups?.[path.slice(1).join(".")];
 
-const groupCache = new Map<string, ReturnType<typeof apiCommandGroup>>();
+/** The group at `path`, taking the generated commands below it; `existing` is the hand-written group it joins. */
+const groupAt = (
+  existing: Command.Command.Any | undefined,
+  path: ReadonlyArray<string>,
+  noun: ApiNoun,
+  entries: ReadonlyArray<ApiCommandEntry>,
+): Command.Command.Any => {
+  const name = path[path.length - 1] ?? "";
+  const under = entries.filter((entry) => startsWith(entry.command, path));
+  const childNames = new Set(
+    under.flatMap((entry) =>
+      entry.command.length > path.length + 1
+        ? entry.command.slice(path.length, path.length + 1)
+        : [],
+    ),
+  );
+  const existingChildren = existing?.subcommands ?? [];
+  const existingNames = new Set(
+    existingChildren.flatMap(({ commands }) => commands.map((child) => child.name)),
+  );
+  const joined = existingChildren.flatMap(({ group, commands }): Subcommands => {
+    const children = Arr.map(commands, (child) =>
+      childNames.has(child.name) ? groupAt(child, [...path, child.name], noun, entries) : child,
+    );
+    return group === undefined ? children : [{ group, commands: children }];
+  });
+  const leaves = under
+    .filter((entry) => entry.command.length === path.length + 1)
+    .map((entry) => cachedLeaf(entry, entries));
+  const created = [...childNames]
+    .filter((child) => !existingNames.has(child))
+    .map((child) => groupAt(undefined, [...path, child], noun, entries));
+  const description = `${groupDescription(path, noun) ?? name} (experimental)`;
+  const base =
+    existing ??
+    Command.make(name).pipe(
+      Command.withDescription(description),
+      Command.withShortDescription(description),
+    );
+  return Command.withSubcommands(base, [...joined, ...leaves, ...created]);
+};
 
 /**
- * The noun groups of the generated Management API commands, one per noun whose feature is
- * enabled; a group is built on first use.
+ * `handWritten` with the generated Management API commands of every enabled noun merged in: a
+ * noun named like a hand-written command adds its commands and sub-groups to that command at any
+ * depth, and any other noun becomes a new group in alphabetical position.
  */
-export const apiCommandGroups = (enabledFeatures: ReadonlyArray<string>) =>
-  Object.entries(nouns).flatMap(([noun, definition]) => {
-    if (!enabledFeatures.includes(definition.feature)) return [];
-    const cached = groupCache.get(noun);
-    if (cached !== undefined) return [cached];
-    const group = apiCommandGroup(noun, definition, apiCommands);
-    groupCache.set(noun, group);
-    return [group];
-  });
+export const withApiCommands = <const C extends ReadonlyArray<Command.Command.Any>>(
+  handWritten: C,
+  enabledFeatures: ReadonlyArray<string>,
+  source: ApiCommandSource = { nouns, entries: apiCommands },
+): ReadonlyArray<C[number] | WithApi<C[number]>> => {
+  const merged: Array<Command.Command.Any> = [...handWritten];
+  for (const [name, noun] of Object.entries(source.nouns)) {
+    if (!enabledFeatures.includes(noun.feature)) continue;
+    const index = merged.findIndex((command) => command.name === name);
+    if (index >= 0) {
+      merged[index] = groupAt(merged[index], [name], noun, source.entries);
+    } else {
+      const position = merged.findIndex((command) => command.name > name);
+      merged.splice(
+        position < 0 ? merged.length : position,
+        0,
+        groupAt(undefined, [name], noun, source.entries),
+      );
+    }
+  }
+  return merged;
+};

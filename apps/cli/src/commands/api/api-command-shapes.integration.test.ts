@@ -27,7 +27,7 @@ import {
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
 import type { ApiNoun } from "./api-command-policy.ts";
-import { apiCommandGroup } from "./runtime.ts";
+import { withApiCommands } from "./runtime.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -75,11 +75,16 @@ const derived = deriveApiCommands({
   generated: Object.keys(FIXTURE_OPERATIONS),
   nouns: { fixture: fixtureNoun },
   operationIdMap: openApiOperationIdMap,
-  handWrittenTopLevel: new Set(),
+  handWritten: { groups: new Set(), leaves: new Set() },
 });
 
 const fixtureRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([apiCommandGroup("fixture", fixtureNoun, derived.entries)]),
+  Command.withSubcommands(
+    withApiCommands([], [fixtureNoun.feature], {
+      nouns: { fixture: fixtureNoun },
+      entries: derived.entries,
+    }),
+  ),
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 

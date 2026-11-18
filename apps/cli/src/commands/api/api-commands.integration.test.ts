@@ -56,7 +56,7 @@ import { assembleInput, decodeInput, previewRequest } from "./api-command-reques
 import { apiCommands } from "./generated.ts";
 import { readApiCommand } from "./api-command.annotation.ts";
 import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
-import { apiCommandGroup, apiCommandGroups } from "./runtime.ts";
+import { withApiCommands } from "./runtime.ts";
 import { standardFailureFor } from "../../shared/cli/standard-errors.ts";
 import { EventUpgradeSuggested } from "../../shared/telemetry/event-catalog.ts";
 import { resolveApiCommandFeatures } from "./api-command-features.ts";
@@ -236,7 +236,7 @@ const withApi = (route: Route, sent: Array<Sent>) => {
 };
 
 const warehouseRoot = Command.make("supabase").pipe(
-  Command.withSubcommands(apiCommandGroups(["warehouse"])),
+  Command.withSubcommands(withApiCommands([], ["warehouse"])),
   Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
 );
 
@@ -1631,11 +1631,12 @@ describe("generated warehouse commands", () => {
     };
     const fixtureRoot = (entry: ApiCommandEntry) =>
       Command.make("supabase").pipe(
-        Command.withSubcommands([
-          apiCommandGroup("fixture", { description: "Fixture commands", feature: "warehouse" }, [
-            entry,
-          ]),
-        ]),
+        Command.withSubcommands(
+          withApiCommands([], ["warehouse"], {
+            nouns: { fixture: { description: "Fixture commands", feature: "warehouse" } },
+            entries: [entry],
+          }),
+        ),
         Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
       );
 

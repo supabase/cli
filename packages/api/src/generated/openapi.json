@@ -12539,6 +12539,8 @@
         "x-fga-permissions": [["database_read"]],
         "x-oauth-scope": "database:read",
         "x-operation": {
+          "group": "warehouse.setups",
+          "method": "get",
           "poll": {
             "status": "/data/attributes/status",
             "succeeded": ["succeeded"],

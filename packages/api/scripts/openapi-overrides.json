@@ -1859,12 +1859,14 @@
         "error": "/data/attributes/status_error"
       }
     },
-    "$comment": "The setup read is polled by `warehouse enable --wait` and has no command of its own; `inspect` names the consolidated status read."
+    "$comment": "The setup read is polled by `warehouse enable --wait`; its name must not claim the status read's `warehouse status`, and `inspect` names that consolidated status read."
   },
   {
     "op": "replace",
     "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1setups~1current/get/x-operation",
     "value": {
+      "group": "warehouse.setups",
+      "method": "get",
       "poll": {
         "status": "/data/attributes/status",
         "succeeded": ["succeeded"],
