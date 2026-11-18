@@ -7,17 +7,12 @@
  * repository permission, so private org members count too) and bots are
  * exempt. PRs that don't follow the process are commented on and closed.
  *
- * Two modes, both driven from `main()`:
- *   - single-PR (default): reacts to one PR on `pull_request_target`
- *     (`opened`/`reopened`/`edited`), using the PR_* env vars from the event.
- *   - all-PRs sweep (`GATE_MODE=all`, or the `--all` flag): evaluates every
- *     open PR, for on-demand `workflow_dispatch` runs. Set `DRY_RUN=true` to
- *     log decisions without commenting/closing.
+ * The manual workflow uses `GATE_MODE=all` to sweep every open PR.
+ * Set `DRY_RUN=true` with that mode to log decisions without commenting or closing.
+ * Run the workflow from a trusted branch.
  *
- * The workflow checks out the base branch in both modes, so this only ever
- * executes trusted repository code.
- *
- * Run in CI as: `bun .github/scripts/contribution-gate.ts`.
+ * Standalone invocation also supports a single PR through the PR_* environment
+ * variables when `GATE_MODE=all` and `--all` are absent; no workflow uses that mode.
  */
 
 export const GATE_LABEL = "open-for-contribution";
@@ -395,7 +390,7 @@ function makeCloser(
   };
 }
 
-/** Single-PR mode: react to the PR carried by a `pull_request_target` event. */
+/** Evaluate one PR supplied through the PR_* environment variables. */
 async function runSinglePr(
   token: string,
   owner: string,
