@@ -11,11 +11,11 @@ import { dim } from "../../../../command-internal/colors.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
-  StackApi,
   mapTargetError,
-  StackTargetResolver,
-  validateStackTarget,
+  missingStackAdvice,
   rejectStackOutput,
+  StackApi,
+  StackTargetResolver,
 } from "../../../../command-internal/stack-target.ts";
 import { StackCommandLogsError } from "./logs.errors.ts";
 import { makeTextFormatter, truncationFooter } from "./logs.format.ts";
@@ -30,7 +30,6 @@ import { logEvent, type LogSource } from "../../../../command-internal/stack-log
 
 export interface StackLogsFlags {
   readonly stack: Option.Option<string>;
-  readonly stackId: Option.Option<string>;
   readonly service: ReadonlyArray<string>;
   readonly follow: boolean;
   readonly tail: number;
@@ -107,10 +106,6 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
     yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
       Effect.mapError(targetError),
     );
-    yield* validateStackTarget({
-      stack: Option.getOrUndefined(flags.stack),
-      stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(targetError));
     if (flags.follow && output.format === "json")
       return yield* new StackCommandLogsError({
         reason: "flags",
@@ -129,15 +124,13 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
       .resolve({
         projectRoot: settings.workdir,
         runtime: "auto",
-        ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
-        ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
+        ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
       })
       .pipe(Effect.mapError(targetError));
     if (target.id === undefined || target.definition === undefined)
       return yield* new StackCommandLogsError({
         reason: "flags",
-        message: "No managed stack exists for the selected project.",
-        suggestion: "Run supabase stack start first.",
+        ...missingStackAdvice(target.name),
       });
     if (flags.follow && !target.hostRunning)
       return yield* new StackCommandLogsError({

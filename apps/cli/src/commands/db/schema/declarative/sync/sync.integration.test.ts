@@ -117,6 +117,8 @@ interface SetupOpts {
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
   stackBackend?: boolean;
+  /** `--stack`; the stack backend fixture only has the default stack. */
+  stack?: string;
   /** Runs the real db-config resolver; `workdir` must be a real directory. */
   realLayers?: boolean;
 }
@@ -198,19 +200,19 @@ function syncStackApi(workdir: string, port: number) {
     create: unusedSyncFn,
     open: () => Effect.succeed(stack),
     discover: () => Effect.die("unused"),
-    find: () =>
+    find: (options) =>
       Effect.succeed(
         Option.some({
           definition: {
             id: stack.id,
             identity,
-            runtime: "native",
+            runtime: "native" as const,
             instances: [],
             composition,
             lifetime: "detached" as const,
           },
           host: undefined,
-        }),
+        }).pipe(Option.filter(() => !("name" in options) || options.name === undefined)),
       ),
     findDeleted: () => Effect.die("unused"),
   });
@@ -402,7 +404,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         })
       : resolver,
-    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockCommandSettings({
+      workdir,
+      projectId: opts.projectId ?? Option.some("test"),
+      ...(opts.stack === undefined ? {} : { stack: opts.stack }),
+    }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
     experimentalFlag,
@@ -979,6 +985,19 @@ describe("db schema declarative sync integration", () => {
       expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
         true,
       );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("fails on an unknown --stack before planning on the stack backend", () => {
+    const s = setup(tmp.current, { experimental: true, stackBackend: true, stack: "typo" });
+    return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
+      /* `--no-apply` never connects to the local database, so only the up-front check can fail. */
+      const error = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(false) })).pipe(
+        Effect.flip,
+      );
+      expect(error.message).toBe('The local stack "typo" does not exist for this project.');
+      expect(s.dbConnectPorts).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 

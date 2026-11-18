@@ -13,6 +13,10 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  STACK_SELECTOR_FLAGS,
+  STACK_SELECTOR_FLAG_NAMES,
+} from "../../../command-internal/stack-target.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -35,6 +39,29 @@ export type DbAdvisorsFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
   Command.withDescription("Checks database for security and performance issues."),
   Command.withShortDescription("Checks database for security and performance issues"),
+  Command.withHandler((flags) =>
+    dbAdvisors(flags).pipe(
+      withCommandTelemetry({
+        flags: {
+          type: flags.type,
+          level: flags.level,
+          "fail-on": flags.failOn,
+        },
+        // type/level/fail-on are auto-detected as safe via `config` below.
+        config,
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(dbAdvisorsRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "its transaction is always rolled back",
+  }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
   withPermissions(
     compose(
       {
@@ -60,33 +87,11 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
             when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
           },
         ],
-        noApiEffectFlags: ["level", "fail-on"],
+        noApiEffectFlags: ["level", "fail-on", ...STACK_SELECTOR_FLAG_NAMES],
       },
       withCondition(projectRefPicker, { dbTarget: ["linked"] }),
       withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       branchResolution,
     ),
   ),
-  Command.withHandler((flags) =>
-    dbAdvisors(flags).pipe(
-      withCommandTelemetry({
-        flags: {
-          type: flags.type,
-          level: flags.level,
-          "fail-on": flags.failOn,
-        },
-        // type/level/fail-on are auto-detected as safe via `config` below.
-        config,
-      }),
-      withJsonErrorHandling,
-    ),
-  ),
-  Command.provide(dbAdvisorsRuntimeLayer),
-  Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(config),
-  withTargetPolicy({
-    group: "selectable",
-    consent: "none",
-    consentExemptReason: "its transaction is always rolled back",
-  }),
 );

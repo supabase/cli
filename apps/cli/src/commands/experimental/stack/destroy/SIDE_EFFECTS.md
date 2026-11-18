@@ -5,10 +5,12 @@ owned database data, Storage upload files, port claims, and attached jobs. The e
 
 ## Selection and confirmation
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
-The selectors are mutually exclusive; a missing target fails. `--stack-id` repeats
-to select several stacks; every id resolves before confirmation, so ids that are not
-found fail together, each named, before anything is destroyed, and ids naming the
+Select the current project/branch stack, or `--stack <name or id>`: a stack name of this
+project and branch first, else an ID or unique ID prefix from any checkout. `SUPABASE_STACK`
+stands in for the flag, but as an ID it only selects a stack of the current project, and only an
+explicit full `--stack` ID selects a deleted stack's leftover containers. A missing target fails.
+`--stack` repeats to select several stacks; every value resolves before confirmation, so values
+that are not found fail together, each named, before anything is destroyed, and values naming the
 same stack select it once.
 Explicit legacy `-o/--output` is rejected in favor of `--output-format`.
 
@@ -18,7 +20,7 @@ data are destroyed. Rejection or cancellation
 does not open or destroy a stack. Discovery may create/chmod the registry directory
 to 0700 but does not launch an owner.
 
-A full `--stack-id` that is not registered under the state root makes destroy
+A full `--stack` ID that no saved stack matches makes destroy
 list stack-labelled containers on Docker and Podman before confirming; an engine
 that is not installed or not running is skipped. When containers labelled with
 that id and its data root there remain on either engine, for example because its
@@ -51,7 +53,7 @@ shutdown is refused.
 When no owner is running and the engine reports that its daemon cannot be
 reached, destruction removes nothing: the registration, port claims and host
 data stay as they are, and the command exits 1 with one error whose suggestion
-gives the exact `supabase stack destroy --stack-id <id> --yes` command to run
+gives the exact `supabase stack destroy --stack <id> --yes` command to run
 once the engine is reachable. Any other engine failure, an owner starting during
 destruction, an instance whose data (including a native database's socket
 directory) cannot be removed, or a labelled container that survives removal,
@@ -90,7 +92,7 @@ deleting data; its configured ports are released with their listeners.
 
 Text prints `Stack <id> destroyed.` (`Removed the containers stack <id> left behind.`
 for a deleted stack's containers). JSON and stream-json success data contain
-`destroyed` (`true`) and `id`. More than one `--stack-id` flag, even when they name
+`destroyed` (`true`) and `id`. More than one `--stack` flag, even when they name
 one stack, instead reports `destroyed` (`true`) and `stacks`, one `id` entry per
 stack; when any of them fails, the command fails once with each failed stack in the
 error detail and a suggestion that retries them (after starting the engine when it
@@ -102,7 +104,7 @@ or cleanup failure, and 130 on interruption. A saved stack whose state cannot be
 knows) fails with an error naming its directory under the state root; removing
 that directory discards the stack. Its leftover containers are then removed
 when a container stack next starts under the same state root or by
-`destroy --stack-id`, and its port reservations are released when another stack
+`destroy --stack <id>`, and its port reservations are released when another stack
 needs them; its data in the shared database volume is not removed. Standard command telemetry is unchanged, with no custom events.
 Telemetry flushes on success and failure to
 `<SUPABASE_HOME or ~/.supabase>/telemetry.json`.

@@ -8,11 +8,9 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 
 const config = {
   stack: Flag.String("stack").pipe(
-    Flag.withDescription("Restart a named stack (defaults to the current project stack)."),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Restart an existing stack by id or unique id prefix."),
+    Flag.withDescription(
+      "Restart a stack by name, else by ID or unique ID prefix (defaults to SUPABASE_STACK, else the current project stack).",
+    ),
     Flag.optional,
   ),
 } as const;
@@ -30,7 +28,7 @@ export const stackRestartCommand = Command.make("restart", config).pipe(
       description: "Restart the current project stack",
     },
   ]),
-  withPermissions({ operations: [], noApiEffectFlags: ["stack", "stack-id"] }),
+  withPermissions({ operations: [], noApiEffectFlags: ["stack"] }),
   Command.withHandler((flags) =>
     stackRestart(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),

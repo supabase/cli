@@ -12,11 +12,9 @@ const config = {
     Flag.optional,
   ),
   stack: Flag.String("stack").pipe(
-    Flag.withDescription("Stop the stack with this name (defaults to the current project stack)."),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Stop an existing stack by id or unique id prefix."),
+    Flag.withDescription(
+      "Stop a stack by name, else by ID or unique ID prefix (defaults to SUPABASE_STACK, else the current project stack).",
+    ),
     Flag.optional,
   ),
 } as const;
@@ -32,7 +30,7 @@ export const stackStopCommand = Command.make("stop", config).pipe(
       description: "Stop the existing feature-a stack",
     },
   ]),
-  withPermissions({ operations: [], noApiEffectFlags: ["all", "stack", "stack-id"] }),
+  withPermissions({ operations: [], noApiEffectFlags: ["all", "stack"] }),
   Command.withHandler((flags) =>
     stackStop(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
