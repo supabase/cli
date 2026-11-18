@@ -641,6 +641,82 @@ describe("deriveApiCommands", () => {
       expect(result.problems).toEqual([]);
     });
 
+    describe("explicit readiness waits", () => {
+      const read = {
+        read: "get-thing",
+        params: { thing_id: "/data/id" },
+        ...poll,
+        matches: ["/data/id"],
+        present: ["/data/attributes/status"],
+      };
+      const wait = {
+        ...read,
+        description: "Wait for readiness.",
+        checks: [{ ...read, read: "get-other" }],
+      };
+      const response = {
+        ...readSchema,
+        required: ["data"],
+        properties: {
+          data: {
+            ...readSchema.properties.data,
+            required: ["id"],
+            properties: { id: { type: "string" }, ...readSchema.properties.data.properties },
+          },
+        },
+      };
+      const readiness = (mapping: unknown, others: Record<string, unknown> = {}) =>
+        derive({
+          "create-thing": operation({
+            "x-operation": { group: "thing", method: "create", wait: mapping },
+            responses: changeResponse({}, requiredChain),
+          }),
+          "get-thing": readOf({ group: "thing", method: "get" }, jsonResponse(response)),
+          "get-other": readOf({ group: "thing", method: "status" }, jsonResponse(response)),
+          ...others,
+        });
+
+      it("derives multiple guarded reads without enabling polling on standalone reads", () => {
+        const result = readiness(wait);
+        expect(result.problems).toEqual([]);
+        expect(waitOf(result)).toEqual(wait);
+        expect(
+          result.entries
+            .filter((entry) => entry.readOnly)
+            .every((entry) => entry.wait === undefined),
+        ).toBe(true);
+      });
+
+      it.each([
+        [
+          "non-read target",
+          { ...wait, checks: [{ ...read, read: "create-thing" }] },
+          "must use GET",
+        ],
+        ["missing binding", { ...wait, params: { bogus: "/data/id" } }, 'wait.params "bogus"'],
+        ["missing match", { ...wait, matches: ["/data/missing"] }, "wait.matches"],
+        ["missing presence field", { ...wait, present: ["/data/missing"] }, "wait.present"],
+        [
+          "unknown read",
+          { ...wait, checks: [{ ...read, read: "get-unknown" }] },
+          "must be a generated operation",
+        ],
+      ])("rejects readiness metadata with %s", (_label, mapping, error) => {
+        expect(readiness(mapping).problems.join("\n")).toContain(error);
+      });
+
+      it("rejects an explicit wait combined with a linked wait", () => {
+        const result = readiness(wait, {
+          "create-thing": operation({
+            "x-operation": { group: "thing", method: "create", wait },
+            responses: changeResponse(link({ thing_id: "$response.body#/data/id" })),
+          }),
+          "get-thing": readWith(poll, jsonResponse(response)),
+        });
+        expect(result.problems.join("\n")).toContain("explicit wait cannot be combined");
+      });
+    });
+
     it("ignores a link whose target has no poll", () => {
       const result = derive({
         "create-thing": changeThing(link({})),

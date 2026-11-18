@@ -55,6 +55,7 @@ import type { ApiCommandEntry } from "./api-command.model.ts";
 import { assembleInput, decodeInput, previewRequest } from "./api-command-request.ts";
 import { apiCommands } from "./generated.ts";
 import { readApiCommand } from "./api-command.annotation.ts";
+import { readPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { withApiCommands } from "./runtime.ts";
 import { standardFailureFor } from "../../shared/cli/standard-errors.ts";
@@ -575,13 +576,219 @@ describe("generated warehouse commands", () => {
       },
     );
 
+    const acceptedLayout = {
+      data: {
+        type: "warehouse_table_layout",
+        id: "16385",
+        attributes: {
+          pipeline_id: "pipeline-1",
+          schema: "public",
+          name: "events",
+          desired: body.data.attributes,
+          application_status: "runtime_updated",
+          reset_table: true,
+          observation_status: "not_requested",
+          observed: null,
+        },
+      },
+    };
+    const layoutRead = (attributes: Record<string, unknown> = {}) => ({
+      data: {
+        ...acceptedLayout.data,
+        attributes: {
+          ...acceptedLayout.data.attributes,
+          desired: { partition_by: [], sort_by: { kind: "primary_key" } },
+          application_status: "configured",
+          reset_table: false,
+          observation_status: "observed",
+          observed: { sort_by: [], partition_by: [], observed_at: "2026-11-18T14:00:00Z" },
+          ...attributes,
+        },
+      },
+    });
+    const tablePath = `/v2/projects/${VALID_REF}/warehouse/tables/16385`;
+    const tableRead = (status: string) => ({
+      data: {
+        type: "warehouse_table",
+        id: "16385",
+        attributes: {
+          schema: "public",
+          name: "events",
+          status,
+          replication_state: status === "live" ? "following_wal" : "copying_table",
+        },
+      },
+    });
+    const readinessRoute = (
+      layouts: ReadonlyArray<unknown>,
+      statuses: ReadonlyArray<string>,
+    ): Route => {
+      let layoutIndex = 0;
+      let tableIndex = 0;
+      return (request) => {
+        if (request.method === "PATCH") return { status: 202, body: acceptedLayout };
+        if (request.path === layoutPath)
+          return { status: 200, body: layouts[Math.min(layoutIndex++, layouts.length - 1)] };
+        if (request.path === tablePath)
+          return {
+            status: 200,
+            body: tableRead(statuses[Math.min(tableIndex++, statuses.length - 1)] ?? "unknown"),
+          };
+        throw new Error(`Unexpected request: ${request.method} ${request.path}`);
+      };
+    };
+    const waitArgs = [...argv, "--body", encodeJson(body), "--reset-table", "--wait"];
+
+    it("declares both readiness reads as permissions needed only with --wait", () => {
+      const command = commandTreeFor({ apiFeatures: ["warehouse"] }).get(
+        "warehouse tables layout update",
+      )?.command;
+      expect(command).toBeDefined();
+      if (command === undefined) return;
+      const permissions = Option.getOrUndefined(readPermissions(command));
+      expect(permissions?.status).toBe("mapped");
+      if (permissions?.status !== "mapped") return;
+      expect(permissions.operations).toEqual(
+        expect.arrayContaining([
+          {
+            operationId: "v2-get-warehouse-table-layout",
+            kind: "required",
+            when: [{ flag: "wait", is: true }],
+          },
+          {
+            operationId: "v2-get-warehouse-table",
+            kind: "required",
+            when: [{ flag: "wait", is: true }],
+          },
+        ]),
+      );
+    });
+
+    it.effect(
+      "waits for catalog availability and a live table, rechecking readiness before printing the final layout",
+      () => {
+        const final = layoutRead({ future_field: { kept: true } });
+        const { sent, out, run } = setup(waitArgs, {
+          yes: true,
+          route: readinessRoute(
+            [
+              layoutRead({ observation_status: "unavailable", observed: null }),
+              layoutRead({ observed: null }),
+              layoutRead(),
+              layoutRead({ observation_status: "table_missing", observed: null }),
+              layoutRead(),
+              final,
+            ],
+            ["syncing", "live", "live", "live"],
+          ),
+        });
+        return Effect.gen(function* () {
+          const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+          yield* driveClock(fiber);
+          yield* Fiber.join(fiber);
+          expect(sent.filter((request) => request.method === "PATCH")).toHaveLength(1);
+          expect(
+            sent.filter((request) => request.method === "GET" && request.path === tablePath),
+          ).toHaveLength(4);
+          expect(
+            sent.filter((request) => request.method === "GET" && request.path === layoutPath),
+          ).toHaveLength(6);
+          expect(decodeJson(out.stdoutText)).toEqual(final);
+        });
+      },
+    );
+
+    it.effect.each([
+      { pipeline_id: "replacement-pipeline" },
+      { desired: { sort_by: { kind: "none" }, partition_by: [] } },
+      { schema: "renamed" },
+    ])("fails if the layout changes after the table was observed live: %j", (drift) => {
+      const { sent, run } = setup(waitArgs, {
+        yes: true,
+        route: readinessRoute([layoutRead(), layoutRead(drift)], ["live"]),
+      });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toBeInstanceOf(ApiCommandOperationFailedError);
+        expect(failure).toMatchObject({
+          status: "state_changed",
+          hint: expect.stringContaining("tables layout get 16385"),
+        });
+        expect(sent.filter((request) => request.method === "PATCH")).toHaveLength(1);
+      });
+    });
+
+    it.effect(
+      "fails on a replication error even while the layout observation is unavailable",
+      () => {
+        const { sent, run } = setup(waitArgs, {
+          yes: true,
+          route: readinessRoute(
+            [layoutRead({ observation_status: "unavailable", observed: null })],
+            ["error"],
+          ),
+        });
+        return Effect.gen(function* () {
+          expect(failureOf(yield* Effect.exit(run))).toMatchObject({
+            _tag: "ApiCommandOperationFailedError",
+            status: "error",
+            hint: expect.stringContaining("tables get 16385"),
+          });
+          expect(sent.filter((request) => request.method === "PATCH")).toHaveLength(1);
+        });
+      },
+    );
+
+    it.effect.each(["stopped", "unknown", "syncing"])(
+      "times out on table status %s without resubmitting the update",
+      (status) => {
+        const { sent, run } = setup([...waitArgs, "--timeout", "10s"], {
+          yes: true,
+          route: readinessRoute([layoutRead()], [status]),
+        });
+        return Effect.gen(function* () {
+          const fiber = yield* run.pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+          yield* driveClock(fiber);
+          expect(failureOf(yield* Fiber.join(fiber))).toMatchObject({
+            _tag: "ApiCommandWaitTimeoutError",
+            timeoutMillis: 10000,
+            lastStatus: expect.stringContaining(`v2-get-warehouse-table: ${status}`),
+            hint: expect.stringContaining("tables get 16385"),
+          });
+          expect(sent.filter((request) => request.method === "PATCH")).toHaveLength(1);
+        });
+      },
+    );
+
+    it.effect("stops on a table-read API error without resubmitting the update", () => {
+      const route = readinessRoute([layoutRead()], ["live"]);
+      const { sent, run } = setup(waitArgs, {
+        yes: true,
+        route: (request) =>
+          request.path === tablePath
+            ? { status: 404, body: { error: { code: "not_found", message: "Table removed" } } }
+            : route(request),
+      });
+      return Effect.gen(function* () {
+        expect(failureOf(yield* Effect.exit(run))).toMatchObject({
+          _tag: "ApiCommandStatusError",
+          status: 404,
+        });
+        expect(sent.filter((request) => request.method === "PATCH")).toHaveLength(1);
+        expect(sent.filter((request) => request.path === tablePath)).toHaveLength(1);
+      });
+    });
+
     it.effect(
       "previews an explicit clear while preserving omitted settings without sending a request",
       () => {
         const clear = { data: { type: "warehouse_table_layout", attributes: { sort_by: null } } };
-        const { sent, out, run } = setup([...argv, "--body", encodeJson(clear), "--dry-run"], {
-          route: accepted,
-        });
+        const { sent, out, run } = setup(
+          [...argv, "--body", encodeJson(clear), "--dry-run", "--wait"],
+          {
+            route: accepted,
+          },
+        );
         return Effect.gen(function* () {
           yield* run;
           expect(sent).toEqual([]);

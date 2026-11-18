@@ -336,6 +336,37 @@ export const apiCommands = [
         flag: "reset-table",
       },
     ],
+    wait: {
+      status: "/data/attributes/observation_status",
+      succeeded: ["observed"],
+      failed: [],
+      read: "v2-get-warehouse-table-layout",
+      params: {
+        table_id: "/data/id",
+      },
+      matches: [
+        "/data/attributes/desired",
+        "/data/attributes/name",
+        "/data/attributes/pipeline_id",
+        "/data/attributes/schema",
+        "/data/id",
+      ],
+      present: ["/data/attributes/observed"],
+      description:
+        "Wait for the accepted layout to remain saved, a catalog observation to be available, and the table to be live. Checks readiness, not catalog convergence or completion of this specific update.",
+      checks: [
+        {
+          status: "/data/attributes/status",
+          succeeded: ["live"],
+          failed: ["error"],
+          read: "v2-get-warehouse-table",
+          params: {
+            table_id: "/data/id",
+          },
+          matches: ["/data/attributes/name", "/data/attributes/schema", "/data/id"],
+        },
+      ],
+    },
   },
   {
     command: ["warehouse", "tables", "list"],

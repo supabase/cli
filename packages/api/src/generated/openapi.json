@@ -1121,7 +1121,7 @@
     },
     "/v1/oauth/token": {
       "post": {
-        "description": "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.\n\nThis endpoint is currently in its **Beta** stage.",
+        "description": "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG \u2014 identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.\n\nThis endpoint is currently in its **Beta** stage.",
         "operationId": "v1-exchange-oauth-token",
         "parameters": [],
         "requestBody": {
@@ -6638,7 +6638,7 @@
         "x-fga-permissions": [["infra_add_ons_read"]]
       },
       "patch": {
-        "description": "Selects an addon variant, for example scaling the project’s compute instance up or down, and applies it to the project.",
+        "description": "Selects an addon variant, for example scaling the project\u2019s compute instance up or down, and applies it to the project.",
         "operationId": "v1-apply-project-addon",
         "parameters": [
           {
@@ -13260,7 +13260,7 @@
     },
     "/v2/projects/{ref}/config": {
       "get": {
-        "description": "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration \u2014 the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-get-project-config",
         "parameters": [
           {
@@ -13350,7 +13350,7 @@
     },
     "/v2/projects/{ref}/notebooks": {
       "get": {
-        "description": "Returns a cursor-paginated list of the project notebooks. Notebook bodies are omitted — read a single notebook to get its cells.",
+        "description": "Returns a cursor-paginated list of the project notebooks. Notebook bodies are omitted \u2014 read a single notebook to get its cells.",
         "operationId": "v2-list-notebooks",
         "parameters": [
           {
@@ -14714,7 +14714,7 @@
     },
     "/v2/projects/{ref}/compute/{name}/uploads": {
       "post": {
-        "description": "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage \u2014 no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-create-compute-instance-upload",
         "parameters": [
           {
@@ -33365,7 +33365,37 @@
         "x-oauth-scope": "database:write",
         "x-operation": {
           "group": "warehouse.tables.layout",
-          "method": "update"
+          "method": "update",
+          "wait": {
+            "checks": [
+              {
+                "failed": ["error"],
+                "matches": ["/data/attributes/name", "/data/attributes/schema", "/data/id"],
+                "params": {
+                  "table_id": "/data/id"
+                },
+                "read": "v2-get-warehouse-table",
+                "status": "/data/attributes/status",
+                "succeeded": ["live"]
+              }
+            ],
+            "description": "Wait for the accepted layout to remain saved, a catalog observation to be available, and the table to be live. Checks readiness, not catalog convergence or completion of this specific update.",
+            "failed": [],
+            "matches": [
+              "/data/attributes/desired",
+              "/data/attributes/name",
+              "/data/attributes/pipeline_id",
+              "/data/attributes/schema",
+              "/data/id"
+            ],
+            "params": {
+              "table_id": "/data/id"
+            },
+            "present": ["/data/attributes/observed"],
+            "read": "v2-get-warehouse-table-layout",
+            "status": "/data/attributes/observation_status",
+            "succeeded": ["observed"]
+          }
         },
         "x-scalar-stability": "experimental"
       }

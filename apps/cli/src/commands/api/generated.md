@@ -117,6 +117,20 @@ Updates saved sorting and partitioning rules for one source table OID. Omitted s
 | --------------- | ------- | -------- | ---------- | ----------------------------------- |
 | `--reset-table` | boolean | no       | no         | body `/data/attributes/reset_table` |
 
+### Wait
+
+Wait for the accepted layout to remain saved, a catalog observation to be available, and the table to be live. Checks readiness, not catalog convergence or completion of this specific update.
+
+- Polls: `GET /v2/projects/{ref}/warehouse/tables/{table_id}/layout` (`v2-get-warehouse-table-layout`).
+- Read parameters from the change response: `table_id` from `/data/id`.
+- Status at `/data/attributes/observation_status`; succeeded: `observed`; failed: .
+- Must still match the accepted response at: `/data/attributes/desired`, `/data/attributes/name`, `/data/attributes/pipeline_id`, `/data/attributes/schema`, `/data/id`.
+- Requires a non-null value at: `/data/attributes/observed`.
+- Also polls `v2-get-warehouse-table`: status at `/data/attributes/status`; succeeded: `live`; failed: `error`.
+  Must still match the accepted response at: `/data/attributes/name`, `/data/attributes/schema`, `/data/id`.
+- Rechecks the primary read after all checks succeed; returns that final read. These separate reads are not an atomic observation.
+- Failure hint names `supabase warehouse tables layout get <table_id> --remote=<ref>`.
+
 ## `supabase warehouse tables list`
 
 List tables replicated to Warehouse

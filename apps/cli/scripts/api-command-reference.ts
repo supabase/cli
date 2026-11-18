@@ -102,6 +102,7 @@ const waitSection = (
   return [
     "### Wait",
     "",
+    ...(wait.description === undefined ? [] : [wait.description, ""]),
     `- Polls: ${polledRoute} (${code(wait.read)}${publicRead === undefined ? ", poll-only read" : publicRead.operationId === entry.operationId ? ", the command's own read" : ""}).`,
     ...(params.length === 0
       ? []
@@ -112,6 +113,23 @@ const waitSection = (
         ]),
     `- Status at ${code(wait.status)}; succeeded: ${wait.succeeded.map(code).join(", ")}; failed: ${wait.failed.map(code).join(", ")}.`,
     ...(wait.error === undefined ? [] : [`- Failure message from ${code(wait.error)}.`]),
+    ...(wait.matches === undefined
+      ? []
+      : [`- Must still match the accepted response at: ${wait.matches.map(code).join(", ")}.`]),
+    ...(wait.present === undefined
+      ? []
+      : [`- Requires a non-null value at: ${wait.present.map(code).join(", ")}.`]),
+    ...(wait.checks ?? []).flatMap((check) => [
+      `- Also polls ${code(check.read)}: status at ${code(check.status)}; succeeded: ${check.succeeded.map(code).join(", ")}; failed: ${check.failed.map(code).join(", ")}.`,
+      ...(check.matches === undefined
+        ? []
+        : [`  Must still match the accepted response at: ${check.matches.map(code).join(", ")}.`]),
+    ]),
+    ...((wait.checks?.length ?? 0) === 0
+      ? []
+      : [
+          "- Rechecks the primary read after all checks succeed; returns that final read. These separate reads are not an atomic observation.",
+        ]),
     `- Failure hint names ${code(failureHintCommand(entry, wait, input))}.`,
   ];
 };

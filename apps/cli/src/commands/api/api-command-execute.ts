@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { OperationId, OperationInput } from "@supabase/api/effect";
 import { operationPermissions } from "@supabase/api/permissions";
 import { Duration, Effect, Option, Predicate, Ref, Schedule, Schema } from "effect";
@@ -17,7 +18,12 @@ import {
   ApiCommandStatusError,
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
-import type { ApiCommandEntry, ApiCommandWait, ApiPollRead } from "./api-command.model.ts";
+import type {
+  ApiCommandEntry,
+  ApiCommandWait,
+  ApiCommandWaitRead,
+  ApiPollRead,
+} from "./api-command.model.ts";
 
 const POLL_BASE_DELAY = "1 second";
 const POLL_MAX_DELAY_MILLIS = 10_000;
@@ -196,6 +202,11 @@ export const writeApiResponse = Effect.fnUntraced(function* (
 
 interface WaitInput {
   readonly wait: ApiCommandWait;
+  readonly changed?: ApiCommandResponse | undefined;
+  readonly checks?: ReadonlyArray<{
+    readonly wait: ApiCommandWaitRead;
+    readonly readEntry: ApiCommandEntry;
+  }>;
   /** The operation the wait polls; its decoded input is `readInput`. */
   readonly readEntry: ApiPollRead;
   /** The command to name in a failure hint: the read's own, or the one that inspects a poll-only read. */
@@ -211,6 +222,7 @@ interface WaitInput {
 export interface PollOutcome {
   readonly done: boolean;
   readonly response: ApiCommandResponse;
+  readonly responses?: ReadonlyArray<ApiCommandResponse>;
 }
 
 /** The delay a `Retry-After` header asks for, as delta-seconds or an HTTP date. */
@@ -229,7 +241,9 @@ export const pollSchedule = Schedule.exponential(POLL_BASE_DELAY).pipe(
     Effect.succeed(
       Math.max(
         Math.min(Duration.toMillis(duration), POLL_MAX_DELAY_MILLIS),
-        retryAfterMillis(input.response.headers, now) ?? 0,
+        ...[input.response, ...(input.responses ?? [])].map(
+          (response) => retryAfterMillis(response.headers, now) ?? 0,
+        ),
       ),
     ),
   ),
@@ -240,8 +254,27 @@ const failureReason = (reason: unknown): string | undefined => {
   return sanitizeErrorBody(typeof reason === "string" ? reason : encodeJsonValue(reason));
 };
 
-const classify = (wait: ApiCommandWait, response: ApiCommandResponse, statusHint: string) => {
+const classify = (
+  wait: ApiCommandWaitRead,
+  response: ApiCommandResponse,
+  statusHint: string,
+  changed?: unknown,
+) => {
   const body = parseResponse(response);
+  for (const pointer of wait.matches ?? []) {
+    const expected = readPointer(changed, pointer);
+    const actual = readPointer(body, pointer);
+    if (expected === undefined || actual === undefined || !isDeepStrictEqual(expected, actual)) {
+      return Effect.fail(
+        new ApiCommandOperationFailedError({
+          status:
+            expected === undefined || actual === undefined ? "invalid_response" : "state_changed",
+          message: `The ${wait.read} response no longer matches the accepted update at ${pointer}.`,
+          hint: statusHint,
+        }),
+      );
+    }
+  }
   const status = readPointer(body, wait.status);
   if (typeof status === "string" && wait.failed.includes(status)) {
     const reason =
@@ -254,7 +287,13 @@ const classify = (wait: ApiCommandWait, response: ApiCommandResponse, statusHint
       }),
     );
   }
-  const done = typeof status === "string" && wait.succeeded.includes(status);
+  const done =
+    typeof status === "string" &&
+    wait.succeeded.includes(status) &&
+    (wait.present ?? []).every((pointer) => {
+      const value = readPointer(body, pointer);
+      return value !== undefined && value !== null;
+    });
   return Effect.succeed<PollOutcome>({ done, response });
 };
 
@@ -284,7 +323,7 @@ const statusCommand = (
  * is a defect.
  */
 export const linkedReadInput = Effect.fnUntraced(function* (input: {
-  readonly wait: ApiCommandWait;
+  readonly wait: ApiCommandWaitRead;
   /** The operation that produced `changed`. */
   readonly changedOperationId: string;
   readonly ref: string;
@@ -316,24 +355,73 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
   const decoded = yield* Schema.decodeEffect(definitionOf(readEntry).inputSchema, {
     onExcessProperty: "error",
   })(readInput).pipe(Effect.orDie);
+  const changed = input.changed === undefined ? undefined : parseResponse(input.changed);
+  const checks = yield* Effect.forEach(input.checks ?? [], (check) =>
+    Effect.gen(function* () {
+      if (input.changed === undefined)
+        return yield* Effect.die("Readiness checks require a mutation response.");
+      const readInput = yield* linkedReadInput({
+        wait: check.wait,
+        changedOperationId: "mutation",
+        ref: input.ref,
+        changed: input.changed,
+      });
+      const decoded = yield* Schema.decodeEffect(definitionOf(check.readEntry).inputSchema, {
+        onExcessProperty: "error",
+      })(readInput).pipe(Effect.orDie);
+      return { ...check, readInput, decoded };
+    }),
+  );
   const statusInput = input.statusEntry.operationId === readEntry.operationId ? readInput : {};
-  const hint = `Check it with \`${statusCommand(input.statusEntry, input.ref, statusInput)}\`.`;
+  const commands = [
+    statusCommand(input.statusEntry, input.ref, statusInput),
+    ...checks.map((check) => statusCommand(check.readEntry, input.ref, check.readInput)),
+  ];
+  const hint = `Check it with ${commands.map((command) => `\`${command}\``).join(" and ")}.`;
   const attempts = yield* Ref.make(0);
   const lastStatus = yield* Ref.make<string | null>(null);
 
-  const poll = Ref.update(attempts, (count) => count + 1).pipe(
-    Effect.andThen(sendApiRequest(readEntry, decoded)),
-    Effect.tap((response) => {
-      const status = readPointer(parseResponse(response), wait.status);
-      return Ref.set(lastStatus, typeof status === "string" ? status : null);
-    }),
-    Effect.flatMap((response) => classify(wait, response, hint)),
-    Effect.tap(({ response }) => {
-      const status = readPointer(parseResponse(response), wait.status);
-      return input.onPoll?.(typeof status === "string" ? status : undefined) ?? Effect.void;
-    }),
-    Effect.withTracerEnabled(false),
-  );
+  const poll = Effect.gen(function* () {
+    yield* Ref.update(attempts, (count) => count + 1);
+    const read = Effect.fnUntraced(function* (
+      mapping: ApiCommandWaitRead,
+      entry: ApiPollRead,
+      decodedInput: OperationInput<OperationId>,
+    ) {
+      const response = yield* sendApiRequest(entry, decodedInput);
+      return yield* classify(mapping, response, hint, changed);
+    });
+    let primary = yield* read(wait, readEntry, decoded);
+    const outcomes = yield* Effect.forEach(checks, (check) =>
+      read(check.wait, check.readEntry, check.decoded),
+    );
+    const responses = [primary.response, ...outcomes.map((outcome) => outcome.response)];
+    if (checks.length > 0 && primary.done && outcomes.every((outcome) => outcome.done)) {
+      // Separate reads cannot be atomic; recheck the guarded resource after its dependencies.
+      primary = yield* read(wait, readEntry, decoded);
+    }
+    const statuses = [primary, ...outcomes].map((outcome, index) => {
+      const mapping = index === 0 ? wait : checks[index - 1]?.wait;
+      const status =
+        mapping === undefined
+          ? undefined
+          : readPointer(parseResponse(outcome.response), mapping.status);
+      const label = typeof status === "string" ? status : "unavailable";
+      return checks.length === 0
+        ? typeof status === "string"
+          ? status
+          : null
+        : `${mapping?.read}: ${label}`;
+    });
+    const status = checks.length === 0 ? (statuses[0] ?? null) : statuses.join("; ");
+    yield* Ref.set(lastStatus, status);
+    yield* input.onPoll?.(status ?? undefined) ?? Effect.void;
+    return {
+      done: primary.done && outcomes.every((outcome) => outcome.done),
+      response: primary.response,
+      responses,
+    };
+  }).pipe(Effect.withTracerEnabled(false));
 
   const outcome = yield* poll.pipe(
     Effect.repeat({ schedule: pollSchedule, until: (result) => result.done }),

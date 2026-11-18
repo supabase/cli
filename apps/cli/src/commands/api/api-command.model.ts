@@ -55,8 +55,8 @@ export interface ApiCommandFlag {
   readonly description?: string;
 }
 
-/** What `--wait` polls after a change and when it is done. */
-export interface ApiCommandWait {
+/** One read and the conditions that allow a wait to finish. */
+export interface ApiCommandWaitRead {
   /** Operation id of the read operation to poll; the command's own when it polls itself. */
   readonly read: string;
   /** Read parameter name to JSON pointer into the change response. */
@@ -67,6 +67,16 @@ export interface ApiCommandWait {
   readonly failed: readonly string[];
   /** JSON pointer to the failure reason in the read response. */
   readonly error?: string;
+  /** Response pointers that must still equal the accepted mutation response. */
+  readonly matches?: readonly string[];
+  /** Response pointers that must be non-null before this read is ready. */
+  readonly present?: readonly string[];
+}
+
+/** What `--wait` polls, returning the primary read after all checks succeed. */
+export interface ApiCommandWait extends ApiCommandWaitRead {
+  readonly description?: string;
+  readonly checks?: readonly ApiCommandWaitRead[];
 }
 
 /** A generated command as plain data; the runtime turns each entry into a CLI command. */
