@@ -102,7 +102,7 @@ const waitSection = (
   return [
     "### Wait",
     "",
-    `- Polls: ${polledRoute} (${code(wait.read)}${publicRead === undefined ? ", hidden poll target" : publicRead.operationId === entry.operationId ? ", the command's own read" : ""}).`,
+    `- Polls: ${polledRoute} (${code(wait.read)}${publicRead === undefined ? ", poll-only read" : publicRead.operationId === entry.operationId ? ", the command's own read" : ""}).`,
     ...(params.length === 0
       ? []
       : [

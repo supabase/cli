@@ -19,6 +19,16 @@ is resolved before the command tree is built, so `--experimental` alone does not
 commands. When the feature is disabled the noun is absent from help, completion and the generated
 command documentation.
 
+## Joining hand-written groups
+
+A generated command joins the hand-written group of the same name, at any depth, so a noun such as
+`warehouse` can sit beside hand-written `warehouse` commands. The generator fails only when a
+generated command path equals a hand-written command or group, or when a group on its path is a
+hand-written command. A hand-written group is described by its own code, so the nouns table gives a
+description only to groups the generator creates. Joining rebuilds the group, so a hand-written
+group carries only metadata (descriptions, flags, subcommands) and provides layers on each
+subcommand: a `Command.provide` on the group itself would be bypassed for every subcommand.
+
 ## Files Read
 
 | Path                                          | Format     | When                                                                               |

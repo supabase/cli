@@ -198,7 +198,7 @@ interface WaitInput {
   readonly wait: ApiCommandWait;
   /** The operation the wait polls; its decoded input is `readInput`. */
   readonly readEntry: ApiPollRead;
-  /** The command to name in a failure hint: the read's own, or the one that inspects a hidden read. */
+  /** The command to name in a failure hint: the read's own, or the one that inspects a poll-only read. */
   readonly statusEntry: ApiCommandEntry;
   /** The flat input of the read operation, as assembled from flags or the change response. */
   readonly readInput: Readonly<Record<string, unknown>>;

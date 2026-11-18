@@ -61,7 +61,7 @@ Enables replication for the currently eligible tables in a schema, or the named 
 
 ### Wait
 
-- Polls: `GET /v2/projects/{ref}/warehouse/setups/current` (`v2-get-warehouse-setup`, hidden poll target).
+- Polls: `GET /v2/projects/{ref}/warehouse/setups/current` (`v2-get-warehouse-setup`, poll-only read).
 - Read parameters from the change response: `selection_id` from `/data/attributes/selection_id`.
 - Status at `/data/attributes/status`; succeeded: `succeeded`; failed: `failed`.
 - Failure message from `/data/attributes/status_error`.
