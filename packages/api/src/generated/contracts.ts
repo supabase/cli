@@ -13098,6 +13098,54 @@ export const V2DeployAComputeInstanceOutput = Schema.Struct({
     }),
   }),
 });
+export const V2DisableWarehouseInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  delete_data: Schema.optionalKey(Schema.Boolean),
+});
+export const V2DisableWarehouseOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_teardown").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      lifecycle_status: Schema.Union([
+        Schema.Literals(["disabling", "disabled", "deletion_failed"]),
+        OpenString,
+      ]),
+      delete_data: Schema.Boolean.annotate({
+        description:
+          "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+      }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
+      cleanup_error: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
+        }),
+        Schema.Null,
+      ]),
+    }),
+  }),
+});
 export const V2DownloadProjectBackupInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -14470,6 +14518,66 @@ export const V2GetWarehouseSetupOutput = Schema.Struct({
         }),
       ),
       replication_state: Schema.String,
+    }),
+  }),
+});
+export const V2GetWarehouseTeardownInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  operation_id: Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+});
+export const V2GetWarehouseTeardownOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_teardown").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      lifecycle_status: Schema.Union([
+        Schema.Literals(["disabling", "disabled", "deletion_failed"]),
+        OpenString,
+      ]),
+      delete_data: Schema.Boolean.annotate({
+        description:
+          "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+      }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
+      cleanup_error: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
+        }),
+        Schema.Null,
+      ]),
     }),
   }),
 });
@@ -19467,12 +19575,14 @@ export const openApiOperationIdMap = {
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
   "v2-deploy-a-compute-instance": "v2DeployAComputeInstance",
+  "v2-disable-warehouse": "v2DisableWarehouse",
   "v2-download-project-backup": "v2DownloadProjectBackup",
   "v2-enable-warehouse": "v2EnableWarehouse",
   "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
   "v2-get-warehouse-setup": "v2GetWarehouseSetup",
+  "v2-get-warehouse-teardown": "v2GetWarehouseTeardown",
   "v2-list-all-compute-instances": "v2ListAllComputeInstances",
   "v2-list-log-drains": "v2ListLogDrains",
   "v2-list-notebooks": "v2ListNotebooks",
@@ -22563,6 +22673,20 @@ export const operationDefinitions = {
     inputSchema: V2DeployAComputeInstanceInput,
     outputSchema: V2DeployAComputeInstanceOutput,
   },
+  v2DisableWarehouse: {
+    id: "v2DisableWarehouse",
+    description:
+      "Stops replication and removes the Warehouse publication, FDW and dependent foreign tables, reader group, catalog access and query routing asynchronously. Stored Warehouse data is retained by default. Set delete_data=true to permanently delete the managed catalog schema and dedicated Storage bucket; destination SQL and Storage write permissions are also required. Legacy shared buckets and source Postgres tables are preserved. Reader memberships are not restored on re-enablement. Safe retries return the existing cleanup identity; changing an in-progress data policy returns a conflict. Poll the linked teardown for completion or partial cleanup failures.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/warehouse",
+    pathParams: ["ref"],
+    queryParams: ["delete_data"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2DisableWarehouseInput,
+    outputSchema: V2DisableWarehouseOutput,
+  },
   v2DownloadProjectBackup: {
     id: "v2DownloadProjectBackup",
     description: "Download project backup",
@@ -22644,6 +22768,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetWarehouseSetupInput,
     outputSchema: V2GetWarehouseSetupOutput,
+  },
+  v2GetWarehouseTeardown: {
+    id: "v2GetWarehouseTeardown",
+    description:
+      "Reads the current durable cleanup state without contacting ETL or inspecting the FDW. Disabling means cleanup is in progress; disabled means cleanup completed; deletion_failed means cleanup may be partial. The original data policy and failure reason remain available. Optionally supply operation_id to observe a specific disable attempt. Returns a conflict if no cleanup state is available or the supplied identity does not match the current operation.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/teardowns/current",
+    pathParams: ["ref"],
+    queryParams: ["operation_id"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseTeardownInput,
+    outputSchema: V2GetWarehouseTeardownOutput,
   },
   v2ListAllComputeInstances: {
     id: "v2ListAllComputeInstances",
