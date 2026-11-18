@@ -18,12 +18,22 @@ export const verbVocabulary = [
 ] as const;
 
 export interface ApiNoun {
-  readonly description: string;
+  /** Help text of the noun's group; set only when no hand-written group of that name exists. */
+  readonly description?: string;
   /** Feature that gates every command under the noun. */
   readonly feature: ExperimentalFeature;
-  /** Help text of each sub-group, keyed by its dotted path below the noun, e.g. `"tables.layout"`. */
+  /**
+   * Help text of each sub-group the generator creates, keyed by its dotted path below the noun,
+   * e.g. `"tables.layout"`; a sub-group that exists in a hand-written group has no entry.
+   */
   readonly groups?: Readonly<Record<string, string>>;
 }
+
+/**
+ * Hand-written groups that wrap their own subcommands after `Command.withSubcommands`, which a
+ * generated command cannot join; each entry is a space-joined group path.
+ */
+export const sealedGroups: ReadonlySet<string> = new Set(["stack"]);
 
 /** Only these operations generate commands, and their response `links` lead to the reads a `--wait` polls. */
 export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
