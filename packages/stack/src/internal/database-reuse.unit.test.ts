@@ -13,7 +13,7 @@ const ORIOLEDB_17 = "17.11.0.002-orioledb";
 const ORIOLEDB_17_NEWER = "17.11.0.004-orioledb";
 
 const destroy =
-  "run `supabase stack destroy --stack-id stack-a` to recreate the stack — this permanently deletes its local database data";
+  "run `supabase stack destroy --stack stack-a` to recreate the stack — this permanently deletes its local database data";
 
 const messageFor = (recorded: string | undefined, requested: string) =>
   databaseIdentityMismatch(

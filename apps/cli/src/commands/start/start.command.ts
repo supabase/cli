@@ -23,6 +23,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { start } from "./start.handler.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { noStackSelectorFlags } from "../../command-internal/stack-target.ts";
 
 /**
  * A string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
@@ -99,6 +100,7 @@ export const startCommand = Command.make("start", config).pipe(
     start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(startRuntimeLayer),
+  Command.provide(noStackSelectorFlags),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "local-only", consent: "none" }),

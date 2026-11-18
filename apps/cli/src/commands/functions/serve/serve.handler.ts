@@ -6,6 +6,7 @@ import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { serveFunctions, type FunctionsServeFlags } from "../../../shared/functions/serve.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { rejectStackSelectorOnLegacy } from "../../../command-internal/stack-target.ts";
 import { functionsServeStack } from "./serve.stack.handler.ts";
 
 export const functionsServe = Effect.fn("functions.serve")(function* (flags: FunctionsServeFlags) {
@@ -19,14 +20,19 @@ export const functionsServe = Effect.fn("functions.serve")(function* (flags: Fun
   const networkId = yield* NetworkIdFlag;
   const path = yield* Path.Path;
 
-  yield* serveFunctions(flags, {
-    projectRoot: cliSettings.workdir,
-    supabaseDir: path.join(cliSettings.workdir, "supabase"),
-    flagCwd: runtimeInfo.cwd,
-    platform: runtimeInfo.platform,
-    debug,
-    networkId,
-    projectIdOverride: cliSettings.projectId,
-    localConfigLoader: functionsLocalConfigLoader,
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  yield* rejectStackSelectorOnLegacy.pipe(
+    Effect.andThen(
+      serveFunctions(flags, {
+        projectRoot: cliSettings.workdir,
+        supabaseDir: path.join(cliSettings.workdir, "supabase"),
+        flagCwd: runtimeInfo.cwd,
+        platform: runtimeInfo.platform,
+        debug,
+        networkId,
+        projectIdOverride: cliSettings.projectId,
+        localConfigLoader: functionsLocalConfigLoader,
+      }),
+    ),
+    Effect.ensuring(telemetryState.flush),
+  );
 });

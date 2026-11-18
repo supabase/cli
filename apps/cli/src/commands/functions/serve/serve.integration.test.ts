@@ -55,6 +55,7 @@ import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
+import { noStackSelectorFlags } from "../../../command-internal/stack-target.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
@@ -449,6 +450,7 @@ function setupServe(options: SetupOptions = {}) {
 
   const layer = Layer.mergeAll(
     cliConfigValuesTestLayer,
+    noStackSelectorFlags,
     buildTestRuntime({
       out,
       api: {

@@ -201,7 +201,7 @@ describe("database component", { timeout: 180_000 }, () => {
         const instanceRoot = path.join(root, "database");
         const orioledbConfig: PinnedDatabaseConfig = { ...config, pin: orioledb };
         const recreate =
-          "run `supabase stack destroy --stack-id database-line-test` to recreate the stack — this permanently deletes its local database data";
+          "run `supabase stack destroy --stack database-line-test` to recreate the stack — this permanently deletes its local database data";
         yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
         yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
         expect((yield* Effect.flip(prepare(orioledbConfig))).message).toContain(

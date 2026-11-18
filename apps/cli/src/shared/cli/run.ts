@@ -118,8 +118,7 @@ export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, Allowe
 
 // Global flags that consume their following argv token as a value; missing one here would make
 // `extractCommandPath` mistake its value for a command-path segment, and leave scanners below
-// unable to skip past it. Derived from `PERSISTENT_VALUE_FLAG_NAMES` so the two registries can't
-// drift apart.
+// unable to skip past it. See `GLOBAL_VALUE_FLAG_TOKENS` for what it holds.
 //
 // `extractCommandPath` treats a recognized bare boolean literal (`--debug false`) as consuming a
 // token too, but `rootFlagTokens`/`firstPositionalIndex` keep the stricter rule that a bare

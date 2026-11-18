@@ -18,8 +18,8 @@ export const filteredLogsSql = Effect.fnUntraced(function* (
   flags: LogsFlags,
   computeEnabled: boolean,
 ) {
-  if (Option.isSome(flags.stack) || Option.isSome(flags.stackId))
-    return yield* new LogsInputError({ message: "--stack and --stack-id are local selectors." });
+  if (Option.isSome(flags.stack))
+    return yield* new LogsInputError({ message: "--stack is a local selector." });
   const enabledSources = hostedSources.filter(
     (entry) => computeEnabled || entry.service !== "compute",
   );
