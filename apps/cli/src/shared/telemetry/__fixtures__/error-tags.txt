@@ -219,7 +219,6 @@ DockerRemoveAllStopError
 DockerRemoveAllVolumePruneError
 DockerResourceCreateError
 DockerRunError
-DocsExamplesError
 DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError

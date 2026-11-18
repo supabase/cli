@@ -32,7 +32,6 @@ const spec = buildDocsSpec({
   root: rootCommand,
   version: resolveVersion(),
   overlays: content.overlays,
-  examples: content.examples,
 });
 
 process.stdout.write(stringifyDocsSpec(spec));

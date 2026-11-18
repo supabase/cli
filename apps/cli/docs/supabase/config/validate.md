@@ -88,10 +88,3 @@ repos:
         files: ^supabase/config\.(toml|jsonc?)$
         pass_filenames: false
 ```
-
-```sh
-supabase config validate
-supabase config validate --workdir path/to/project
-supabase config validate --output-format json
-supabase config validate --resolve-env
-```
