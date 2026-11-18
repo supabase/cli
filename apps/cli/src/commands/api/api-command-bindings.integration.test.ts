@@ -81,13 +81,19 @@ const operationOf = (operationId: string): SpecOperation => {
   throw new Error(`${operationId} is not in openapi.json`);
 };
 
-/** The JSON Schema types of a node, with OpenAPI 3.0 `nullable` folded in as a `null` type. */
+/**
+ * The JSON Schema types of a node, with OpenAPI 3.0 `nullable` and a `null` union branch folded in
+ * as a `null` type.
+ */
 const typesOf = (node: Json): ReadonlyArray<string> => {
   const declared = node["type"];
   const types = (Array.isArray(declared) ? declared : declared === undefined ? [] : [declared]).map(
     String,
   );
-  return (node["nullable"] === true ? [...types, "null"] : types)
+  const nullable =
+    node["nullable"] === true ||
+    asList(node["anyOf"]).some((branch) => asRecord(branch)["type"] === "null");
+  return (nullable ? [...types, "null"] : types)
     .filter((type, index, all) => all.indexOf(type) === index)
     .toSorted((a, b) => a.localeCompare(b));
 };

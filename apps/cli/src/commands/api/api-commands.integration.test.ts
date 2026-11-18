@@ -480,6 +480,46 @@ describe("generated warehouse commands", () => {
       },
     );
   });
+  describe("warehouse tables layout get", () => {
+    const layoutPath = `/v2/projects/${VALID_REF}/warehouse/tables/16385/layout`;
+    const body = {
+      data: {
+        id: "16385",
+        type: "warehouse_table_layout",
+        attributes: {
+          schema: "public",
+          name: "events",
+          desired: {
+            sort_by: null,
+            partition_by: [{ column: "account_id", transform: { kind: "bucket", count: 16 } }],
+          },
+          observation_status: "observed",
+          observed: {
+            sort_by: [{ expression: '"created_at"', direction: "DESC", nulls: "NULLS_LAST" }],
+            partition_by: [{ column: "account_id", transform: "bucket(16)" }],
+            observed_at: "2026-11-18T09:30:00.123456Z",
+          },
+        },
+      },
+    };
+
+    it.effect("renders unmanaged desired sorting beside the observed catalog layout", () => {
+      const { out, sent, run } = setup(["warehouse", "tables", "layout", "get", "16385"], {
+        route: ok(body),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([{ method: "GET", path: layoutPath, search: "", body: undefined }]);
+        expect(out.stdoutText).toMatch(/^Warehouse table layout\n/);
+        expect(out.stdoutText).toMatch(/Desired\n\s+Sort by\s+-\n/);
+        expect(out.stdoutText).toMatch(/account_id \| \{"kind":"bucket","count":16\}/);
+        expect(out.stdoutText).toMatch(/Observation status\s+observed/);
+        expect(out.stdoutText).toMatch(/account_id \| bucket\(16\)/);
+        expect(out.stdoutText).toMatch(/Observed at\s+2026-11-18T09:30:00\.123456Z/);
+      });
+    });
+  });
   describe("warehouse connection", () => {
     const connectionPath = `/v2/projects/${VALID_REF}/warehouse/connection`;
     const host = `${VALID_REF}.warehouse.example.invalid`;

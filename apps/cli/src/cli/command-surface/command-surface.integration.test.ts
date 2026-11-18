@@ -60,6 +60,8 @@ describe("command surface", () => {
         "warehouse status",
         "warehouse tables",
         "warehouse tables get",
+        "warehouse tables layout",
+        "warehouse tables layout get",
         "warehouse tables list",
         "warehouse teardowns",
         "warehouse teardowns get",
