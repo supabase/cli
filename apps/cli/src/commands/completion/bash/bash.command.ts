@@ -21,9 +21,9 @@ export const completionBashCommand = Command.make("bash", config).pipe(
       "To load completions in your current shell session:\n\n" +
       "\tsource <(supabase completion bash)\n\n" +
       "To load completions for every new session, execute once:\n\n" +
-      "#### Linux:\n\n" +
+      "Linux:\n\n" +
       "\tsupabase completion bash > /etc/bash_completion.d/supabase\n\n" +
-      "#### macOS:\n\n" +
+      "macOS:\n\n" +
       "\tsupabase completion bash > $(brew --prefix)/etc/bash_completion.d/supabase\n\n" +
       "You will need to start a new shell for this setup to take effect.",
   ),
