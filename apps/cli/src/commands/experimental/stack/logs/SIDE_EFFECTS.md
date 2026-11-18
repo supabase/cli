@@ -7,13 +7,14 @@ starts/stops a service.
 
 ## Selection and files
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
-The selectors are mutually exclusive. By default, composition members are
+Select the current project/branch stack, or `--stack` by name, else by ID or
+unique ID prefix. `SUPABASE_STACK` stands in for `--stack`, but as an ID it only
+selects a stack of the current project. By default, composition members are
 included, plus `gateway` (the shared API port's request lines) when a member is
-served on that port. `--service <kind-or-instance-id>` is repeatable and can also select
-standalone instances or `gateway`; a value that matches no saved instance, or
-`gateway` without the shared API port, fails with status 1.
-A missing stack fails with status 1.
+served on that port. `--service <kind-or-instance-id>` is repeatable and can
+also select standalone instances or `gateway`; a value that matches no saved
+instance, or `gateway` without the shared API port, fails with status 1. A
+missing stack fails with status 1.
 
 Reads saved definitions under `<SUPABASE_HOME or ~/.supabase>/stacks/<id>/` and
 the persisted segments under

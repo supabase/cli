@@ -1,8 +1,10 @@
 # `supabase stack start`
 
-The experimental stack family and the enabled top-level `supabase start` alias use this handler.
-It creates or resumes the stack for the project and optional `--stack` name, or opens the selected
-`--stack-id`. Those selectors are mutually exclusive. Starting does not create a project config file.
+The experimental stack family and the enabled top-level `supabase start` alias use this handler. It
+opens the stack `--stack` selects by name, else by ID or unique ID prefix, or creates or resumes the
+project stack, named after a `--stack` value that matches no stack. `SUPABASE_STACK` stands in for
+`--stack`, but as an ID it only selects a stack of the current project. Starting does not create a
+project config file.
 
 ## Configuration and state
 
@@ -438,7 +440,7 @@ Text output reports progress and `Stack is ready.`, then prints the connection s
 `stack status` on stdout: API, REST, Functions, Studio, MCP, Mailpit, and database URLs for the
 members that expose them, the publishable and secret keys, the Storage S3 URL, access keys, and
 region when the S3 protocol is enabled, a services table, the runtime, and a
-pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` selector or the resolved full `--stack-id`, shell-quoted. Progress lines
+pointer to `supabase status --env` that repeats an explicit `--workdir` and the `--stack` name, or the full ID of a stack selected by ID, shell-quoted. Progress lines
 and warnings written while the spinner is shown appear on their own rows.
 
 JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint
@@ -457,7 +459,7 @@ once per API-backed service, unlike the deduplicated text message; a database ve
 moves both `db.major_version` and `db.orioledb_version` has an entry for each), each with `service`, `path` (the
 composition planner's dotted path, e.g. `endpoints.http.port`, not a `config.toml` key), `key`,
 `saved`, `requested`, and `editable`. `recreate_command` is present only when recreating the stack
-is among the suggested remedies; it is the exact `supabase stack destroy --stack-id <id>`
+is among the suggested remedies; it is the exact `supabase stack destroy --stack <id>`
 invocation, without `--yes`, since destroy deletes local database data; running it
 non-interactively or with `--output-format json`/`--output-format stream-json` requires passing
 `--yes` explicitly. It is absent when a running idle owner only needs `supabase stack stop` then

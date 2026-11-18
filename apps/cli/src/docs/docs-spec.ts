@@ -401,7 +401,10 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
     const flags: Array<DocsFlag> = [];
     if (isExecutable) {
-      const declared = flagDocsFor(commandPath, internals.config.flags);
+      const declared = flagDocsFor(commandPath, [
+        ...internals.config.flags,
+        ...userGlobalFlagParams(command),
+      ]);
       const declaredIds = new Set(declared.map((flag) => flag.id));
       const extraFlags = DOCS_EXTRA_FLAGS[docId];
       if (extraFlags !== undefined) {

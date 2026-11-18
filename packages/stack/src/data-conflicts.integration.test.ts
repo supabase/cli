@@ -76,7 +76,7 @@ it.effect("reports initialized data that has no recorded identity", () =>
         requested: built,
       });
       expect(conflict?.message).toBe(
-        `PostgreSQL data has no recorded identity, but stock PostgreSQL build ${built} was requested; run \`supabase stack destroy --stack-id ${stackId}\` to recreate the stack — this permanently deletes its local database data`,
+        `PostgreSQL data has no recorded identity, but stock PostgreSQL build ${built} was requested; run \`supabase stack destroy --stack ${stackId}\` to recreate the stack — this permanently deletes its local database data`,
       );
     }),
   ),

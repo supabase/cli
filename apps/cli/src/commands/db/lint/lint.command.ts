@@ -14,6 +14,7 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -41,14 +42,6 @@ export type DbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbLintCommand = Command.make("lint", config).pipe(
   Command.withDescription("Checks a database for typing error."),
   Command.withShortDescription("Checks a database for typing error"),
-  withPermissions(
-    compose(
-      { operations: [], noApiEffectFlags: ["schema", "level", "fail-on"] },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     dbLint(flags).pipe(
       withCommandTelemetry({
@@ -73,4 +66,13 @@ export const dbLintCommand = Command.make("lint", config).pipe(
     consent: "none",
     consentExemptReason: "its transaction is always rolled back",
   }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["schema", "level", "fail-on"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

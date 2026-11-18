@@ -22,7 +22,7 @@ docker, or podman), and `owner` (reachable or unavailable). Owner availability i
 not service lifecycle or health. Entries sort by project root, name, then ID.
 Text shows NAME, PROJECT, BRANCH, RUNTIME, OWNER, and a compact ID. An empty
 registry prints `No managed stacks found.` The text column shows an ID prefix that
-`--stack-id` accepts while it stays unique; `--output-format json` shows full IDs.
+`--stack` accepts while it stays unique; `--output-format json` shows full IDs.
 
 JSON emits `{ "stacks": [...], "message": "" }`; stream-json wraps that data in
 one result event. State entries that cannot be read or decoded are skipped with a warning on

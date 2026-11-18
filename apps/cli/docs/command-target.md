@@ -34,6 +34,18 @@ The consent default is the answer a confirmation starts on. It is `No` for anyth
 - **`--remote=true|yes|on|1|y`** means a bare `--remote`. `--no-remote` and `--remote=false|no|off|0|n` fail with `--remote doesn't take false. Leave it out to <fallback>.`, and an empty `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<values>; leave it out to <fallback>.` `<fallback>` is `target the local database`, `target the local Storage API` or, on a hosted command, `use the linked project`; `<values>` is `<ref|branch|url>` where the command takes a database URL, `<ref|branch>` elsewhere and `<ref>` on `branches *`. Neither error prints the command's help.
 - **A local stack that is down in a linked checkout.** A database command that defaults to the local stack and can't reach it adds `To use the linked project instead, pass --remote.` to its error's suggestion when the checkout is linked (`SUPABASE_PROJECT_ID` is set, or `supabase/.temp/project-ref` names a project). `gen types` adds it to its errors for a local database container that is missing or can't be inspected.
 
+## Local stack
+
+On the experimental stack backend, every command that reaches the project's local stack takes
+`--stack <name or id>` and acts on that stack instead of the default one. The value matches a stack
+name of the current project and branch first, then a full stack ID or a unique ID prefix of at least
+4 hex characters from any checkout. Without the flag, `SUPABASE_STACK` selects the stack the same
+way, except that as an ID it only selects a stack of the current project, and it is ignored by a
+`--remote` target, a database URL and the legacy backend. A selected stack never falls back to the
+default stack: one that does not exist fails with exit 1 and a message naming it (`stack start` and
+`db start` create it instead), and so does a stopped one for a command that needs its database. See
+[Stack commands](stack-commands.md#targeting-a-named-stack-from-other-commands).
+
 ## `--remote <word>`
 
 `--remote=<word>` always parses as a value. A bare `--remote` followed by a word is rewritten to `--remote=<word>` when the command takes no operands (a hidden one does not count), when the word is a database URL, or when the command already has more words than operands.
@@ -65,6 +77,8 @@ These fail with exit 1 before the command does any work:
 | linked state whose ref is malformed, so there is no project to search                                     | `LinkParentRefInvalidError`                               |
 | a branch that has no project ref yet because it is still provisioning                                     | `LinkBranchNotReadyError`                                 |
 | the branch lookup fails to reach the API or gets a non-200 status                                         | `LinkBranchListNetworkError`, `LinkBranchListStatusError` |
+| `--stack` with `--remote` or a deprecated remote selector                                                 | `TargetSelectorConflictError`                             |
+| `--stack` while the legacy backend is selected                                                            | `ExperimentalStackTargetError`                            |
 
 A selector conflict lists only the selector flags the command has: `Only one of --remote, --linked, --db-url and --local can be set; got …`, with the suggestion to use `--remote` or `--remote=<values>` on its own. A bare `--remote` together with `--project-ref=<x>` is accepted: the alias's value wins and its warning prints. A `false` switch counts as absent, so `--linked=false` selects nothing. A repeated `--remote` is one selection when every occurrence resolves to the same target, and a bare `--remote` is the linked project, so `--remote --remote` and `--remote=<ref> --remote=<ref>` run. When the occurrences differ the run fails before anything runs, with `--remote is given more than once with different values; pass it once.` and the suggestion to pass `--remote` once.
 

@@ -1,6 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Ref } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Path, Ref } from "effect";
 import {
   StackApi,
   StackTargetError,
@@ -16,8 +16,7 @@ import {
 
 type TargetInput = {
   readonly projectRoot: string;
-  readonly name?: string;
-  readonly id?: string;
+  readonly stack?: string;
   readonly runtime: "auto" | "docker" | "podman" | "native";
 };
 
@@ -57,6 +56,11 @@ const workspace = Effect.gen(function* () {
   return { root, home, register, resolve };
 });
 
+const withEnv =
+  (env: Readonly<Record<string, string>>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.provideService(effect, ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord(env));
+
 describe("stack target resolver", () => {
   it.effect("resolves an explicit id without reading the current project identity", () =>
     Effect.gen(function* () {
@@ -69,7 +73,7 @@ describe("stack target resolver", () => {
 
       const target = yield* resolve({
         projectRoot: path.join(root, "missing-current-project"),
-        id,
+        stack: id,
         runtime: "auto",
       });
 
@@ -101,7 +105,7 @@ describe("stack target resolver", () => {
 
       const failure = yield* resolve({
         projectRoot: root,
-        id: id.slice(0, 8),
+        stack: id.slice(0, 8),
         runtime: "auto",
       }).pipe(Effect.flip);
 
@@ -113,19 +117,14 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("rejects a stack id shorter than four characters", () =>
+  it.effect("treats a value too short for an ID as the name of a new stack", () =>
     Effect.gen(function* () {
       const { root, register, resolve } = yield* workspace;
       const id = yield* register({ projectRoot: root });
 
-      const failure = yield* resolve({
-        projectRoot: root,
-        id: id.slice(0, 3),
-        runtime: "auto",
-      }).pipe(Effect.flip);
+      const target = yield* resolve({ projectRoot: root, stack: id.slice(0, 3), runtime: "auto" });
 
-      expect(failure.reason).toBe("flags");
-      expect(failure.message).toContain("prefix of at least 4 characters");
+      expect(target).toEqual({ projectRoot: root, name: id.slice(0, 3), hostRunning: false });
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
@@ -134,7 +133,7 @@ describe("stack target resolver", () => {
       const { root, register, resolve } = yield* workspace;
       const id = yield* register({ projectRoot: root, runtime: "docker" });
 
-      const failure = yield* resolve({ projectRoot: root, id, runtime: "native" }).pipe(
+      const failure = yield* resolve({ projectRoot: root, stack: id, runtime: "native" }).pipe(
         Effect.flip,
       );
 
@@ -153,10 +152,115 @@ describe("stack target resolver", () => {
       yield* register({ projectRoot: root });
       const id = yield* register({ projectRoot: root, name: "feature" });
 
-      const target = yield* resolve({ projectRoot: root, name: "feature", runtime: "auto" });
+      const target = yield* resolve({ projectRoot: root, stack: "feature", runtime: "auto" });
 
       expect(target).toMatchObject({ projectRoot: root, id, name: "feature" });
       expect(target.definition?.identity.stackName).toBe("feature");
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("selects the stack SUPABASE_STACK names when no selector is passed", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      yield* register({ projectRoot: root });
+      const id = yield* register({ projectRoot: root, name: "feature" });
+
+      const target = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK: "feature" }),
+      );
+
+      expect(target).toMatchObject({ id, name: "feature" });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("prefers a --stack name over a SUPABASE_STACK ID", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      const other = yield* register({ projectRoot: root, name: "other" });
+      const id = yield* register({ projectRoot: root, name: "feature" });
+
+      const target = yield* resolve({ projectRoot: root, stack: "feature", runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK: other }),
+      );
+
+      expect(target).toMatchObject({ id, name: "feature" });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("resolves a stack name before an ID prefix that matches it", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      const byId = yield* register({ projectRoot: root });
+      const prefix = byId.slice(0, 8);
+      const byName = yield* register({ projectRoot: root, name: prefix });
+
+      const named = yield* resolve({ projectRoot: root, stack: prefix, runtime: "auto" });
+      const identified = yield* resolve({ projectRoot: root, stack: byId, runtime: "auto" });
+
+      expect(named).toMatchObject({ id: byName, name: prefix });
+      expect(identified).toMatchObject({ id: byId });
+      expect(identified.name).toBeUndefined();
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("selects another project's stack by ID only from an explicit --stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, register, resolve } = yield* workspace;
+      const otherRoot = path.join(root, "other-project");
+      yield* fs.makeDirectory(otherRoot);
+      const id = yield* register({ projectRoot: otherRoot });
+      const own = yield* register({ projectRoot: root, name: "feature" });
+
+      const fromEnv = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK: id.slice(0, 8) }),
+        Effect.flip,
+      );
+      const ownFromEnv = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK: own.slice(0, 8) }),
+      );
+      const explicit = yield* resolve({
+        projectRoot: root,
+        stack: id.slice(0, 8),
+        runtime: "auto",
+      });
+
+      expect(fromEnv).toMatchObject({
+        reason: "flags",
+        message: `SUPABASE_STACK selects stack ${id} of ${otherRoot}, not of this project (${root}).`,
+        suggestion: `Unset SUPABASE_STACK, or pass --stack ${id} to target that stack explicitly.`,
+      });
+      expect(ownFromEnv).toMatchObject({ id: own });
+      expect(explicit).toMatchObject({ projectRoot: otherRoot, id });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("lists every other project's stack a SUPABASE_STACK prefix matches", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, home, register, resolve } = yield* workspace;
+      const otherRoot = path.join(root, "other-project");
+      yield* fs.makeDirectory(otherRoot);
+      const id = yield* register({ projectRoot: otherRoot });
+      const twin = `${id.slice(0, 8)}${id.slice(8).replace(/./gu, (c) => (c === "0" ? "1" : "0"))}`;
+      const saved = yield* fs.readFileString(path.join(home, "stacks", id, "state.json"));
+      yield* fs.makeDirectory(path.join(home, "stacks", twin));
+      yield* fs.writeFileString(
+        path.join(home, "stacks", twin, "state.json"),
+        saved.replaceAll(id, twin),
+      );
+
+      const failure = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        withEnv({ SUPABASE_STACK: id.slice(0, 8) }),
+        Effect.flip,
+      );
+
+      expect(failure.reason).toBe("flags");
+      expect(failure.message).toContain(`Stack id prefix ${id.slice(0, 8)} matches 2 stacks`);
+      expect(failure.message).toContain(id);
+      expect(failure.message).toContain(twin);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
@@ -251,7 +355,7 @@ describe("stack target resolver", () => {
         const byProject = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(Effect.flip);
         const byPrefix = yield* resolve({
           projectRoot: root,
-          id: id.slice(0, 8),
+          stack: id.slice(0, 8),
           runtime: "auto",
         }).pipe(Effect.flip);
 
@@ -267,7 +371,7 @@ describe("stack target resolver", () => {
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("reports a stack registry that cannot be listed for an id prefix", () =>
+  it.effect("reports a stack registry that cannot be read for a name or an id prefix", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -275,11 +379,18 @@ describe("stack target resolver", () => {
       yield* fs.makeDirectory(home);
       yield* fs.writeFileString(path.join(home, "stacks"), "not a directory");
 
-      const failure = yield* resolve({ projectRoot: root, id: "abcd", runtime: "auto" }).pipe(
+      const byName = yield* resolve({ projectRoot: root, stack: "feature", runtime: "auto" }).pipe(
         Effect.flip,
       );
+      /* From a missing project root, an ID-shaped value skips the name lookup. */
+      const byPrefix = yield* resolve({
+        projectRoot: path.join(root, "missing-current-project"),
+        stack: "abcd",
+        runtime: "auto",
+      }).pipe(Effect.flip);
 
-      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "stack-discovery" });
+      expect(byName).toMatchObject({ reason: "invalid-config", targetIssue: "stack-lookup" });
+      expect(byPrefix).toMatchObject({ reason: "invalid-config", targetIssue: "stack-discovery" });
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
@@ -307,7 +418,7 @@ describe("stack target resolver", () => {
 
       const failure = yield* resolve({
         projectRoot: root,
-        id: id.slice(0, 8),
+        stack: id.slice(0, 8),
         runtime: "auto",
       }).pipe(Effect.flip);
 

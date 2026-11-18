@@ -967,6 +967,8 @@ function setup(
     // absent an explicit `--remote=<ref>`, instead of falling back to `opts.ref`.
     linkedFails?: boolean;
     stackBackend?: boolean;
+    /** `--stack`. */
+    stack?: string;
     stackDatabaseReady?: boolean;
     stackStorageReady?: boolean;
     stackStorageState?:
@@ -1091,7 +1093,7 @@ function setup(
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         })
       : resolver.layer,
-    mockCommandSettings({ workdir }),
+    mockCommandSettings({ workdir, ...(opts.stack === undefined ? {} : { stack: opts.stack }) }),
     BunServices.layer,
     BunCrypto.layer,
     recorder.layer,
@@ -1765,6 +1767,26 @@ describe("db reset", () => {
             (r) => r.authorization === `Bearer ${generateLocalJwt(RESET_JWT, "service_role")}`,
           ),
         ).toBe(true);
+      });
+    });
+
+    it.effect("keeps the selected stack in the advice when storage is disabled", () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--stack", "feature"],
+        isLocal: true,
+        stackBackend: true,
+        stack: "feature",
+        stackStorageState: "disabled",
+        stackApiEndpoint: { url: "http://127.0.0.1:55424", port: 55424 },
+        httpClient: recordingStackStorageHttpClient().layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          "run supabase stack stop --stack feature followed by supabase stack start --stack feature " +
+            "without -x storage, then supabase seed buckets --stack feature.",
+        );
       });
     });
 

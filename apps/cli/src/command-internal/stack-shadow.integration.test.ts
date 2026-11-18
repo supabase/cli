@@ -7,7 +7,17 @@ import {
 import { CliConfigSchema } from "@supabase/config";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, FileSystem, Layer, Option, Path, Ref, Schema } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Ref,
+  Schema,
+} from "effect";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
@@ -21,6 +31,7 @@ import { parseConnectionString } from "./db-config.parse.ts";
 import {
   stackAcquireShadowDatabase,
   stackMigrateShadow,
+  stackShadowRuntime,
   stackWithShadowDatabase,
 } from "./stack-shadow.ts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
@@ -167,6 +178,43 @@ const query = Effect.fn("ShadowTest.query")(function* (url: string, sql: string)
 });
 
 describe("stack shadow databases", () => {
+  it.effect("takes the shadow runtime from --stack, never from SUPABASE_STACK", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-runtime-" }),
+      );
+      const api = yield* StackApi;
+      const register = (name: string | undefined, runtime: "native" | "docker") =>
+        api
+          .create({
+            projectRoot: root,
+            ...(name === undefined ? {} : { name }),
+            stateRoot: path.join(root, "stacks"),
+            cacheRoot: path.join(root, "cache", "stack"),
+            runtime,
+          })
+          .pipe(Effect.scoped);
+      yield* register(undefined, "native");
+      yield* register("feature", "docker");
+      const runtime = (stack?: string) =>
+        stackShadowRuntime.pipe(
+          Effect.provide(mockCommandSettings({ workdir: root, supabaseHome: root, stack })),
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromEnvRecord({ SUPABASE_STACK: "feature" }),
+          ),
+        );
+
+      expect(yield* runtime()).toBe("native");
+      expect(yield* runtime("feature")).toBe("docker");
+    }).pipe(
+      Effect.provide(Layer.mergeAll(stackApiLayer, runtimeInfoLayer)),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
+    ),
+  );
+
   it.live(
     "publishes and restores a baseline while keeping migrations and ownership isolated",
     () =>

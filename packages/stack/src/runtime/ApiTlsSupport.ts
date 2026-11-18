@@ -182,7 +182,7 @@ export const checkApiTlsReach = Effect.fn("ApiTlsSupport.checkReach")(function* 
           const recovery =
             unstopped === undefined
               ? `; its services stopped: ${error.next}`
-              : `; its services did not stop (${unstopped}), run \`supabase stack stop --stack-id ${stack.id}\` to stop them`;
+              : `; its services did not stop (${unstopped}), run \`supabase stack stop --stack ${stack.id}\` to stop them`;
           return yield* new ApiTlsCheckError({
             message: `${error.message} (${error.detail})${recovery}`,
             detail: error.detail,

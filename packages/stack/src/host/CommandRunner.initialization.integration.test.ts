@@ -232,7 +232,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         expect((yield* run(newer)).exitCode).toBe(0);
         const refused = yield* run(older).pipe(Effect.flip);
         expect(refused.message).toContain("auth v2.299.0 is older than v2.300.0");
-        expect(refused.message).toContain("supabase stack destroy --stack-id");
+        expect(refused.message).toContain("supabase stack destroy --stack");
         expect((yield* run(newer)).exitCode).toBe(0);
 
         expect(output.join("")).toBe("ran newer\nran newer\n");

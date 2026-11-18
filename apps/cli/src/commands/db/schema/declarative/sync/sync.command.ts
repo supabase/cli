@@ -13,6 +13,7 @@ import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAG_NAMES } from "../../../../../command-internal/stack-target.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -72,6 +73,7 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
         "no-apply",
         "no-cache",
         "strict-coverage",
+        ...STACK_SELECTOR_FLAG_NAMES,
       ],
     }),
   ),

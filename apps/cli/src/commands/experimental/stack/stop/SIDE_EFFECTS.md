@@ -6,10 +6,11 @@ The experimental top-level `supabase stop` alias delegates to this handler.
 
 ## Selection and output
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
-`--stack` and `--stack-id` are mutually exclusive. `--all` cannot be combined
-with either selector. Explicit legacy `-o/--output` is rejected; use
-`--output-format` instead.
+Select the current project/branch stack, or `--stack` by name, else by ID or
+unique ID prefix. `SUPABASE_STACK` stands in for `--stack`, but as an ID it only
+selects a stack of the current project. `--all` cannot be combined with
+`--stack`. Explicit legacy `-o/--output` is rejected; use `--output-format`
+instead.
 
 Discovery probes saved owners before shutdown. If no owner is reachable, the
 command does not start one; it reclaims the stack's leftover workloads under the

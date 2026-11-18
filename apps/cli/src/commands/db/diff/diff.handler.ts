@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path, Ref } from "effect";
+import { Clock, Effect, FileSystem, Option, Path, Predicate, Ref } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
@@ -53,6 +53,10 @@ import {
   stackLocalDatabaseConn,
   stackRejectNativeDockerDiffEngine,
 } from "../../../command-internal/stack-local-database.ts";
+import {
+  passedStackSelectorFlag,
+  rejectStackSelectorOnLegacy,
+} from "../../../command-internal/stack-target.ts";
 import {
   stackPrepareShadowSource,
   stackWithShadowDatabase,
@@ -194,6 +198,17 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       if (Option.isSome(flags.remote)) {
         return yield* new DbDiffExplicitFlagsError({
           message: "--remote doesn't apply with --from/--to; use --from=remote or --to=remote.",
+        });
+      }
+      yield* rejectStackSelectorOnLegacy;
+      const stackFlag = yield* passedStackSelectorFlag;
+      if (
+        stackFlag !== undefined &&
+        !Predicate.isTagged(classifyExplicitRef(from), "Local") &&
+        !Predicate.isTagged(classifyExplicitRef(to), "Local")
+      ) {
+        return yield* new DbDiffExplicitFlagsError({
+          message: `${stackFlag} selects a local stack, but neither --from nor --to is local.`,
         });
       }
       const { selection, deprecations } = yield* Effect.fromResult(parseTargetSelector(flags)).pipe(

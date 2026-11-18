@@ -39,6 +39,7 @@ import { DbConnection } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
 
 import { testDbRuntimeLayer } from "./test-db.layers.ts";
+import { noStackSelectorFlags } from "./stack-target.ts";
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-test-db-layers-");
@@ -60,6 +61,7 @@ function ambientStubs() {
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
+    noStackSelectorFlags,
   );
 
   // Stub out the heavy service layers so layer construction doesn't require a

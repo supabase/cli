@@ -173,7 +173,7 @@ function startStack(cliEffect: LiveFixtures["cliEffect"]) {
       Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(StackStartSchema))),
     ),
     (stack) =>
-      cliEffect(["stack", "destroy", "--stack-id", stack.id, "--yes"], { env: stackEnv }).pipe(
+      cliEffect(["stack", "destroy", "--stack", stack.id, "--yes"], { env: stackEnv }).pipe(
         Effect.flatMap((result) => requireSuccess(result, "stack destroy")),
         Effect.orDie,
       ),
