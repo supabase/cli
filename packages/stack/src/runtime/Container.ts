@@ -611,7 +611,14 @@ export const makeContainerRuntime = (options: {
             [
               child.stdout.pipe(Stream.runDrain),
               child.stderr.pipe(
-                Stream.runForEach((bytes) => Ref.update(collected, (chunks) => [...chunks, bytes])),
+                Stream.runForEach((bytes) =>
+                  Ref.update(collected, (chunks) => {
+                    const kept = [...chunks, bytes];
+                    let size = kept.reduce((total, chunk) => total + chunk.byteLength, 0);
+                    while (size > 65536 && kept.length > 1) size -= kept.shift()?.byteLength ?? 0;
+                    return kept;
+                  }),
+                ),
               ),
               child.exitCode,
             ],
