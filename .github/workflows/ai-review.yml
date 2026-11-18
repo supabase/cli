@@ -145,7 +145,7 @@ jobs:
         if: steps.guidance-support.outputs.available == 'true'
         continue-on-error: true
         timeout-minutes: 2
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           version: 2026.11.6
           install_args: node bun pnpm
@@ -474,8 +474,8 @@ jobs:
           effort: high
           output-schema-file: /tmp/ai-review/findings.schema.json
           output-file: /tmp/ai-review/codex-findings.json
-          # 0.159.1 is the first stable CLI whose model catalog carries gpt-6.1-sol.
-          codex-version: &codex-cli-version "0.159.2"
+          # 0.169.1 is the first stable CLI whose model catalog carries gpt-6.2-sol.
+          codex-version: &codex-cli-version "0.169.1"
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
