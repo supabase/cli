@@ -81,8 +81,8 @@ function readPosture(
   });
 }
 
-// get reports `appliedSuccessfully: false` until the posture propagates (see
-// ../get/SIDE_EFFECTS.md), and there is no signal to wait on, so poll get (bounded).
+// get reports `appliedSuccessfully: false` until the posture propagates, and there is no
+// signal to wait on, so poll get (bounded).
 const proofSchedule = Schedule.spaced(PROOF_INTERVAL_MS).pipe(
   Schedule.upTo({ duration: PROOF_TIMEOUT_MS }),
 );
