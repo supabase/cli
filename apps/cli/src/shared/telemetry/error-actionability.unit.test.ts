@@ -24,7 +24,6 @@ class DeclaredError extends Data.TaggedError("DeclaredError")<{ readonly message
 
 class DeclaredStatusError extends Data.TaggedError("DeclaredStatusError")<{
   readonly status: number;
-  readonly upgradeSuggested?: boolean;
   readonly notFoundIsInvalidInput?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -131,11 +130,6 @@ describe("classifyCliErrorActionability", () => {
     expect(
       classifyCliErrorActionability(new DeclaredStatusError({ status: 401 })).error_category,
     ).toBe("auth");
-    expect(
-      classifyCliErrorActionability(
-        new DeclaredStatusError({ status: 404, upgradeSuggested: true }),
-      ).error_category,
-    ).toBe("plan_limit");
     expect(
       classifyCliErrorActionability(
         new DeclaredStatusError({ status: 404, notFoundIsInvalidInput: true }),

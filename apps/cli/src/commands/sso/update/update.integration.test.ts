@@ -44,7 +44,6 @@ import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts"
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { prepareCliArgs } from "../../../shared/cli/run.ts";
-import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoUpdateFlags } from "./update.command.ts";
 import { ssoUpdate } from "./update.handler.ts";
@@ -81,7 +80,6 @@ interface SetupOpts {
   getBody?: unknown;
   putStatus?: number;
   putBody?: unknown;
-  upgradeGate?: "gated" | "notGated";
   /**
    * Raw argv the handler sees via `Stdio.Stdio`, driving the raw-argv
    * scan behind the arity, mutex, and value-reconciliation checks. Keep in
@@ -121,7 +119,6 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
 
-  const gate = opts.upgradeGate;
   const getStatus = opts.getStatus ?? 200;
   const getBody = opts.getBody ?? EXISTING_PROVIDER;
   const putStatus = opts.putStatus ?? 200;
@@ -136,41 +133,6 @@ function setup(opts: SetupOpts = {}) {
         }
         if (request.method === "PUT")
           return Effect.succeed(jsonResponse(request, putStatus, putBody));
-      }
-      if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        if (gate === undefined) return Effect.succeed(jsonResponse(request, 404, {}));
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            id: VALID_REF,
-            ref: VALID_REF,
-            organization_id: "org-id",
-            organization_slug: "acme",
-            name: "Test",
-            region: "us-east-1",
-            created_at: "2023-01-01T00:00:00Z",
-            status: "ACTIVE_HEALTHY",
-            database: {
-              host: "db.example.com",
-              version: "15",
-              postgres_engine: "15",
-              release_channel: "ga",
-            },
-          }),
-        );
-      }
-      if (url.includes("/v1/organizations/acme/entitlements")) {
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            entitlements: [
-              {
-                feature: { key: "auth.saml_2", type: "boolean" },
-                hasAccess: gate === "notGated",
-                type: "boolean",
-                config: { enabled: false },
-              },
-            ],
-          }),
-        );
       }
       return Effect.succeed(jsonResponse(request, 404, {}));
     },
@@ -355,7 +317,6 @@ describe("sso update integration", () => {
       }
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
-        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
       ]);
       assertPermissionDrift({ command: "sso update", requests: api.requests });
     }).pipe(Effect.provide(layer));
@@ -1380,24 +1341,28 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("PUT 4xx + gated entitlement → unexpected error + cli_upgrade_suggested", () => {
-    // suggestUpgrade fires only on 4xx.
-    const { layer, analytics } = setup({
-      putStatus: 403,
-      putBody: { error: "forbidden" },
-      upgradeGate: "gated",
+  it.effect("fails with the plan-gate entitlement on an enveloped 402 from the PUT", () => {
+    const { layer, api } = setup({
+      putStatus: 402,
+      putBody: {
+        message: "This feature requires the Pro, Team, or Enterprise organization plan.",
+        error: {
+          code: "entitlement_required",
+          feature: "auth.saml_2",
+          upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+        },
+      },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const dump = Cause.pretty(exit.cause);
-        expect(dump).toContain("SsoUpdateUnexpectedStatusError");
-        expect(dump).toContain(
-          'unexpected error fetching identity provider: {"error":"forbidden"}',
-        );
-      }
-      expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
+      const error = yield* Effect.flip(ssoUpdate(defaultFlags));
+      expect(error).toMatchObject({
+        entitlement: {
+          feature: "auth.saml_2",
+          upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+        },
+      });
+      expect(api.requests.map(({ method }) => method)).toEqual(["GET", "PUT"]);
+      assertPermissionDrift({ command: "sso update", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1678,44 +1643,6 @@ describe("sso update integration", () => {
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.provide(layer));
     },
-  );
-
-  it.effect(
-    "profile emulation: a gated 4xx on the reconciled GET sends the fallback gate requests to the reconciled host",
-    () =>
-      Effect.gen(function* () {
-        const first = yield* writeProfileYaml("first-gate.yml", "http://first.example");
-        const second = yield* writeProfileYaml("second-gate.yml", "http://second.example");
-        const { layer, api } = setup({
-          getStatus: 403,
-          getBody: {},
-          upgradeGate: "gated",
-          cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
-          profileFlag: first,
-        });
-        return yield* Effect.gen(function* () {
-          const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const classified = classifyCliCauseActionability(exit.cause);
-            expect(classified.error_kind).toBe("user_actionable");
-            expect(classified.error_category).toBe("plan_limit");
-            expect(classified.suggestion_type).toBe("upgrade_plan");
-          }
-          const project = api.requests.find((r) => r.url.endsWith(`/v1/projects/${VALID_REF}`));
-          const entitlements = api.requests.find((r) => r.url.includes("/entitlements"));
-          expect(project?.url).toBe(`http://second.example/v1/projects/${VALID_REF}`);
-          expect(entitlements?.url).toBe(
-            "http://second.example/v1/organizations/acme/entitlements",
-          );
-          expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
-          assertPermissionDrift({
-            command: "sso update",
-            requests: api.requests,
-            apiUrl: "http://second.example",
-          });
-        }).pipe(Effect.provide(layer));
-      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("profile emulation: the LoadProfile failure loses to the arity check", () => {

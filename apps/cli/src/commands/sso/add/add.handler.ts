@@ -1,4 +1,4 @@
-import { operationDefinitions, type SupabaseApiError } from "@supabase/api/effect";
+import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option, Predicate, type Redacted, Schema, Stdio, type Types } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -25,7 +25,6 @@ import { accessTokenForProfile } from "../../../auth/command-credentials.layer.t
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
   argvBoolValue,
   argvEnumValue,
@@ -40,7 +39,6 @@ import {
   SsoAddMetadataFileError,
   SsoAddNetworkError,
   SsoAddRequiredFlagError,
-  SsoAddSamlDisabledError,
   SsoAddUnexpectedStatusError,
   SsoFlagNeedsArgumentError,
   SsoInvalidFlagValueError,
@@ -57,9 +55,6 @@ import {
   toNameIdFormat,
 } from "../sso.saml.ts";
 import type { SsoAddFlags } from "./add.command.ts";
-
-const SAML_DISABLED_MESSAGE =
-  "SAML 2.0 support is not enabled for this project. Please enable it through the dashboard";
 
 type SsoAddBody = Types.Mutable<
   Omit<Schema.Schema.Type<typeof operationDefinitions.v1CreateASsoProvider.inputSchema>, "ref">
@@ -85,44 +80,6 @@ const readMetadata = readMetadataFile({
 const readAttributeMapping = readAttributeMappingFile({
   openError: (args) => new SsoAddAttributeMappingFileError(args),
 });
-
-type TokenForAux<R> = Effect.Effect<Option.Option<Redacted.Redacted<string>> | undefined, never, R>;
-
-const handleAddError = <R>(
-  ref: string,
-  apiUrl: string,
-  tokenForAux: TokenForAux<R>,
-  cause: SupabaseApiError,
-) =>
-  mapStatusOrNetwork(cause).pipe(
-    Effect.catchTag("SsoAddUnexpectedStatusError", (mapped) =>
-      Effect.gen(function* () {
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: mapped.status,
-          response: gateResponse(cause),
-          apiUrl,
-          ...(yield* Effect.map(tokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
-        });
-        if (mapped.status === 404) {
-          return yield* new SsoAddSamlDisabledError({
-            message: SAML_DISABLED_MESSAGE,
-            upgradeSuggested,
-          });
-        }
-        return yield* new SsoAddUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
-          upgradeSuggested,
-          entitlement: mapped.entitlement,
-        });
-      }),
-    ),
-  );
 
 const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 
@@ -194,8 +151,8 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Resolved once (memoized) so the token read happens after
     // required/mutex/workdir validation — a missing or invalid reconciled
-    // token must not preempt those errors. Auxiliary calls (cache fill,
-    // upgrade-gate GETs) use the failure-absorbing variant below instead.
+    // token must not preempt those errors. The cache fill uses the
+    // failure-absorbing variant below instead.
     const reconciledTokenCached = Option.isSome(reconciledProfile)
       ? yield* Effect.cached(accessTokenForProfile(reconciledProfile.value.name))
       : undefined;
@@ -331,7 +288,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         const rawBody: unknown = yield* response.json;
         return { rawBody, provider: yield* decodeProvider(rawBody) };
       }).pipe(
-        Effect.catch((cause) => handleAddError(ref, apiUrl, reconciledTokenForAux, cause)),
+        Effect.catch(mapStatusOrNetwork),
         Effect.tapError(() => creating?.fail() ?? Effect.void),
       );
       yield* creating?.clear ?? Effect.void;

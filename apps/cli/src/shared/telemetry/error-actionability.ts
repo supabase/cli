@@ -161,7 +161,6 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "request_encoding",
   "request_input",
   "runtime_stopped",
-  "saml_disabled",
   "saved_stack_changes",
   "seed_buckets",
   "service_config",
@@ -639,34 +638,25 @@ function stackKindDeclaration(value: unknown): CliErrorActionabilityDeclaration 
     : undefined;
 }
 
-/**
- * The declaration for a failure confirmed plan-gated, by its `entitlement`
- * or by the entitlement check (`suggestUpgrade`). Shared so every gated
- * surface groups under the same fingerprint family.
- */
-export const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
+/** The declaration for a failure whose `entitlement` confirms it is plan-gated. */
+const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
   ...actionability.planLimit,
   fingerprint_suffix: "plan_limit",
 };
 
 /**
- * Classification policy for errors carrying a Management API status code. `upgradeSuggested`
- * is the entitlement gate's typed result, never inferred from message text. A 404 counts as
+ * Classification policy for errors carrying a Management API status code. A 404 counts as
  * user-actionable only when the caller confirms the endpoint names a user-selected resource,
  * since list/discovery endpoints also 404.
  */
 export function statusCodeActionability(
   status: number | undefined,
   opts: {
-    readonly upgradeSuggested?: boolean;
     readonly notFoundIsInvalidInput?: boolean;
   } = {},
 ): CliErrorActionabilityDeclaration {
   if (status === 401) {
     return { ...actionability.authLogin, fingerprint_suffix: "auth" };
-  }
-  if (opts.upgradeSuggested === true && status !== undefined && status >= 400 && status < 500) {
-    return planLimitGatedActionability;
   }
   if (status === 403) {
     return { ...actionability.accountAccess, fingerprint_suffix: "forbidden" };

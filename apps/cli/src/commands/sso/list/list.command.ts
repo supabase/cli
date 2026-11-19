@@ -7,7 +7,6 @@ import { branchResolution } from "../../../command-internal/target/branch-resolu
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -31,7 +30,6 @@ export const ssoListCommand = Command.make("list", config).pipe(
   withPermissions(
     compose(
       { operations: [{ operationId: "v1-list-all-sso-provider", kind: "required" }] },
-      upgradeSuggestion,
       projectRefPicker,
       linkedProjectCache,
       branchResolution,

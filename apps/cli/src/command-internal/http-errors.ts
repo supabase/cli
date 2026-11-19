@@ -125,7 +125,7 @@ function normalizeUpgradeUrl(raw: string): string | undefined {
  * `{ error: { code: "entitlement_required", feature, upgrade_url } }`.
  * Hand-validated: the packages/api codegen emits no non-2xx schemas.
  */
-export function parsePlanGateEnvelope(body: unknown): PlanGateEntitlement | undefined {
+function parsePlanGateEnvelope(body: unknown): PlanGateEntitlement | undefined {
   if (typeof body !== "object" || body === null) return undefined;
   const error = (body as { readonly error?: unknown }).error;
   if (readString(error, "code") !== "entitlement_required") return undefined;
