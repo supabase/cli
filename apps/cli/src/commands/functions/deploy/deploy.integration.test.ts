@@ -63,6 +63,7 @@ import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
 import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
+  FunctionDeployDockerNotRunningError,
   FunctionImportMapSyntaxError,
   FunctionsDeployFailedError,
   InvalidFunctionDeploySlugError,
@@ -2546,33 +2547,192 @@ describe("functions deploy", () => {
     });
   });
 
-  describe("bundler routing with --use-api=false", () => {
-    it.live("falls through to Docker bundling, not the API path, when --use-api=false", () => {
-      // `useDocker` forces the API path only when `useApi` resolves to true, so
-      // `--use-api=false` alone leaves `useDocker`'s own default (true) in effect.
+  describe("bundler routing with an explicit local bundler flag", () => {
+    it.live.each<readonly [string, Partial<FunctionsDeployFlags>]>([
+      ["--use-api=false", {}],
+      ["--use-docker", {}],
+      ["--legacy-bundle", { legacyBundle: true }],
+    ])(
+      "fails without deploying when %s is passed and Docker is not running",
+      ([flag, parsedFlags]) => {
+        const out = mockOutput({ format: "text" });
+        const child = mockChildProcessSpawner({ exitCode: 1 });
+        const api = mockCommandPlatformApi({
+          handler: (request) =>
+            Effect.succeed(
+              request.method === "GET"
+                ? jsonResponse(request, 200, [])
+                : jsonResponse(request, 201, deployedFunction("hello-world")),
+            ),
+        });
+        const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
+          buildTestRuntime({
+            out,
+            api,
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          approvedHostedMutation,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", flag]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+          const error = yield* functionsDeploy({
+            ...baseFlags,
+            useApi: false,
+            useDocker: true,
+            ...parsedFlags,
+          }).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(FunctionDeployDockerNotRunningError);
+          expect(error.message).toBe(
+            "Docker is not running. Start Docker to bundle Functions locally, or deploy with --use-api instead.",
+          );
+          expect(child.spawned).toEqual([{ command: "docker", args: ["info"] }]);
+          expect(out.stderrText).not.toContain("WARNING: Docker is not running");
+          expect(api.requests).toEqual([]);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.live.each<readonly [string, Partial<FunctionsDeployFlags>]>([
+      ["--use-api=false", {}],
+      ["--use-docker", {}],
+      ["--legacy-bundle", { legacyBundle: true }],
+    ])(
+      "fails before listing or asking when %s is passed with --prune and Docker is not running",
+      ([flag, parsedFlags]) => {
+        const out = mockOutput({
+          format: "text",
+          interactive: true,
+          promptConfirmResponses: [true],
+        });
+        const child = mockChildProcessSpawner({ exitCode: 1 });
+        const api = mockCommandPlatformApi({
+          handler: (request) =>
+            Effect.succeed(
+              request.method === "GET"
+                ? jsonResponse(request, 200, [{ ...deployedFunction("remote-only"), version: 1 }])
+                : jsonResponse(request, 201, deployedFunction("hello-world")),
+            ),
+        });
+        const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
+          buildTestRuntime({
+            out,
+            api,
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+            tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+          }),
+          Layer.succeed(YesFlag, false),
+          Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", flag, "--prune"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+          const error = yield* functionsDeploy({
+            ...baseFlags,
+            useApi: false,
+            useDocker: true,
+            prune: true,
+            ...parsedFlags,
+          }).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(FunctionDeployDockerNotRunningError);
+          expect(out.promptConfirmCalls).toHaveLength(0);
+          expect(api.requests).toEqual([]);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.live.each<readonly [string, Partial<FunctionsDeployFlags>]>([
+      ["--use-api=false", {}],
+      ["--use-docker", {}],
+      ["--legacy-bundle", { legacyBundle: true }],
+    ])(
+      "still prunes when %s is passed, Docker is not running and every Function is disabled",
+      ([flag, parsedFlags]) => {
+        const out = mockOutput({ format: "text" });
+        const child = mockChildProcessSpawner({ exitCode: 1 });
+        const api = mockCommandPlatformApi({
+          handler: (request) =>
+            Effect.succeed(
+              request.method === "GET"
+                ? jsonResponse(request, 200, [{ ...deployedFunction("remote-only"), version: 1 }])
+                : jsonResponse(request, 200, {}),
+            ),
+        });
+        const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
+          buildTestRuntime({
+            out,
+            api,
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          approvedHostedMutation,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", flag, "--prune"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* writeCliConfig(
+            tempRoot.current,
+            [
+              'project_id = "test-project"',
+              '[functions."hello-world"]',
+              "enabled = false",
+              "",
+            ].join("\n"),
+          );
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+          yield* functionsDeploy({
+            ...baseFlags,
+            useApi: false,
+            useDocker: true,
+            prune: true,
+            ...parsedFlags,
+          });
+
+          expect(child.spawned).toEqual([{ command: "docker", args: ["info"] }]);
+          expect(out.stderrText).toContain("WARNING: Docker is not running\n");
+          expect(out.stderrText).toContain("All Functions are up to date.\n");
+          expect(out.stderrText).toContain("Deleting Function: remote-only\n");
+          expect(api.requests.map((request) => request.method)).toEqual(["GET", "DELETE"]);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.live.each<readonly [string, ReadonlyArray<string>]>([
+      ["no bundler flag is passed", []],
+      ["--legacy-bundle=false is passed", ["--legacy-bundle=false"]],
+    ])("falls back to API bundling with a warning when %s", ([, flagArgs]) => {
       const out = mockOutput({ format: "text" });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const api = mockCommandPlatformApi({
-        handler: (request) => {
-          if (request.method === "GET") {
-            return Effect.succeed(jsonResponse(request, 200, []));
-          }
-          return Effect.succeed(
-            jsonResponse(request, 201, {
-              id: "function-id",
-              slug: "hello-world",
-              name: "hello-world",
-              status: "ACTIVE",
-              version: 2,
-              created_at: 1_687_423_025_152,
-              updated_at: 1_687_423_025_152,
-              verify_jwt: true,
-              import_map: true,
-              entrypoint_path: "functions/hello-world/index.ts",
-              import_map_path: "functions/hello-world/deno.json",
-            }),
-          );
-        },
+        handler: (request) =>
+          Effect.succeed(
+            request.method === "GET"
+              ? jsonResponse(request, 200, [])
+              : jsonResponse(request, 201, deployedFunction("hello-world")),
+          ),
       });
       const layer = Layer.mergeAll(
         cliConfigValuesTestLayer,
@@ -2585,7 +2745,7 @@ describe("functions deploy", () => {
         approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
-          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+          args: Effect.succeed(["functions", "deploy", "hello-world", ...flagArgs]),
         }),
       );
 
@@ -3589,7 +3749,7 @@ describe("functions deploy", () => {
         approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
-          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+          args: Effect.succeed(["functions", "deploy", "hello-world"]),
         }),
       );
 
@@ -3610,7 +3770,7 @@ describe("functions deploy", () => {
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
             localConfigLoader: functionsLocalConfigLoader,
-            rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
+            rawArgs: ["functions", "deploy", "hello-world"],
             edgeRuntimeVersion: "1.69.12",
             resolveProjectRef: Effect.succeed("abcdefghijklmnopqrst"),
             styleWarning: (text) => `<warn>${text}</warn>`,

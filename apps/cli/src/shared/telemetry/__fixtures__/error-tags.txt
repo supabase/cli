@@ -217,12 +217,14 @@ DockerRemoveAllListError
 DockerRemoveAllNetworkPruneError
 DockerRemoveAllStopError
 DockerRemoveAllVolumePruneError
+DockerResourceCreateError
 DockerRunError
 DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError
 DuplicateRemoteProjectIdError
 EdgeRuntimeContainerCrashedError
+EdgeRuntimeDockerStepError
 EdgeRuntimeLogStreamLostError
 EdgeRuntimeScriptError
 EncryptionNetworkError
@@ -247,6 +249,7 @@ FeedbackInvalidTokenError
 FeedbackMessageTooLongError
 FeedbackNotFoundError
 FileWatcherError
+FunctionDeployDockerNotRunningError
 FunctionDownloadNotFoundError
 FunctionImportNotDirectoryError
 FunctionNotFoundError
@@ -463,6 +466,9 @@ SecretsUnsetUnexpectedStatusError
 SeedConfigLoadError
 SeedMissingProjectConfigError
 SeedWorkdirError
+ServeConfigError
+ServeEnvError
+ServeFilesystemError
 ServeLocalDbInspectError
 ServeLocalDbNotRunningError
 ServiceVersionNotFoundError

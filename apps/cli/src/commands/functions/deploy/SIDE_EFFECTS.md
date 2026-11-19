@@ -116,7 +116,7 @@ The `--output`/`-o` flag does not change deploy output.
   directory, forward slashes). Imports outside the workdir but inside
   the nearest git root still upload, with `../`-relative names. The nearest git
   root is the containment boundary for uploaded imports.
-- Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
+- Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`, while an explicit `--use-api=false`, `--use-docker`, or `--legacy-bundle` fails before listing Functions to prune, asking the consent question or deploying, unless every selected Function is disabled.
 - Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
 - **Plan-gated denials:** a function create, update, deploy or bulk update denied with a 4xx whose
@@ -126,6 +126,7 @@ The `--output`/`-o` flag does not change deploy output.
   per-function failures as one aggregate error, which carries the entitlement of the first
   plan-gated failure, so one gated function is enough for the hint, the JSON field, the event and
   `plan_limit`.
+- Local Docker bundling creates the project network and the Deno cache volume before the first bundle. If either creation fails, `--output json` reports `error.code` `DockerResourceCreateError` instead of `UnknownError`; the message and exit code are unchanged. When the Docker daemon is unreachable, the failure shows a start-Docker suggestion instead of the generic `--debug` hint.
 - Prints the target banner before anything else.
 - **Consent:** one question, `Deploy N Function(s)` on the target, asked after planning and
   before the first bundle, upload or delete. The default answer is No. `--prune` adds
