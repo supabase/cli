@@ -245,6 +245,7 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v1-get-security-advisors": { fga: [["advisors_read"]], oauthScope: "database:read" },
   "v1-get-project-logs-all": { fga: [["analytics_logs_read"]], oauthScope: "analytics:read" },
   "v1-get-project-logs": { fga: [["analytics_logs_read"]], oauthScope: "analytics:read" },
+  "v1-post-project-logs": { fga: [["analytics_logs_read"]], oauthScope: "analytics:read" },
   "v1-get-project-usage-api-count": { fga: [["analytics_usage_read"]] },
   "v1-get-project-usage-request-count": { fga: [["analytics_usage_read"]] },
   "v1-get-project-function-combined-stats": { fga: [["analytics_usage_read"]] },
@@ -277,6 +278,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v1-list-all-functions": { fga: [["edge_functions_read"]], oauthScope: "edge_functions:read" },
   "v1-create-a-function": { fga: [["edge_functions_write"]], oauthScope: "edge_functions:write" },
   "v1-bulk-update-functions": {
+    fga: [["edge_functions_write"]],
+    oauthScope: "edge_functions:write",
+  },
+  "v1-delete-all-functions": {
     fga: [["edge_functions_write"]],
     oauthScope: "edge_functions:write",
   },
@@ -378,6 +383,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
         "storage_config_read",
       ],
     ],
+  },
+  "v2-delete-project-function": {
+    fga: [["edge_functions_write"]],
+    oauthScope: "edge_functions:write",
   },
   "v2-list-notebooks": { fga: [["project_notebooks_read"]], oauthScope: "database:read" },
   "v2-create-notebook": { fga: [["project_notebooks_write"]], oauthScope: "database:write" },

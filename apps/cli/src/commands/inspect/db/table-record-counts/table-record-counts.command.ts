@@ -1,4 +1,5 @@
 import { Command } from "effect/cli";
+import { withDeprecated } from "../../../../command-internal/command-access-policy.ts";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbTableRecordCounts } from "./table-record-counts.handler.ts";
 import {
@@ -18,11 +19,12 @@ export const inspectDbTableRecordCountsCommand = Command.make(
   Command.withDescription(
     'Show estimated number of rows per table. Deprecated: use "table-stats" instead.',
   ),
-  Command.withShortDescription("Show table record counts (deprecated)"),
+  Command.withShortDescription("Show table record counts"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbTableRecordCounts)),
   Command.provide(inspectDbRuntimeLayer("table-record-counts")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
   withInspectDbTargetPolicy,
+  withDeprecated,
 );

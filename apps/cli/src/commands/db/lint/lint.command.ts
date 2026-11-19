@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -29,10 +30,12 @@ const config = {
   ),
   level: Flag.Literals("level", ["warning", "error"] as const).pipe(
     Flag.withDescription("Error level to emit."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "warning" }),
     Flag.optional,
   ),
   failOn: Flag.Literals("fail-on", ["none", "warning", "error"] as const).pipe(
     Flag.withDescription("Error level to exit with non-zero status."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "none" }),
     Flag.optional,
   ),
 } as const;
@@ -42,6 +45,20 @@ export type DbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbLintCommand = Command.make("lint", config).pipe(
   Command.withDescription("Checks a database for typing error."),
   Command.withShortDescription("Checks a database for typing error"),
+  Command.withExamples([
+    {
+      command: "supabase db lint --schema public",
+      description: "Lint only the public schema",
+    },
+    {
+      command: "supabase db lint --fail-on warning",
+      description: "Exit with a non-zero status if warnings or errors are found",
+    },
+    {
+      command: "supabase db lint --fail-on error",
+      description: "Exit with a non-zero status only if errors are found",
+    },
+  ]),
   Command.withHandler((flags) =>
     dbLint(flags).pipe(
       withCommandTelemetry({

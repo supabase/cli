@@ -1,6 +1,7 @@
 import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
 import { Effect } from "effect";
 
+/** Sends both bounds: with one the endpoint silently returns a one-minute window, and with neither it errors. */
 export const requestLogs = Effect.fn("Logs.request")(function* (
   api: ApiClient,
   ref: string,

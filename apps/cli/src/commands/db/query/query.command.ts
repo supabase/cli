@@ -23,7 +23,7 @@ import {
  * `db query` needs its own `--output`/`-o` (`json|table|csv`), but Effect CLI keeps one global
  * flag registry that can't hold two `output` flags, so the global choice is the union of every
  * command's values instead. This handler reads the global flag, honors `json`/`table`/`csv`, and
- * defaults by agent mode (JSON for agents, table for humans) when unset. See SIDE_EFFECTS.md.
+ * defaults by agent mode (JSON for agents, table for humans) when unset.
  */
 const config = {
   sql: Argument.String("sql").pipe(

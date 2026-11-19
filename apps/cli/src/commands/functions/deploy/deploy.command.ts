@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -43,6 +44,7 @@ const config = {
       (jobs) => `Expected --jobs to be non-negative, got ${jobs}`,
     ),
     Flag.withDescription("Maximum number of parallel jobs."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "1" }),
     Flag.optional,
   ),
   useDocker: Flag.Boolean("use-docker").pipe(

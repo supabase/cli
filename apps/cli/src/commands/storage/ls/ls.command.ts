@@ -7,7 +7,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageLs } from "./ls.handler.ts";
@@ -40,7 +40,7 @@ export const storageLsCommand = Command.make("ls", config).pipe(
   withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       const telemetryFlags = {
         recursive: flags.recursive,
       };
@@ -50,5 +50,6 @@ export const storageLsCommand = Command.make("ls", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "ls"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

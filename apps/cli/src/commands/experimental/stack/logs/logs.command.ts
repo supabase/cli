@@ -33,7 +33,7 @@ const config = {
       (tail) => `Expected --tail to be 0 or more, got ${tail}`,
     ),
     Flag.withDescription(
-      "Number of retained lines to print across the selected services (default 200); 0 prints none.",
+      "Number of retained lines to print across the selected services; 0 prints none.",
     ),
     Flag.withDefault(200),
   ),

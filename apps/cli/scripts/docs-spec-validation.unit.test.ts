@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { Command } from "effect/cli";
 import { stringify } from "yaml";
+import { withDeprecated } from "../src/command-internal/command-access-policy.ts";
 import { validateDocsSpec } from "./docs-spec-validation.ts";
 
 const root = Command.make("supabase").pipe(
@@ -57,7 +58,9 @@ const inspectRoot = Command.make("supabase").pipe(
   Command.withSubcommands([
     Command.make("inspect").pipe(
       Command.withSubcommands([
-        Command.make("db").pipe(Command.withSubcommands([Command.make("cache-hit")])),
+        Command.make("db").pipe(
+          Command.withSubcommands([Command.make("cache-hit").pipe(withDeprecated)]),
+        ),
       ]),
     ),
   ]),
