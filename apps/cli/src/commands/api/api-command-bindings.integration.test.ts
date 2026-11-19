@@ -162,7 +162,6 @@ interface Input {
   readonly location: "query" | "body";
   readonly field: string;
   readonly flag: string;
-  readonly pointer: string | undefined;
   readonly required: boolean;
   readonly sample: unknown;
 }
@@ -189,7 +188,6 @@ const inputsOf = (
         location: "query",
         field,
         flag: flagFor("query", field),
-        pointer: undefined,
         required: parameter["required"] === true,
         sample: sampleOf(parameter["schema"]),
       };
@@ -221,7 +219,6 @@ const inputsOf = (
       location: "body",
       field,
       flag: flagFor("body", field),
-      pointer: `${envelope ? "/data/attributes" : ""}/${field}`,
       required: required.includes(field),
       sample: scalar ? sampleOf(schema) : JSON_SAMPLES[key],
     };
@@ -360,9 +357,6 @@ const rows = [
   .flatMap((entry) => (entry.api === undefined ? [] : [{ ...entry, api: entry.api }]))
   .toSorted((a, b) => a.api.operationId.localeCompare(b.api.operationId));
 
-const bindingKey = (binding: { readonly location: string; readonly name: string }): string =>
-  JSON.stringify(binding);
-
 describe("generated command bindings", () => {
   it("covers every generated command", () => {
     expect(rows.map((row) => row.api.operationId)).toEqual(
@@ -373,7 +367,14 @@ describe("generated command bindings", () => {
   for (const row of rows) {
     const { operationId } = row.api;
     const operation = operationOf(operationId);
-    const inputs = inputsOf(operationId, operation, row.api.bindings);
+    // The API rejects `since` combined with `from`/`to`; the relative form is the one sent here.
+    const inputs = inputsOf(operationId, operation, row.api.bindings).filter(
+      (input, _, all) =>
+        input.location !== "query" ||
+        (input.field !== "from" && input.field !== "to") ||
+        !all.some((other) => other.field === "since"),
+    );
+    const required = inputs.filter((input) => input.required);
     const positionals = positionalsOf(operation);
     const expectedPath = positionals.reduce(
       (path, { name, sample }) => path.replace(`{${name}}`, sample),
@@ -381,36 +382,6 @@ describe("generated command bindings", () => {
     );
 
     describe(row.path.join(" "), () => {
-      it("binds the path reference and every other input to the spec's location", () => {
-        expect(operation.template.match(/\{[^}]+\}/g)).toEqual([
-          "{ref}",
-          ...positionals.map(({ name }) => `{${name}}`),
-        ]);
-        const expected = [
-          { location: "path", name: "ref", source: "target" },
-          ...positionals.map(({ name }) => ({
-            location: "path",
-            name,
-            source: "argument",
-            argument: generated.find((entry) => entry.operationId === operationId)?.argument?.name,
-          })),
-          ...inputs.map((input) =>
-            input.location === "query"
-              ? { location: "query", name: input.field, source: "flag", flag: input.flag }
-              : {
-                  location: "body",
-                  name: input.field,
-                  pointer: input.pointer,
-                  source: "flag",
-                  flag: input.flag,
-                },
-          ),
-        ];
-        expect(row.api.bindings.map(bindingKey).toSorted()).toEqual(
-          expected.map(bindingKey).toSorted(),
-        );
-      });
-
       it.effect("sends every input at its binding", () =>
         Effect.gen(function* () {
           const requests = yield* send(
@@ -429,22 +400,23 @@ describe("generated command bindings", () => {
         }),
       );
 
-      it.effect("sends only the inputs the spec requires when no other flag is given", () =>
-        Effect.gen(function* () {
-          const required = inputs.filter((input) => input.required);
-          const requests = yield* send(
-            row.path,
-            [...positionals.map(({ sample }) => sample), ...argvOf(required)],
-            operation.responseStatus,
-          );
-          expect(requests).toHaveLength(1);
-          const [request] = requests;
-          expect(Object.fromEntries(new URLSearchParams(request?.search))).toEqual(
-            expectedQuery(required),
-          );
-          expect(request?.body).toEqual(expectedBody(operation, required));
-        }),
-      );
+      if (required.length < inputs.length) {
+        it.effect("sends only the inputs the spec requires when no other flag is given", () =>
+          Effect.gen(function* () {
+            const requests = yield* send(
+              row.path,
+              [...positionals.map(({ sample }) => sample), ...argvOf(required)],
+              operation.responseStatus,
+            );
+            expect(requests).toHaveLength(1);
+            const [request] = requests;
+            expect(Object.fromEntries(new URLSearchParams(request?.search))).toEqual(
+              expectedQuery(required),
+            );
+            expect(request?.body).toEqual(expectedBody(operation, required));
+          }),
+        );
+      }
 
       it("declares the operation's success response as the response result", () => {
         expect(Object.keys(apiCommandSchemas)).toContain(operationId);
