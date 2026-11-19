@@ -27,17 +27,23 @@ command documentation.
 | `<workdir>/supabase/config.toml`              | TOML       | when no `config.json` exists, for the same setting                                            |
 | `<file>`                                      | JSON       | only with `--file <path>`: the whole request body (`--file -` reads stdin)                    |
 | `<SUPABASE_HOME or ~/.supabase>/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring holds no credential, unless `--dry-run` |
-| `<workdir>/supabase/.temp/project-ref`        | plain text | when neither `--project-ref`/`--remote=<ref>` nor `SUPABASE_PROJECT_ID` is set                |
+| `<workdir>/supabase/.temp/project-ref`        | plain text | legacy mode, when neither `--project-ref`/`--remote=<ref>` nor `SUPABASE_PROJECT_ID` is set   |
+| `<workdir>/supabase/.link.json`               | JSON       | stack mode, when neither `--project-ref`/`--remote=<ref>` nor `SUPABASE_PROJECT_ID` is set    |
 | `<SUPABASE_HOME or ~/.supabase>/profile`      | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set                                        |
+
+Stack mode is on with `[experimental] stack = true` or `SUPABASE_EXPERIMENTAL_STACK=1`; otherwise the
+project state is legacy. `<workdir>` is the `--workdir` flag, else `SUPABASE_WORKDIR`, else the
+nearest ancestor of the cwd holding `supabase/config.json` or `supabase/config.toml`, else the cwd.
 
 Commands never write project configuration, execute SQL locally or read stdin, except `--file -`.
 
 ## Files Written
 
-| Path                                            | Format | When                                                                                                        |
-| ----------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------- |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always, flushed on success and on failure                                                                   |
-| `<workdir>/supabase/.temp/linked-project.json`  | JSON   | post-run, once the project ref resolved, only when no such file exists for that ref; never with `--dry-run` |
+| Path                                                      | Format | When                                                                                                                                                     |
+| --------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`           | JSON   | always, flushed on success and on failure                                                                                                                |
+| `<workdir>/supabase/.temp/linked-project.json`            | JSON   | legacy mode, post-run, once the project ref resolved, only when no such file exists for that ref; never with `--dry-run`                                 |
+| `<SUPABASE_HOME or ~/.supabase>/project-cache/<ref>.json` | JSON   | stack mode, post-run, once the project ref resolved, only when that file does not exist and `<ref>` is a well-formed project ref; never with `--dry-run` |
 
 ## API Routes
 
@@ -123,15 +129,16 @@ includes the failed status and the reported failure message.
 
 ## Environment Variables
 
-| Variable                          | Purpose                                                                                                            | Required?                                       |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
-| `SUPABASE_EXPERIMENTAL_<FEATURE>` | command registration (boolean `1`/`true` enables, `0`/`false` disables; unset/empty uses `experimental.<feature>`) | no                                              |
-| `SUPABASE_ACCESS_TOKEN`           | auth token (bypasses credential file/keyring lookup)                                                               | no (falls back to keyring, then `access-token`) |
-| `SUPABASE_PROFILE`                | built-in profile name or YAML file path                                                                            | no (falls back to `~/.supabase/profile`)        |
-| `SUPABASE_PROJECT_ID`             | project ref, consulted after `--project-ref`                                                                       | no (falls back to `supabase/.temp/project-ref`) |
-| `SUPABASE_WORKDIR`                | project directory the command acts on                                                                              | no (falls back to `--workdir`, then the cwd)    |
-| `SUPABASE_HOME`                   | directory holding `telemetry.json`                                                                                 | no (falls back to `~/.supabase`)                |
-| `SUPABASE_YES`                    | consent for mutations in a shell; `supabase/.env` and a cwd `.env*` file do not count                              | no (falls back to `--yes`)                      |
+| Variable                          | Purpose                                                                                                            | Required?                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `SUPABASE_EXPERIMENTAL_<FEATURE>` | command registration (boolean `1`/`true` enables, `0`/`false` disables; unset/empty uses `experimental.<feature>`) | no                                                           |
+| `SUPABASE_ACCESS_TOKEN`           | auth token (bypasses credential file/keyring lookup)                                                               | no (falls back to keyring, then `access-token`)              |
+| `SUPABASE_PROFILE`                | built-in profile name or YAML file path                                                                            | no (falls back to `~/.supabase/profile`)                     |
+| `SUPABASE_PROJECT_ID`             | project ref, consulted after `--project-ref`                                                                       | no (falls back to the linked project ref)                    |
+| `SUPABASE_WORKDIR`                | project directory the command acts on, consulted after `--workdir`                                                 | no (falls back to the discovered project root, then the cwd) |
+| `SUPABASE_EXPERIMENTAL_STACK`     | selects stack mode (`1`/`true`) or legacy mode (`0`/`false`)                                                       | no (falls back to `experimental.stack`)                      |
+| `SUPABASE_HOME`                   | directory holding `telemetry.json`, and `project-cache/` in stack mode                                             | no (falls back to `~/.supabase`)                             |
+| `SUPABASE_YES`                    | consent for mutations in a shell; `supabase/.env` and a cwd `.env*` file do not count                              | no (falls back to `--yes`)                                   |
 
 ## Telemetry Events Fired
 

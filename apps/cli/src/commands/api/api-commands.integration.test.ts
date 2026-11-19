@@ -55,8 +55,6 @@ import {
 import type { ApiCommandEntry } from "./api-command.model.ts";
 import { assembleInput, decodeInput, previewRequest } from "./api-command-request.ts";
 import { apiCommands } from "./generated.ts";
-import { readApiCommand } from "./api-command.annotation.ts";
-import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { withApiCommands } from "./runtime.ts";
 import { isMachineFailureMode, standardFailureFor } from "../../shared/cli/standard-errors.ts";
 import { EventUpgradeSuggested } from "../../shared/telemetry/event-catalog.ts";
@@ -2217,20 +2215,6 @@ describe("generated warehouse commands", () => {
         expect(tree.has("warehouse status")).toBe(true);
       }),
     );
-
-    it("marks each mounted leaf with its operation and experimental feature stage", () => {
-      const tree = commandTreeFor({ apiFeatures: ["warehouse"] });
-      for (const entry of apiCommands) {
-        const command = tree.get(entry.command.join(" "))?.command;
-        if (command === undefined) throw new Error(`${entry.command.join(" ")} is not mounted`);
-        expect(Option.map(readApiCommand(command), (api) => api.operationId)).toEqual(
-          Option.some(entry.operationId),
-        );
-        expect(readCommandStage(command)).toEqual(
-          Option.some({ status: "experimental", feature: "warehouse" }),
-        );
-      }
-    });
 
     it.effect("is on with experimental.warehouse in the project config", () =>
       Effect.gen(function* () {

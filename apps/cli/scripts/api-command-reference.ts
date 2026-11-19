@@ -44,6 +44,14 @@ const bindsTo = (entry: ApiCommandEntry, flag: ApiCommandFlag): string => {
     : `${binding.location} ${code(binding.name)}`;
 };
 
+const requiredCell = (entry: ApiCommandEntry, flag: ApiCommandFlag): string => {
+  if (!flag.required) return "no";
+  const bodyBound = entry.bindings.some(
+    (binding) => binding.location === "body" && binding.flag === flag.name,
+  );
+  return bodyBound ? `yes, unless ${code("--body")} or ${code("--file")} has the field` : "yes";
+};
+
 const flagRows = (entry: ApiCommandEntry): ReadonlyArray<string> =>
   entry.flags.map((flag) => {
     const label =
@@ -51,7 +59,7 @@ const flagRows = (entry: ApiCommandEntry): ReadonlyArray<string> =>
         ? `--${flag.name}`
         : `--${flag.name} <${flag.type === "json" ? "json" : flag.name}>`;
     const notes = flag.sensitive === true ? " Sensitive: never echoed or recorded." : "";
-    return `| ${code(label)} | ${cell(flagType(flag))} | ${flag.required ? "yes" : "no"} | ${flag.repeatable ? "yes" : "no"} | ${bindsTo(entry, flag)}${notes} |`;
+    return `| ${code(label)} | ${cell(flagType(flag))} | ${requiredCell(entry, flag)} | ${flag.repeatable ? "yes" : "no"} | ${bindsTo(entry, flag)}${notes} |`;
   });
 
 const argumentLine = (entry: ApiCommandEntry): string | undefined => {

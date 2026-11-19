@@ -6,10 +6,6 @@ import { ApiCommandUsageError } from "../../command-internal/command-errors/api-
 import { withStandardErrors } from "../../command-internal/command-errors/command-errors.annotation.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, type OperationEntry } from "../../command-internal/command-permissions/model.ts";
-import {
-  type CommandStage,
-  withCommandStage,
-} from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { parseDuration } from "../../command-internal/duration.ts";
 import { GLOBAL_OUTPUT_FORMATS, OutputFlag } from "../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
@@ -57,11 +53,6 @@ import { apiCommands, apiPollTargets } from "./generated.ts";
 
 const DEFAULT_WAIT_TIMEOUT = "10m";
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
-
-const stageOf = (entry: ApiCommandEntry): CommandStage => ({
-  status: "experimental",
-  feature: entry.feature,
-});
 
 /** A command's `--wait`: the wait declared on its entry and the entry of the operation it polls. */
 interface ResolvedWait {
@@ -335,13 +326,8 @@ const leafOf = (entry: ApiCommandEntry, entries: ReadonlyArray<ApiCommandEntry>)
     Command.withDescription(entry.description ?? entry.summary),
     Command.withShortDescription(`${entry.summary} (experimental)`),
     Command.withExamples([{ command: exampleFor(entry), description: entry.summary }]),
-    withApiCommand({
-      operationId: entry.operationId,
-      bindings: entry.bindings,
-      response: entry.response,
-    }),
+    withApiCommand({ operationId: entry.operationId }),
     withPermissions(permissionsOf(entry, resolved)),
-    withCommandStage(stageOf(entry)),
     withStandardErrors,
     Command.withHandler((flags) => {
       const { api: _generated, argument: _argument, ...recorded } = flags;

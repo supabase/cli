@@ -51,13 +51,13 @@ Enables replication for the currently eligible tables in a schema, or the named 
 
 ### Flags
 
-| Flag                                                  | Type    | Required | Repeatable | Binds to                                        |
-| ----------------------------------------------------- | ------- | -------- | ---------- | ----------------------------------------------- |
-| `--warehouse-region <warehouse-region>`               | string  | no       | no         | body `/data/attributes/warehouse_region`        |
-| `--destination-project-ref <destination-project-ref>` | string  | no       | no         | body `/data/attributes/destination_project_ref` |
-| `--install-fdw`                                       | boolean | no       | no         | body `/data/attributes/install_fdw`             |
-| `--schema <schema>`                                   | string  | yes      | no         | body `/data/attributes/schema`                  |
-| `--table <table>`                                     | string  | no       | yes        | body `/data/attributes/tables`                  |
+| Flag                                                  | Type    | Required                                       | Repeatable | Binds to                                        |
+| ----------------------------------------------------- | ------- | ---------------------------------------------- | ---------- | ----------------------------------------------- |
+| `--warehouse-region <warehouse-region>`               | string  | no                                             | no         | body `/data/attributes/warehouse_region`        |
+| `--destination-project-ref <destination-project-ref>` | string  | no                                             | no         | body `/data/attributes/destination_project_ref` |
+| `--install-fdw`                                       | boolean | no                                             | no         | body `/data/attributes/install_fdw`             |
+| `--schema <schema>`                                   | string  | yes, unless `--body` or `--file` has the field | no         | body `/data/attributes/schema`                  |
+| `--table <table>`                                     | string  | no                                             | yes        | body `/data/attributes/tables`                  |
 
 ### Wait
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import { commandSurface, commandSurfaceEntry, walkCommandSurface } from "./command-surface.ts";
+import { apiCommands } from "../../commands/api/generated.ts";
 import { rootCommandForFeatures } from "../root.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -134,26 +135,40 @@ describe("command surface", () => {
     }),
   );
 
-  it.effect("describes a generated command from its annotations and operation schemas", () =>
+  it.effect(
+    "describes a generated command from its operation and schemas; a body flag is not required on the command line",
+    () =>
+      Effect.gen(function* () {
+        const warehouse = yield* warehouseVariant;
+        const enable = warehouse["warehouse enable"];
+        expect(enable).toMatchObject({
+          path: ["warehouse", "enable"],
+          target: { group: "hosted", consent: "no" },
+          errors: "standard",
+          stage: { status: "experimental", feature: "warehouse" },
+          api: { operationId: "v2-enable-warehouse", request: { contentType: "application/json" } },
+        });
+        expect(titlesOf(enable?.result)).toEqual(["response", "waited", "dryRun"]);
+        expect(enable?.flags["schema"]).toMatchObject({ required: false });
+        expect(enable?.flags["table"]).toMatchObject({
+          type: "string",
+          variadic: true,
+          required: false,
+        });
+        expect(enable?.flags["dry-run"]).toMatchObject({ type: "boolean", default: false });
+        expect(Object.keys(enable?.flags ?? {})).not.toContain("output");
+      }),
+  );
+
+  it.effect("reports every generated command with its operation and experimental stage", () =>
     Effect.gen(function* () {
       const warehouse = yield* warehouseVariant;
-      const enable = warehouse["warehouse enable"];
-      expect(enable).toMatchObject({
-        path: ["warehouse", "enable"],
-        target: { group: "hosted", consent: "no" },
-        errors: "standard",
-        stage: { status: "experimental", feature: "warehouse" },
-        api: { operationId: "v2-enable-warehouse", request: { contentType: "application/json" } },
-      });
-      expect(titlesOf(enable?.result)).toEqual(["response", "waited", "dryRun"]);
-      expect(enable?.flags["schema"]).toMatchObject({ required: true });
-      expect(enable?.flags["table"]).toMatchObject({
-        type: "string",
-        variadic: true,
-        required: false,
-      });
-      expect(enable?.flags["dry-run"]).toMatchObject({ type: "boolean", default: false });
-      expect(Object.keys(enable?.flags ?? {})).not.toContain("output");
+      for (const entry of apiCommands) {
+        expect(warehouse[entry.command.join(" ")]).toMatchObject({
+          stage: { status: "experimental", feature: entry.feature },
+          api: { operationId: entry.operationId },
+        });
+      }
     }),
   );
 

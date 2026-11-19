@@ -5,11 +5,8 @@ import { readApiCommand } from "../../commands/api/api-command.annotation.ts";
 import type {
   ApiCommandBinding,
   ApiCommandEntry,
-  ApiCommandFlag,
   ApiCommandSchemas,
 } from "../../commands/api/api-command.model.ts";
-import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
-import type { CommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { nouns } from "../../commands/api/api-command-policy.ts";
 import { apiCommands } from "../../commands/api/generated.ts";
 import { rootCommandForFeatures } from "../root.ts";
@@ -55,6 +52,15 @@ interface SurfaceApi {
   /** Request body content type and JSON Schema, `null` when the operation sends none. */
   readonly request: { readonly contentType: string; readonly schema: unknown } | null;
   readonly bindings: readonly ApiCommandBinding[];
+}
+
+/**
+ * How far a command's contract has settled. An experimental command is reachable only while its
+ * `feature` is enabled: the root mounts the command's family only then.
+ */
+interface CommandStage {
+  readonly status: "experimental";
+  readonly feature: string;
 }
 
 /** One command or group of the mounted tree. Optional fields are omitted when the command declares nothing. */
@@ -150,11 +156,37 @@ const sortedRecord = <A>(
 ): Readonly<Record<string, A>> =>
   Object.fromEntries([...entries].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
-const noApiFlags: ReadonlyMap<string, ApiCommandFlag> = new Map();
+/** What a generated flag adds to its parsed definition. */
+interface ApiFlagFacts {
+  readonly required: boolean;
+  readonly sensitive: boolean;
+}
+
+const noApiFlags: ReadonlyMap<string, ApiFlagFacts> = new Map();
+
+/**
+ * A body flag's requirement sits on the request body, which `--body` or `--file` can supply
+ * instead; a query or header flag has no other source, so it is required on the command line.
+ */
+const apiFlagFacts = (entry: ApiCommandEntry): ReadonlyMap<string, ApiFlagFacts> =>
+  new Map(
+    entry.flags.map((flag) => {
+      const bodyBound = entry.bindings.some(
+        (binding) => binding.location === "body" && binding.flag === flag.name,
+      );
+      return [
+        flag.name,
+        {
+          required: flag.required && !bodyBound,
+          sensitive: flag.sensitive === true,
+        },
+      ];
+    }),
+  );
 
 const surfaceFlag = (
   flag: CommandSpec.Flag,
-  apiFlags: ReadonlyMap<string, ApiCommandFlag>,
+  apiFlags: ReadonlyMap<string, ApiFlagFacts>,
 ): readonly [string, SurfaceFlag] => [
   flag.name,
   {
@@ -187,7 +219,7 @@ const walkGlobalFlags = (root: CommandRoot) => {
 const apiSurface = Effect.fn("CommandSurface.api")(function* (command: CommandRoot) {
   const descriptor = readApiCommand(command);
   if (Option.isNone(descriptor)) return Option.none();
-  const { operationId, bindings } = descriptor.value;
+  const { operationId } = descriptor.value;
   const generated = generatedEntries.find((entry) => entry.operationId === operationId);
   if (generated === undefined) {
     return yield* Effect.die(`no generated command declares operation "${operationId}"`);
@@ -214,10 +246,11 @@ const apiSurface = Effect.fn("CommandSurface.api")(function* (command: CommandRo
         schemas.request === undefined
           ? null
           : { contentType: schemas.request.contentType, schema: schemas.request.schema },
-      bindings,
+      bindings: generated.bindings,
     } satisfies SurfaceApi,
     result: { anyOf: branches } satisfies JsonSchema,
-    apiFlags: new Map(generated.flags.map((flag) => [flag.name, flag])),
+    stage: { status: "experimental", feature: generated.feature } satisfies CommandStage,
+    apiFlags: apiFlagFacts(generated),
   });
 });
 
@@ -236,7 +269,6 @@ export const commandSurfaceEntry = Effect.fn("CommandSurface.entry")(function* (
     onNone: () => noApiFlags,
     onSome: (found) => found.apiFlags,
   });
-  const stage = readCommandStage(command.value);
   const target = readTargetPolicy(command.value);
   const permissions = readPermissions(command.value);
   const flags = spec.value.flags
@@ -247,7 +279,7 @@ export const commandSurfaceEntry = Effect.fn("CommandSurface.entry")(function* (
     aliases: spec.value.alias === undefined ? [] : [spec.value.alias],
     summary: spec.value.shortDescription ?? spec.value.description ?? "",
     unlisted: spec.value.unlisted,
-    ...(Option.isSome(stage) ? { stage: stage.value } : {}),
+    ...(Option.isSome(api) ? { stage: api.value.stage } : {}),
     ...(Option.isSome(target)
       ? { target: { group: target.value.group, consent: target.value.consent } }
       : {}),

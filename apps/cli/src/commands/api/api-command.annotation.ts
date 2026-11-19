@@ -1,13 +1,9 @@
 import { Context, Option } from "effect";
 import { Command } from "effect/cli";
 
-import type { ApiCommandBinding, ApiCommandEntry } from "./api-command.model.ts";
-
 /** What a generated command declares about its API operation; tooling reads it from `Command.annotations`. */
 export interface ApiCommandDescriptor {
   readonly operationId: string;
-  readonly bindings: readonly ApiCommandBinding[];
-  readonly response: ApiCommandEntry["response"];
 }
 
 /** Context key under which a generated command's descriptor is stored in `Command.annotations`. */
