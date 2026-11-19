@@ -38,6 +38,20 @@ const policy = Effect.fnUntraced(function* (checker: Checker, member: ts.Propert
   return undefined;
 });
 
+const aliasedCheckPolicy = Effect.fnUntraced(function* (checker: Checker, ref: ts.Identifier) {
+  const alias = yield* declaration(checker, ref);
+  if (
+    alias &&
+    ts.isVariableDeclaration(alias) &&
+    alias.initializer &&
+    ts.isPropertyAccessExpression(alias.initializer) &&
+    alias.initializer.name.getText() === "check"
+  ) {
+    return yield* policy(checker, alias.initializer);
+  }
+  return undefined;
+});
+
 function checksIn(
   handler: ts.Node,
   checker: Checker,
@@ -54,6 +68,10 @@ function checksIn(
           const key = yield* policy(checker, member);
           if (key) checks.add(key);
         }
+        if (ts.isIdentifier(member)) {
+          const key = yield* aliasedCheckPolicy(checker, member);
+          if (key) checks.add(key);
+        }
       }
       if (followHandler && ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const decl = yield* declaration(checker, node.expression);
@@ -63,6 +81,11 @@ function checksIn(
     }
   });
 }
+
+// Commands that gate only some flags behind experimental access, so the command itself stays documented as stable.
+const FLAG_CONDITIONAL_CHECKS = new Set([
+  "commands/projects/create/create.command.ts:requiredExperimentalAccess",
+]);
 
 it.effect(
   "pairs each command's experimental annotations with checks in its own handler",
@@ -104,6 +127,12 @@ it.effect(
         }
         for (const key of new Set([...annotated, ...checked])) {
           recognizedPolicies.add(key);
+          const relative = file.split("/src/").pop();
+          if (
+            !annotated.has(key) &&
+            FLAG_CONDITIONAL_CHECKS.has(`${relative}:${key.split(":").pop()}`)
+          )
+            continue;
           if (annotated.has(key) !== checked.has(key))
             failures.push(
               `${file}: missing ${annotated.has(key) ? "check" : "annotation"} for ${key}`,

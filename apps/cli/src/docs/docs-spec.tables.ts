@@ -2,9 +2,8 @@ import type { DocsFlag } from "./docs-spec.ts";
 import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
 /**
- * Static data the Effect command tree cannot express structurally: docs-site section tags
- * and flag defaults that
- * `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
+ * Static data the Effect command tree cannot express structurally: docs-site section tags and
+ * flag defaults that `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
  */
 
 export interface DocsInfoTag {

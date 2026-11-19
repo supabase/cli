@@ -11,8 +11,8 @@ import { defineExperimentalAccess } from "./command-access-policy.ts";
 /**
  * Gates access to experimental commands and their children. Must run before any
  * mutual-exclusivity check, `withCommandTelemetry`, and any telemetry/linked-project file write —
- * a closed gate must produce none of those side effects. Each native experimental leaf calls
- * {@link requireExperimental} first in its `.command.ts` for this reason. The message text and
+ * a closed gate must produce none of those side effects. Each native experimental leaf annotates
+ * {@link requiredExperimentalAccess} and runs its check first in its `.command.ts` for this reason. The message text and
  * the `SUPABASE_EXPERIMENTAL` env fallback (see {@link resolveExperimental}) are established
  * behavior and must not change casually.
  */
@@ -37,5 +37,8 @@ export const requiredExperimentalAccess = defineExperimentalAccess({
   }),
 });
 
-/** Flag-conditional experimental check, without command-level documentation metadata. */
+/**
+ * Flag-conditional experimental check for commands that stay stable; the pairing test rejects it
+ * in unannotated commands outside its allowlist.
+ */
 export const requireExperimental = requiredExperimentalAccess.check;
