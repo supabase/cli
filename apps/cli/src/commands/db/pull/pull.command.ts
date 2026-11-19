@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Effect, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
@@ -99,6 +100,7 @@ const telemetryOptions = (flags: DbPullFlags) => ({
 });
 
 export const dbPullCommand = Command.make("pull", config).pipe(
+  withSidebar({ title: "Pull schema changes from remote database" }),
   Command.withDescription(
     "Migration mode compares supabase/migrations with the selected live database (the local database by default, or the one --remote selects), writes the complete difference as migration files, and records them in that database's migration history; a hosted database asks for confirmation first, or needs --yes in a non-interactive run. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
   ),

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { dbDiffCommand } from "./diff/diff.command.ts";
 import { dbDumpCommand } from "./dump/dump.command.ts";
@@ -14,6 +15,7 @@ import { dbRemoteCommand } from "./remote/remote.command.ts";
 import { dbSchemaCommand } from "./schema/schema.command.ts";
 
 export const dbCommand = Command.make("db").pipe(
+  withSidebar({ category: "database", title: "Manage local databases" }),
   Command.withDescription("Manage Postgres databases."),
   Command.withShortDescription("Manage databases"),
   Command.withSubcommands([

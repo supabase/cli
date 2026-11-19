@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -64,6 +65,7 @@ const warnPasswordIgnored = Effect.fnUntraced(function* (flags: LinkFlags) {
 });
 
 export const linkCommand = Command.make("link", config).pipe(
+  withSidebar({ category: "general" }),
   Command.withDescription("Link to a Supabase project."),
   Command.withShortDescription("Link to a Supabase project"),
   Command.withExamples([

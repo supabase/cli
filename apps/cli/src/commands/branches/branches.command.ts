@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { branchesListCommand } from "./list/list.command.ts";
 import { branchesCreateCommand } from "./create/create.command.ts";
@@ -9,6 +10,7 @@ import { branchesDeleteCommand } from "./delete/delete.command.ts";
 import { branchesDisableCommand } from "./disable/disable.command.ts";
 
 export const branchesCommand = Command.make("branches").pipe(
+  withSidebar({ category: "branches" }),
   Command.withDescription("Manage Supabase preview branches."),
   Command.withShortDescription("Manage preview branches"),
   Command.withSubcommands([

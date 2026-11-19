@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -42,6 +43,7 @@ const config = {
 export type PostgresConfigDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
+  withSidebar({ title: "Delete Postgres configurations" }),
   Command.withDescription("Delete specific Postgres database config overrides."),
   Command.withShortDescription("Delete Postgres database config overrides"),
   withPermissions(

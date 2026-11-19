@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -32,6 +33,7 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 export type DomainsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const domainsDeleteCommand = Command.make("delete", config).pipe(
+  withSidebar({ title: "Delete custom hostname config" }),
   Command.withDescription("Deletes the custom hostname config for your project."),
   Command.withShortDescription("Delete the custom hostname config"),
   Command.withExamples([

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -52,6 +53,7 @@ const stopRuntimeLayer = Layer.mergeAll(
 );
 
 export const stopCommand = Command.make("stop", config).pipe(
+  withSidebar({ category: "general", title: "Stop all containers" }),
   Command.withDescription("Stop all local Supabase containers."),
   Command.withShortDescription("Stop all local Supabase containers"),
   Command.withExamples([

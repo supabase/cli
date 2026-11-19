@@ -1,8 +1,10 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { encryptionGetRootKeyCommand } from "./get-root-key/get-root-key.command.ts";
 import { encryptionUpdateRootKeyCommand } from "./update-root-key/update-root-key.command.ts";
 
 export const encryptionCommand = Command.make("encryption").pipe(
+  withSidebar({ category: "encryption" }),
   Command.withDescription("Manage encryption keys of Supabase projects"),
   Command.withShortDescription("Manage encryption keys"),
   Command.withSubcommands([encryptionGetRootKeyCommand, encryptionUpdateRootKeyCommand]),

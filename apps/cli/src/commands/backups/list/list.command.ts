@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import type * as CliCommand from "effect/cli/Command";
 import { Command } from "effect/cli";
 
@@ -20,6 +21,7 @@ const config = {
 export type BackupsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const backupsListCommand = Command.make("list", config).pipe(
+  withSidebar({ title: "List available physical backups" }),
   Command.withDescription("Lists available physical backups"),
   Command.withShortDescription("Lists available physical backups"),
   Command.withExamples([

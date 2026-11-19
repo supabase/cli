@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -116,6 +117,7 @@ const explicitBranchSide = (flag: "from" | "to") =>
   }) as const;
 
 export const dbDiffCommand = Command.make("diff", config).pipe(
+  withSidebar({ title: "Diff local database" }),
   Command.withDescription(
     "Compares a shadow built from supabase/migrations with a live database (the local database by default, or the one --remote selects). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
   ),

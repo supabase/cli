@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -38,6 +39,7 @@ const config = {
 export type SslEnforcementUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const sslEnforcementUpdateCommand = Command.make("update", config).pipe(
+  withSidebar({ title: "Update SSL enforcement configurations" }),
   Command.withDescription("Update SSL enforcement configuration."),
   Command.withShortDescription("Update SSL enforcement configuration"),
   withPermissions(

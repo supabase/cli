@@ -1,67 +1,9 @@
 import type { DocsFlag } from "./docs-spec.ts";
 
 /**
- * Static data the Effect command tree cannot express structurally: docs-site section tags,
- * argument usage exceptions and query-specific output formats.
- * `buildDocsSpec` fails the build on stale keys.
+ * Static data the Effect command tree cannot express structurally: argument usage exceptions
+ * and query-specific output formats. `buildDocsSpec` fails the build on stale keys.
  */
-
-export interface DocsInfoTag {
-  readonly id: string;
-  readonly title: string;
-}
-
-export const DOCS_INFO_TAGS: ReadonlyArray<DocsInfoTag> = [
-  { id: "quick-start", title: "Quick Start" },
-  { id: "local-dev", title: "Local Development" },
-  { id: "management-api", title: "Management APIs" },
-  { id: "other-commands", title: "Additional Commands" },
-];
-
-/** Docs-site section tag per top-level command. */
-export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "supabase-bootstrap": ["quick-start"],
-  "supabase-backups": ["management-api"],
-  "supabase-branches": ["management-api"],
-  "supabase-completion": ["other-commands"],
-  "supabase-config": ["management-api"],
-  "supabase-db": ["local-dev"],
-  "supabase-domains": ["management-api"],
-  "supabase-encryption": ["management-api"],
-  "supabase-feedback": ["other-commands"],
-  "supabase-functions": ["management-api"],
-  "supabase-gen": ["local-dev"],
-  "supabase-init": ["local-dev"],
-  "supabase-inspect": ["local-dev"],
-  "supabase-issue": ["other-commands"],
-  "supabase-link": ["local-dev"],
-  "supabase-login": ["local-dev"],
-  "supabase-logout": ["local-dev"],
-  "supabase-logs": ["management-api", "local-dev"],
-  "supabase-migration": ["local-dev"],
-  "supabase-network-bans": ["management-api"],
-  "supabase-network-restrictions": ["management-api"],
-  "supabase-notebooks": ["management-api"],
-  "supabase-orgs": ["management-api"],
-  "supabase-postgres-config": ["management-api"],
-  "supabase-projects": ["management-api"],
-  "supabase-pull": ["other-commands"],
-  "supabase-secrets": ["management-api"],
-  "supabase-seed": ["local-dev"],
-  "supabase-services": ["local-dev"],
-  "supabase-snippets": ["management-api"],
-  "supabase-ssl-enforcement": ["management-api"],
-  "supabase-sso": ["management-api"],
-  "supabase-start": ["local-dev"],
-  "supabase-status": ["local-dev"],
-  "supabase-stop": ["local-dev"],
-  "supabase-storage": ["management-api"],
-  "supabase-telemetry": ["local-dev"],
-  "supabase-test": ["local-dev"],
-  "supabase-unlink": ["local-dev"],
-  "supabase-vanity-subdomains": ["management-api"],
-  "supabase-whoami": ["management-api"],
-};
 
 /**
  * Flag docs injected into specific commands beyond what their Effect config

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -75,6 +76,7 @@ const statusRuntimeLayer = Layer.mergeAll(
 );
 
 export const statusCommand = Command.make("status", config).pipe(
+  withSidebar({ category: "general", title: "Retrieve container status" }),
   Command.withDescription("Show status of local Supabase containers."),
   Command.withShortDescription("Show status of local Supabase containers"),
   Command.withExamples([

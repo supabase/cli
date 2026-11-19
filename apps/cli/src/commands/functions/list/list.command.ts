@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -19,6 +20,7 @@ const config = {
 export type FunctionsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const functionsListCommand = Command.make("list", config).pipe(
+  withSidebar({ title: "List all functions" }),
   Command.withDescription("List all Functions in the linked Supabase project."),
   Command.withShortDescription("List all Functions in Supabase"),
   Command.withExamples([

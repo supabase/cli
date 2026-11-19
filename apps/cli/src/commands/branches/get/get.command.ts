@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -57,6 +58,7 @@ const config = {
 export type BranchesGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const branchesGetCommand = Command.make("get", config).pipe(
+  withSidebar({ title: "Show connection details for a preview branch" }),
   Command.withDescription(
     "Retrieve details of the specified preview branch.\n\nNote: For the main branch, password-dependent fields (POSTGRES_URL, POSTGRES_URL_NON_POOLING) are not populated because production database credentials are not retrievable via API.",
   ),

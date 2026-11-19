@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -43,6 +44,7 @@ const config = {
 export type DbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbLintCommand = Command.make("lint", config).pipe(
+  withSidebar({ title: "Lint local database" }),
   Command.withDescription("Checks a database for typing error."),
   Command.withShortDescription("Checks a database for typing error"),
   Command.withExamples([

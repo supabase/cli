@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -14,6 +15,7 @@ const config = {
 export type CompletionPowershellFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const completionPowershellCommand = Command.make("powershell", config).pipe(
+  withSidebar({ title: "Generate powershell script" }),
   Command.withDescription(
     "Generate the autocompletion script for powershell.\n\n" +
       "To load completions in your current shell session:\n\n" +

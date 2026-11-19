@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -30,6 +31,7 @@ const config = {
 export type MigrationListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const migrationListCommand = Command.make("list", config).pipe(
+  withSidebar({ title: "List all migrations" }),
   Command.withDescription(
     "List local migration files and the migration history of the target database.",
   ),

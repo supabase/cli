@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -26,6 +27,7 @@ const config = {
 export type VanitySubdomainsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const vanitySubdomainsDeleteCommand = Command.make("delete", config).pipe(
+  withSidebar({ title: "Delete vanity subdomain" }),
   Command.withDescription(
     "Deletes the vanity subdomain for a project, and reverts to using the project ref for routing.",
   ),

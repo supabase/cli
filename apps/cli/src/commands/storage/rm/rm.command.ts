@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect, Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
@@ -27,6 +28,7 @@ const config = {
 } as const;
 
 export const storageRmCommand = Command.make("rm", config).pipe(
+  withSidebar({ title: "Delete objects from Storage" }),
   Command.withDescription("Remove objects by file path."),
   Command.withShortDescription("Remove objects by file path"),
   Command.withExamples([

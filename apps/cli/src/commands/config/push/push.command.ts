@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -32,6 +33,7 @@ const configPushHandler = (flags: ConfigPushFlags) =>
   );
 
 export const configPushCommand = Command.make("push", config).pipe(
+  withSidebar({ title: "Push config from a local file" }),
   Command.withDescription(
     "Pushes the properties your local config file declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview. Shows the exact diff for every changed resource, then asks once before anything is written (the default answer is no). Piped answers are not read: non-interactive and JSON runs need --yes or a SUPABASE_YES set in the shell. Run `supabase config diff` first to review the changes.",
   ),

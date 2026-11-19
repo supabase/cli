@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -26,6 +27,7 @@ const config = {
 export type SsoShowFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoShowCommand = Command.make("show", config).pipe(
+  withSidebar({ title: "Show information for an identity provider" }),
   Command.withDescription(
     "Provides the information about an established connection to an identity provider. You can use --metadata to obtain the raw SAML 2.0 Metadata XML document stored in your project's configuration.",
   ),

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
@@ -161,6 +162,7 @@ const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
 );
 
 export const issueCommand = Command.make("issue").pipe(
+  withSidebar({ category: "feedback" }),
   Command.withDescription("Open Supabase CLI GitHub issue forms."),
   Command.withShortDescription("Open GitHub issue forms"),
   Command.withSubcommands([issueBugCommand, issueFeatureCommand, issueDocsCommand]),

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -32,6 +33,7 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 export type DomainsActivateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const domainsActivateCommand = Command.make("activate", config).pipe(
+  withSidebar({ title: "Activate custom hostname" }),
   Command.withDescription(
     "Activates the custom hostname configuration for a project. This reconfigures your Supabase project to respond to requests on your custom hostname. After the custom hostname is activated, your project's auth services will no longer function on the Supabase-provisioned subdomain.",
   ),

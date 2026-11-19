@@ -214,12 +214,6 @@ describe("buildDocsSpec", () => {
     expect(spec.clispec).toBe("001");
     expect(spec.info.id).toBe("cli");
     expect(spec.info.version).toBe("1.2.3");
-    expect(spec.info.tags.map((tag) => tag.id)).toEqual([
-      "quick-start",
-      "local-dev",
-      "management-api",
-      "other-commands",
-    ]);
   });
 
   it("excludes gated Compute and Stack commands from the default docs spec", () => {
@@ -273,13 +267,12 @@ describe("buildDocsSpec", () => {
   it("includes the TS-only completion and issue families", () => {
     const { byId } = builtSpec();
     expect(byId.get("supabase-completion")?.subcommands).toContain("supabase-completion-zsh");
-    expect(byId.get("supabase-issue")?.tags).toEqual(["other-commands"]);
+    expect(byId.get("supabase-issue")?.subcommands).toContain("supabase-issue-bug");
   });
 
   it("includes the top-level whoami command in the Management API reference", () => {
     const whoami = builtSpec().byId.get("supabase-whoami");
     expect(whoami).toBeDefined();
-    expect(whoami?.tags).toEqual(["management-api"]);
     expect(whoami?.usage).toBe("supabase whoami [flags]");
     expect(whoami?.subcommands).toEqual([]);
     expect(whoami?.description).toBe("Show information about the currently logged-in user.");
@@ -297,7 +290,6 @@ describe("buildDocsSpec", () => {
     const { byId, content } = builtSpec();
     const link = byId.get("supabase-link");
     expect(link).toBeDefined();
-    expect(link?.tags).toEqual(["local-dev"]);
     expect(link?.usage).toBe("supabase link [ref-or-branch] [flags]");
     expect(link?.flags.map((flag) => flag.id)).toEqual(["project-ref", "skip-pooler"]);
     expect(link?.description).toBe(
@@ -544,14 +536,6 @@ describe("build guards fail loudly", () => {
   it("throws when the root declares no --experimental global flag", () => {
     const root = Command.make("supabase").pipe(Command.withSubcommands([Command.make("link")]));
     expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(/no --experimental global flag/);
-  });
-
-  it("throws for a top-level command without a docs section tag", () => {
-    const root = Command.make("supabase").pipe(
-      Command.withSubcommands([Command.make("not-a-real-command")]),
-      Command.withGlobalFlags([ExperimentalFlag]),
-    );
-    expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(/no DOCS_TAGS entry/);
   });
 
   it("throws listing stale static-table entries for a shrunken tree", () => {

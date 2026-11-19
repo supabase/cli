@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
@@ -8,6 +9,7 @@ import { withTargetPolicy } from "../../command-internal/target/target-policy.ts
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 export const logoutCommand = Command.make("logout").pipe(
+  withSidebar({ category: "general" }),
   Command.withDescription("Log out and delete access tokens locally."),
   Command.withShortDescription("Log out and delete access tokens locally"),
   withPermissions({ operations: [] }),

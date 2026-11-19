@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -23,6 +24,7 @@ const config = {
 export type ProjectsApiKeysFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const projectsApiKeysCommand = Command.make("api-keys", config).pipe(
+  withSidebar({ title: "Show API keys for a project" }),
   Command.withDescription("List all API keys for a Supabase project."),
   Command.withShortDescription("List API keys"),
   Command.withExamples([

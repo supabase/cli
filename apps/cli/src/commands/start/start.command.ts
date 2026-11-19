@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -90,6 +91,7 @@ const startRuntimeLayer = Layer.mergeAll(
 );
 
 export const startCommand = Command.make("start", config).pipe(
+  withSidebar({ category: "general", title: "Start a container" }),
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
   withPermissions({

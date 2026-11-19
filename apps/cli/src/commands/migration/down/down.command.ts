@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -38,6 +39,7 @@ const config = {
 export type MigrationDownFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const migrationDownCommand = Command.make("down", config).pipe(
+  withSidebar({ title: "Reset migrations to a prior version" }),
   Command.withDescription("Resets applied migrations up to the last n versions."),
   Command.withShortDescription("Resets applied migrations up to the last n versions"),
   Command.withHandler((flags) =>

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -64,6 +65,7 @@ const config = {
 export type SsoAddFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoAddCommand = Command.make("add", config).pipe(
+  withSidebar({ title: "Add an identity provider" }),
   Command.withDescription(
     "Add and configure a new connection to a SSO identity provider to your Supabase project.",
   ),

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbTrafficProfile } from "./traffic-profile.handler.ts";
@@ -15,6 +16,7 @@ export const inspectDbTrafficProfileCommand = Command.make(
   "traffic-profile",
   INSPECT_DB_FLAGS,
 ).pipe(
+  withSidebar({ title: "Show read / write activity ratio for tables" }),
   Command.withDescription(
     "Show read/write activity ratio for tables based on block I/O operations.",
   ),

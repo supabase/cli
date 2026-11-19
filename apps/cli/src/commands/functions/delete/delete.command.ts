@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -30,6 +31,7 @@ const functionsDeleteHandler = (flags: FunctionsDeleteFlags) =>
   );
 
 export const functionsDeleteCommand = Command.make("delete", config).pipe(
+  withSidebar({ title: "Delete a function" }),
   Command.withDescription(
     "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
   ),

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -21,6 +22,7 @@ import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts"
  * `testDbConfig`/`runTestDbCommand` implementation across two `Command` registrations.
  */
 export const testDbCommand = Command.make("db", testDbConfig).pipe(
+  withSidebar({ title: "Run tests (pgTAP)" }),
   Command.withDescription(TEST_DB_DESCRIPTION),
   Command.withShortDescription(TEST_DB_SHORT),
   Command.withHandler(runTestDbCommand),

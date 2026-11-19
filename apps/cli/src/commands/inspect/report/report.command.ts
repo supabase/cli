@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -27,6 +28,7 @@ const config = {
 export type InspectReportFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const inspectReportCommand = Command.make("report", config).pipe(
+  withSidebar({ title: "Inspect all database statistics and save output" }),
   Command.withDescription(
     "Generate a CSV output for all inspect commands. It reports on the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
   ),

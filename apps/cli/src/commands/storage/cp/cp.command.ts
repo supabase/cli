@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
@@ -68,6 +69,7 @@ const config = {
 export type StorageCpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const storageCpCommand = Command.make("cp", config).pipe(
+  withSidebar({ title: "Upload and download from Storage" }),
   Command.withDescription("Copy objects from src to dst path."),
   Command.withShortDescription("Copy objects from src to dst path"),
   Command.withExamples([

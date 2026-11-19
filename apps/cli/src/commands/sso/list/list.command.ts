@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -20,6 +21,7 @@ const config = {
 export type SsoListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoListCommand = Command.make("list", config).pipe(
+  withSidebar({ title: "List all identity providers" }),
   Command.withDescription("List all SSO identity providers for a project."),
   Command.withShortDescription("List all SSO identity providers"),
   Command.withExamples([

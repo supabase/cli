@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbIndexStats } from "./index-stats.handler.ts";
@@ -12,6 +13,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbIndexStatsCommand = Command.make("index-stats", INSPECT_DB_FLAGS).pipe(
+  withSidebar({ title: "Show sizes of individual indexes" }),
   Command.withDescription(
     "Show combined index size, usage percent, scan counts, and unused status.",
   ),

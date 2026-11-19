@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
@@ -39,6 +40,7 @@ const testNewRuntimeLayer = Layer.mergeAll(
 );
 
 export const testNewCommand = Command.make("new", config).pipe(
+  withSidebar({ title: "Create a new test" }),
   Command.withDescription("Create a new test file."),
   Command.withShortDescription("Create a new test file"),
   withPermissions({ operations: [], noApiEffectFlags: ["template"] }),

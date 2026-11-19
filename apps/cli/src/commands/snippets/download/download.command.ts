@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -22,6 +23,7 @@ const config = {
 export type SnippetsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const snippetsDownloadCommand = Command.make("download", config).pipe(
+  withSidebar({ title: "Download SQL snippet content" }),
   Command.withDescription("Download contents of the specified SQL snippet."),
   Command.withShortDescription("Download contents of a SQL snippet"),
   Command.withExamples([

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -41,6 +42,7 @@ const config = {
 export type DbAdvisorsFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
+  withSidebar({ title: "Check database for security and performance issues" }),
   Command.withDescription("Checks database for security and performance issues."),
   Command.withShortDescription("Checks database for security and performance issues"),
   Command.withHandler((flags) =>

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -29,6 +30,7 @@ const config = {
 export type StorageLsFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const storageLsCommand = Command.make("ls", config).pipe(
+  withSidebar({ title: "Lists all Storage objects" }),
   Command.withDescription("List objects by path prefix."),
   Command.withShortDescription("List objects by path prefix"),
   Command.withExamples([

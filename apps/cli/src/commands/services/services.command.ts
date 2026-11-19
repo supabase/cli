@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
@@ -16,6 +17,7 @@ const config = {};
 export type ServicesFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const servicesCommand = Command.make("services", config).pipe(
+  withSidebar({ category: "services" }),
   Command.withDescription("Show versions of all Supabase services."),
   Command.withShortDescription("Show versions of all Supabase services"),
   withPermissions(

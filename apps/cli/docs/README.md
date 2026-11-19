@@ -63,9 +63,10 @@ directory must already exist. Local mode does not clone, commit, push, or open a
 credentials. Add `--dry-run` to validate the input and print the destination without writing.
 
 This preview writes only the command-reference spec, not sidebar entries or JSON Schemas.
-New commands still need an entry in the website's
-[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json)
-to appear in the reference.
+From `apps/cli`, `pnpm docs:spec <version>` generates the command-reference spec and
+`pnpm docs:sidebar` generates the content for the website's
+[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json).
+Copy the generated sidebar into that file so new commands appear in the reference.
 
 ## Release Publishing
 
@@ -116,10 +117,11 @@ bun scripts/publish-schemas.ts --version <version> [--dry-run]
 
 ## Maintenance
 
-When adding or changing a command or flag, update the matching entries in
-`src/docs/docs-spec.tables.ts` — each table's doc comment says
-when it applies: `TAGS`, `DEFAULT_OVERRIDES`, `REQUIRED`, `EXPERIMENTAL` (and
-`_OPTIONAL`), `EXCLUDED` (whole commands), `EXCLUDED_FLAGS`, `ARG_OVERRIDES`,
-`CHOICE_OVERRIDES`, `EXTRA_FLAGS`. The spec build fails on entries that no
-longer resolve against the command tree, but new commands and flags must be
-added by hand — nothing detects a missing entry for a new surface.
+When adding or changing a command or flag, update the applicable argument overrides and extra
+flags in `src/docs/docs-spec.tables.ts`; each table's doc comment says when it applies.
+The spec build fails on entries that no longer resolve against the command tree, but it cannot
+detect missing overrides for a new surface.
+Each new top-level command needs `withSidebar({ category })`, using a category from
+`DOCS_SIDEBAR_CATEGORIES` in `src/command-internal/command-sidebar.ts`.
+Run `pnpm docs:sidebar` to regenerate the sidebar; the build rejects missing categories,
+categories declared on subcommands, unused categories and titles longer than 50 characters.

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { migrationListCommand } from "./list/list.command.ts";
 import { migrationNewCommand } from "./new/new.command.ts";
@@ -8,6 +9,7 @@ import { migrationDownCommand } from "./down/down.command.ts";
 import { migrationFetchCommand } from "./fetch/fetch.command.ts";
 
 export const migrationCommand = Command.make("migration").pipe(
+  withSidebar({ category: "migrations", title: "Manage database migrations" }),
   Command.withDescription("Manage database migration scripts."),
   Command.withShortDescription("Manage database migration scripts"),
   Command.withAlias("migrations"),

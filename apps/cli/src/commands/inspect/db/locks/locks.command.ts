@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbLocks } from "./locks.handler.ts";
@@ -12,6 +13,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbLocksCommand = Command.make("locks", INSPECT_DB_FLAGS).pipe(
+  withSidebar({ title: "Show queries taking exclusive locks" }),
   Command.withDescription("Show queries which have taken out an exclusive lock on a relation."),
   Command.withShortDescription("Show exclusive locks"),
   withPermissions(INSPECT_DB_PERMISSIONS),
