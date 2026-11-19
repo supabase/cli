@@ -308,26 +308,50 @@ const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
 
 describe("generated warehouse commands", () => {
   describe("consolidated warehouse status", () => {
+    const attributes = {
+      project_ref: VALID_REF,
+      enabled: true,
+      status: "degraded",
+      configured_readiness: "not_ready",
+      query_connectivity: "not_checked",
+      observed_at: "2026-11-17T10:00:00Z",
+      compute: {
+        status: "available",
+        region: "us-east-1",
+        routing_status: "ready",
+        unavailable_reason: null,
+        observed_at: "2026-11-17T10:00:00Z",
+      },
+      lifecycle: null,
+      pipeline: null,
+      tables: {
+        status: "available",
+        unavailable_reason: null,
+        observed_at: "2026-11-17T10:00:00Z",
+        items: [],
+      },
+      replication: {
+        status: "unavailable",
+        unavailable_reason: "observation_unavailable",
+        observed_at: null,
+        apply_lag: null,
+      },
+      capabilities: {
+        context: true,
+        query_explain: false,
+        replication_add: false,
+        replication_remove: true,
+        table_layout_read: true,
+        table_layout_update: false,
+        table_resync: false,
+        workload_metrics: true,
+      },
+    } satisfies OperationOutput<"v2GetWarehouseStatus">["data"]["attributes"];
     const body = {
       data: {
         type: "warehouse_context",
         id: VALID_REF,
-        attributes: {
-          enabled: true,
-          status: "degraded",
-          configured_readiness: "not_ready",
-          query_connectivity: "not_checked",
-          observed_at: "2026-11-17T10:00:00Z",
-          tables: { status: "available", items: [] },
-          replication: {
-            status: "unavailable",
-            unavailable_reason: "observation_unavailable",
-            observed_at: null,
-            apply_lag: null,
-          },
-          capabilities: { replication_add: false, replication_remove: true, table_resync: false },
-          future_field: { retained: true },
-        },
+        attributes: { ...attributes, future_field: { retained: true } },
       },
     };
 
@@ -373,23 +397,37 @@ describe("generated warehouse commands", () => {
 
     it.effect("lists every table of a large warehouse in terminal output", () => {
       const items = Array.from({ length: 12 }, (_, index) => ({
-        id: String(20000 + index),
+        id: 20000 + index,
+        schema: "public",
         name: `table_${index}`,
-        replication_state: index === 0 ? "error" : "following_wal",
-      }));
+        replication_state: index === 0 ? ("error" as const) : ("following_wal" as const),
+        sync_lag:
+          index === 1
+            ? {
+                active: true,
+                feedback_age_ms: 5,
+                flush_lag_bytes: 2048,
+                flush_lag_ms: 120,
+                wal_status: "reserved" as const,
+                write_lag_ms: 80,
+              }
+            : null,
+      })) satisfies OperationOutput<"v2GetWarehouseStatus">["data"]["attributes"]["tables"]["items"];
       const { out, run } = setup(["warehouse", "status"], {
         route: ok({
           data: {
             ...body.data,
-            attributes: { ...body.data.attributes, tables: { status: "available", items } },
+            attributes: { ...attributes, tables: { ...attributes.tables, items } },
           },
         }),
         stdoutIsTty: true,
       });
       return Effect.gen(function* () {
         yield* run;
-        expect(out.stdoutText).toMatch(/20000\s.*table_0.*error/);
-        expect(out.stdoutText).toMatch(/20011\s.*table_11/);
+        expect(out.stdoutText).toMatch(
+          /ID\s+20000\n\s+Schema\s+public\n\s+Name\s+table_0\n\s+Replication state\s+error\n/,
+        );
+        for (const item of items) expect(out.stdoutText).toContain(String(item.id));
         expect(out.stdoutText).not.toContain("omitted");
       });
     });
@@ -448,7 +486,7 @@ describe("generated warehouse commands", () => {
         expect(out.stdoutText).toMatch(/16402\s.*events.*syncing.*copying_table/);
         expect(out.stdoutText).toMatch(/Warehouse table 16385\n[\s\S]*Source\s+pipeline_apply/);
         expect(out.stdoutText).toMatch(/Feedback age ms\s+5/);
-        expect(out.stdoutText).not.toContain("Warehouse table 16402");
+        expect(out.stdoutText).toMatch(/Warehouse table 16402\n\s+Replication feedback\s+-\n/);
       });
     });
 
@@ -496,6 +534,45 @@ describe("generated warehouse commands", () => {
         },
       ],
     };
+
+    it.effect("shows the last 10 samples of a long series with an omission notice", () => {
+      const points = Array.from({ length: 12 }, (_, index) => ({
+        timestamp: 1795001000 + index * 60,
+        value: 1001 + index,
+      }));
+      const [first] = response.data;
+      const [firstSeries] = attributes.series;
+      const { out, run } = setup(argv, {
+        route: ok({
+          data: [
+            {
+              ...first,
+              attributes: {
+                ...first?.attributes,
+                series: [
+                  {
+                    ...firstSeries,
+                    points,
+                    coverage: { returned_points: 12, expected_points: 12 },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toContain(
+          "Showing last 10 of 12 samples; 2 omitted; use -o json for all samples.",
+        );
+        expect(out.stdoutText).not.toContain("1001");
+        expect(out.stdoutText).not.toContain("1002");
+        expect(out.stdoutText).toContain("1003");
+        expect(out.stdoutText).toContain("1012");
+      });
+    });
 
     it.effect("forwards a relative range and preserves the full JSON response", () => {
       const { sent, out, run } = setup(

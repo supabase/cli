@@ -182,7 +182,7 @@ const resourceLines = (document: JsonObject): ReadonlyArray<string> | undefined 
     const summary = columns.filter((column) => !nested.has(column));
     const details = data.flatMap((resource, index) => {
       const entries = resourceEntries(resource).filter(
-        ([key, value]) => nested.has(key) && !isScalar(value),
+        ([key, value]) => nested.has(key) && value !== undefined,
       );
       if (entries.length === 0) return [];
       const id = resource["id"];
