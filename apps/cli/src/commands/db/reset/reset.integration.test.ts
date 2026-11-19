@@ -98,6 +98,7 @@ import {
   YesFlag,
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
+import { defaultSecretKey } from "../../../shared/stack-constants.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
@@ -478,14 +479,23 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
-/** Appends each gateway request to `timeline`, answering PostgREST's readiness probe with `readyStatus`. */
-function timelineHttpClientLayer(timeline: Array<string>, readyStatus: number) {
+/** Appends each gateway request to `timeline` (flagged when sent after `finished()`), answering PostgREST's readiness probe with `readyStatus`. */
+function timelineHttpClientLayer(
+  timeline: Array<string>,
+  readyProbes: Array<{ readonly origin: string; readonly apikey: string }>,
+  readyStatus: number,
+  finished: () => boolean,
+) {
   return Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
       Effect.sync(() => {
-        const path = new URL(request.url).pathname;
-        timeline.push(`${request.method} ${path}`);
+        const url = new URL(request.url);
+        const path = url.pathname;
+        timeline.push(`${request.method} ${path}${finished() ? " after finish" : ""}`);
+        if (path === POSTGREST_READY_PATH) {
+          readyProbes.push({ origin: url.origin, apikey: request.headers["apikey"] ?? "" });
+        }
         const status = path === POSTGREST_READY_PATH ? readyStatus : 200;
         return HttpClientResponse.fromWeb(request, new Response(null, { status }));
       }),
@@ -1202,17 +1212,21 @@ describe("db reset", () => {
     readonly kongReloadFailsAfterRest?: boolean;
   }) {
     const timeline: Array<string> = [];
+    const readyProbes: Array<{ readonly origin: string; readonly apikey: string }> = [];
     let seeded = (): boolean => false;
+    let finished = (): boolean => false;
     const base = defaultLocalResetRoute();
     const ctx = setup(tmp.current, {
       toml: opts.toml ?? 'project_id = "test"\n',
       files: {
-        ...migrationFile("20240101000000", "create table rest_marker ();"),
+        ...migrationFile("20240101000000", "create table rest_seed_marker (id integer);"),
         "supabase/seed.sql": "insert into rest_seed_marker values (1);",
       },
       args: ["db", "reset"],
       isLocal: true,
-      httpClient: timelineHttpClientLayer(timeline, opts.readyStatus ?? 200),
+      httpClient: timelineHttpClientLayer(timeline, readyProbes, opts.readyStatus ?? 200, () =>
+        finished(),
+      ),
       route: (args) => {
         if (args[0] === "restart" && args[1] === REST_ID) {
           timeline.push(seeded() ? "restart rest after seed" : "restart rest before seed");
@@ -1238,7 +1252,8 @@ describe("db reset", () => {
       },
     });
     seeded = () => ctx.conn.execs.some((sql) => sql.includes("insert into rest_seed_marker"));
-    return { ...ctx, timeline };
+    finished = () => ctx.out.stderrText.includes("Finished supabase db reset");
+    return { ...ctx, timeline, readyProbes };
   }
 
   describe("local reset — PG15+", () => {
@@ -2650,17 +2665,24 @@ describe("db reset", () => {
     });
 
     it.effect("restarts PostgREST after the seed and waits for it before finishing", () => {
-      const { layer, out, timeline } = postgrestScenario({});
-      return Effect.gen(function* () {
-        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(timeline).toEqual([
-          "reload kong",
-          "restart rest after seed",
-          "reload kong",
-          `HEAD ${POSTGREST_READY_PATH}`,
-        ]);
-        expect(out.stderrText).toContain("Finished supabase db reset.\n");
-      });
+      const { layer, out, timeline, readyProbes } = postgrestScenario({});
+      return withEnvVar(
+        "DOCKER_HOST",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(timeline).toEqual([
+            "reload kong",
+            "restart rest after seed",
+            "reload kong",
+            `HEAD ${POSTGREST_READY_PATH}`,
+          ]);
+          expect(readyProbes).toEqual([
+            { origin: "http://127.0.0.1:54321", apikey: defaultSecretKey },
+          ]);
+          expect(out.stderrText).toContain("Finished supabase db reset.\n");
+        }),
+      );
     });
 
     it.effect("warns but still finishes when PostgREST never becomes ready", () => {
@@ -2687,17 +2709,22 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(timeline).toEqual(["reload kong"]);
+        expect(out.stderrText).not.toContain("PostgREST may not serve");
         expect(out.stderrText).toContain("Finished supabase db reset.\n");
       });
     });
 
-    it.effect("still restarts PostgREST when inspecting it fails for another reason", () => {
-      const { layer, timeline } = postgrestScenario({
+    it.effect("warns and skips PostgREST when inspecting it fails for another reason", () => {
+      const { layer, out, timeline } = postgrestScenario({
         restInspectError: "Cannot connect to the Docker daemon",
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(timeline).toContain("restart rest after seed");
+        expect(timeline).toEqual(["reload kong"]);
+        expect(out.stderrText).toContain(
+          "WARNING: PostgREST may not serve the reset schema yet: failed to inspect container health: Cannot connect to the Docker daemon",
+        );
+        expect(out.stderrText).toContain("Finished supabase db reset.\n");
       });
     });
 
@@ -2707,7 +2734,9 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(timeline).not.toContain(`HEAD ${POSTGREST_READY_PATH}`);
+        expect(timeline.some((entry) => entry.startsWith(`HEAD ${POSTGREST_READY_PATH}`))).toBe(
+          false,
+        );
         expect(out.stderrText).toContain(
           "WARNING: PostgREST may not serve the reset schema yet: failed to reload kong",
         );

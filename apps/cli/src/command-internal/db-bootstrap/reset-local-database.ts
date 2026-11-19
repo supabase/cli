@@ -10,7 +10,7 @@
  * invocation only, emitted by its own handler after calling this function.
  */
 
-import { Data, Effect, FileSystem, Option, Path, Result } from "effect";
+import { Data, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { branchClause, detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -350,35 +350,36 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
 
   /* Restart PostgREST so its schema cache matches the reset database; failures only warn. */
   const restId = serviceContainerName("rest", projectId);
-  const rest = yield* inspectContainerState(spawner, restId).pipe(Effect.result);
-  const restRunning = Result.isFailure(rest)
-    ? !isContainerNotFoundMessage(rest.failure.message)
-    : rest.success.running;
-  if (restRunning) {
-    yield* Effect.gen(function* () {
-      yield* restartContainer(spawner, restId);
-      if (!(yield* reloadKong(spawner, projectId))) return;
-      const { localKongCa } = yield* resolveStorageCredentials({ projectRef: "" });
-      yield* Effect.sync(() => configureLoopbackProxyBypass());
-      yield* waitForHealthyServices(spawner, [restId], {
-        postgrest: {
-          containerId: restId,
-          apiExternalUrl: values.apiUrl,
-          secretKey: values.secretKey,
-        },
-      }).pipe(withStorageGatewayFetch(localKongCa));
-    }).pipe(
-      Effect.catch((error) => {
-        const suggestion = suggestionOf(error);
-        const nextStep = suggestion === undefined ? "" : `\n${suggestion}`;
-        return output.raw(
-          `${yellow("WARNING:")} PostgREST may not serve the reset schema yet: ${error.message}${nextStep}\n`,
-          "stderr",
-        );
-      }),
-      Effect.withSpan("DbBootstrap.restartPostgrest"),
+  yield* Effect.gen(function* () {
+    const restRunning = yield* inspectContainerState(spawner, restId).pipe(
+      Effect.map((state) => state.running),
+      Effect.catch((error) =>
+        isContainerNotFoundMessage(error.message) ? Effect.succeed(false) : Effect.fail(error),
+      ),
     );
-  }
+    if (!restRunning) return;
+    yield* restartContainer(spawner, restId);
+    if (!(yield* reloadKong(spawner, projectId))) return;
+    const { localKongCa } = yield* resolveStorageCredentials({ projectRef: "" });
+    yield* Effect.sync(() => configureLoopbackProxyBypass());
+    yield* waitForHealthyServices(spawner, [restId], {
+      postgrest: {
+        containerId: restId,
+        apiExternalUrl: values.apiUrl,
+        secretKey: values.secretKey,
+      },
+    }).pipe(withStorageGatewayFetch(localKongCa));
+  }).pipe(
+    Effect.catch((error) => {
+      const suggestion = suggestionOf(error);
+      const nextStep = suggestion === undefined ? "" : `\n${suggestion}`;
+      return output.raw(
+        `${yellow("WARNING:")} PostgREST may not serve the reset schema yet: ${error.message}${nextStep}\n`,
+        "stderr",
+      );
+    }),
+    Effect.withSpan("DbBootstrap.restartPostgrest"),
+  );
 
   // Seed objects from supabase/buckets when storage is up; summary is suppressed since reset
   // emits its own result. See docs/stack-commands.md#storage-and-bucket-seeding.
