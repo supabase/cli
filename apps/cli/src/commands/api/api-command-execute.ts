@@ -1,11 +1,10 @@
-import type { OperationId, OperationInput } from "@supabase/api/effect";
+import type { ApiClient, OperationId, OperationInput } from "@supabase/api/effect";
 import { operationPermissions } from "@supabase/api/permissions";
 import { Duration, Effect, Option, Predicate, Ref, Schedule, Schema } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as Headers from "effect/http/Headers";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { parsePlanGateEnvelope, sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { readPointer } from "./api-command-pointer.ts";
@@ -126,14 +125,14 @@ export interface ApiCommandResponse {
 }
 
 /**
- * Sends the decoded input of `entry` and returns the 2xx response; any other status fails with
- * the API's own message, code and hint.
+ * Sends the decoded input of `entry` through `api` and returns the 2xx response; any other status
+ * fails with the API's own message, code and hint.
  */
 export const sendApiRequest = Effect.fnUntraced(function* (
+  api: ApiClient,
   entry: Pick<ApiCommandEntry, "definition" | "operationId">,
   decoded: OperationInput<OperationId>,
 ) {
-  const api = yield* CommandPlatformApi;
   const response = yield* api.executeRaw<OperationId>(definitionOf(entry), decoded);
   if (response.status < 200 || response.status >= 300) {
     return yield* statusError(entry.operationId, response);
@@ -178,6 +177,7 @@ export const writeApiResponse = Effect.fnUntraced(function* (
 });
 
 interface WaitInput {
+  readonly api: ApiClient;
   readonly wait: ApiCommandWait;
   /** The operation the wait polls; its decoded input is `readInput`. */
   readonly readEntry: ApiPollRead;
@@ -223,10 +223,22 @@ const failureReason = (reason: unknown): string | undefined => {
   return sanitizeErrorBody(typeof reason === "string" ? reason : encodeJsonValue(reason));
 };
 
-const classify = (wait: ApiCommandWait, response: ApiCommandResponse, statusHint: string) => {
+/** One poll read: the response, its decoded JSON body and the status the wait reads from it. */
+interface PollRead {
+  readonly response: ApiCommandResponse;
+  readonly body: unknown;
+  readonly status: string | undefined;
+}
+
+const readPoll = (wait: ApiCommandWait, response: ApiCommandResponse): PollRead => {
   const body = parseResponse(response);
   const status = readPointer(body, wait.status);
-  if (typeof status === "string" && wait.failed.includes(status)) {
+  return { response, body, status: typeof status === "string" ? status : undefined };
+};
+
+const classify = (wait: ApiCommandWait, read: PollRead, statusHint: string) => {
+  const { response, body, status } = read;
+  if (status !== undefined && wait.failed.includes(status)) {
     const reason =
       wait.error === undefined ? undefined : failureReason(readPointer(body, wait.error));
     return Effect.fail(
@@ -237,7 +249,7 @@ const classify = (wait: ApiCommandWait, response: ApiCommandResponse, statusHint
       }),
     );
   }
-  const done = typeof status === "string" && wait.succeeded.includes(status);
+  const done = status !== undefined && wait.succeeded.includes(status);
   return Effect.succeed<PollOutcome>({ done, response });
 };
 
@@ -305,15 +317,13 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
   const lastStatus = yield* Ref.make<string | null>(null);
 
   const poll = Ref.update(attempts, (count) => count + 1).pipe(
-    Effect.andThen(sendApiRequest(readEntry, decoded)),
-    Effect.tap((response) => {
-      const status = readPointer(parseResponse(response), wait.status);
-      return Ref.set(lastStatus, typeof status === "string" ? status : null);
-    }),
-    Effect.flatMap((response) => classify(wait, response, hint)),
-    Effect.tap(({ response }) => {
-      const status = readPointer(parseResponse(response), wait.status);
-      return input.onPoll?.(typeof status === "string" ? status : undefined) ?? Effect.void;
+    Effect.andThen(sendApiRequest(input.api, readEntry, decoded)),
+    Effect.flatMap((response) => {
+      const read = readPoll(wait, response);
+      return Ref.set(lastStatus, read.status ?? null).pipe(
+        Effect.andThen(classify(wait, read, hint)),
+        Effect.tap(() => input.onPoll?.(read.status) ?? Effect.void),
+      );
     }),
     Effect.withTracerEnabled(false),
   );

@@ -2,7 +2,7 @@ import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
-import { linkedDbResolverRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { lazyManagementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import {
   migraRuntimeLayer,
@@ -17,7 +17,7 @@ const dbSchemaPullRuntimeLayer = (command: ReadonlyArray<string>) =>
     migraRuntimeLayer,
     identityStitchLayer,
     telemetryStateLayer,
-    linkedDbResolverRuntimeLayer(command).pipe(Layer.provide(identityStitchLayer)),
+    lazyManagementApiRuntimeLayer(command).pipe(Layer.provide(identityStitchLayer)),
     commandRuntimeLayer(command),
   );
 

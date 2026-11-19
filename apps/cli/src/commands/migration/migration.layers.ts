@@ -9,7 +9,7 @@ import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.l
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
-import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
+import { lazyManagementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { stackApiLayer } from "../../command-internal/stack-api.ts";
 import { bundledPostgresClientLayer } from "../../command-internal/bundled-postgres-client.ts";
@@ -51,7 +51,7 @@ export const migrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
     identityStitchLayer,
     telemetryStateLayer,
     stdinLayer,
-    linkedDbResolverRuntimeLayer(commandPath).pipe(Layer.provide(identityStitchLayer)),
+    lazyManagementApiRuntimeLayer(commandPath).pipe(Layer.provide(identityStitchLayer)),
     commandRuntimeLayer(commandPath),
   );
 

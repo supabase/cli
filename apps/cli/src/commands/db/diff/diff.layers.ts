@@ -2,7 +2,7 @@ import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
-import { linkedDbResolverRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { lazyManagementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import {
   migraRuntimeLayer,
@@ -16,6 +16,6 @@ export const dbDiffRuntimeLayer = Layer.mergeAll(
   migraRuntimeLayer,
   identityStitchLayer,
   telemetryStateLayer,
-  linkedDbResolverRuntimeLayer(["db", "diff"]).pipe(Layer.provide(identityStitchLayer)),
+  lazyManagementApiRuntimeLayer(["db", "diff"]).pipe(Layer.provide(identityStitchLayer)),
   commandRuntimeLayer(["db", "diff"]),
 );

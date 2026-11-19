@@ -203,10 +203,11 @@ const replyOf = (reply: Reply): Response => {
 };
 
 /** Replaces `globalThis.fetch` while `body` runs: the one in-process seam under the real leaf. */
-const withApi = (route: Route, sent: Array<Sent>) => {
+const withApi = (route: Route, sent: Array<Sent>, seen: Array<string>) => {
   const stub = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(String(input), init);
     const url = new URL(request.url);
+    seen.push(`${request.method} ${url.pathname}`);
     if (url.pathname === TARGET_LOOKUP_PATH) {
       return Promise.resolve(replyOf({ status: 200, body: {} }));
     }
@@ -257,6 +258,8 @@ const cliServices = (workdir: string, args: ReadonlyArray<string>) =>
 interface CliOpts {
   readonly yes?: boolean;
   readonly route: Route;
+  /** Whether an access token is configured; defaults to true. */
+  readonly token?: boolean;
   readonly root?: typeof warehouseRoot;
   readonly analytics?: ReturnType<typeof mockAnalytics>;
   /** The Output layer's resolved format; defaults to `text`. */
@@ -274,11 +277,14 @@ interface CliOpts {
 const execute = (argv: ReadonlyArray<string>, opts: CliOpts) => {
   const args = [...argv, `--remote=${VALID_REF}`, ...(opts.yes === true ? ["--yes"] : [])];
   const sent: Array<Sent> = [];
+  const seen: Array<string> = [];
   const run = withConfigEnv(
-    { SUPABASE_ACCESS_TOKEN: VALID_TOKEN, SUPABASE_NO_KEYRING: "1" },
+    opts.token === false
+      ? { SUPABASE_ACCESS_TOKEN: "", SUPABASE_NO_KEYRING: "1", SUPABASE_HOME: tempRoot.current }
+      : { SUPABASE_ACCESS_TOKEN: VALID_TOKEN, SUPABASE_NO_KEYRING: "1" },
     Command.runWith(opts.root ?? warehouseRoot, { version: "0.0.0-test" })(args),
-  ).pipe(withApi(opts.route, sent));
-  return { args, sent, run };
+  ).pipe(withApi(opts.route, sent, seen));
+  return { args, sent, seen, run };
 };
 
 const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
@@ -288,7 +294,7 @@ const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
     interactive,
     ...(interactive ? { promptConfirmResponses: opts.confirmResponses } : {}),
   });
-  const { args, sent, run } = execute(argv, opts);
+  const { args, sent, seen, run } = execute(argv, opts);
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
@@ -301,7 +307,7 @@ const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
     }),
     cliServices(tempRoot.current, args),
   );
-  return { args, out, sent, run: run.pipe(Effect.provide(layer)) };
+  return { args, out, sent, seen, run: run.pipe(Effect.provide(layer)) };
 };
 
 const failureOf = (exit: Exit.Exit<unknown, unknown>): unknown =>
@@ -1399,13 +1405,14 @@ describe("generated warehouse commands", () => {
 
   describe("consent and dry run", () => {
     it.effect("prints exactly the request preview and sends nothing under --dry-run", () => {
-      const { out, sent, run } = setup(
+      const { out, sent, seen, run } = setup(
         ["warehouse", "enable", "--schema", "public", "--table", "a", "--dry-run"],
         { route: accepted },
       );
       return Effect.gen(function* () {
         yield* run;
         expect(sent).toEqual([]);
+        expect(seen).toEqual([]);
         expect(decodeJson(out.stdoutText)).toEqual({
           method: "POST",
           path: ENABLE_PATH,
@@ -1415,6 +1422,46 @@ describe("generated warehouse commands", () => {
             data: { type: "warehouse_setup", attributes: { schema: "public", tables: ["a"] } },
           },
         });
+      });
+    });
+
+    it.effect(
+      "previews a mutation for a literal --remote ref with no access token, no request and no cache write",
+      () => {
+        const { out, seen, run } = setup(
+          ["warehouse", "enable", "--schema", "public", "--dry-run"],
+          { token: false, route: accepted },
+        );
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+
+          yield* run;
+
+          expect(decodeJson(out.stdoutText)).toMatchObject({ method: "POST", path: ENABLE_PATH });
+          expect(seen).toEqual([]);
+          expect(
+            yield* fs.exists(
+              path.join(tempRoot.current, "supabase", ".temp", "linked-project.json"),
+            ),
+          ).toBe(false);
+        }).pipe(Effect.provide(BunServices.layer));
+      },
+    );
+
+    it.effect("fails a send with no access token before any request", () => {
+      const { seen, run } = setup(["warehouse", "enable", "--schema", "public"], {
+        token: false,
+        yes: true,
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(run);
+
+        expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
+          "AccessTokenRequiredError",
+        );
+        expect(seen).toEqual([]);
       });
     });
 

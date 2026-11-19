@@ -31,23 +31,23 @@ subcommand: a `Command.provide` on the group itself would be bypassed for every 
 
 ## Files Read
 
-| Path                                          | Format     | When                                                                               |
-| --------------------------------------------- | ---------- | ---------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.json`              | JSON       | when present, to resolve `experimental.<feature>` before the command tree is built |
-| `<workdir>/supabase/config.toml`              | TOML       | when no `config.json` exists, for the same setting                                 |
-| `<file>`                                      | JSON       | only with `--file <path>`: the whole request body (`--file -` reads stdin)         |
-| `<SUPABASE_HOME or ~/.supabase>/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring holds no credential          |
-| `<workdir>/supabase/.temp/project-ref`        | plain text | when neither `--project-ref`/`--remote=<ref>` nor `SUPABASE_PROJECT_ID` is set     |
-| `<SUPABASE_HOME or ~/.supabase>/profile`      | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set                             |
+| Path                                          | Format     | When                                                                                          |
+| --------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.json`              | JSON       | when present, to resolve `experimental.<feature>` before the command tree is built            |
+| `<workdir>/supabase/config.toml`              | TOML       | when no `config.json` exists, for the same setting                                            |
+| `<file>`                                      | JSON       | only with `--file <path>`: the whole request body (`--file -` reads stdin)                    |
+| `<SUPABASE_HOME or ~/.supabase>/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring holds no credential, unless `--dry-run` |
+| `<workdir>/supabase/.temp/project-ref`        | plain text | when neither `--project-ref`/`--remote=<ref>` nor `SUPABASE_PROJECT_ID` is set                |
+| `<SUPABASE_HOME or ~/.supabase>/profile`      | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set                                        |
 
 Commands never write project configuration, execute SQL locally or read stdin, except `--file -`.
 
 ## Files Written
 
-| Path                                            | Format | When                                                                                |
-| ----------------------------------------------- | ------ | ----------------------------------------------------------------------------------- |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always, flushed on success and on failure                                           |
-| `<workdir>/supabase/.temp/linked-project.json`  | JSON   | post-run, once the project ref resolved, only when no such file exists for that ref |
+| Path                                            | Format | When                                                                                                        |
+| ----------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always, flushed on success and on failure                                                                   |
+| `<workdir>/supabase/.temp/linked-project.json`  | JSON   | post-run, once the project ref resolved, only when no such file exists for that ref; never with `--dry-run` |
 
 ## API Routes
 
@@ -58,7 +58,7 @@ can add:
 | Method | Path                             | Auth         | Request body | Response (used fields)                                                                                                                                                                                      |
 | ------ | -------------------------------- | ------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`  | `/v1/projects`                   | Bearer token | none         | only when no ref resolved and the session is interactive (project picker)                                                                                                                                   |
-| `GET`  | `/v1/projects/{ref}`             | Bearer token | none         | `{ref, name, organization_id, organization_slug}`; linked-project cache miss only (best-effort, after the command)                                                                                          |
+| `GET`  | `/v1/projects/{ref}`             | Bearer token | none         | `{ref, name, organization_id, organization_slug}`; linked-project cache miss only (best-effort, after the command, never with `--dry-run`)                                                                  |
 | `GET`  | `/v1/projects/{parent}/branches` | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
 | `GET`  | `/v1/branches/{id}`              | Bearer token | none         | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                            |
 
@@ -77,8 +77,10 @@ With `--wait`, the command also polls the read operation named in its reference 
 - A body whose fields form alternatives (the request needs one of several fields) reports a missing
   choice as `Pass at least one of --a, --b`.
 - `--dry-run` prints `{method, path, query, headers, body}` and sends no command request, before
-  consent. The linked-project cache read in the table above can still run. It shows the local
-  request, not a server-resolved impact.
+  consent. A literal ref target (`--remote=<ref>`, `--project-ref`) needs no access token, sends no
+  request and writes no linked-project cache; only local files are read. A branch name, a bare
+  `--remote` or the project picker still call the API as listed above. It shows the local request,
+  not a server-resolved impact.
 - Consent uses the command's summary as the action and lists what the validated request does: one
   `name: value` line per non-ref path parameter, query parameter and body field (for an envelope
   body, the fields under `data.attributes`). Scalars print as is; objects and arrays print as

@@ -1,6 +1,7 @@
 import { Array as Arr, Cause, Effect, Exit, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
+import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { ApiCommandUsageError } from "../../command-internal/command-errors/api-command.errors.ts";
 import { withStandardErrors } from "../../command-internal/command-errors/command-errors.annotation.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -13,7 +14,8 @@ import { parseDuration } from "../../command-internal/duration.ts";
 import { GLOBAL_OUTPUT_FORMATS, OutputFlag } from "../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
-import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
+import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
+import { lazyManagementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { branchResolution } from "../../command-internal/target/branch-resolution.ts";
 import { resolveProjectTarget } from "../../command-internal/target/resolve-project-target.ts";
 import { projectTargetFlags } from "../../command-internal/target/target-flags.ts";
@@ -234,6 +236,7 @@ const handle = Effect.fn("api-command.run")(function* (
         yield* Effect.annotateCurrentSpan("run.outcome", "dry_run");
         return yield* writeDryRun(previewRequest(entry, decoded), format);
       }
+      const api = yield* (yield* CommandPlatformApiFactory).make;
       if (!entry.readOnly) {
         yield* requireHostedMutationConsent({
           action: summaryText(entry),
@@ -251,12 +254,13 @@ const handle = Effect.fn("api-command.run")(function* (
               changedOperationId: entry.operationId,
               ref,
               changed: yield* withTask(progress, summaryText(entry), () =>
-                sendApiRequest(entry, decoded),
+                sendApiRequest(api, entry, decoded),
               ),
             });
         const polling = summaryText(resolved.readEntry);
         const settled = yield* withTask(progress, polling, (update) =>
           waitForOperation({
+            api,
             wait: resolved.wait,
             readEntry: resolved.readEntry,
             statusEntry: resolved.statusEntry,
@@ -271,11 +275,11 @@ const handle = Effect.fn("api-command.run")(function* (
         return yield* writeApiResponse(resolved.readEntry, settled, format);
       }
       const response = yield* withTask(progress, summaryText(entry), () =>
-        sendApiRequest(entry, decoded),
+        sendApiRequest(api, entry, decoded),
       );
       yield* Effect.annotateCurrentSpan("run.outcome", "sent");
       return yield* writeApiResponse(entry, response, format);
-    }).pipe(Effect.ensuring(cache.cache(ref)));
+    }).pipe(Effect.ensuring(flags.dryRun ? Effect.void : cache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });
 
@@ -345,8 +349,15 @@ const leafOf = (entry: ApiCommandEntry, entries: ReadonlyArray<ApiCommandEntry>)
         withCommandTelemetry({ flags: recorded, outputFormats: GLOBAL_OUTPUT_FORMATS }),
       );
     }),
-    // `stdinLayer`: `--file -` reads the request body from piped stdin.
-    Command.provide(Layer.mergeAll(managementApiRuntimeLayer(entry.command), stdinLayer)),
+    // `stdinLayer`: `--file -` reads the request body from piped stdin. `identityStitchLayer` is
+    // shared by the lazy runtime and the post-run telemetry.
+    Command.provide(
+      Layer.mergeAll(
+        lazyManagementApiRuntimeLayer(entry.command).pipe(Layer.provide(identityStitchLayer)),
+        identityStitchLayer,
+        stdinLayer,
+      ),
+    ),
     withTargetPolicy({ group: "hosted", consent: entry.readOnly ? "none" : "no" }),
   );
 };

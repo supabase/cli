@@ -13,7 +13,7 @@ import { targetFlags } from "../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
-import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
+import { lazyManagementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { stackTargetResolverLayer, stackApiLayer } from "../../command-internal/stack-target.ts";
 import { logsTerminalLayer } from "./logs.browser.ts";
@@ -176,7 +176,7 @@ export const logsCommandFor = () =>
     Command.provide(stdinLayer),
     Command.provide(stackTargetResolverLayer.pipe(Layer.provideMerge(stackApiLayer))),
     Command.provide(
-      linkedDbResolverRuntimeLayer(["logs"]).pipe(Layer.provide(identityStitchLayer)),
+      lazyManagementApiRuntimeLayer(["logs"]).pipe(Layer.provide(identityStitchLayer)),
     ),
     withTargetPolicy({
       group: "selectable",
@@ -207,7 +207,7 @@ export const logsCommandFor = () =>
         ),
         Command.provide(stackTargetResolverLayer.pipe(Layer.provideMerge(stackApiLayer))),
         Command.provide(
-          linkedDbResolverRuntimeLayer(["logs", "sources"]).pipe(
+          lazyManagementApiRuntimeLayer(["logs", "sources"]).pipe(
             Layer.provide(identityStitchLayer),
           ),
         ),

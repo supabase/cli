@@ -121,12 +121,13 @@ type ManagementApiServices =
   | DebugLogger;
 
 /**
- * Runtime layer for the `--linked` db-config resolver path (`db dump`, `db query`,
- * `db schema declarative generate/sync`). Identical to `managementApiRuntimeLayer`, except the
- * access token resolves lazily via `CommandPlatformApiFactory` on first use instead of eagerly, so
- * `--linked --password …` invocations succeed without requiring a login.
+ * Management API runtime for commands that may finish without an access token (`--linked
+ * --password …` db commands, generated API commands under `--dry-run`). Identical to
+ * `managementApiRuntimeLayer`, except the token resolves lazily through `CommandPlatformApiFactory`
+ * on first use instead of at layer build. It requires `IdentityStitch` from the caller so the
+ * factory's client and the linked-project cache share one stitcher.
  */
-export function linkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<string>) {
+export function lazyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
   const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
   const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
   const credentials = commandCredentialsLayer.pipe(
@@ -155,6 +156,6 @@ export function linkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<string>) 
   return built;
 }
 
-type LinkedDbResolverRuntime = ReturnType<typeof linkedDbResolverRuntimeLayer>;
-export type LinkedDbResolverRuntimeRequirements =
-  LinkedDbResolverRuntime extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
+type LazyManagementApiRuntime = ReturnType<typeof lazyManagementApiRuntimeLayer>;
+export type LazyManagementApiRuntimeRequirements =
+  LazyManagementApiRuntime extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
