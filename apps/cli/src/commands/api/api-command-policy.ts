@@ -6,6 +6,8 @@ export interface ApiNoun {
   readonly description?: string;
   /** Feature that gates every command under the noun. */
   readonly feature: ExperimentalFeature;
+  /** Default presentation when the caller has not selected an output format. */
+  readonly defaultOutput?: "json";
   /**
    * Help text of each sub-group the generator creates, keyed by its dotted path below the noun,
    * e.g. `"tables.layout"`; a sub-group that exists in a hand-written group has no entry.
@@ -24,9 +26,15 @@ export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-get-warehouse-table",
   "v2-get-warehouse-table-layout",
   "v2-update-warehouse-table-layout",
+  "v2-get-warehouse-query-stats",
 ];
 
 export const nouns = {
+  inspect: {
+    feature: "warehouse",
+    defaultOutput: "json",
+    groups: { warehouse: "Inspect Warehouse workload metrics" },
+  },
   warehouse: {
     description: "Manage the data warehouse for a project",
     feature: "warehouse",

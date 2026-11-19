@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { parse as parseYaml } from "yaml";
 import {
   Cause,
   Console,
@@ -431,6 +432,100 @@ describe("generated warehouse commands", () => {
       return Effect.gen(function* () {
         yield* run;
         expect(decodeJson(out.stdoutText)).toEqual(body);
+      });
+    });
+  });
+  describe("inspect warehouse query-stats", () => {
+    const argv = ["inspect", "warehouse", "query-stats"];
+    const response = {
+      data: [
+        {
+          type: "warehouse_metric",
+          id: "query_duration_p95",
+          attributes: {
+            metric: "query_duration_p95",
+            unit: "seconds",
+            aggregation: "p95",
+            definition:
+              "Executor duration through terminal outcome, including assignment wait and streaming.",
+            requested: { metric: "query_duration_p95", start: 1795000000, end: 1795001800 },
+            effective: { start: 1795000000, end: 1795001800, step: 60, rate_window_seconds: 300 },
+            scrape_interval_seconds: 60,
+            last_sample_at: 1795001740,
+            availability: "partial",
+            series: [
+              {
+                labels: {},
+                points: [
+                  { timestamp: 1795001740, value: 0.2 },
+                  { timestamp: 1795001800, value: null },
+                ],
+                coverage: { returned_points: 1, expected_points: 2 },
+              },
+            ],
+            future_observation: { reason: null },
+          },
+        },
+      ],
+    };
+
+    it.effect("forwards a relative range and prints the full JSON response on a terminal", () => {
+      const { sent, out, run } = setup(
+        [
+          ...argv,
+          "--since",
+          "30m",
+          "--attributes",
+          "query_rate,query_duration_p95",
+          "--interval",
+          "5m",
+        ],
+        {
+          route: ok(response),
+          stdoutIsTty: true,
+        },
+      );
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({
+          method: "GET",
+          path: `/v2/projects/${VALID_REF}/warehouse/query-stats`,
+          body: undefined,
+        });
+        expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({
+          since: "30m",
+          attributes: "query_rate,query_duration_p95",
+          interval: "5m",
+        });
+        expect(decodeJson(out.stdoutText)).toEqual(response);
+      });
+    });
+
+    it.effect("forwards fixed timestamps unchanged and preserves null samples in YAML", () => {
+      const from = "2026-11-18T09:30:00+01:00";
+      const to = "2026-11-18T10:00:00+01:00";
+      const { sent, out, run } = setup([...argv, "--from", from, "--to", to, "-o", "yaml"], {
+        route: ok(response),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({ from, to });
+        expect(parseYaml(out.stdoutText)).toEqual(response);
+      });
+    });
+
+    it.effect("honors an explicit text format over the inspection JSON default", () => {
+      const { out, run } = setup([...argv, "--output-format", "text"], {
+        route: ok(response),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toContain("query_duration_p95");
+        expect(out.stdoutText).toContain("partial");
+        expect(out.stdoutText.trimStart().startsWith("{")).toBe(false);
       });
     });
   });
@@ -1850,6 +1945,24 @@ describe("generated warehouse commands", () => {
         args: ["__complete", "ware"],
         features: ["warehouse"],
       },
+      { name: "inspection parent help", args: ["inspect"], features: ["warehouse"] },
+      {
+        name: "Warehouse inspection",
+        args: ["inspect", "warehouse", "query-stats"],
+        features: ["warehouse"],
+      },
+      { name: "database inspection", args: ["inspect", "db", "table-stats"], features: [] },
+      { name: "inspection report", args: ["inspect", "report"], features: [] },
+      {
+        name: "inspection completion",
+        args: ["__complete", "inspect", ""],
+        features: ["warehouse"],
+      },
+      {
+        name: "database inspection completion",
+        args: ["__complete", "inspect", "db", ""],
+        features: [],
+      },
       { name: "a command of another group", args: ["projects", "list"], features: [] },
       { name: "completion of another group", args: ["__complete", "projects", ""], features: [] },
       { name: "the root version flag", args: ["--version"], features: [] },
@@ -1864,6 +1977,8 @@ describe("generated warehouse commands", () => {
       Effect.gen(function* () {
         const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "maybe" };
         expect(yield* resolve(env, tempRoot.current, ["projects", "list"])).toEqual([]);
+        expect(yield* resolve(env, tempRoot.current, ["inspect", "db", "table-stats"])).toEqual([]);
+        expect(yield* resolve(env, tempRoot.current, ["inspect", "report"])).toEqual([]);
       }),
     );
 

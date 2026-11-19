@@ -3,6 +3,103 @@ import type { ApiCommandEntry, ApiPollTarget } from "./api-command.model.ts";
 
 export const apiCommands = [
   {
+    command: ["inspect", "warehouse", "query-stats"],
+    operationId: "v2-get-warehouse-query-stats",
+    definition: "v2GetWarehouseQueryStats",
+    method: "GET",
+    apiPath: "/v2/projects/{ref}/warehouse/query-stats",
+    summary: "Inspect Warehouse workload query statistics",
+    description:
+      "Returns aggregate workload measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, and full series with dimension labels. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Do not average interval percentiles into a whole-range percentile. Executor invocations include metadata/schema work and are not counts of user SQL statements. Timeouts are included in errors; cancellation is separate. Missing and unavailable values remain null. No query history, individual-query attribution, raw queries, or backend selectors are exposed. Each request returns up to eight measurements. A failure of one measurement does not discard the other results.",
+    readOnly: true,
+    feature: "warehouse",
+    defaultOutput: "json",
+    response: {
+      status: 200,
+      kind: "json",
+    },
+    flags: [
+      {
+        name: "attributes",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Up to eight distinct workload measurements. Defaults to invocation rate, latency p50/p95/p99, error rate, and timeout rate. Supply a comma-separated list. Allowed measurements: query_rate, query_error_rate, query_timeout_rate, query_canceled_rate, query_duration_mean, query_duration_p50, query_duration_p95, query_duration_p99, duckdb_duration_mean, rpc_rate, rpc_duration_mean, rpc_duration_p95.",
+      },
+      {
+        name: "from",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Range start as an ISO timestamp, within the last 30 days. Requires to; cannot be combined with since.",
+      },
+      {
+        name: "interval",
+        type: "string",
+        choices: ["10m", "1d", "1h", "1m", "30m", "5m"],
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+      },
+      {
+        name: "since",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
+      },
+      {
+        name: "to",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Range end as an ISO timestamp, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+      },
+    ],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "query",
+        name: "attributes",
+        source: "flag",
+        flag: "attributes",
+      },
+      {
+        location: "query",
+        name: "from",
+        source: "flag",
+        flag: "from",
+      },
+      {
+        location: "query",
+        name: "interval",
+        source: "flag",
+        flag: "interval",
+      },
+      {
+        location: "query",
+        name: "since",
+        source: "flag",
+        flag: "since",
+      },
+      {
+        location: "query",
+        name: "to",
+        source: "flag",
+        flag: "to",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "connection"],
     operationId: "v2-get-warehouse-connection",
     definition: "v2GetWarehouseConnection",

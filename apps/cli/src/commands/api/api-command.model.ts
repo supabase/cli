@@ -84,6 +84,8 @@ export interface ApiCommandEntry {
   readonly readOnly: boolean;
   /** Feature that gates the command's noun. */
   readonly feature: string;
+  /** Default presentation when no explicit output format is selected. */
+  readonly defaultOutput?: "json";
   /** Request body shape; `json-envelope` bodies wrap fields in `data.attributes`. */
   readonly body?: {
     readonly contentType: "application/json";

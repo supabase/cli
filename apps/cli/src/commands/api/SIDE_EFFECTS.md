@@ -144,6 +144,9 @@ and `--wait` record `true`. Generated field flags, `--body`, `--file` and `--tim
 
 ## Output
 
+Generated inspection commands can declare JSON as their default presentation, including on
+a terminal. Explicit `-o`/`--output` and `--output-format` choices take precedence.
+
 Text rendering applies on a terminal by default, with `--output-format text` (also when piped), and
 with `-o pretty`. Piped runs, agent runs, `--output-format json|stream-json` and `-o json` keep the
 API's JSON bytes. `-o` takes precedence over `--output-format`.

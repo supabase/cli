@@ -1106,6 +1106,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       ...(description === undefined ? {} : { description }),
       readOnly: operation.method === "GET",
       feature: noun.feature,
+      ...(noun.defaultOutput === undefined ? {} : { defaultOutput: noun.defaultOutput }),
       ...(body === undefined ? {} : { body }),
       response: { status: response.status, kind: response.kind },
       ...(positional === undefined
