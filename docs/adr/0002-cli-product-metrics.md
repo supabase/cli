@@ -152,4 +152,5 @@ Three-state model: `"pending" | "granted" | "denied"`, stored in `~/.supabase/te
 
 ## See Also
 
-- [Telemetry Implementation](../telemetry.md): Collection architecture, identity resolution, consent flow, local storage, remote export, and metric derivation
+- [CLI Analytics](../../apps/cli/docs/analytics.md): PostHog events, identity, and consent
+- [CLI Tracing and Monitoring](../../apps/cli/docs/tracing-monitoring.md): Opt-in local traces and OTLP export
