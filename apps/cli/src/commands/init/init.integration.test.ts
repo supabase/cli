@@ -536,7 +536,7 @@ describe("init", () => {
     {
       env: {},
       interactive: true,
-      expected: "set SUPABASE_EXPERIMENTAL_STACK=1 and re-run `supabase init --force`",
+      expected: "set SUPABASE_EXPERIMENTAL_STACK=1 before your next `supabase init`",
     },
     {
       env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
@@ -544,11 +544,13 @@ describe("init", () => {
       expected: "Experimental local stack enabled in supabase/config.toml",
     },
     { env: {}, interactive: false, expected: undefined },
+    { env: { SUPABASE_EXPERIMENTAL_STACK: "0" }, interactive: true, expected: undefined },
     {
       env: {},
       interactive: false,
       agent: true,
-      expected: "Coding agents: offer this to the user and ask before re-running init with --force",
+      expected:
+        "Coding agents: offer this to the user and ask before changing supabase/config.toml",
     },
   ])(
     "stack note (interactive=$interactive, agent=$agent, env=$env)",

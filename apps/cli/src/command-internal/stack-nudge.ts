@@ -1,6 +1,7 @@
 import { Clock, Effect, FileSystem, Path, Schema } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { resolveExperimentalFeature } from "../shared/config/experimental-feature.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { agentDetected } from "./agent-mode.ts";
 
@@ -11,8 +12,8 @@ const START_STACK_NUDGE_MESSAGE = `Try the new local stack: faster, lighter, and
 To switch: remove the fixed ports from supabase/config.toml, then add \`stack = true\` under \`[experimental]\`.
 Steps and limitations: ${DOCS_URL}`;
 
-const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack: set SUPABASE_EXPERIMENTAL_STACK=1 and re-run \`supabase init --force\` (regenerates this config)
-Learn more: ${DOCS_URL}`;
+const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack: set SUPABASE_EXPERIMENTAL_STACK=1 before your next \`supabase init\`.
+To switch this project: ${DOCS_URL}`;
 
 const INIT_STACK_ENABLED_MESSAGE =
   "Experimental local stack enabled in supabase/config.toml. Share feedback: https://github.com/supabase/cli/issues";
@@ -25,7 +26,7 @@ const NudgeState = Schema.fromJsonString(Schema.Struct({ lastShownAt: Schema.Fin
 const START_AGENT_ASK_LINE =
   "Coding agents: offer this switch to the user and ask before changing supabase/config.toml.";
 const INIT_AGENT_ASK_LINE =
-  "Coding agents: offer this to the user and ask before re-running init with --force.";
+  "Coding agents: offer this to the user and ask before changing supabase/config.toml.";
 
 /**
  * Who to nudge: a coding agent, a human at a terminal, or nobody. Text mode writes to stderr so
@@ -33,6 +34,13 @@ const INIT_AGENT_ASK_LINE =
  */
 const nudgeAudience = Effect.gen(function* () {
   const output = yield* Output;
+  // With the config side pinned to true, only an explicit shell `SUPABASE_EXPERIMENTAL_STACK=0`
+  // resolves to false; that user opted out, so the nudge stays quiet.
+  const optedOut = !(yield* resolveExperimentalFeature({
+    feature: "stack",
+    configValue: Effect.succeed(true),
+  }).pipe(Effect.orElseSucceed(() => true)));
+  if (optedOut) return undefined;
   if (yield* agentDetected) return "agent" as const;
   return output.interactive ? ("human" as const) : undefined;
 });
