@@ -42,7 +42,7 @@ const statusBody = (state: string) =>
 const runWarehouse = (
   args: ReadonlyArray<string>,
   route: (request: { readonly method: string; readonly pathname: string }) => Served,
-  options: { readonly stdin?: string; readonly commandPrefix?: ReadonlyArray<string> } = {},
+  options: { readonly stdin?: string } = {},
 ) =>
   Effect.gen(function* () {
     const requests: Array<string> = [];
@@ -89,27 +89,24 @@ const runWarehouse = (
         "",
       ].join("\n"),
     );
-    const result = yield* runSupabaseEffect(
-      [...(options.commandPrefix ?? ["warehouse"]), ...args, `--remote=${REF}`],
-      {
-        cwd: home.dir,
-        home: home.dir,
-        ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
-        env: {
-          SUPABASE_ACCESS_TOKEN: ACCESS_TOKEN,
-          SUPABASE_EXPERIMENTAL_WAREHOUSE: "1",
-          SUPABASE_NO_KEYRING: "1",
-          SUPABASE_PROFILE: profilePath,
-          SUPABASE_TELEMETRY_DISABLED: "1",
-          SUPABASE_WORKDIR: home.dir,
-          SUPABASE_YES: undefined,
-        },
+    const result = yield* runSupabaseEffect(["warehouse", ...args, `--remote=${REF}`], {
+      cwd: home.dir,
+      home: home.dir,
+      ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
+      env: {
+        SUPABASE_ACCESS_TOKEN: ACCESS_TOKEN,
+        SUPABASE_EXPERIMENTAL_WAREHOUSE: "1",
+        SUPABASE_NO_KEYRING: "1",
+        SUPABASE_PROFILE: profilePath,
+        SUPABASE_TELEMETRY_DISABLED: "1",
+        SUPABASE_WORKDIR: home.dir,
+        SUPABASE_YES: undefined,
       },
-    );
+    });
     return { result, requests, bodies };
   }).pipe(Effect.scoped);
 
-it.live("inspect warehouse query-stats reaches the public route through the compiled CLI", () =>
+it.live("warehouse inspect query-stats reaches the public route through the compiled CLI", () =>
   Effect.gen(function* () {
     const response = json(200, {
       data: [
@@ -121,12 +118,11 @@ it.live("inspect warehouse query-stats reaches the public route through the comp
       ],
     });
     const { result, requests } = yield* runWarehouse(
-      ["query-stats", "--since", "30m"],
+      ["inspect", "query-stats", "--since", "30m"],
       () => response,
-      { commandPrefix: ["inspect", "warehouse"] },
     );
 
-    requireCliSuccess(result, "inspect warehouse query-stats");
+    requireCliSuccess(result, "warehouse inspect query-stats");
     expect(result.stdout, result.stderr).toBe(response.body);
     expect(requests).toEqual([`GET /v2/projects/${REF}/warehouse/query-stats`]);
   }).pipe(Effect.provide(BunServices.layer)),

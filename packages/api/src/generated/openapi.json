@@ -33548,7 +33548,7 @@
         "x-fga-permissions": [["database_read"]],
         "x-oauth-scope": "database:read",
         "x-operation": {
-          "group": "inspect.warehouse",
+          "group": "warehouse.inspect",
           "method": "query-stats"
         },
         "x-scalar-stability": "experimental"

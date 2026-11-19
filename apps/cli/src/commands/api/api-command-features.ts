@@ -7,22 +7,18 @@ import {
   readExperimentalFeatureConfig,
   resolveExperimentalFeature,
 } from "../../shared/config/experimental-feature.ts";
-import { apiCommands } from "./generated.ts";
+import { nouns } from "./api-command-policy.ts";
 
-const pathFeatures = (path: ReadonlyArray<string>): ReadonlyArray<ExperimentalFeature> => [
-  ...new Set(
-    apiCommands
-      .filter((entry) =>
-        path.slice(0, entry.command.length).every((word, index) => word === entry.command[index]),
-      )
-      .map((entry) => entry.feature),
-  ),
-];
+const nounFeatures = (noun: string | undefined): ReadonlyArray<ExperimentalFeature> => {
+  if (noun === undefined) return [...new Set(Object.values(nouns).map(({ feature }) => feature))];
+  const definition = Object.entries(nouns).find(([name]) => name === noun)?.[1];
+  return definition === undefined ? [] : [definition.feature];
+};
 
 /**
  * Resolves the experimental features that gate generated API command groups, reading
- * configuration only for the features this invocation can reach: features beneath the requested
- * path, including root help and completion. Unrelated hand-written siblings do not read them.
+ * configuration only for the features this invocation can reach: every noun feature when no
+ * command is named (root help and completion), the named noun's feature otherwise.
  */
 export const resolveApiCommandFeatures = Effect.fn("ApiCommands.resolveFeatures")(
   function* (input: {
@@ -43,7 +39,7 @@ export const resolveApiCommandFeatures = Effect.fn("ApiCommands.resolveFeatures"
       commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
         ? commandPath.slice(1)
         : commandPath;
-    const enabled = yield* Effect.filter(pathFeatures(completePath), (feature) =>
+    const enabled = yield* Effect.filter(nounFeatures(completePath[0]), (feature) =>
       resolveExperimentalFeature({
         feature,
         configValue: readExperimentalFeatureConfig({ feature, cwd: input.cwd, args: routingArgs }),

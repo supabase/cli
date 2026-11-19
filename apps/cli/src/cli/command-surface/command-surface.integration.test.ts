@@ -53,12 +53,12 @@ describe("command surface", () => {
     Effect.gen(function* () {
       const warehouse = yield* warehouseVariant;
       expect(Object.keys(warehouse)).toEqual([
-        "inspect warehouse",
-        "inspect warehouse query-stats",
         "warehouse",
         "warehouse connection",
         "warehouse disable",
         "warehouse enable",
+        "warehouse inspect",
+        "warehouse inspect query-stats",
         "warehouse status",
         "warehouse tables",
         "warehouse tables get",
@@ -83,18 +83,19 @@ describe("command surface", () => {
   );
 
   it.effect(
-    "mounts workload inspection beside existing inspect commands under the Warehouse gate",
+    "mounts workload inspection under Warehouse and preserves standalone inspect commands",
     () =>
       Effect.gen(function* () {
         const { commands } = yield* Effect.promise(() => surface);
-        expect(commands).not.toHaveProperty("inspect warehouse query-stats");
+        expect(commands).not.toHaveProperty("warehouse inspect query-stats");
         const enabled = yield* walkCommandSurface(
           rootCommandForFeatures({ apiFeatures: ["warehouse"] }),
         );
         for (const path of ["inspect", "inspect db", "inspect report", "inspect db table-stats"]) {
           expect(enabled[path]).toEqual(commands[path]);
         }
-        const stats = enabled["inspect warehouse query-stats"];
+        expect(enabled).not.toHaveProperty("inspect warehouse");
+        const stats = enabled["warehouse inspect query-stats"];
         expect(stats).toMatchObject({
           stage: { status: "experimental", feature: "warehouse" },
           target: { group: "hosted", consent: "none" },

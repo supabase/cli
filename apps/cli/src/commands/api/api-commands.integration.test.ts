@@ -435,8 +435,8 @@ describe("generated warehouse commands", () => {
       });
     });
   });
-  describe("inspect warehouse query-stats", () => {
-    const argv = ["inspect", "warehouse", "query-stats"];
+  describe("warehouse inspect query-stats", () => {
+    const argv = ["warehouse", "inspect", "query-stats"];
     const response = {
       data: [
         {
@@ -1945,10 +1945,10 @@ describe("generated warehouse commands", () => {
         args: ["__complete", "ware"],
         features: ["warehouse"],
       },
-      { name: "inspection parent help", args: ["inspect"], features: ["warehouse"] },
+      { name: "inspection parent help", args: ["inspect"], features: [] },
       {
         name: "Warehouse inspection",
-        args: ["inspect", "warehouse", "query-stats"],
+        args: ["warehouse", "inspect", "query-stats"],
         features: ["warehouse"],
       },
       { name: "database inspection", args: ["inspect", "db", "table-stats"], features: [] },
@@ -1956,7 +1956,7 @@ describe("generated warehouse commands", () => {
       {
         name: "inspection completion",
         args: ["__complete", "inspect", ""],
-        features: ["warehouse"],
+        features: [],
       },
       {
         name: "database inspection completion",
@@ -1977,6 +1977,7 @@ describe("generated warehouse commands", () => {
       Effect.gen(function* () {
         const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "maybe" };
         expect(yield* resolve(env, tempRoot.current, ["projects", "list"])).toEqual([]);
+        expect(yield* resolve(env, tempRoot.current, ["inspect"])).toEqual([]);
         expect(yield* resolve(env, tempRoot.current, ["inspect", "db", "table-stats"])).toEqual([]);
         expect(yield* resolve(env, tempRoot.current, ["inspect", "report"])).toEqual([]);
       }),

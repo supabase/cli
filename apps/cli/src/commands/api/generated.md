@@ -4,27 +4,6 @@
 
 Reference for the commands generated from the Management API contract. The behavior every one of them shares (feature gates, consent, files, exit codes, output, `--wait`) is in [SIDE_EFFECTS.md](./SIDE_EFFECTS.md).
 
-## `supabase inspect warehouse query-stats`
-
-Inspect Warehouse workload query statistics
-
-Returns aggregate workload measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, and full series with dimension labels. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Do not average interval percentiles into a whole-range percentile. Executor invocations include metadata/schema work and are not counts of user SQL statements. Timeouts are included in errors; cancellation is separate. Missing and unavailable values remain null. No query history, individual-query attribution, raw queries, or backend selectors are exposed. Each request returns up to eight measurements. A failure of one measurement does not discard the other results.
-
-- Access: read-only, no consent.
-- Feature: `warehouse`.
-- Default output: `json`; explicit output flags take precedence.
-- Request: `GET /v2/projects/{ref}/warehouse/query-stats` (`v2-get-warehouse-query-stats`), success 200 json.
-
-### Flags
-
-| Flag                        | Type                                          | Required | Repeatable | Binds to           |
-| --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
-| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
-| `--from <from>`             | string                                        | no       | no         | query `from`       |
-| `--interval <interval>`     | string (`10m`, `1d`, `1h`, `1m`, `30m`, `5m`) | no       | no         | query `interval`   |
-| `--since <since>`           | string                                        | no       | no         | query `since`      |
-| `--to <to>`                 | string                                        | no       | no         | query `to`         |
-
 ## `supabase warehouse connection`
 
 Get Warehouse Flight SQL connection details
@@ -87,6 +66,27 @@ Enables replication for the currently eligible tables in a schema, or the named 
 - Status at `/data/attributes/status`; succeeded: `succeeded`; failed: `failed`.
 - Failure message from `/data/attributes/status_error`.
 - Failure hint names `supabase warehouse status --remote=<ref>`.
+
+## `supabase warehouse inspect query-stats`
+
+Inspect Warehouse workload query statistics
+
+Returns aggregate workload measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, and full series with dimension labels. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Do not average interval percentiles into a whole-range percentile. Executor invocations include metadata/schema work and are not counts of user SQL statements. Timeouts are included in errors; cancellation is separate. Missing and unavailable values remain null. No query history, individual-query attribution, raw queries, or backend selectors are exposed. Each request returns up to eight measurements. A failure of one measurement does not discard the other results.
+
+- Access: read-only, no consent.
+- Feature: `warehouse`.
+- Default output: `json`; explicit output flags take precedence.
+- Request: `GET /v2/projects/{ref}/warehouse/query-stats` (`v2-get-warehouse-query-stats`), success 200 json.
+
+### Flags
+
+| Flag                        | Type                                          | Required | Repeatable | Binds to           |
+| --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
+| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
+| `--from <from>`             | string                                        | no       | no         | query `from`       |
+| `--interval <interval>`     | string (`10m`, `1d`, `1h`, `1m`, `30m`, `5m`) | no       | no         | query `interval`   |
+| `--since <since>`           | string                                        | no       | no         | query `since`      |
+| `--to <to>`                 | string                                        | no       | no         | query `to`         |
 
 ## `supabase warehouse status`
 
