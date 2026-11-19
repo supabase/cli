@@ -2,11 +2,11 @@
 
 Every command that acts on a database or hosted project announces the target it resolved, once, before it acts. The same identity goes to machine consumers as the JSON `target` object.
 
-This page is the shared reference for how a command's target is chosen, which errors the selection raises, the deprecated selector flags, how a hosted write is confirmed, and what the banner and the JSON `target` carry. [ADR 0033](../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md) records why. The `SIDE_EFFECTS.md` of every `hosted`, `selectable` and `account` command opens with a `Target:` line that links here and lists only what is specific to that command: its own calls, files, exit codes and prompt, and any selector rule that differs from this page. A `local-only` command has no `Target:` line.
+This page is the shared reference for how a command's target is chosen, which errors the selection raises, the deprecated selector flags, how a hosted write is confirmed, and what the banner and the JSON `target` carry. [ADR 0033](../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md) records why.
 
 ## Groups
 
-The `Target:` line names the command's group and its consent default: `Target: <group>, consent default <No|Yes>`, or `Target: <group>, no consent` when the command never asks for hosted-mutation consent. A document that covers several subcommands gives each one's default.
+Every command belongs to one group, which decides what it acts on when no target is given and which selector flags it takes. A command that confirms hosted writes through the shared consent prompt also has a consent default.
 
 | Group        | Acts on                         | With no `--remote` | Selector flags                                                               |
 | ------------ | ------------------------------- | ------------------ | ---------------------------------------------------------------------------- |
@@ -33,6 +33,18 @@ The consent default is the answer a confirmation starts on. It is `No` for anyth
 - **A database URL** applies only where the remote side is Postgres. `storage`, `seed buckets` and hosted commands need a project, so they reject `--remote=<url>` when the flags are parsed, as an invalid `--remote` value (`--remote takes a project ref or a branch name.`, or `--remote takes a project ref.` on `branches *`). The run exits 1 before anything else happens, and the URL is never echoed. A value with `://` that is not a `postgres://` or `postgresql://` URL, and a keyword connection string (`host=… user=…`), is rejected on every command and is never looked up as a branch.
 - **`--remote=true|yes|on|1|y`** means a bare `--remote`. `--no-remote` and `--remote=false|no|off|0|n` fail with `--remote doesn't take false. Leave it out to <fallback>.`, and an empty `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<values>; leave it out to <fallback>.` `<fallback>` is `target the local database`, `target the local Storage API` or, on a hosted command, `use the linked project`; `<values>` is `<ref|branch|url>` where the command takes a database URL, `<ref|branch>` elsewhere and `<ref>` on `branches *`. Neither error prints the command's help.
 - **A local stack that is down in a linked checkout.** A database command that defaults to the local stack and can't reach it adds `To use the linked project instead, pass --remote.` to its error's suggestion when the checkout is linked (`SUPABASE_PROJECT_ID` is set, or `supabase/.temp/project-ref` names a project). `gen types` adds it to its errors for a local database container that is missing or can't be inspected.
+
+## Local stack
+
+On the experimental stack backend, every command that reaches the project's local stack takes
+`--stack <name or id>` and acts on that stack instead of the default one. The value matches a stack
+name of the current project and branch first, then a full stack ID or a unique ID prefix of at least
+4 hex characters from any checkout. Without the flag, `SUPABASE_STACK` selects the stack the same
+way, except that as an ID it only selects a stack of the current project, and it is ignored by a
+`--remote` target, a database URL and the legacy backend. A selected stack never falls back to the
+default stack: one that does not exist fails with exit 1 and a message naming it (`stack start` and
+`db start` create it instead), and so does a stopped one for a command that needs its database. See
+[Stack commands](stack-commands.md#targeting-a-named-stack-from-other-commands).
 
 ## `--remote <word>`
 
@@ -65,6 +77,8 @@ These fail with exit 1 before the command does any work:
 | linked state whose ref is malformed, so there is no project to search                                     | `LinkParentRefInvalidError`                               |
 | a branch that has no project ref yet because it is still provisioning                                     | `LinkBranchNotReadyError`                                 |
 | the branch lookup fails to reach the API or gets a non-200 status                                         | `LinkBranchListNetworkError`, `LinkBranchListStatusError` |
+| `--stack` with `--remote` or a deprecated remote selector                                                 | `TargetSelectorConflictError`                             |
+| `--stack` while the legacy backend is selected                                                            | `ExperimentalStackTargetError`                            |
 
 A selector conflict lists only the selector flags the command has: `Only one of --remote, --linked, --db-url and --local can be set; got …`, with the suggestion to use `--remote` or `--remote=<values>` on its own. A bare `--remote` together with `--project-ref=<x>` is accepted: the alias's value wins and its warning prints. A `false` switch counts as absent, so `--linked=false` selects nothing. A repeated `--remote` is one selection when every occurrence resolves to the same target, and a bare `--remote` is the linked project, so `--remote --remote` and `--remote=<ref> --remote=<ref>` run. When the occurrences differ the run fails before anything runs, with `--remote is given more than once with different values; pass it once.` and the suggestion to pass `--remote` once.
 
@@ -76,8 +90,6 @@ A selector conflict lists only the selector flags the command has: `Only one of 
 
 - `--remote=<url>`: `--password can't be used with --remote=<db-url>. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres`
 - the local default: `--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.`, followed by `To use the linked project instead, pass --remote.` in a linked checkout.
-
-A command's own `SIDE_EFFECTS.md` records where else its password can come from and when it is withheld from a target.
 
 ## Deprecated selector flags
 

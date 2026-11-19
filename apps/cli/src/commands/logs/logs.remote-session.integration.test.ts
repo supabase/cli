@@ -20,7 +20,6 @@ const flags = (overrides: Partial<LogsFlags> = {}): LogsFlags => ({
   local: false,
   linked: false,
   stack: Option.none(),
-  stackId: Option.none(),
   service: ["postgres"],
   resource: Option.none(),
   kind: Option.none(),

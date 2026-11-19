@@ -59,6 +59,7 @@ import {
 } from "../../../command-internal/stack-shadow.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
+import { captureStackSelectorFlags } from "../../../command-internal/stack-target.ts";
 
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
   const server = Net.createServer();
@@ -302,14 +303,15 @@ export const pgDeltaNextShadowLayer = Layer.effect(
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
     // Both shadows of one plan share a runtime, so the engines are probed at most once.
-    const shadowRuntime = yield* Effect.cached(stackShadowRuntime);
+    const provideStackSelector = yield* captureStackSelectorFlags;
+    const shadowRuntime = yield* Effect.cached(provideStackSelector(stackShadowRuntime));
     const stackAcquire = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
       Effect.gen(function* () {
         return yield* stackAcquireShadowDatabase(input.base, {
           runtime: yield* shadowRuntime,
           ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
           ...(opts.bypassCache === true ? { bypassCache: true } : {}),
-        });
+        }).pipe(provideStackSelector);
       });
 
     const stackProvisionMigrations = (input: NativeShadowInput, opts: ShadowCacheOpts) =>

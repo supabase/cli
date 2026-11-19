@@ -9,6 +9,10 @@ import { dbStart } from "./start.handler.ts";
 import { dbStartRuntimeLayer } from "./start.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  STACK_SELECTOR_FLAGS,
+  STACK_SELECTOR_FLAG_NAMES,
+} from "../../../command-internal/stack-target.ts";
 
 const config = {
   fromBackup: Flag.String("from-backup").pipe(
@@ -22,7 +26,6 @@ export type DbStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbStartCommand = Command.make("start", config).pipe(
   Command.withDescription("Starts local Postgres database."),
   Command.withShortDescription("Starts local Postgres database"),
-  withPermissions({ operations: [], noApiEffectFlags: ["from-backup"] }),
   Command.withHandler((flags) =>
     dbStart(flags).pipe(
       withCommandTelemetry({
@@ -37,4 +40,9 @@ export const dbStartCommand = Command.make("start", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "local-only", consent: "none" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["from-backup", ...STACK_SELECTOR_FLAG_NAMES],
+  }),
 );

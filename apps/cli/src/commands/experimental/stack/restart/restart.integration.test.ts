@@ -74,7 +74,7 @@ const fixture = Effect.fn("StackRestartTest.fixture")(function* () {
     output,
     telemetry,
     layer,
-    flags: { stack: Option.none<string>(), stackId: Option.some(stack.id) },
+    flags: { stack: Option.some(stack.id) },
   };
 });
 

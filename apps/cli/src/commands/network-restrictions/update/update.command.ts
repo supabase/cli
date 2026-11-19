@@ -9,7 +9,7 @@ import { projectTargetFlags } from "../../../command-internal/target/target-flag
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
@@ -79,12 +79,13 @@ export const networkRestrictionsUpdateCommand = Command.make("update", config).p
       // eagerly resolves an access token, so it's provided here (after the gate) rather than
       // via Command.provide, which would fail on a missing token before this generator's
       // first yield* runs.
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       return yield* networkRestrictionsUpdate(flags).pipe(
         withCommandTelemetry({ flags }),
         Effect.provide(managementApiRuntimeLayer(["network-restrictions", "update"])),
       );
     }).pipe(withJsonErrorHandling),
   ),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "hosted", consent: "no" }),
 );

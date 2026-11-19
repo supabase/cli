@@ -31,6 +31,7 @@ import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { SUGGEST_DOCKER_INSTALL } from "../../../command-internal/docker-suggest.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { declarativeSeamLayer } from "./pgdelta.seam.layer.ts";
@@ -134,6 +135,9 @@ function setup(
     /** The Engine API's answer for an existing local db container. */
     readonly dbContainer?: { readonly running: boolean; readonly status: string };
     readonly env?: Readonly<Record<string, string>>;
+    /** `--stack`, and the project stacks the stack API reports. */
+    readonly stack?: string;
+    readonly stackApi?: Layer.Layer<StackApi>;
   } = {},
 ) {
   const out = mockOutput();
@@ -144,7 +148,11 @@ function setup(
   });
   const dbConnection = fakeShadowDbConnection();
   const docker = fakeShadowSetupDocker();
-  const cliSettings = mockCommandSettings({ workdir, projectId: Option.none() });
+  const cliSettings = mockCommandSettings({
+    workdir,
+    projectId: Option.none(),
+    ...(opts.stack === undefined ? {} : { stack: opts.stack }),
+  });
 
   // Every service `declarativeSeamLayer` needs must be provided directly into `seam`
   // itself — the "provide doesn't share to siblings inside Layer.mergeAll" rule (legacy
@@ -184,6 +192,7 @@ function setup(
     // fills the remaining platform services (`FileSystem`, `Path`) and crypto (`Digest`, `SecureRandom`).
     Layer.provide(shadowSpawner.layer),
     Layer.provide(engine),
+    Layer.provide(opts.stackApi ?? Layer.empty),
     Layer.provide(unusedStackServices),
     Layer.provide([BunServices.layer, BunCrypto.layer]),
   );
@@ -233,6 +242,28 @@ describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describe("declarativeSeamLayer.ensureLocalDatabaseStarted under a selected stack", () => {
+  it.effect("fails instead of creating a --stack that does not exist", () => {
+    const { layer } = setup(tmp.current, {
+      stackBackend: true,
+      stack: "typo",
+      stackApi: Layer.succeed(StackApi, {
+        create: () => Effect.die("a missing selected stack must not be created"),
+        open: () => Effect.die("unused"),
+        discover: () => Effect.die("unused"),
+        find: () => Effect.succeed(Option.none()),
+        findDeleted: () => Effect.die("unused"),
+      }),
+    });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const error = yield* seam.ensureLocalDatabaseStarted.pipe(Effect.flip);
+      expect(error.message).toContain('The local stack "typo" does not exist for this project.');
+      expect(error.suggestion).toBe("Run supabase start --stack typo.");
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describe("declarativeSeamLayer.ensureLocalDatabaseStarted with an existing db container", () => {

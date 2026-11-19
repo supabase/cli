@@ -216,11 +216,11 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       # npm only — no `pnpm install`, no workspace toolchain. npm ≥ 11.5.1 (required for OIDC
-      # trusted publishing) is newer than the runner image's system npm; node 24 bundles it.
+      # trusted publishing) is newer than the runner image's system npm; node 26 bundles it.
       - name: Install node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24
+          node-version: 26
 
       - name: Download the reviewed release artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

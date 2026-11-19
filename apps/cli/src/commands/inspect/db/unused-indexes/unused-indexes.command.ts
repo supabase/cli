@@ -1,4 +1,5 @@
 import { Command } from "effect/cli";
+import { withDeprecated } from "../../../../command-internal/command-access-policy.ts";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbUnusedIndexes } from "./unused-indexes.handler.ts";
 import {
@@ -13,11 +14,12 @@ import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbUnusedIndexesCommand = Command.make("unused-indexes", INSPECT_DB_FLAGS).pipe(
   Command.withDescription('Show indexes with low usage. Deprecated: use "index-stats" instead.'),
-  Command.withShortDescription("Show unused indexes (deprecated)"),
+  Command.withShortDescription("Show unused indexes"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbUnusedIndexes)),
   Command.provide(inspectDbRuntimeLayer("unused-indexes")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
   withInspectDbTargetPolicy,
+  withDeprecated,
 );

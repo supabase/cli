@@ -73,14 +73,34 @@ const sendTestEmail = (
 
 class MailStallError extends Data.TaggedError("MailStallError")<{ readonly message: string }> {}
 
-const mailStall = (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: Ref.Ref<string>) =>
+const logTailChars = 16_384;
+type LogTails = Ref.Ref<Readonly<Record<string, string>>>;
+
+const keepLogTail = (tails: LogTails, label: string) => {
+  const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
+  return Stream.runForEach(
+    ({ stream, bytes }: { readonly stream: "stdout" | "stderr"; readonly bytes: Uint8Array }) =>
+      Ref.update(tails, (all) => ({
+        ...all,
+        [label]: ((all[label] ?? "") + decoders[stream].decode(bytes, { stream: true })).slice(
+          -logTailChars,
+        ),
+      })),
+  );
+};
+
+const mailStall = (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: LogTails) =>
   failOnStall(
     duration,
     Effect.all([Ref.get(phase), Ref.get(logs)]).pipe(
-      Effect.flatMap(([stalled, output]) =>
+      Effect.flatMap(([stalled, tails]) =>
         Effect.fail(
           new MailStallError({
-            message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${output || "(none)"}`,
+            message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${
+              Object.entries(tails)
+                .map(([label, tail]) => `[${label}]\n${tail || "(none)"}`)
+                .join("\n") || "(none)"
+            }`,
           }),
         ),
       ),
@@ -91,7 +111,7 @@ describe("service catalog", () => {
   it.live("launches the real Mailpit recipe and serves its HTTP endpoint", () =>
     Effect.gen(function* () {
       const phase = yield* Ref.make("setup");
-      const logs = yield* Ref.make("");
+      const logs: LogTails = yield* Ref.make({});
       yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -101,11 +121,8 @@ describe("service catalog", () => {
             { service: "mail", pin: selection.mail, config: {} },
             dockerOptions(root),
           );
-          const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
           yield* Stream.fromSubscription(yield* recipe.logs).pipe(
-            Stream.runForEach(({ stream, bytes }) =>
-              Ref.update(logs, (text) => text + decoders[stream].decode(bytes, { stream: true })),
-            ),
+            keepLogTail(logs, "mail"),
             Effect.forkScoped({ startImmediately: true }),
           );
           const instance = yield* makeStandaloneService(recipe.definition, {
@@ -137,43 +154,55 @@ describe("service catalog", () => {
   it.live(
     "keeps two native mail instances on one isolated database each, both becoming ready",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-isolation-" });
-          const recipeFor = (instanceId: string) =>
-            makeServiceRecipe(
-              { service: "mail", pin: selection.mail, config: {} },
-              { ...options(root), instanceId },
+      Effect.gen(function* () {
+        const phase = yield* Ref.make("setup");
+        const logs: LogTails = yield* Ref.make({});
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-isolation-" });
+            const makeInstance = Effect.fnUntraced(function* (instanceId: string) {
+              const recipe = yield* makeServiceRecipe(
+                { service: "mail", pin: selection.mail, config: {} },
+                { ...options(root), instanceId },
+              );
+              yield* Stream.fromSubscription(yield* recipe.logs).pipe(
+                keepLogTail(logs, instanceId),
+                Effect.forkScoped({ startImmediately: true }),
+              );
+              return yield* makeStandaloneService(recipe.definition, {
+                id: instanceId,
+                config: recipe.creation,
+              });
+            });
+            const instances = [yield* makeInstance("mail-a"), yield* makeInstance("mail-b")];
+            yield* Ref.set(phase, "start");
+            yield* Effect.all(
+              instances.map((instance) => instance.start),
+              { concurrency: "unbounded" },
             );
-          const first = yield* recipeFor("mail-a");
-          const second = yield* recipeFor("mail-b");
-          const firstInstance = yield* makeStandaloneService(first.definition, {
-            id: "mail-a",
-            config: first.creation,
-          });
-          const secondInstance = yield* makeStandaloneService(second.definition, {
-            id: "mail-b",
-            config: second.creation,
-          });
-          yield* Effect.all([firstInstance.start, secondInstance.start], {
-            concurrency: "unbounded",
-          });
-          yield* Effect.all([firstInstance.ready, secondInstance.ready], {
-            concurrency: "unbounded",
-          });
-          expect(yield* fs.exists(path.join(root, "mail-a", "mailpit.db"))).toBe(true);
-          expect(yield* fs.exists(path.join(root, "mail-b", "mailpit.db"))).toBe(true);
-          yield* Effect.all([firstInstance.stop, secondInstance.stop], {
-            concurrency: "unbounded",
-          });
-        }),
-      ).pipe(
+            yield* Ref.set(phase, "readiness");
+            yield* Effect.all(
+              instances.map((instance) => instance.ready),
+              { concurrency: "unbounded" },
+            );
+            expect(yield* fs.exists(path.join(root, "mail-a", "mailpit.db"))).toBe(true);
+            expect(yield* fs.exists(path.join(root, "mail-b", "mailpit.db"))).toBe(true);
+            yield* Ref.set(phase, "stop");
+            yield* Effect.all(
+              instances.map((instance) => instance.stop),
+              { concurrency: "unbounded" },
+            );
+            yield* Ref.set(phase, "scope teardown");
+          }),
+        ).pipe(mailStall("50 seconds", phase, logs));
+      }).pipe(
         Effect.provide(
           Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
         ),
       ),
+    { timeout: 60_000 },
   );
 
   it.live("keeps a captured email after a native mail stop and start", () =>

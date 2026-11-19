@@ -10,6 +10,7 @@ import {
 import { AgentFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
 import { TargetPolicy, readTargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import type { TargetPolicyShape } from "../../src/command-internal/target/target-policy.ts";
+import { noStackSelectorFlags } from "../../src/command-internal/stack-target.ts";
 import { commandTreeFor } from "./command-flags.ts";
 import {
   buildTestRuntime,
@@ -30,6 +31,7 @@ const consentLayer = (runtime: RuntimeLayer, yes: boolean, policy: TargetPolicyS
     Layer.succeed(YesFlag, yes),
     Layer.succeed(AgentFlag, "auto"),
     Layer.succeed(TargetPolicy, policy),
+    noStackSelectorFlags,
   );
 
 /** Everything a leaf's handler can require while `describeHostedConsent` runs it. */

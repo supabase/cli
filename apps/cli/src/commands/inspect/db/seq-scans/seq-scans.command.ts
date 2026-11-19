@@ -1,4 +1,5 @@
 import { Command } from "effect/cli";
+import { withDeprecated } from "../../../../command-internal/command-access-policy.ts";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbSeqScans } from "./seq-scans.handler.ts";
 import {
@@ -15,11 +16,12 @@ export const inspectDbSeqScansCommand = Command.make("seq-scans", INSPECT_DB_FLA
   Command.withDescription(
     'Show number of sequential scans recorded against all tables. Deprecated: use "index-stats" instead.',
   ),
-  Command.withShortDescription("Show sequential scans (deprecated)"),
+  Command.withShortDescription("Show sequential scans"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbSeqScans)),
   Command.provide(inspectDbRuntimeLayer("seq-scans")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
   withInspectDbTargetPolicy,
+  withDeprecated,
 );

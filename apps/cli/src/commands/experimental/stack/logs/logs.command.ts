@@ -10,12 +10,8 @@ import { withTargetPolicy } from "../../../../command-internal/target/target-pol
 const config = {
   stack: Flag.String("stack").pipe(
     Flag.withDescription(
-      "Select an existing stack by name (defaults to the current project stack).",
+      "Select an existing stack by name, else by ID or unique ID prefix (defaults to SUPABASE_STACK, else the current project stack).",
     ),
-    Flag.optional,
-  ),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Read logs from an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
   service: Flag.String("service").pipe(
@@ -37,7 +33,7 @@ const config = {
       (tail) => `Expected --tail to be 0 or more, got ${tail}`,
     ),
     Flag.withDescription(
-      "Number of retained lines to print across the selected services (default 200); 0 prints none.",
+      "Number of retained lines to print across the selected services; 0 prints none.",
     ),
     Flag.withDefault(200),
   ),
@@ -70,7 +66,7 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["stack", "stack-id", "service", "follow", "tail", "since"],
+    noApiEffectFlags: ["stack", "service", "follow", "tail", "since"],
   }),
   Command.withHandler((flags) =>
     Effect.gen(function* () {

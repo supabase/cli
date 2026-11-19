@@ -182,6 +182,7 @@ function defaultFlags(overrides: Partial<GenTypesFlags> = {}): GenTypesFlags {
     lang: "typescript" as const,
     schema: [],
     "swift-access-control": Option.none(),
+    "swift-typegen-source": Option.none(),
     postgrestV9Compat: false,
     queryTimeout: "15s",
     ...overrides,
@@ -450,6 +451,8 @@ const setup = Effect.fnUntraced(function* (
     readonly childStderr?: ReadonlyArray<string>;
     readonly childDockerMissing?: boolean;
     readonly args?: ReadonlyArray<string>;
+    /** `--stack`, as the parsed flag services see it. */
+    readonly stack?: string;
     readonly generateTypescriptTypes?: (input: {
       readonly ref: string;
       readonly included_schemas?: string;
@@ -589,6 +592,7 @@ const setup = Effect.fnUntraced(function* (
       workdir,
       explicitWorkdir: opts.explicitWorkdir ?? false,
       projectId: opts.projectId ?? Option.none(),
+      ...(opts.stack === undefined ? {} : { stack: opts.stack }),
     }),
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
@@ -1520,6 +1524,37 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("rejects --swift-typegen-source with --project-ref (mutex group)", () =>
+      Effect.gen(function* () {
+        const { layer } = yield* setup({
+          args: [
+            "gen",
+            "types",
+            "--project-ref",
+            VALID_REF,
+            "--swift-typegen-source",
+            "main",
+            "--lang",
+            "swift",
+          ],
+        });
+        const exit = yield* genTypes(
+          defaultFlags({
+            projectRef: Option.some(VALID_REF),
+            lang: "swift",
+            "swift-typegen-source": Option.some("main"),
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "if any flags in the group [remote linked project-ref swift-typegen-source] are set none of the others can be; [project-ref swift-typegen-source] were all set",
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect(
       "rejects --postgrest-v9-compat without --db-url for project-ref generation, ahead of the mutex group",
       () =>
@@ -1779,6 +1814,18 @@ describe("gen types", () => {
             input: { ref: VALID_REF, included_schemas: "public" },
           },
         ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("does not read a --stack value as the positional language", () =>
+      Effect.gen(function* () {
+        const { layer } = yield* setup({
+          args: ["gen", "types", "--stack", "feature"],
+          stack: "feature",
+        });
+        const error = yield* genTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error.message).toBe("--stack requires the experimental stack backend.");
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -2057,7 +2104,7 @@ describe("gen types", () => {
     );
 
     it.effect(
-      "forwards --query-timeout and --swift-access-control to the generator for the default local database",
+      "forwards --query-timeout and the Swift flags to the generator for the default local database",
       () =>
         Effect.gen(function* () {
           const { layer, generator } = yield* setup({
@@ -2070,6 +2117,8 @@ describe("gen types", () => {
               "20s",
               "--swift-access-control",
               "public",
+              "--swift-typegen-source",
+              "./supabase-swift",
             ],
           });
           yield* genTypes(
@@ -2077,12 +2126,14 @@ describe("gen types", () => {
               lang: "go",
               queryTimeout: "20s",
               "swift-access-control": Option.some("public"),
+              "swift-typegen-source": Option.some("./supabase-swift"),
             }),
           ).pipe(Effect.provide(layer));
 
           const call = generator.calls[0];
           expect(call?.isLocal).toBe(true);
           expect(call?.options["swift-access-control"]).toBe("public");
+          expect(call?.options["swift-typegen-source"]).toBe("./supabase-swift");
           expect(call?.conn.runtimeParams?.["statement_timeout"]).toBe("20000");
           expect(call?.conn.connectTimeoutSeconds).toBe(20);
         }).pipe(Effect.provide(BunServices.layer)),

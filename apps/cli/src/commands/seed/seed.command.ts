@@ -1,6 +1,7 @@
 import { Command } from "effect/cli";
 
 import { seedTargetGlobalFlags } from "../../command-internal/target/target-flags.ts";
+import { STACK_SELECTOR_FLAGS } from "../../command-internal/stack-target.ts";
 import { bucketsCommand } from "./buckets/buckets.command.ts";
 
 export const seedCommand = Command.make("seed").pipe(
@@ -14,5 +15,6 @@ export const seedCommand = Command.make("seed").pipe(
     seedTargetGlobalFlags.linked,
     seedTargetGlobalFlags.local,
     seedTargetGlobalFlags.projectRef,
+    ...STACK_SELECTOR_FLAGS,
   ]),
 );

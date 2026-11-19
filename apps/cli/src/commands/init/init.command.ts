@@ -48,6 +48,12 @@ export type InitFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const initCommand = Command.make("init", config).pipe(
   Command.withDescription("Initialize a local project."),
   Command.withShortDescription("Initialize a local project"),
+  Command.withExamples([
+    {
+      command: "supabase init --use-orioledb",
+      description: "Initialize a project using OrioleDB as the Postgres storage engine",
+    },
+  ]),
   withPermissions({
     operations: [],
     noApiEffectFlags: [

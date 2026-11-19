@@ -8,6 +8,8 @@ import { resolveHostedRemote, selectTarget } from "./remote-resolution.ts";
 import type { TargetFlagValues } from "./target-flags.ts";
 import { linkedAlternativeHint } from "./target-identity.ts";
 import { TargetPolicy } from "./target-policy.ts";
+import { TargetSelectorConflictError } from "./target.errors.ts";
+import { passedStackSelectorFlag, rejectStackSelectorOnLegacy } from "../stack-target.ts";
 
 export type ResolvedTarget =
   | { readonly kind: "local" }
@@ -46,6 +48,30 @@ const hintLinkedAlternative = Effect.fnUntraced(function* () {
   yield* cell.value.hintLocal(linkedAlternativeHint({ ref: linkedRef.value, cache: link.parent }));
 });
 
+/** The selector that picked a remote target, named the way the user typed it. */
+const remoteFlagOf = (flags: TargetFlagValues): string =>
+  flags.linked
+    ? "--linked"
+    : Option.isSome(flags.dbUrl ?? Option.none())
+      ? "--db-url"
+      : Option.isSome(flags.projectRef)
+        ? "--project-ref"
+        : Option.isSome(flags.projectId ?? Option.none())
+          ? "--project-id"
+          : "--remote";
+
+/** `--stack` names a local stack, so a remote selector beside it is a conflict. */
+const rejectRemoteStackSelector = Effect.fnUntraced(function* (flags: TargetFlagValues) {
+  const flag = yield* passedStackSelectorFlag;
+  if (flag === undefined) return;
+  const remote = remoteFlagOf(flags);
+  return yield* new TargetSelectorConflictError({
+    flags: [flag, remote],
+    message: `${flag} selects a local stack and cannot be combined with ${remote}.`,
+    suggestion: `Drop ${flag} to target the remote database, or drop ${remote} to target the local stack.`,
+  });
+});
+
 /**
  * Resolves the target a `selectable` command acts on: `--remote` (or a deprecated alias) picks a
  * linked project, a branch or a database URL, and no selector means the local stack.
@@ -69,15 +95,19 @@ export const resolveTarget = Effect.fn("Target.resolve")(function* (flags: Targe
 
   switch (selection._tag) {
     case "Local":
+      yield* rejectStackSelectorOnLegacy;
       return yield* finish({ kind: "local" }, "flag");
     case "DbUrl":
+      yield* rejectRemoteStackSelector(flags);
       return yield* finish({ kind: "db-url", url: Redacted.make(selection.url) }, "flag");
     case "Default":
+      yield* rejectStackSelectorOnLegacy;
       yield* hintLinkedAlternative();
       return yield* finish({ kind: "local" }, "default");
     case "Linked":
     case "Ref":
     case "Branch":
+      yield* rejectRemoteStackSelector(flags);
       return yield* finish(yield* resolveHostedRemote(selection), "flag");
   }
 });
