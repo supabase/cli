@@ -32,6 +32,7 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
+    "@supabase/typegen": "0.3.2",
     "effect": "catalog:",
     "jose": "^6.2.10"
   },

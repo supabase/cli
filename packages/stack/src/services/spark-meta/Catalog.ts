@@ -46,8 +46,10 @@ export interface TypeInfo {
 }
 
 export const typeInfo = (description: Description, type: string): TypeInfo => {
-  const array = type.endsWith("[]");
-  const inner = baseType(array ? type.slice(0, -2) : type);
+  // Postgres names an array type `_<element>` whatever its dimensions.
+  const element = type.replace(/(?:\s*\[\d*\])+$/u, "");
+  const array = element !== type;
+  const inner = baseType(element);
   const found = description.enums.find(
     (e) =>
       inner === `${e.schema}.${e.name}` ||
@@ -131,7 +133,12 @@ export const makeModel = (description: Description) => {
       format: info.format,
       format_schema: info.format_schema,
       is_identity: c.identity !== null,
-      identity_generation: c.identity === "a" ? "ALWAYS" : c.identity === "d" ? "BY DEFAULT" : null,
+      identity_generation:
+        c.identity === "a"
+          ? ("ALWAYS" as const)
+          : c.identity === "d"
+            ? ("BY DEFAULT" as const)
+            : null,
       is_generated: c.generated !== null && c.generated !== "",
       is_nullable: !c.not_null,
       is_updatable: true,

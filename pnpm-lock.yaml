@@ -635,6 +635,9 @@ importers:
       '@effect/sql-pg':
         specifier: 'catalog:'
         version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
+      '@supabase/typegen':
+        specifier: 0.3.2
+        version: 0.3.2(oxfmt@0.66.0)
       effect:
         specifier: 'catalog:'
         version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)

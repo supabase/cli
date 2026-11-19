@@ -114,7 +114,7 @@ ls supabase/migrations/*_add_labels.sql >/dev/null 2>&1 || fail "apply_migration
 ok "MCP: list_tables, apply_migration, execute_sql, list_migrations, generate_typescript_types, get_project_url"
 
 run sb gen types typescript
-grep -q "todos:" "$LOG" || fail "gen types has no todos table"
+grep -q '"todos": {' "$LOG" || fail "gen types has no todos table"
 ok "gen types typescript through the Management API"
 
 run sb db pull

@@ -26,7 +26,7 @@ import {
   words,
 } from "./Sql.ts";
 import { renderDump } from "./Dump.ts";
-import { typescript } from "./Typegen.ts";
+import { type SparkTypegenError, typescript } from "./Typegen.ts";
 
 export interface SparkMetaSettings {
   readonly projectRef: string;
@@ -64,7 +64,7 @@ const json = (body: unknown, status = 200, headers: Readonly<Record<string, stri
 const rejected = (code: string, message: string, hint?: string) =>
   new SparkQueryError({ code, message, status: 400, ...(hint === undefined ? {} : { hint }) });
 
-const errorResponse = (error: SparkAdminError | AdapterShapeError) => {
+const errorResponse = (error: SparkAdminError | AdapterShapeError | SparkTypegenError) => {
   if (error._tag !== "SparkQueryError") return json({ message: error.message }, 500);
   const { code, message, details, hint } = error;
   const formattedError = `ERROR:  ${code ?? ""}: ${message}${details === undefined ? "" : `\nDETAIL:  ${details}`}${hint === undefined ? "" : `\nHINT:  ${hint}`}`;
@@ -397,7 +397,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         return json([{ name: "server_version", setting: "17.0" }]);
       case "generators":
         if (resourcePath.startsWith("/generators/typescript"))
-          return HttpServerResponse.text(typescript(description, included ?? ["public"]), {
+          return HttpServerResponse.text(yield* typescript(model, included ?? ["public"]), {
             headers: corsHeaders,
           });
     }
@@ -427,8 +427,8 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
 
   const typesFor = (search: URLSearchParams) =>
     current.pipe(
-      Effect.map((model) =>
-        typescript(model.description, schemaList(search.get("included_schemas")) ?? ["public"]),
+      Effect.flatMap((model) =>
+        typescript(model, schemaList(search.get("included_schemas")) ?? ["public"]),
       ),
     );
 
@@ -547,7 +547,8 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     return json({ message: "not found" }, 404);
   });
 
-  const fail = (error: SparkAdminError | AdapterShapeError) => Effect.succeed(errorResponse(error));
+  const fail = (error: SparkAdminError | AdapterShapeError | SparkTypegenError) =>
+    Effect.succeed(errorResponse(error));
   return (request: HttpServerRequest.HttpServerRequest) =>
     route(request).pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, request),
@@ -555,6 +556,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         SparkQueryError: fail,
         SparkTransportError: fail,
         AdapterShapeError: fail,
+        SparkTypegenError: fail,
       }),
     );
 });

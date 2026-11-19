@@ -1,220 +1,98 @@
-import type { Description } from "./Description.ts";
-import { typeInfo } from "./Catalog.ts";
+import {
+  findLanguage,
+  GENERATOR_METADATA_VERSION,
+  type GeneratorMetadata,
+  type Host,
+} from "@supabase/typegen";
+import { Data, Effect } from "effect";
 
-const TS: Readonly<Record<string, string>> = {
-  bool: "boolean",
-  int2: "number",
-  int4: "number",
-  int8: "number",
-  float4: "number",
-  float8: "number",
-  numeric: "number",
-  json: "Json",
-  jsonb: "Json",
-};
+import type { Model } from "./Catalog.ts";
 
-const key = (s: string) => (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(s) ? s : JSON.stringify(s));
+export class SparkTypegenError extends Data.TaggedError("SparkTypegenError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
-/** TypeScript types in the shape `supabase gen types typescript` writes, from Spark's description. */
-export const typescript = (description: Description, schemas: ReadonlyArray<string>): string => {
-  const tsType = (type: string) => {
-    const info = typeInfo(description, type);
-    const base =
-      info.enum === undefined
-        ? (TS[info.base] ?? (info.base === "void" ? "undefined" : "string"))
-        : `Database[${JSON.stringify(info.enum.schema)}]["Enums"][${JSON.stringify(info.enum.name)}]`;
-    return info.array ? `${base}[]` : base;
+/**
+ * The metadata `introspect()` would read from `pg_catalog`, built from Spark's description instead,
+ * so the shared generators run unchanged. The description has no functions and no view columns.
+ */
+const generatorMetadata = (model: Model, schemas: ReadonlyArray<string>): GeneratorMetadata => {
+  const { description } = model;
+  const included = (schema: string) => schemas.includes(schema);
+  const tables = description.tables.filter((t) => included(t.schema));
+  return {
+    version: GENERATOR_METADATA_VERSION,
+    schemas: model.schemas().filter((s) => included(s.name)),
+    tables: tables.map((t) => ({
+      id: model.tableId(t),
+      schema: t.schema,
+      name: t.name,
+      rls_enabled: t.rls_enabled,
+      rls_forced: t.rls_forced,
+      replica_identity: "DEFAULT",
+      bytes: 0,
+      size: "0 bytes",
+      live_rows_estimate: 0,
+      dead_rows_estimate: 0,
+      comment: t.comment,
+    })),
+    foreignTables: [],
+    views: description.views
+      .filter((v) => included(v.schema))
+      .map((v) => ({
+        id: model.tableId(v),
+        schema: v.schema,
+        name: v.name,
+        is_updatable: false,
+        comment: v.comment,
+      })),
+    materializedViews: [],
+    columns: tables.flatMap((t) =>
+      t.columns.map((c) => {
+        const { format_schema, ...column } = model.column(t, c);
+        return { ...column, type_schema: format_schema, enums: [...column.enums] };
+      }),
+    ),
+    primaryKeys: tables.flatMap((t) => model.table(t, false).primary_keys),
+    relationships: model.foreignKeys
+      .filter(({ table, references }) => included(table.schema) && included(references.schema))
+      .map(({ table, constraint, references }) => ({
+        foreign_key_name: constraint.name,
+        schema: table.schema,
+        relation: table.name,
+        columns: [...constraint.columns],
+        is_one_to_one: table.constraints.some(
+          (k) =>
+            (k.type === "p" || k.type === "u") && k.columns.join() === constraint.columns.join(),
+        ),
+        referenced_schema: references.schema,
+        referenced_relation: references.table,
+        referenced_columns: [...references.columns],
+      })),
+    functions: [],
+    types: model.types().map((t) => ({ ...t, enums: [...t.enums], type_relation_id: null })),
+    rpcFunctions: [],
   };
-  const out: Array<string> = [];
-  out.push(
-    `export type Json =\n  | string\n  | number\n  | boolean\n  | null\n  | { [key: string]: Json | undefined }\n  | Json[]\n`,
-  );
-  out.push(`export type Database = {`);
-  for (const schema of schemas) {
-    const tables = description.tables
-      .filter((t) => t.schema === schema)
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const views = description.views
-      .filter((v) => v.schema === schema)
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const enums = description.enums
-      .filter((e) => e.schema === schema)
-      .sort((a, b) => a.name.localeCompare(b.name));
-    out.push(`  ${key(schema)}: {`);
-    out.push(`    Tables: {${tables.length > 0 ? "" : "\n      [_ in never]: never"}`);
-    for (const t of tables) {
-      const columns = [...t.columns].sort((a, b) => a.name.localeCompare(b.name));
-      const writable = columns.filter(
-        (c) => c.identity !== "a" && (c.generated === null || c.generated === ""),
-      );
-      const nullable = (notNull: boolean) => (notNull ? "" : " | null");
-      const row = columns.map(
-        (c) => `          ${key(c.name)}: ${tsType(c.type)}${nullable(c.not_null)}`,
-      );
-      const insert = writable.map(
-        (c) =>
-          `          ${key(c.name)}${!c.not_null || c.default !== null || c.identity !== null ? "?" : ""}: ${tsType(c.type)}${nullable(c.not_null)}`,
-      );
-      const update = writable.map(
-        (c) => `          ${key(c.name)}?: ${tsType(c.type)}${nullable(c.not_null)}`,
-      );
-      const relationships = t.constraints.flatMap((k) => {
-        const references = k.references;
-        if (k.type !== "f" || references === null || !schemas.includes(references.schema))
-          return [];
-        const target = description.tables.find(
-          (x) => x.schema === references.schema && x.name === references.table,
-        );
-        const one = t.constraints.some(
-          (u) => (u.type === "p" || u.type === "u") && u.columns.join() === k.columns.join(),
-        );
-        return [
-          [
-            `          {`,
-            `            foreignKeyName: ${JSON.stringify(k.name)}`,
-            `            columns: ${JSON.stringify(k.columns)}`,
-            `            isOneToOne: ${String(one)}`,
-            `            referencedRelation: ${JSON.stringify(target?.name ?? references.table)}`,
-            `            referencedColumns: ${JSON.stringify(references.columns)}`,
-            `          },`,
-          ].join("\n"),
-        ];
-      });
-      out.push(`      ${key(t.name)}: {`);
-      out.push(`        Row: {\n${row.join("\n")}\n        }`);
-      out.push(`        Insert: {\n${insert.join("\n")}\n        }`);
-      out.push(`        Update: {\n${update.join("\n")}\n        }`);
-      out.push(
-        `        Relationships: [${relationships.length > 0 ? `\n${relationships.join("\n")}\n        ` : ""}]`,
-      );
-      out.push(`      }`);
-    }
-    out.push(`    }`);
-    out.push(`    Views: {${views.length > 0 ? "" : "\n      [_ in never]: never"}`);
-    // The description carries no view columns.
-    for (const v of views)
-      out.push(
-        `      ${key(v.name)}: {\n        Row: {\n          [key: string]: Json | undefined\n        }\n        Relationships: []\n      }`,
-      );
-    out.push(`    }`);
-    out.push(`    Functions: {\n      [_ in never]: never\n    }`);
-    out.push(`    Enums: {${enums.length > 0 ? "" : "\n      [_ in never]: never"}`);
-    for (const e of enums)
-      out.push(`      ${key(e.name)}: ${e.labels.map((l) => JSON.stringify(l)).join(" | ")}`);
-    out.push(`    }`);
-    out.push(`    CompositeTypes: {\n      [_ in never]: never\n    }`);
-    out.push(`  }`);
-  }
-  out.push(`}\n`);
-  out.push(HELPERS);
-  const constants = schemas
-    .map(
-      (s) =>
-        `  ${key(s)}: {\n    Enums: {${description.enums
-          .filter((e) => e.schema === s)
-          .map((e) => `\n      ${key(e.name)}: ${JSON.stringify(e.labels)},`)
-          .join("")}\n    },\n  },`,
-    )
-    .join("\n");
-  out.push(`export const Constants = {\n${constants}\n} as const\n`);
-  return out.join("\n");
 };
 
-const HELPERS = `type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+// Unformatted like `supabase gen types`, which keeps `oxfmt` out of the bundle; no generator spawns.
+const host: Host = { cwd: ".", env: {}, format: (code) => Promise.resolve(code) };
 
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
-
-export type Tables<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
-      Row: infer R
-    }
-    ? R
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] & DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
-        Row: infer R
-      }
-      ? R
-      : never
-    : never
-
-export type TablesInsert<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I
-    }
-    ? I
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I
-      }
-      ? I
-      : never
-    : never
-
-export type TablesUpdate<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U
-    }
-    ? U
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U
-      }
-      ? U
-      : never
-    : never
-
-export type Enums<
-  DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
-> = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
-  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
-`;
+/** TypeScript types for `schemas`, from the generator `supabase gen types` and postgres-meta use. */
+export const typescript = Effect.fn("SparkMeta.typescript")(function* (
+  model: Model,
+  schemas: ReadonlyArray<string>,
+) {
+  const language = findLanguage("typescript");
+  if (language === undefined)
+    return yield* new SparkTypegenError({ message: "@supabase/typegen has no typescript" });
+  return yield* Effect.tryPromise({
+    try: (signal) => language.generate(generatorMetadata(model, schemas), {}, { ...host, signal }),
+    catch: (cause) =>
+      new SparkTypegenError({
+        message: `failed to generate typescript types: ${cause instanceof Error ? cause.message : String(cause)}`,
+        cause,
+      }),
+  });
+});
