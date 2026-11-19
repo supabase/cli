@@ -1,12 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { OptionSpec } from "@supabase/typegen";
 import { Option } from "effect";
-import {
-  flagDefaultsFor,
-  languageFlagsFor,
-  mergeUserOptions,
-  optionValuesFor,
-} from "./types.languages.ts";
+import { languageFlagsFor, mergeUserOptions, optionValuesFor } from "./types.languages.ts";
+import { docsFlagDoc } from "../../../docs/docs-spec.ts";
 
 const level = (choices: ReadonlyArray<string>, fallback: string): OptionSpec => ({
   name: "level",
@@ -78,11 +74,13 @@ describe("optionValuesFor", () => {
   });
 });
 
-describe("flagDefaultsFor", () => {
+describe("language flag documentation", () => {
   it("documents a default only when it is unambiguous", () => {
-    expect(flagDefaultsFor(mergeUserOptions([level(["a"], "a")]))).toEqual({
-      "supabase-gen-types level": "a",
-    });
-    expect(flagDefaultsFor(mergeUserOptions([level(["a"], "a"), level(["b"], "b")]))).toEqual({});
+    const documented = (specs: ReadonlyArray<OptionSpec>) =>
+      Object.values(languageFlagsFor(mergeUserOptions(specs), [])).map(
+        (flag) => docsFlagDoc(["supabase", "gen", "types"], flag)?.default_value,
+      );
+    expect(documented([level(["a"], "a")])).toEqual(["a"]);
+    expect(documented([level(["a"], "a"), level(["b"], "b")])).toEqual([""]);
   });
 });

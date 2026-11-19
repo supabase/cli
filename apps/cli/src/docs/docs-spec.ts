@@ -11,17 +11,14 @@ import {
   userGlobalFlagParams,
 } from "./docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
+import { flagDefault, flagDocumentation } from "../command-internal/flag-documentation.ts";
 import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
 import { remoteFlagName } from "../shared/output/target-help.ts";
 import {
   DOCS_ARG_OVERRIDES,
-  DOCS_CHOICE_OVERRIDES,
-  DOCS_DEFAULT_OVERRIDES,
-  DOCS_EXCLUDED_FLAGS,
   DOCS_EXTRA_FLAGS,
   DOCS_INFO_DESCRIPTION,
   DOCS_INFO_TAGS,
-  DOCS_REQUIRED,
   DOCS_TAGS,
 } from "./docs-spec.tables.ts";
 import type { DocsInfoTag } from "./docs-spec.tables.ts";
@@ -188,14 +185,12 @@ export function docsFlagDoc(
     );
   }
   const { single, isVariadic } = unwrapped;
+  const documentation = flagDocumentation(single);
   if (single.hidden) return undefined;
-
-  const docId = commandPath.join("-");
-  const overrideKey = `${docId} ${single.name}`;
 
   let acceptedValues: ReadonlyArray<DocsAcceptedValue> | undefined;
   let enumType: string | undefined;
-  const choices = DOCS_CHOICE_OVERRIDES[overrideKey] ?? choiceKeysOf(single.primitiveType);
+  const choices = documentation.choices ?? choiceKeysOf(single.primitiveType);
   if (choices !== undefined) {
     enumType = docsEnumTypeString(choices);
     const type = enumType;
@@ -211,14 +206,17 @@ export function docsFlagDoc(
       : `${single.name}${varname === undefined ? "" : ` <${varname}>`}`;
   const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${longName}`;
 
-  const required = DOCS_REQUIRED.has(overrideKey);
+  const required =
+    documentation.required ??
+    (!unwrapped.isOptional &&
+      (isVariadic ? unwrapped.variadicMin > 0 : single.primitiveType._tag !== "Boolean"));
 
   return {
     id: single.name,
     name,
     description: docsNormalizeText(Option.getOrElse(single.description, () => "")),
     ...(required ? { required: true } : {}),
-    default_value: DOCS_DEFAULT_OVERRIDES[overrideKey] ?? docsTypeDefault(single, isVariadic),
+    default_value: flagDefault(unwrapped) ?? docsTypeDefault(single, isVariadic),
     ...(acceptedValues === undefined ? {} : { accepted_values: acceptedValues }),
   };
 }
@@ -338,35 +336,18 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
   const commands: Array<DocsCommand> = [];
   const emittedIds = new Set<string>();
-  const seenFlagKeys = new Set<string>(rootFlags.map((flag) => `supabase ${flag.id}`));
-  const consumedExcludedFlagKeys = new Set<string>();
   const consumedArgOverrideIds = new Set<string>();
   const consumedExtraFlagIds = new Set<string>();
   const consumedOverlayPaths = new Set<string>();
   const allowedOrphanOverlayPaths = new Set<string>();
 
-  /**
-   * Builds the visible flag docs for a command's params, dropping hidden flags and
-   * `DOCS_EXCLUDED_FLAGS` entries. Does not record `seenFlagKeys` itself — callers record
-   * only the flags that reach the output, so table validation reflects the published spec,
-   * not intermediate candidates.
-   */
   const flagDocsFor = (
     commandPath: ReadonlyArray<string>,
     params: ReadonlyArray<Param.AnyFlag>,
   ): ReadonlyArray<DocsFlag> => {
-    const docId = commandPath.join("-");
     return params
       .map((param) => docsFlagDoc(commandPath, param))
       .filter((flag) => flag !== undefined)
-      .filter((flag) => {
-        const key = `${docId} ${flag.id}`;
-        if (DOCS_EXCLUDED_FLAGS.has(key)) {
-          consumedExcludedFlagKeys.add(key);
-          return false;
-        }
-        return true;
-      })
       .toSorted((a, b) => docsCompare(a.id, b.id));
   };
 
@@ -408,7 +389,6 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
         }
       }
       const own = [...declared, ...(extraFlags ?? [])].toSorted((a, b) => docsCompare(a.id, b.id));
-      own.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...own);
       const experimental = readExperimentalAccess(command);
       if (Option.isSome(experimental)) {
@@ -418,7 +398,6 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       const inherited = flagDocsFor(commandPath, inheritedParams).filter(
         (flag) => !ownIds.has(flag.id) && !rootFlagIds.has(flag.id),
       );
-      inherited.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...inherited);
     }
 
@@ -480,8 +459,6 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
   validateDocsTables({
     emittedIds,
-    seenFlagKeys,
-    consumedExcludedFlagKeys,
     consumedArgOverrideIds,
     consumedExtraFlagIds,
   });
@@ -530,29 +507,15 @@ export function stringifyDocsSpec(spec: DocsSpec): string {
  */
 function validateDocsTables(seen: {
   readonly emittedIds: ReadonlySet<string>;
-  readonly seenFlagKeys: ReadonlySet<string>;
-  readonly consumedExcludedFlagKeys: ReadonlySet<string>;
   readonly consumedArgOverrideIds: ReadonlySet<string>;
   readonly consumedExtraFlagIds: ReadonlySet<string>;
 }): void {
   const stale: Array<string> = [];
-  for (const key of Object.keys(DOCS_DEFAULT_OVERRIDES)) {
-    if (!seen.seenFlagKeys.has(key)) stale.push(`DOCS_DEFAULT_OVERRIDES: "${key}"`);
-  }
   for (const id of Object.keys(DOCS_TAGS)) {
     if (!seen.emittedIds.has(id)) stale.push(`DOCS_TAGS: "${id}"`);
   }
-  for (const key of Object.keys(DOCS_CHOICE_OVERRIDES)) {
-    if (!seen.seenFlagKeys.has(key)) stale.push(`DOCS_CHOICE_OVERRIDES: "${key}"`);
-  }
   for (const id of Object.keys(DOCS_EXTRA_FLAGS)) {
     if (!seen.consumedExtraFlagIds.has(id)) stale.push(`DOCS_EXTRA_FLAGS: "${id}"`);
-  }
-  for (const key of DOCS_REQUIRED) {
-    if (!seen.seenFlagKeys.has(key)) stale.push(`DOCS_REQUIRED: "${key}"`);
-  }
-  for (const key of DOCS_EXCLUDED_FLAGS) {
-    if (!seen.consumedExcludedFlagKeys.has(key)) stale.push(`DOCS_EXCLUDED_FLAGS: "${key}"`);
   }
   for (const id of Object.keys(DOCS_ARG_OVERRIDES)) {
     if (!seen.consumedArgOverrideIds.has(id)) stale.push(`DOCS_ARG_OVERRIDES: "${id}"`);

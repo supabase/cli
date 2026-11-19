@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -26,6 +27,7 @@ const config = {
   // resolution.
   desiredSubdomain: Flag.String("desired-subdomain").pipe(
     Flag.withDescription("The desired vanity subdomain to use for your Supabase project."),
+    Flag.annotate(FlagDocumentation, { required: true }),
     Flag.optional,
   ),
 } as const;

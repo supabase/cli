@@ -35,7 +35,7 @@ const config = {
   config: postgresConfigUpdateConfigFlag,
   replaceExistingOverrides: Flag.Boolean("replace-existing-overrides").pipe(
     Flag.withDescription(
-      "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.",
+      "Replace all existing overrides with the ones provided. Omit this flag to merge overrides instead.",
     ),
     Flag.withDefault(false),
   ),

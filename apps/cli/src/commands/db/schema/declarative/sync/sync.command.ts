@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../../../command-internal/flag-documentation.ts";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -31,6 +32,7 @@ const config = {
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Saves schema diff to a new migration file."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "declarative_sync" }),
     Flag.optional,
   ),
   name: Flag.String("name").pipe(
