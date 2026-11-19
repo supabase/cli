@@ -20182,7 +20182,7 @@ export const V2ResyncWarehouseReplicationInput = Schema.Struct({
   data: Schema.Struct({
     attributes: Schema.Struct({
       schema: Schema.String.annotate({
-        description: "Literal source PostgreSQL schema. Omit table to select its current tables.",
+        description: "Literal source PostgreSQL schema of the table.",
       }).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       table: Schema.String.annotate({
         description: "Literal name of the single source table to reset and recopy.",
@@ -25264,7 +25264,7 @@ export const operationDefinitions = {
   v2ResyncWarehouseReplication: {
     id: "v2ResyncWarehouseReplication",
     description:
-      "Resets replication for one selected source table using its currently saved layout. Source rows, saved layouts and completed replication state for unrelated tables are preserved. In-progress initial copies of other tables may restart from scratch. The Warehouse copy is deleted and rebuilt when replication resumes; table reads may be unavailable, freshness can lag, and the source incurs additional reads. Stopping and restarting the pipeline interrupts replication for other tables. Duration is unknown. The pipeline must be started and initial sync enabled for the table before the reset. The immediate response retains ETL reset states; it does not establish recopy completion. Inspect warehouse tables get and warehouse status separately. Do not automatically retry an uncertain response: repeating this request may reset the table again. There is no preview, revision check, idempotency key or operation polling.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "Resets replication for one selected source table using its currently saved layout. Source rows, saved layouts and completed replication state for unrelated tables are preserved. In-progress initial copies of other tables may restart from scratch. The Warehouse copy is deleted and rebuilt when replication resumes; table reads may be unavailable, freshness can lag, and the source incurs additional reads. Stopping and restarting the pipeline interrupts replication for other tables. Duration is unknown. The pipeline must be started and initial sync enabled for the table before the reset. The immediate response retains ETL reset states; it does not establish recopy completion. Inspect warehouse tables get and warehouse status separately. Do not automatically retry an uncertain response: repeating this request may reset the table again. There is no server-side preview, revision check, idempotency key or operation polling.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "POST",
     path: "/v2/projects/{ref}/warehouse/replication/resync",
     pathParams: ["ref"],

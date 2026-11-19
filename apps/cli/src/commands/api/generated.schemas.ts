@@ -2547,8 +2547,7 @@ export const apiCommandSchemas = {
                 additionalProperties: false,
                 properties: {
                   schema: {
-                    description:
-                      "Literal source PostgreSQL schema. Omit table to select its current tables.",
+                    description: "Literal source PostgreSQL schema of the table.",
                     minLength: 1,
                     type: "string",
                   },

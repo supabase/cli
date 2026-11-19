@@ -2515,6 +2515,53 @@ describeHostedConsent("warehouse tables layout update", {
   },
 });
 
+describeHostedConsent("warehouse replication add", {
+  command: commandTreeFor({ apiFeatures: ["warehouse"] }).get("warehouse replication add")!.command,
+  invoke: ({ workdir, yes, out }) => {
+    const { args, sent, run } = execute(
+      ["warehouse", "replication", "add", "--schema", "public", "--table", "orders"],
+      { yes, route: accepted },
+    );
+    return {
+      run: run.pipe(
+        Effect.onExit(() =>
+          Effect.sync(() => {
+            if (out.promptConfirmCalls.length > 0) {
+              expect(out.stderrText).toContain("interrupting replication for other tables");
+            }
+          }),
+        ),
+        Effect.provide(cliServices(workdir, args)),
+      ),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
+
+describeHostedConsent("warehouse replication remove", {
+  command: commandTreeFor({ apiFeatures: ["warehouse"] }).get("warehouse replication remove")!
+    .command,
+  invoke: ({ workdir, yes, out }) => {
+    const { args, sent, run } = execute(
+      ["warehouse", "replication", "remove", "--schema", "public", "--table", "orders"],
+      { yes, route: accepted },
+    );
+    return {
+      run: run.pipe(
+        Effect.onExit(() =>
+          Effect.sync(() => {
+            if (out.promptConfirmCalls.length > 0) {
+              expect(out.stderrText).toContain("retained copy stops receiving updates");
+            }
+          }),
+        ),
+        Effect.provide(cliServices(workdir, args)),
+      ),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
+
 describeHostedConsent("warehouse replication resync", {
   command: commandTreeFor({ apiFeatures: ["warehouse"] }).get("warehouse replication resync")!
     .command,
