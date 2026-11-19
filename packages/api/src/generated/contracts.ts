@@ -1463,9 +1463,26 @@ export const V1CreateASsoProviderInput = Schema.Struct({
       "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
     ]),
   ),
+  dedicated_scope: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When `true`, the provider's SAML ACS URL and entity ID are scoped to its own provider ID instead of the ones shared by all SAML providers in the project. The same signing key is still used. This cannot be changed once the provider is created.",
+    }),
+  ),
 });
 export const V1CreateASsoProviderOutput = Schema.Struct({
   id: Schema.String,
+  domains: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        domain: Schema.optionalKey(Schema.String),
+        created_at: Schema.optionalKey(Schema.String),
+        updated_at: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  created_at: Schema.optionalKey(Schema.String),
+  updated_at: Schema.optionalKey(Schema.String),
   saml: Schema.optionalKey(
     Schema.Struct({
       entity_id: Schema.String,
@@ -1497,19 +1514,9 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
-  domains: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        domain: Schema.optionalKey(Schema.String),
-        created_at: Schema.optionalKey(Schema.String),
-        updated_at: Schema.optionalKey(Schema.String),
-      }),
-    ),
-  ),
-  created_at: Schema.optionalKey(Schema.String),
-  updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1CreateAnOrganizationInput = Schema.Struct({
   name: Schema.String.check(
@@ -2044,6 +2051,17 @@ export const V1DeleteASsoProviderInput = Schema.Struct({
 });
 export const V1DeleteASsoProviderOutput = Schema.Struct({
   id: Schema.String,
+  domains: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        domain: Schema.optionalKey(Schema.String),
+        created_at: Schema.optionalKey(Schema.String),
+        updated_at: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  created_at: Schema.optionalKey(Schema.String),
+  updated_at: Schema.optionalKey(Schema.String),
   saml: Schema.optionalKey(
     Schema.Struct({
       entity_id: Schema.String,
@@ -2075,19 +2093,22 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
-  domains: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        domain: Schema.optionalKey(Schema.String),
-        created_at: Schema.optionalKey(Schema.String),
-        updated_at: Schema.optionalKey(Schema.String),
+});
+export const V1DeleteAllFunctionsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
-  ),
-  created_at: Schema.optionalKey(Schema.String),
-  updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
@@ -2873,6 +2894,17 @@ export const V1GetASsoProviderInput = Schema.Struct({
 });
 export const V1GetASsoProviderOutput = Schema.Struct({
   id: Schema.String,
+  domains: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        domain: Schema.optionalKey(Schema.String),
+        created_at: Schema.optionalKey(Schema.String),
+        updated_at: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  created_at: Schema.optionalKey(Schema.String),
+  updated_at: Schema.optionalKey(Schema.String),
   saml: Schema.optionalKey(
     Schema.Struct({
       entity_id: Schema.String,
@@ -2904,19 +2936,9 @@ export const V1GetASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
-  domains: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        domain: Schema.optionalKey(Schema.String),
-        created_at: Schema.optionalKey(Schema.String),
-        updated_at: Schema.optionalKey(Schema.String),
-      }),
-    ),
-  ),
-  created_at: Schema.optionalKey(Schema.String),
-  updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1GetActionRunInput = Schema.Struct({
   ref: Schema.String.check(
@@ -5336,6 +5358,7 @@ export const V1GetProjectLogsInput = Schema.Struct({
       }),
     ),
   sql: Schema.optionalKey(Schema.String),
+  lql: Schema.optionalKey(Schema.String),
   iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
@@ -6660,6 +6683,17 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
       id: Schema.String,
+      domains: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            domain: Schema.optionalKey(Schema.String),
+            created_at: Schema.optionalKey(Schema.String),
+            updated_at: Schema.optionalKey(Schema.String),
+          }),
+        ),
+      ),
+      created_at: Schema.optionalKey(Schema.String),
+      updated_at: Schema.optionalKey(Schema.String),
       saml: Schema.optionalKey(
         Schema.Struct({
           entity_id: Schema.String,
@@ -6691,19 +6725,9 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
               OpenString,
             ]),
           ),
+          dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
         }),
       ),
-      domains: Schema.optionalKey(
-        Schema.Array(
-          Schema.Struct({
-            domain: Schema.optionalKey(Schema.String),
-            created_at: Schema.optionalKey(Schema.String),
-            updated_at: Schema.optionalKey(Schema.String),
-          }),
-        ),
-      ),
-      created_at: Schema.optionalKey(Schema.String),
-      updated_at: Schema.optionalKey(Schema.String),
     }),
   ),
 });
@@ -7745,6 +7769,55 @@ export const V1PauseAProjectInput = Schema.Struct({
       }),
     ),
 });
+export const V1PostProjectLogsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  sql: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
+    }),
+  ),
+  lql: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Custom LQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
+    }),
+  ),
+  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+});
+export const V1PostProjectLogsOutput = Schema.Struct({
+  result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
+  error: Schema.optionalKey(
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({
+        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        errors: Schema.Array(
+          Schema.Struct({
+            domain: Schema.String,
+            location: Schema.String,
+            locationType: Schema.String,
+            message: Schema.String,
+            reason: Schema.String,
+          }),
+        ),
+        message: Schema.String,
+        status: Schema.String,
+      }),
+    ]),
+  ),
+});
 export const V1PushABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
@@ -8520,6 +8593,17 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
 });
 export const V1UpdateASsoProviderOutput = Schema.Struct({
   id: Schema.String,
+  domains: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        domain: Schema.optionalKey(Schema.String),
+        created_at: Schema.optionalKey(Schema.String),
+        updated_at: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  created_at: Schema.optionalKey(Schema.String),
+  updated_at: Schema.optionalKey(Schema.String),
   saml: Schema.optionalKey(
     Schema.Struct({
       entity_id: Schema.String,
@@ -8553,17 +8637,6 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
       ),
     }),
   ),
-  domains: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        domain: Schema.optionalKey(Schema.String),
-        created_at: Schema.optionalKey(Schema.String),
-        updated_at: Schema.optionalKey(Schema.String),
-      }),
-    ),
-  ),
-  created_at: Schema.optionalKey(Schema.String),
-  updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1UpdateActionRunStatusInput = Schema.Struct({
   ref: Schema.String.check(
@@ -12960,6 +13033,19 @@ export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
     ),
   aws_account_id: Schema.String,
   database_identifier: Schema.String,
+});
+export const V2DeleteProjectFunctionInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
 });
 export const V2DeployAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
@@ -19351,6 +19437,7 @@ export const V1CountActionRunsOutput = Schema.Void;
 export const V1DeactivateVanitySubdomainConfigOutput = Schema.Void;
 export const V1DeleteHostnameConfigOutput = Schema.Void;
 export const V1DeleteAFunctionOutput = Schema.Void;
+export const V1DeleteAllFunctionsOutput = Schema.Void;
 export const V1DeleteInviteExternalJitAccessOutput = Schema.Void;
 export const V1DeleteJitAccessOutput = Schema.Void;
 export const V1DeleteNetworkBansOutput = Schema.Void;
@@ -19384,6 +19471,7 @@ export const V2DeleteLogDrainOutput = Schema.Void;
 export const V2DeleteNotebookOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
+export const V2DeleteProjectFunctionOutput = Schema.Void;
 export const V2RemoveOrganizationMembersOutput = Schema.Void;
 export const V2TransferAProjectOutput = Schema.Void;
 
@@ -19420,6 +19508,7 @@ export const openApiOperationIdMap = {
   "v1-delete-a-function": "v1DeleteAFunction",
   "v1-delete-a-project": "v1DeleteAProject",
   "v1-delete-a-sso-provider": "v1DeleteASsoProvider",
+  "v1-delete-all-functions": "v1DeleteAllFunctions",
   "v1-delete-invite-external-jit-access": "v1DeleteInviteExternalJitAccess",
   "v1-delete-jit-access": "v1DeleteJitAccess",
   "v1-delete-login-roles": "v1DeleteLoginRoles",
@@ -19516,6 +19605,7 @@ export const openApiOperationIdMap = {
   "v1-patch-network-restrictions": "v1PatchNetworkRestrictions",
   "v1-patch-postgres-config": "v1PatchPostgresConfig",
   "v1-pause-a-project": "v1PauseAProject",
+  "v1-post-project-logs": "v1PostProjectLogs",
   "v1-push-a-branch": "v1PushABranch",
   "v1-read-only-query": "v1ReadOnlyQuery",
   "v1-remove-a-read-replica": "v1RemoveAReadReplica",
@@ -19574,6 +19664,7 @@ export const openApiOperationIdMap = {
   "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
+  "v2-delete-project-function": "v2DeleteProjectFunction",
   "v2-deploy-a-compute-instance": "v2DeployAComputeInstance",
   "v2-disable-warehouse": "v2DisableWarehouse",
   "v2-download-project-backup": "v2DownloadProjectBackup",
@@ -19943,6 +20034,7 @@ export const operationDefinitions = {
         "domains",
         "attribute_mapping",
         "name_id_format",
+        "dedicated_scope",
       ],
     },
     response: { kind: "json" },
@@ -20147,6 +20239,19 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1DeleteASsoProviderInput,
     outputSchema: V1DeleteASsoProviderOutput,
+  },
+  v1DeleteAllFunctions: {
+    id: "v1DeleteAllFunctions",
+    description: "Deletes all Edge Functions from a project",
+    method: "DELETE",
+    path: "/v1/projects/{ref}/functions",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V1DeleteAllFunctionsInput,
+    outputSchema: V1DeleteAllFunctionsOutput,
   },
   v1DeleteInviteExternalJitAccess: {
     id: "v1DeleteInviteExternalJitAccess",
@@ -20876,11 +20981,11 @@ export const operationDefinitions = {
   v1GetProjectLogs: {
     id: "v1GetProjectLogs",
     description:
-      "Executes an SQL or LQL query on the project's unified logs stream.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nFilter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\nNote: SQL must be written in **ClickHouse SQL dialect**.",
+      "Executes an SQL or LQL query on the project's unified logs stream.\n\n  Either the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\n  If both are not provided, only the last 1 minute of logs will be queried.\n  The timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\n  Filter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\n  Note: SQL must be written in **ClickHouse SQL dialect**.",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs",
     pathParams: ["ref"],
-    queryParams: ["sql", "iso_timestamp_start", "iso_timestamp_end"],
+    queryParams: ["sql", "lql", "iso_timestamp_start", "iso_timestamp_end"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
@@ -21486,6 +21591,24 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V1PauseAProjectInput,
     outputSchema: V1PauseAProjectOutput,
+  },
+  v1PostProjectLogs: {
+    id: "v1PostProjectLogs",
+    description:
+      "Executes an SQL or LQL query on the project's unified logs stream.\n\n  Either the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\n  If both are not provided, only the last 1 minute of logs will be queried.\n  The timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\n  Filter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\n  Note: SQL must be written in **ClickHouse SQL dialect**.",
+    method: "POST",
+    path: "/v1/projects/{ref}/analytics/endpoints/logs",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: {
+      kind: "json",
+      contentType: "application/json",
+      fields: ["sql", "lql", "iso_timestamp_start", "iso_timestamp_end"],
+    },
+    response: { kind: "json" },
+    inputSchema: V1PostProjectLogsInput,
+    outputSchema: V1PostProjectLogsOutput,
   },
   v1PushABranch: {
     id: "v1PushABranch",
@@ -22658,6 +22781,19 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V2DeletePrivateLinkAssociationForDatabaseInput,
     outputSchema: V2DeletePrivateLinkAssociationForDatabaseOutput,
+  },
+  v2DeleteProjectFunction: {
+    id: "v2DeleteProjectFunction",
+    description: "Deletes all Edge Functions from a project",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/functions",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteProjectFunctionInput,
+    outputSchema: V2DeleteProjectFunctionOutput,
   },
   v2DeployAComputeInstance: {
     id: "v2DeployAComputeInstance",

@@ -518,6 +518,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    deleteAllFunctions: (
+      input: typeof operationDefinitions.v1DeleteAllFunctions.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1DeleteAllFunctions.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1DeleteAllFunctions">(
+          operationDefinitions.v1DeleteAllFunctions,
+          input,
+          options,
+        );
+      }),
     deleteInviteExternalJitAccess: (
       input: typeof operationDefinitions.v1DeleteInviteExternalJitAccess.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -2054,6 +2070,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    postProjectLogs: (
+      input: typeof operationDefinitions.v1PostProjectLogs.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1PostProjectLogs.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1PostProjectLogs">(
+          operationDefinitions.v1PostProjectLogs,
+          input,
+          options,
+        );
+      }),
     pushABranch: (
       input: typeof operationDefinitions.v1PushABranch.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -2976,6 +3008,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2DeletePrivateLinkAssociationForDatabase">(
           operationDefinitions.v2DeletePrivateLinkAssociationForDatabase,
+          input,
+          options,
+        );
+      }),
+    deleteProjectFunction: (
+      input: typeof operationDefinitions.v2DeleteProjectFunction.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeleteProjectFunction.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeleteProjectFunction">(
+          operationDefinitions.v2DeleteProjectFunction,
           input,
           options,
         );
