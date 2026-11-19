@@ -22,6 +22,7 @@ import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
 import { branchResolution } from "../../../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
+import { pgDeltaAccess } from "../declarative.gate.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
@@ -137,6 +138,7 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  pgDeltaAccess.annotate,
   withTargetPolicy({
     group: "selectable",
     consent: "none",

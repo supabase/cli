@@ -61,7 +61,6 @@ enabled = false
 const startFlags = () => ({
   exclude: [],
   stack: Option.none<string>(),
-  stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "on-demand" as const,
   frozen: false,

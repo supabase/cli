@@ -245,7 +245,7 @@ describe("stack prune", () => {
         expect(error.message).toBe("Failed to destroy 1 managed stack(s).");
         expect(error.detail).toBe(`${f.moved.id}: engine refused`);
         expect(error.suggestion).toContain('"supabase stack prune --yes"');
-        expect(error.suggestion).not.toContain("--stack-id");
+        expect(error.suggestion).not.toContain("--stack");
         expect(output.messages.filter(({ type }) => type === "success")).toEqual([]);
         expect(yield* f.savedIds).toEqual(f.allIds);
       }).pipe(Effect.provide(live)),

@@ -30,6 +30,7 @@ import {
 } from "../../../shared/functions/functions-config.ts";
 import { LocalDbRunningError } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { stackOpenReadyProject } from "../../../command-internal/stack-local-database.ts";
+import { selectedStackFlags } from "../../../command-internal/stack-target.ts";
 import { DebugFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsServeFlags } from "../../../shared/functions/serve.ts";
@@ -54,10 +55,15 @@ const serveReason = (cause: { readonly message: string }): FunctionsServeStackEr
   return cause instanceof LocalDbRunningError ? "lifecycle" : "runtime";
 };
 
-const runtimeError = (cause: { readonly message: string }) =>
+const runtimeError = (cause: { readonly message: string; readonly suggestion?: string }) =>
   cause instanceof FunctionsServeStackError
     ? cause
-    : new FunctionsServeStackError({ reason: serveReason(cause), message: cause.message, cause });
+    : new FunctionsServeStackError({
+        reason: serveReason(cause),
+        message: cause.message,
+        ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
+        cause,
+      });
 const invalidConfig = (message: string) =>
   new FunctionsServeStackError({ reason: "invalid-config", message });
 
@@ -97,6 +103,7 @@ const follow = Effect.fn("functions.serve.follow")(function* (
   launch: Effect.Effect<void, { readonly message: string }, Scope.Scope>,
 ) {
   const output = yield* Output;
+  const stackFlags = yield* selectedStackFlags;
   // The owner may pin a follow's start after the launch begins; a time bound taken before launch
   // keeps its first output.
   const since = DateTime.formatIso(yield* DateTime.now);
@@ -142,7 +149,7 @@ const follow = Effect.fn("functions.serve.follow")(function* (
                 reason: "runtime",
                 message:
                   status.error?.message ?? "The Functions service stopped or became unhealthy.",
-                suggestion: "Run supabase start to make Functions available again.",
+                suggestion: `Run supabase start${stackFlags} to make Functions available again.`,
               }),
             )
           : Effect.void;

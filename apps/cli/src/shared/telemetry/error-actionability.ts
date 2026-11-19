@@ -1146,7 +1146,7 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   if (depth >= MAX_CAUSE_DEPTH) {
     return toActionability(actionability.unknown, "error", "CauseChainLimit");
   }
-  // `mapHttpError` attaches `entitlement` only from a 4xx `entitlement_required` body, so it
+  // `planGateFromResponse` attaches `entitlement` only from a 4xx `entitlement_required` body, so it
   // marks a plan-gated denial on any status error class, declared field or not.
   const declared =
     isErrorRecord(error) && isErrorRecord(error["entitlement"])

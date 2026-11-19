@@ -5,6 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../output/normalize-error.ts";
 
 /**
  * Non-OK Management API response with an HTTP status code, shared by
@@ -21,6 +22,7 @@ export class FunctionsApiStatusError extends Data.TaggedError("FunctionsApiStatu
    * as `api_status` with the `api_response` fingerprint instead of the status-code policy.
    */
   readonly decode?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.decode === true) {

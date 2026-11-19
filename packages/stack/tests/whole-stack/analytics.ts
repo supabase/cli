@@ -1,5 +1,5 @@
 import { Clock, DateTime, Effect, Schedule, Schema } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 const AnalyticsLog = Schema.Struct({
   event_message: Schema.String,
@@ -20,6 +20,15 @@ class AnalyticsFlowError extends Schema.TaggedError<AnalyticsFlowError>()(
     cause: Schema.Unknown,
   },
 ) {}
+
+// Analytics can drop connections or answer 5xx while it restarts; these failures clear on retry.
+const transientOperations = new Set(["request", "post-unavailable", "query-unavailable"]);
+const isTransient = (error: unknown) =>
+  Schema.is(AnalyticsFlowError)(error) && transientOperations.has(error.operation);
+
+// The status decides whether a failure is retried, so an unreadable error body must not mask it.
+const errorBody = (response: HttpClientResponse.HttpClientResponse) =>
+  response.text.pipe(Effect.orElseSucceed((cause) => `(unreadable body: ${String(cause)})`));
 
 const request = Effect.fn("WholeStack.analyticsRequest")(
   (request: HttpClientRequest.HttpClientRequest) =>
@@ -44,10 +53,10 @@ const postAnalyticsMarker = Effect.fn("WholeStack.postAnalyticsMarker")(
       );
       if (response.status >= 400)
         return yield* new AnalyticsFlowError({
-          operation: "post-log",
+          operation: response.status >= 500 ? "post-unavailable" : "post-log",
           cause: {
             status: response.status,
-            body: yield* response.text,
+            body: yield* errorBody(response),
             url: `${analyticsUrl}/api/logs?source_name=postgres.logs`,
           },
         });
@@ -63,8 +72,7 @@ const postAnalyticsMarker = Effect.fn("WholeStack.postAnalyticsMarker")(
     }),
 );
 
-/** Performs one exact-marker SQL query against Logflare's Postgres backend. */
-export const queryAnalyticsMarker = Effect.fn("WholeStack.queryAnalyticsMarker")(
+const queryAnalyticsMarkerOnce = Effect.fn("WholeStack.queryAnalyticsMarkerOnce")(
   (analyticsUrl: string, apiKey: string, marker: string, phaseStartedAtMillis: number) =>
     Effect.gen(function* () {
       const escapedMarker = marker.replaceAll("'", "''");
@@ -80,7 +88,10 @@ export const queryAnalyticsMarker = Effect.fn("WholeStack.queryAnalyticsMarker")
         ),
       );
       if (response.status >= 400)
-        return yield* new AnalyticsFlowError({ operation: "query-log", cause: response.status });
+        return yield* new AnalyticsFlowError({
+          operation: response.status >= 500 ? "query-unavailable" : "query-log",
+          cause: { status: response.status, body: yield* errorBody(response) },
+        });
       const rows = yield* Schema.decodeUnknownEffect(AnalyticsQueryResponse)(
         yield* response.json,
       ).pipe(
@@ -91,6 +102,14 @@ export const queryAnalyticsMarker = Effect.fn("WholeStack.queryAnalyticsMarker")
       );
       return rows;
     }),
+);
+
+/** Queries Logflare's Postgres backend for an exact marker, retrying transient failures. */
+export const queryAnalyticsMarker = Effect.fn("WholeStack.queryAnalyticsMarker")(
+  (analyticsUrl: string, apiKey: string, marker: string, phaseStartedAtMillis: number) =>
+    queryAnalyticsMarkerOnce(analyticsUrl, apiKey, marker, phaseStartedAtMillis).pipe(
+      Effect.retry({ schedule: Schedule.spaced("1 second"), times: 30, while: isTransient }),
+    ),
 );
 
 const queryMarkerUntilVisible = Effect.fn("WholeStack.queryMarkerUntilVisible")(
@@ -113,6 +132,14 @@ const queryMarkerUntilVisible = Effect.fn("WholeStack.queryMarkerUntilVisible")(
     ),
 );
 
+// A repeated marker is harmless because queries only check that one row matches.
+const postMarkerUntilAccepted = Effect.fn("WholeStack.postMarkerUntilAccepted")(
+  (analyticsUrl: string, apiKey: string, marker: string, timestampMillis: number) =>
+    postAnalyticsMarker(analyticsUrl, apiKey, marker, timestampMillis).pipe(
+      Effect.retry({ schedule: Schedule.spaced("1 second"), times: 30, while: isTransient }),
+    ),
+);
+
 /** Names the marker every phase of a stack ingests, for cross-stack isolation checks. */
 export const stackAnalyticsMarker = (stackId: string): string => `stack-${stackId}`;
 
@@ -123,8 +150,8 @@ export const exerciseAnalytics = Effect.fn("WholeStack.exerciseAnalytics")(
       const phaseStartedAtMillis = yield* Clock.currentTimeMillis;
       const phaseMarker = `direct-${stackId}-${phase}-${phaseStartedAtMillis}`;
       const stackMarker = stackAnalyticsMarker(stackId);
-      yield* postAnalyticsMarker(analyticsUrl, apiKey, phaseMarker, phaseStartedAtMillis);
-      yield* postAnalyticsMarker(analyticsUrl, apiKey, stackMarker, phaseStartedAtMillis);
+      yield* postMarkerUntilAccepted(analyticsUrl, apiKey, phaseMarker, phaseStartedAtMillis);
+      yield* postMarkerUntilAccepted(analyticsUrl, apiKey, stackMarker, phaseStartedAtMillis);
       yield* Effect.all(
         [
           queryMarkerUntilVisible(analyticsUrl, apiKey, phaseMarker, phaseStartedAtMillis),

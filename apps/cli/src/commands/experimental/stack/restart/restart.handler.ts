@@ -5,12 +5,12 @@ import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
+  failedOutcomesDetail,
+  mapTargetError,
+  missingStackAdvice,
+  rejectStackOutput,
   StackApi,
   StackTargetResolver,
-  failedOutcomesDetail,
-  rejectStackOutput,
-  validateStackTarget,
-  mapTargetError,
 } from "../../../../command-internal/stack-target.ts";
 import { StackCommandRestartError } from "./restart.errors.ts";
 import type { StackRestartFlags } from "./restart.command.ts";
@@ -39,23 +39,17 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
     yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
       Effect.mapError(targetError),
     );
-    yield* validateStackTarget({
-      stack: Option.getOrUndefined(flags.stack),
-      stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(targetError));
     const target = yield* resolver
       .resolve({
         projectRoot: settings.workdir,
         runtime: "auto",
-        ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
-        ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
+        ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
       })
       .pipe(Effect.mapError(targetError));
     if (target.id === undefined)
       return yield* new StackCommandRestartError({
         reason: "not-found",
-        message: "No managed stack exists for the selected project.",
-        suggestion: "Run supabase stack start first.",
+        ...missingStackAdvice(target.name),
       });
     const stack = yield* api
       .open({

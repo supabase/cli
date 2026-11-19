@@ -51,7 +51,6 @@ describe("stack-only flags rejected by the legacy backend", () => {
   const stackOnlyInvocations: ReadonlyArray<ReadonlyArray<string>> = [
     ["start", "--runtime", "native"],
     ["start", "--stack", "feature-a"],
-    ["start", "--stack-id", "feature-a"],
     ["start", "--preparation", "frozen"],
     ["start", "--frozen"],
     ["start", "--eager"],

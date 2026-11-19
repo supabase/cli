@@ -44,11 +44,11 @@ const acceptedValuesOf = (variant: RemoteFlagVariant): string => {
 const remoteDescription = (variant: RemoteFlagVariant): string => {
   const hint = valueHintOf(variant);
   if (variant.kind === "hosted") {
-    return `Target another project: --remote=${hint}. Defaults to the linked project.`;
+    return `Target another project: \`--remote=${hint}\`. Defaults to the linked project.`;
   }
   return variant.dbUrl
-    ? `Target a remote database: the linked project, or --remote=${hint}.`
-    : `Target a remote ${variant.subject}: the linked project, or --remote=${hint}.`;
+    ? `Target a remote database: the linked project, or \`--remote=${hint}\`.`
+    : `Target a remote ${variant.subject}: the linked project, or \`--remote=${hint}\`.`;
 };
 
 const rejectionMessage = (variant: RemoteFlagVariant, rejection: RemoteValueRejection): string => {
@@ -128,14 +128,14 @@ const linkedFlag = () =>
 
 const dbUrlFlag = () =>
   Flag.String("db-url").pipe(
-    Flag.withDescription("Deprecated, removed in v4: use --remote=<db-url>."),
+    Flag.withDescription("Deprecated, removed in v4: use `--remote=<db-url>`."),
     Flag.optional,
     Flag.withHidden,
   );
 
 const projectRefFlag = () =>
   Flag.String("project-ref").pipe(
-    Flag.withDescription("Deprecated, removed in v4: use --remote=<ref>."),
+    Flag.withDescription("Deprecated, removed in v4: use `--remote=<ref>`."),
     Flag.optional,
     Flag.withHidden,
   );
@@ -241,7 +241,7 @@ export const readSeedTargetFlags = Effect.fnUntraced(function* () {
 
 /** Hidden alias of `--remote=<ref>`, accepted only by `gen types`. */
 export const deprecatedProjectIdFlag = Flag.String("project-id").pipe(
-  Flag.withDescription("Deprecated, removed in v4: use --remote=<ref>."),
+  Flag.withDescription("Deprecated, removed in v4: use `--remote=<ref>`."),
   Flag.optional,
   Flag.withHidden,
 );

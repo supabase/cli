@@ -18,6 +18,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { TestClock } from "effect/testing";
 import { vi } from "vitest";
+import { noStackSelectorFlags } from "../../command-internal/stack-target.ts";
 
 const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
 
@@ -721,6 +722,7 @@ function setupSubstrate(
 
   const layer = Layer.mergeAll(
     configValuesLayer({ output: outputLayer }),
+    noStackSelectorFlags,
     machineErrorContextLayer,
     commandRuntimeLayer(["pull"]).pipe(Layer.provide([BunServices.layer, BunCrypto.layer])),
     stdioLayer,

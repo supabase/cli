@@ -200,6 +200,7 @@ export const BranchResponse_Output = Schema.Struct({
         "PAUSE_FAILED",
         "RESIZING",
         "PROMOTING",
+        "RIGHTSIZING",
       ]),
       OpenString,
     ]),
@@ -311,6 +312,7 @@ export const V1ProjectWithDatabaseResponse_Output = Schema.Struct({
       "PAUSE_FAILED",
       "RESIZING",
       "PROMOTING",
+      "RIGHTSIZING",
     ]),
     OpenString,
   ]),
@@ -1110,6 +1112,7 @@ export const V1CreateABranchOutput = Schema.Struct({
         "PAUSE_FAILED",
         "RESIZING",
         "PROMOTING",
+        "RIGHTSIZING",
       ]),
       OpenString,
     ]),
@@ -1418,6 +1421,7 @@ export const V1CreateAProjectOutput = Schema.Struct({
       "PAUSE_FAILED",
       "RESIZING",
       "PROMOTING",
+      "RIGHTSIZING",
     ]),
     OpenString,
   ]),
@@ -1459,9 +1463,26 @@ export const V1CreateASsoProviderInput = Schema.Struct({
       "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
     ]),
   ),
+  dedicated_scope: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When `true`, the provider's SAML ACS URL and entity ID are scoped to its own provider ID instead of the ones shared by all SAML providers in the project. The same signing key is still used. This cannot be changed once the provider is created.",
+    }),
+  ),
 });
 export const V1CreateASsoProviderOutput = Schema.Struct({
   id: Schema.String,
+  domains: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        domain: Schema.optionalKey(Schema.String),
+        created_at: Schema.optionalKey(Schema.String),
+        updated_at: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  created_at: Schema.optionalKey(Schema.String),
+  updated_at: Schema.optionalKey(Schema.String),
   saml: Schema.optionalKey(
     Schema.Struct({
       entity_id: Schema.String,
@@ -1493,19 +1514,9 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
-  domains: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        domain: Schema.optionalKey(Schema.String),
-        created_at: Schema.optionalKey(Schema.String),
-        updated_at: Schema.optionalKey(Schema.String),
-      }),
-    ),
-  ),
-  created_at: Schema.optionalKey(Schema.String),
-  updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1CreateAnOrganizationInput = Schema.Struct({
   name: Schema.String.check(
@@ -2040,6 +2051,17 @@ export const V1DeleteASsoProviderInput = Schema.Struct({
 });
 export const V1DeleteASsoProviderOutput = Schema.Struct({
   id: Schema.String,
+  domains: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        domain: Schema.optionalKey(Schema.String),
+        created_at: Schema.optionalKey(Schema.String),
+        updated_at: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  created_at: Schema.optionalKey(Schema.String),
+  updated_at: Schema.optionalKey(Schema.String),
   saml: Schema.optionalKey(
     Schema.Struct({
       entity_id: Schema.String,
@@ -2071,19 +2093,22 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
-  domains: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        domain: Schema.optionalKey(Schema.String),
-        created_at: Schema.optionalKey(Schema.String),
-        updated_at: Schema.optionalKey(Schema.String),
+});
+export const V1DeleteAllFunctionsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
-  ),
-  created_at: Schema.optionalKey(Schema.String),
-  updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1DeleteInviteExternalJitAccessInput = Schema.Struct({
   ref: Schema.String.check(
@@ -2609,6 +2634,7 @@ export const V1GetABranchOutput = Schema.Struct({
         "PAUSE_FAILED",
         "RESIZING",
         "PROMOTING",
+        "RIGHTSIZING",
       ]),
       OpenString,
     ]),
@@ -2664,6 +2690,7 @@ export const V1GetABranchConfigOutput = Schema.Struct({
       "PAUSE_FAILED",
       "RESIZING",
       "PROMOTING",
+      "RIGHTSIZING",
     ]),
     OpenString,
   ]),
@@ -2867,6 +2894,17 @@ export const V1GetASsoProviderInput = Schema.Struct({
 });
 export const V1GetASsoProviderOutput = Schema.Struct({
   id: Schema.String,
+  domains: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        domain: Schema.optionalKey(Schema.String),
+        created_at: Schema.optionalKey(Schema.String),
+        updated_at: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  created_at: Schema.optionalKey(Schema.String),
+  updated_at: Schema.optionalKey(Schema.String),
   saml: Schema.optionalKey(
     Schema.Struct({
       entity_id: Schema.String,
@@ -2898,19 +2936,9 @@ export const V1GetASsoProviderOutput = Schema.Struct({
           OpenString,
         ]),
       ),
+      dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
     }),
   ),
-  domains: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        domain: Schema.optionalKey(Schema.String),
-        created_at: Schema.optionalKey(Schema.String),
-        updated_at: Schema.optionalKey(Schema.String),
-      }),
-    ),
-  ),
-  created_at: Schema.optionalKey(Schema.String),
-  updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1GetActionRunInput = Schema.Struct({
   ref: Schema.String.check(
@@ -3037,6 +3065,7 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
           "PAUSE_FAILED",
           "RESIZING",
           "PROMOTING",
+          "RIGHTSIZING",
         ]),
         OpenString,
       ]),
@@ -5111,6 +5140,7 @@ export const V1GetProjectOutput = Schema.Struct({
       "PAUSE_FAILED",
       "RESIZING",
       "PROMOTING",
+      "RIGHTSIZING",
     ]),
     OpenString,
   ]),
@@ -5328,6 +5358,7 @@ export const V1GetProjectLogsInput = Schema.Struct({
       }),
     ),
   sql: Schema.optionalKey(Schema.String),
+  lql: Schema.optionalKey(Schema.String),
   iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
@@ -6652,6 +6683,17 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
       id: Schema.String,
+      domains: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            domain: Schema.optionalKey(Schema.String),
+            created_at: Schema.optionalKey(Schema.String),
+            updated_at: Schema.optionalKey(Schema.String),
+          }),
+        ),
+      ),
+      created_at: Schema.optionalKey(Schema.String),
+      updated_at: Schema.optionalKey(Schema.String),
       saml: Schema.optionalKey(
         Schema.Struct({
           entity_id: Schema.String,
@@ -6683,19 +6725,9 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
               OpenString,
             ]),
           ),
+          dedicated_scope: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
         }),
       ),
-      domains: Schema.optionalKey(
-        Schema.Array(
-          Schema.Struct({
-            domain: Schema.optionalKey(Schema.String),
-            created_at: Schema.optionalKey(Schema.String),
-            updated_at: Schema.optionalKey(Schema.String),
-          }),
-        ),
-      ),
-      created_at: Schema.optionalKey(Schema.String),
-      updated_at: Schema.optionalKey(Schema.String),
     }),
   ),
 });
@@ -7737,6 +7769,55 @@ export const V1PauseAProjectInput = Schema.Struct({
       }),
     ),
 });
+export const V1PostProjectLogsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  sql: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
+    }),
+  ),
+  lql: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Custom LQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
+    }),
+  ),
+  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+});
+export const V1PostProjectLogsOutput = Schema.Struct({
+  result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
+  error: Schema.optionalKey(
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({
+        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        errors: Schema.Array(
+          Schema.Struct({
+            domain: Schema.String,
+            location: Schema.String,
+            locationType: Schema.String,
+            message: Schema.String,
+            reason: Schema.String,
+          }),
+        ),
+        message: Schema.String,
+        status: Schema.String,
+      }),
+    ]),
+  ),
+});
 export const V1PushABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
@@ -8345,6 +8426,7 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
         "PAUSE_FAILED",
         "RESIZING",
         "PROMOTING",
+        "RIGHTSIZING",
       ]),
       OpenString,
     ]),
@@ -8511,6 +8593,17 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
 });
 export const V1UpdateASsoProviderOutput = Schema.Struct({
   id: Schema.String,
+  domains: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        domain: Schema.optionalKey(Schema.String),
+        created_at: Schema.optionalKey(Schema.String),
+        updated_at: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  created_at: Schema.optionalKey(Schema.String),
+  updated_at: Schema.optionalKey(Schema.String),
   saml: Schema.optionalKey(
     Schema.Struct({
       entity_id: Schema.String,
@@ -8544,17 +8637,6 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
       ),
     }),
   ),
-  domains: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        domain: Schema.optionalKey(Schema.String),
-        created_at: Schema.optionalKey(Schema.String),
-        updated_at: Schema.optionalKey(Schema.String),
-      }),
-    ),
-  ),
-  created_at: Schema.optionalKey(Schema.String),
-  updated_at: Schema.optionalKey(Schema.String),
 });
 export const V1UpdateActionRunStatusInput = Schema.Struct({
   ref: Schema.String.check(
@@ -12375,6 +12457,13 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           "request_too_large",
           "unauthorized",
           "validation_failed",
+          "warehouse_selection_empty",
+          "warehouse_selection_conflict",
+          "warehouse_selection_changed",
+          "warehouse_lifecycle_conflict",
+          "warehouse_setup_invalid",
+          "warehouse_not_found",
+          "warehouse_setup_unavailable",
           "agentic_credential_not_found",
           "backup_unsupported",
           "branch_admin_required",
@@ -12626,6 +12715,177 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
     }),
   }),
 });
+export const V2CreateWarehouseSetupInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_setup").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      warehouse_region: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Optional Warehouse compute region, independent of the source and catalog regions. Defaults to the existing assignment, or ap-southeast-1 in staging and eu-west-1 in production for a new assignment. DNS routing requires a registered cluster in that environment. Unsupported regions and changes to an existing assignment are rejected. Ignored when targets is empty.",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      destination_project_ref: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Supabase project to use for both the DuckLake PostgreSQL catalog and Supabase Storage. Defaults to this project on first setup and to the configured destination on later requests. The destination must be active and healthy, and another project requires SQL and Storage admin write permissions. An existing destination cannot be changed through setup. Ignored when targets is empty.",
+        })
+          .check(
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
+            }),
+          )
+          .check(
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
+          )
+          .check(
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+              expected: "a string matching the RegExp ^[a-z]+$",
+            }),
+          ),
+      ),
+      targets: Schema.Array(
+        Schema.Union(
+          [
+            Schema.Struct({
+              type: Schema.Literal("schema"),
+              schema: Schema.String.annotate({
+                description: "Postgres schema whose currently eligible tables should be copied",
+              }).check(
+                Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+              ),
+            }),
+            Schema.Struct({
+              type: Schema.Literal("table"),
+              schema: Schema.String.annotate({ description: "Postgres schema name" }).check(
+                Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+              ),
+              name: Schema.String.annotate({ description: "Postgres table name" }).check(
+                Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+              ),
+            }),
+          ],
+          { mode: "oneOf" },
+        ),
+      ).annotate({
+        description:
+          "Complete selection of schemas and individual tables to copy, replacing the previous selection. Schema targets expand to the eligible tables present when the request is processed. An empty array asynchronously disables Warehouse while retaining its data. Prefer DELETE to disable Warehouse; poll setup-status for completion.",
+      }),
+      install_fdw: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether to configure and install the Warehouse FDW in the project database. Defaults to false. Ignored when targets is empty.",
+        }),
+      ),
+    }),
+  }),
+});
+export const V2CreateWarehouseSetupOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_setup").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      tables: Schema.Array(
+        Schema.Struct({
+          schema: Schema.String.annotate({ description: "Postgres schema name" }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          name: Schema.String.annotate({ description: "Postgres table name" }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          state: Schema.Union([
+            Schema.Literals(["syncing", "live", "error"]).annotate({
+              description: "Warehouse copy sync state derived from replication status",
+            }),
+            OpenString,
+          ]),
+          lag_ms: Schema.optionalKey(
+            Schema.Number.annotate({
+              description: "Replication lag in milliseconds, when available",
+            })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          last_synced_at: Schema.optionalKey(
+            Schema.String.annotate({
+              description: "Last sync timestamp, when available",
+              format: "date-time",
+            }),
+          ),
+          copy_name: Schema.String.annotate({
+            description:
+              "DuckLake table path with individually quoted identifiers, including the configured project namespace when present",
+          }),
+          warehouse_size_bytes: Schema.optionalKey(
+            Schema.Number.annotate({ description: "Warehouse table size in bytes, when available" })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+        }),
+      ).annotate({ description: "Tables with Warehouse copies" }),
+      pipeline_id: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Warehouse replication pipeline ID, or null when Warehouse disable has been requested",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+        Schema.Null,
+      ]),
+      accepted: Schema.Literal(true),
+      selected_tables: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          schema: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          name: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        }),
+      ),
+    }),
+  }),
+});
 export const V2DeleteAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -12774,6 +13034,19 @@ export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
   aws_account_id: Schema.String,
   database_identifier: Schema.String,
 });
+export const V2DeleteProjectFunctionInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
 export const V2DeployAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -12911,6 +13184,54 @@ export const V2DeployAComputeInstanceOutput = Schema.Struct({
     }),
   }),
 });
+export const V2DisableWarehouseInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  delete_data: Schema.optionalKey(Schema.Boolean),
+});
+export const V2DisableWarehouseOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_teardown").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      lifecycle_status: Schema.Union([
+        Schema.Literals(["disabling", "disabled", "deletion_failed"]),
+        OpenString,
+      ]),
+      delete_data: Schema.Boolean.annotate({
+        description:
+          "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+      }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
+      cleanup_error: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
+        }),
+        Schema.Null,
+      ]),
+    }),
+  }),
+});
 export const V2DownloadProjectBackupInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -12933,6 +13254,176 @@ export const V2DownloadProjectBackupOutput = Schema.Struct({
     type: Schema.Literal("project_backup_file_url").annotate({ description: "Resource type." }),
     id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     attributes: Schema.Struct({ file_url: Schema.String }),
+  }),
+});
+export const V2EnableWarehouseInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_setup").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      warehouse_region: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Optional Warehouse compute region, independent of the source and catalog regions. Defaults to the existing assignment, or ap-southeast-1 in staging and eu-west-1 in production for a new assignment. DNS routing requires a registered cluster in that environment. Unsupported regions and changes to an existing assignment are rejected. Ignored when targets is empty.",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      destination_project_ref: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Supabase project to use for both the DuckLake PostgreSQL catalog and Supabase Storage. Defaults to this project on first setup and to the configured destination on later requests. The destination must be active and healthy, and another project requires SQL and Storage admin write permissions. An existing destination cannot be changed through setup. Ignored when targets is empty.",
+        })
+          .check(
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
+            }),
+          )
+          .check(
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
+          )
+          .check(
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+              expected: "a string matching the RegExp ^[a-z]+$",
+            }),
+          ),
+      ),
+      install_fdw: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether to configure and install the Warehouse FDW in the project database. Defaults to false. Ignored when targets is empty.",
+        }),
+      ),
+      schema: Schema.String.annotate({
+        description:
+          "Source PostgreSQL schema. Without tables, selects its currently eligible tables only.",
+      }).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      tables: Schema.optionalKey(
+        Schema.Array(
+          Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        )
+          .annotate({
+            description:
+              "Table names in schema. Omit to select the currently eligible tables in that schema.",
+          })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+      ),
+    }),
+  }),
+});
+export const V2EnableWarehouseOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_setup").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      tables: Schema.Array(
+        Schema.Struct({
+          schema: Schema.String.annotate({ description: "Postgres schema name" }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          name: Schema.String.annotate({ description: "Postgres table name" }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          state: Schema.Union([
+            Schema.Literals(["syncing", "live", "error"]).annotate({
+              description: "Warehouse copy sync state derived from replication status",
+            }),
+            OpenString,
+          ]),
+          lag_ms: Schema.optionalKey(
+            Schema.Number.annotate({
+              description: "Replication lag in milliseconds, when available",
+            })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          last_synced_at: Schema.optionalKey(
+            Schema.String.annotate({
+              description: "Last sync timestamp, when available",
+              format: "date-time",
+            }),
+          ),
+          copy_name: Schema.String.annotate({
+            description:
+              "DuckLake table path with individually quoted identifiers, including the configured project namespace when present",
+          }),
+          warehouse_size_bytes: Schema.optionalKey(
+            Schema.Number.annotate({ description: "Warehouse table size in bytes, when available" })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+        }),
+      ).annotate({ description: "Tables with Warehouse copies" }),
+      pipeline_id: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Warehouse replication pipeline ID, or null when Warehouse disable has been requested",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+        Schema.Null,
+      ]),
+      accepted: Schema.Literal(true),
+      selected_tables: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          schema: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          name: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        }),
+      ),
+      selection_id: Schema.String.annotate({
+        description:
+          "Identity of the accepted selection. Pass to the current setup read to reject a changed selection while waiting.",
+      }).check(
+        Schema.isPattern(new RegExp("^[a-f0-9]{64}$", "u")).annotate({
+          expected: "a string matching the RegExp ^[a-f0-9]{64}$",
+        }),
+      ),
+    }),
   }),
 });
 export const V2GetAComputeInstanceInput = Schema.Struct({
@@ -13915,6 +14406,267 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     }),
   }),
 });
+export const V2GetWarehouseSetupInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  inspect_fdw: Schema.optionalKey(Schema.Literals(["true", "false"])),
+  selection_id: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[a-f0-9]{64}$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-f0-9]{64}$",
+      }),
+    ),
+  ),
+});
+export const V2GetWarehouseSetupOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_setup").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      dns: Schema.optionalKey(
+        Schema.Struct({
+          hostname: Schema.String,
+          region: Schema.String,
+          status: Schema.Union([
+            Schema.Literals(["pending", "ready", "error", "removed"]),
+            OpenString,
+          ]),
+        }).annotate({
+          description:
+            "Warehouse DNS delivery status. Ready means the DNS API accepted the route; client DNS caches may still be updating.",
+        }),
+      ),
+      delete_data: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description: "Whether the current disable request deletes DuckLake data.",
+        }),
+      ),
+      error: Schema.optionalKey(
+        Schema.String.annotate({ description: "Warehouse cleanup failure, when present." }),
+      ),
+      setup_status: Schema.Union([
+        Schema.Literals([
+          "not_started",
+          "setting_up",
+          "copying",
+          "complete",
+          "error",
+          "disabling",
+          "disabled",
+          "deletion_failed",
+        ]).annotate({
+          description:
+            "Overall Warehouse lifecycle status, using persisted state during teardown and replication state during setup",
+        }),
+        OpenString,
+      ]),
+      pipeline_id: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Warehouse replication pipeline ID when it exists",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      steps: Schema.Array(
+        Schema.Struct({
+          name: Schema.Union([
+            Schema.Literals(["warehouse_pipeline", "warehouse_copy", "warehouse_fdw"]).annotate({
+              description: "Observable Warehouse setup phase",
+            }),
+            OpenString,
+          ]),
+          status: Schema.Union([
+            Schema.Literals(["waiting", "running", "completed", "skipped", "error"]).annotate({
+              description: "Derived Warehouse setup step status",
+            }),
+            OpenString,
+          ]),
+          message: Schema.optionalKey(
+            Schema.String.annotate({
+              description: "Best-effort progress or error message derived from Warehouse state",
+            }),
+          ),
+        }),
+      ).annotate({ description: "Warehouse setup phases in execution order" }),
+      tables: Schema.Array(
+        Schema.Struct({
+          schema: Schema.String.annotate({ description: "Postgres schema name" }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          name: Schema.String.annotate({ description: "Postgres table name" }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          state: Schema.Union([
+            Schema.Literals(["syncing", "live", "error"]).annotate({
+              description: "Warehouse copy sync state derived from replication status",
+            }),
+            OpenString,
+          ]),
+          lag_ms: Schema.optionalKey(
+            Schema.Number.annotate({
+              description: "Replication lag in milliseconds, when available",
+            })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          last_synced_at: Schema.optionalKey(
+            Schema.String.annotate({
+              description: "Last sync timestamp, when available",
+              format: "date-time",
+            }),
+          ),
+          copy_name: Schema.String.annotate({
+            description:
+              "DuckLake table path with individually quoted identifiers, including the configured project namespace when present",
+          }),
+          warehouse_size_bytes: Schema.optionalKey(
+            Schema.Number.annotate({ description: "Warehouse table size in bytes, when available" })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          replication_state: Schema.Union([Schema.String, Schema.Null]),
+        }),
+      ),
+      fdw_status: Schema.Union([
+        Schema.Struct({
+          extension_available: Schema.Boolean.annotate({
+            description:
+              "Whether fdw_warehouse is available to install on the project database instance",
+          }),
+          extension_installed: Schema.Boolean.annotate({
+            description: "Whether the fdw_warehouse extension exists in the project database",
+          }),
+          wrapper_installed: Schema.Boolean.annotate({
+            description:
+              "Whether the Warehouse foreign data wrapper exists in the project database",
+          }),
+          server_configured: Schema.Boolean.annotate({
+            description: "Whether the Warehouse foreign server exists in the project database",
+          }),
+          schema_created: Schema.Boolean.annotate({
+            description: "Whether the local Warehouse schema exists in the project database",
+          }),
+          foreign_schema_imported: Schema.Boolean.annotate({
+            description:
+              "Whether the Warehouse foreign schema import has exposed the Warehouse snapshots table",
+          }),
+        }).annotate({
+          description:
+            "Project database FDW setup markers; null during or after teardown, when setup inspection is inapplicable.",
+        }),
+        Schema.Null,
+      ]),
+      status: Schema.Union([
+        Schema.Literals(["running", "succeeded", "failed"]).annotate({
+          description:
+            "Current enablement readiness. Success requires initial copy, a running pipeline and ready routing; this is not a historical operation result or a query connectivity check.",
+        }),
+        OpenString,
+      ]),
+      status_error: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Reason current enablement readiness failed. Separate from Studio setup or cleanup errors.",
+        }),
+      ),
+      replication_state: Schema.String,
+    }),
+  }),
+});
+export const V2GetWarehouseTeardownInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  operation_id: Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+});
+export const V2GetWarehouseTeardownOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_teardown").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      lifecycle_status: Schema.Union([
+        Schema.Literals(["disabling", "disabled", "deletion_failed"]),
+        OpenString,
+      ]),
+      delete_data: Schema.Boolean.annotate({
+        description:
+          "Whether this cleanup permanently deletes managed Warehouse data. Source Postgres tables are preserved in both modes.",
+      }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
+      cleanup_error: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Last cleanup failure, or null when none was recorded. Failed cleanup can leave partially removed resources; retry disable with the same data policy.",
+        }),
+        Schema.Null,
+      ]),
+    }),
+  }),
+});
 export const V2ListAllComputeInstancesInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -14693,6 +15445,7 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
             "PAUSE_FAILED",
             "RESIZING",
             "PROMOTING",
+            "RIGHTSIZING",
           ]).annotate({ description: "Project status" }),
           OpenString,
         ]),
@@ -18684,6 +19437,7 @@ export const V1CountActionRunsOutput = Schema.Void;
 export const V1DeactivateVanitySubdomainConfigOutput = Schema.Void;
 export const V1DeleteHostnameConfigOutput = Schema.Void;
 export const V1DeleteAFunctionOutput = Schema.Void;
+export const V1DeleteAllFunctionsOutput = Schema.Void;
 export const V1DeleteInviteExternalJitAccessOutput = Schema.Void;
 export const V1DeleteJitAccessOutput = Schema.Void;
 export const V1DeleteNetworkBansOutput = Schema.Void;
@@ -18717,6 +19471,7 @@ export const V2DeleteLogDrainOutput = Schema.Void;
 export const V2DeleteNotebookOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
+export const V2DeleteProjectFunctionOutput = Schema.Void;
 export const V2RemoveOrganizationMembersOutput = Schema.Void;
 export const V2TransferAProjectOutput = Schema.Void;
 
@@ -18753,6 +19508,7 @@ export const openApiOperationIdMap = {
   "v1-delete-a-function": "v1DeleteAFunction",
   "v1-delete-a-project": "v1DeleteAProject",
   "v1-delete-a-sso-provider": "v1DeleteASsoProvider",
+  "v1-delete-all-functions": "v1DeleteAllFunctions",
   "v1-delete-invite-external-jit-access": "v1DeleteInviteExternalJitAccess",
   "v1-delete-jit-access": "v1DeleteJitAccess",
   "v1-delete-login-roles": "v1DeleteLoginRoles",
@@ -18849,6 +19605,7 @@ export const openApiOperationIdMap = {
   "v1-patch-network-restrictions": "v1PatchNetworkRestrictions",
   "v1-patch-postgres-config": "v1PatchPostgresConfig",
   "v1-pause-a-project": "v1PauseAProject",
+  "v1-post-project-logs": "v1PostProjectLogs",
   "v1-push-a-branch": "v1PushABranch",
   "v1-read-only-query": "v1ReadOnlyQuery",
   "v1-remove-a-read-replica": "v1RemoveAReadReplica",
@@ -18900,17 +19657,23 @@ export const openApiOperationIdMap = {
   "v2-create-notebook": "v2CreateNotebook",
   "v2-create-organization-invitations": "v2CreateOrganizationInvitations",
   "v2-create-private-link-association": "v2CreatePrivateLinkAssociation",
+  "v2-create-warehouse-setup": "v2CreateWarehouseSetup",
   "v2-delete-a-compute-instance": "v2DeleteAComputeInstance",
   "v2-delete-log-drain": "v2DeleteLogDrain",
   "v2-delete-notebook": "v2DeleteNotebook",
   "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
+  "v2-delete-project-function": "v2DeleteProjectFunction",
   "v2-deploy-a-compute-instance": "v2DeployAComputeInstance",
+  "v2-disable-warehouse": "v2DisableWarehouse",
   "v2-download-project-backup": "v2DownloadProjectBackup",
+  "v2-enable-warehouse": "v2EnableWarehouse",
   "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
+  "v2-get-warehouse-setup": "v2GetWarehouseSetup",
+  "v2-get-warehouse-teardown": "v2GetWarehouseTeardown",
   "v2-list-all-compute-instances": "v2ListAllComputeInstances",
   "v2-list-log-drains": "v2ListLogDrains",
   "v2-list-notebooks": "v2ListNotebooks",
@@ -19271,6 +20034,7 @@ export const operationDefinitions = {
         "domains",
         "attribute_mapping",
         "name_id_format",
+        "dedicated_scope",
       ],
     },
     response: { kind: "json" },
@@ -19475,6 +20239,19 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1DeleteASsoProviderInput,
     outputSchema: V1DeleteASsoProviderOutput,
+  },
+  v1DeleteAllFunctions: {
+    id: "v1DeleteAllFunctions",
+    description: "Deletes all Edge Functions from a project",
+    method: "DELETE",
+    path: "/v1/projects/{ref}/functions",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V1DeleteAllFunctionsInput,
+    outputSchema: V1DeleteAllFunctionsOutput,
   },
   v1DeleteInviteExternalJitAccess: {
     id: "v1DeleteInviteExternalJitAccess",
@@ -20204,11 +20981,11 @@ export const operationDefinitions = {
   v1GetProjectLogs: {
     id: "v1GetProjectLogs",
     description:
-      "Executes an SQL or LQL query on the project's unified logs stream.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nFilter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\nNote: SQL must be written in **ClickHouse SQL dialect**.",
+      "Executes an SQL or LQL query on the project's unified logs stream.\n\n  Either the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\n  If both are not provided, only the last 1 minute of logs will be queried.\n  The timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\n  Filter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\n  Note: SQL must be written in **ClickHouse SQL dialect**.",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs",
     pathParams: ["ref"],
-    queryParams: ["sql", "iso_timestamp_start", "iso_timestamp_end"],
+    queryParams: ["sql", "lql", "iso_timestamp_start", "iso_timestamp_end"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
@@ -20814,6 +21591,24 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V1PauseAProjectInput,
     outputSchema: V1PauseAProjectOutput,
+  },
+  v1PostProjectLogs: {
+    id: "v1PostProjectLogs",
+    description:
+      "Executes an SQL or LQL query on the project's unified logs stream.\n\n  Either the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\n  If both are not provided, only the last 1 minute of logs will be queried.\n  The timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\n  Filter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\n  Note: SQL must be written in **ClickHouse SQL dialect**.",
+    method: "POST",
+    path: "/v1/projects/{ref}/analytics/endpoints/logs",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: {
+      kind: "json",
+      contentType: "application/json",
+      fields: ["sql", "lql", "iso_timestamp_start", "iso_timestamp_end"],
+    },
+    response: { kind: "json" },
+    inputSchema: V1PostProjectLogsInput,
+    outputSchema: V1PostProjectLogsOutput,
   },
   v1PushABranch: {
     id: "v1PushABranch",
@@ -21892,6 +22687,20 @@ export const operationDefinitions = {
     inputSchema: V2CreatePrivateLinkAssociationInput,
     outputSchema: V2CreatePrivateLinkAssociationOutput,
   },
+  v2CreateWarehouseSetup: {
+    id: "v2CreateWarehouseSetup",
+    description:
+      "Replaces the full selection, preserving existing placement and destination settings. Resolves source identities under the mutation lock. Empty selections asynchronously disable Warehouse while retaining data. FDW installation is opt-in. Acceptance does not imply completed synchronization.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/warehouse/setups",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateWarehouseSetupInput,
+    outputSchema: V2CreateWarehouseSetupOutput,
+  },
   v2DeleteAComputeInstance: {
     id: "v2DeleteAComputeInstance",
     description:
@@ -21973,6 +22782,19 @@ export const operationDefinitions = {
     inputSchema: V2DeletePrivateLinkAssociationForDatabaseInput,
     outputSchema: V2DeletePrivateLinkAssociationForDatabaseOutput,
   },
+  v2DeleteProjectFunction: {
+    id: "v2DeleteProjectFunction",
+    description: "Deletes all Edge Functions from a project",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/functions",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteProjectFunctionInput,
+    outputSchema: V2DeleteProjectFunctionOutput,
+  },
   v2DeployAComputeInstance: {
     id: "v2DeployAComputeInstance",
     description:
@@ -21987,6 +22809,20 @@ export const operationDefinitions = {
     inputSchema: V2DeployAComputeInstanceInput,
     outputSchema: V2DeployAComputeInstanceOutput,
   },
+  v2DisableWarehouse: {
+    id: "v2DisableWarehouse",
+    description:
+      "Stops replication and removes the Warehouse publication, FDW and dependent foreign tables, reader group, catalog access and query routing asynchronously. Stored Warehouse data is retained by default. Set delete_data=true to permanently delete the managed catalog schema and dedicated Storage bucket; destination SQL and Storage write permissions are also required. Legacy shared buckets and source Postgres tables are preserved. Reader memberships are not restored on re-enablement. Safe retries return the existing cleanup identity; changing an in-progress data policy returns a conflict. Poll the linked teardown for completion or partial cleanup failures.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/warehouse",
+    pathParams: ["ref"],
+    queryParams: ["delete_data"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2DisableWarehouseInput,
+    outputSchema: V2DisableWarehouseOutput,
+  },
   v2DownloadProjectBackup: {
     id: "v2DownloadProjectBackup",
     description: "Download project backup",
@@ -21999,6 +22835,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2DownloadProjectBackupInput,
     outputSchema: V2DownloadProjectBackupOutput,
+  },
+  v2EnableWarehouse: {
+    id: "v2EnableWarehouse",
+    description:
+      "Enables replication for the currently eligible tables in a schema, or the named tables in that schema. Resolves source identities under the mutation lock without a preview or revision. Repeating the same selection is safe; a different existing selection is rejected. Schema selection excludes future tables; selected partition roots include future partitions. Acceptance does not imply completed synchronization.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/warehouse/enable",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2EnableWarehouseInput,
+    outputSchema: V2EnableWarehouseOutput,
   },
   v2GetAComputeInstance: {
     id: "v2GetAComputeInstance",
@@ -22040,6 +22890,34 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
+  },
+  v2GetWarehouseSetup: {
+    id: "v2GetWarehouseSetup",
+    description:
+      "Returns setup phases, linked tables, pipeline and routing state, cleanup errors, and optional FDW inspection. Set inspect_fdw=false to skip database FDW inspection. A null table replication_state means no observation is available. Status succeeded requires initial copy, a running pipeline and ready routing; it does not verify query connectivity. Pass the selection_id returned by enable to reject a changed selection while waiting.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/setups/current",
+    pathParams: ["ref"],
+    queryParams: ["inspect_fdw", "selection_id"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseSetupInput,
+    outputSchema: V2GetWarehouseSetupOutput,
+  },
+  v2GetWarehouseTeardown: {
+    id: "v2GetWarehouseTeardown",
+    description:
+      "Reads the current durable cleanup state without contacting ETL or inspecting the FDW. Disabling means cleanup is in progress; disabled means cleanup completed; deletion_failed means cleanup may be partial. The original data policy and failure reason remain available. Optionally supply operation_id to observe a specific disable attempt. Returns a conflict if no cleanup state is available or the supplied identity does not match the current operation.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/teardowns/current",
+    pathParams: ["ref"],
+    queryParams: ["operation_id"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseTeardownInput,
+    outputSchema: V2GetWarehouseTeardownOutput,
   },
   v2ListAllComputeInstances: {
     id: "v2ListAllComputeInstances",

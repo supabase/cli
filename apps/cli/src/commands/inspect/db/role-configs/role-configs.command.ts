@@ -1,4 +1,5 @@
 import { Command } from "effect/cli";
+import { withDeprecated } from "../../../../command-internal/command-access-policy.ts";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbRoleConfigs } from "./role-configs.handler.ts";
 import {
@@ -15,11 +16,12 @@ export const inspectDbRoleConfigsCommand = Command.make("role-configs", INSPECT_
   Command.withDescription(
     'Show configuration settings for database roles when they have been modified. Deprecated: use "role-stats" instead.',
   ),
-  Command.withShortDescription("Show role configs (deprecated)"),
+  Command.withShortDescription("Show role configs"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbRoleConfigs)),
   Command.provide(inspectDbRuntimeLayer("role-configs")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
   withInspectDbTargetPolicy,
+  withDeprecated,
 );

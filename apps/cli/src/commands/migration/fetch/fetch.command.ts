@@ -14,6 +14,7 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = targetFlags({ subject: "database", dbUrl: true });
 
@@ -22,14 +23,6 @@ export type MigrationFetchFlags = CliCommand.Command.Config.Infer<typeof config>
 export const migrationFetchCommand = Command.make("fetch", config).pipe(
   Command.withDescription("Fetch migration files from history table."),
   Command.withShortDescription("Fetch migration files from history table"),
-  withPermissions(
-    compose(
-      { operations: [], noApiEffectFlags: [] },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     migrationFetch(flags).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),
@@ -41,4 +34,13 @@ export const migrationFetchCommand = Command.make("fetch", config).pipe(
     consent: "none",
     consentExemptReason: "reads the remote migration history and writes only local migration files",
   }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: [] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

@@ -3625,7 +3625,7 @@ content_path = "./supabase/templates/custom_notice.html"
           // a daemon-unreachable `image inspect` stderr, with no registry-candidate retries or
           // real backoff sleeps — the flagless test above already covers the other trigger,
           // pull-retry exhaustion. Both funnel into the same joined `ImagePrepullError`. See
-          // `isUnhealthyStartError`'s doc comment and `SIDE_EFFECTS.md`'s "Notes" before changing this.
+          // `isUnhealthyStartError`'s doc comment before changing this.
           const base = defaultRoute();
           const route = (args: ReadonlyArray<string>): RouteResult => {
             if (args[0] === "image" && args[1] === "inspect") {
