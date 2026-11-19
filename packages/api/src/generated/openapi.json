@@ -7110,7 +7110,7 @@
     "/v1/projects/{ref}/analytics/endpoints/logs": {
       "get": {
         "deprecated": false,
-        "description": "Executes an SQL or LQL query on the project's unified logs stream.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nFilter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\nNote: SQL must be written in **ClickHouse SQL dialect**.\n",
+        "description": "Executes an SQL or LQL query on the project's unified logs stream.\n\n  Either the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\n  If both are not provided, only the last 1 minute of logs will be queried.\n  The timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\n  Filter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\n  Note: SQL must be written in **ClickHouse SQL dialect**.\n",
         "operationId": "v1-get-project-logs",
         "parameters": [
           {
@@ -7137,6 +7137,16 @@
             }
           },
           {
+            "name": "lql",
+            "required": false,
+            "in": "query",
+            "description": "Custom LQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
+            "schema": {
+              "example": "s:event_message",
+              "type": "string"
+            }
+          },
+          {
             "name": "iso_timestamp_start",
             "required": false,
             "in": "query",
@@ -7159,6 +7169,76 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "402": {
+            "description": "Usage exceeded. Enable additional usage to continue querying"
+          },
+          "403": {
+            "description": "Forbidden action"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Gets all project's logs in a single log stream",
+        "tags": ["Analytics"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: analytics:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["observability"],
+        "x-fga-permissions": [["analytics_logs_read"]],
+        "x-oauth-scope": "analytics:read"
+      },
+      "post": {
+        "deprecated": false,
+        "description": "Executes an SQL or LQL query on the project's unified logs stream.\n\n  Either the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\n  If both are not provided, only the last 1 minute of logs will be queried.\n  The timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\n  Filter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\n  Note: SQL must be written in **ClickHouse SQL dialect**.\n",
+        "operationId": "v1-post-project-logs",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V1PostProjectLogsBody"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "",
@@ -9169,6 +9249,57 @@
         "x-endpoint-owners": ["functions"],
         "x-fga-permissions": [["edge_functions_write"]],
         "x-oauth-scope": "edge_functions:write"
+      },
+      "delete": {
+        "operationId": "v1-delete-all-functions",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden action"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "description": "Failed to delete project's functions"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deletes all Edge Functions from a project",
+        "tags": ["Edge Functions"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["support-tooling", "functions"],
+        "x-fga-permissions": [["edge_functions_write"]],
+        "x-oauth-scope": "edge_functions:write"
       }
     },
     "/v1/projects/{ref}/functions/deploy": {
@@ -10601,6 +10732,16 @@
           "401": {
             "description": "Unauthorized"
           },
+          "402": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
+          },
           "403": {
             "description": "Forbidden action"
           },
@@ -10618,10 +10759,15 @@
         ],
         "summary": "Creates a new SSO provider",
         "tags": ["Auth"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: auth:write",
             "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
           }
         ],
         "x-endpoint-owners": ["auth"],
@@ -10809,6 +10955,16 @@
           "401": {
             "description": "Unauthorized"
           },
+          "402": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
+          },
           "403": {
             "description": "Forbidden action"
           },
@@ -10826,10 +10982,15 @@
         ],
         "summary": "Updates a SSO provider by its UUID",
         "tags": ["Auth"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: auth:write",
             "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
           }
         ],
         "x-endpoint-owners": ["auth"],
@@ -13345,6 +13506,97 @@
           ]
         ],
         "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/functions": {
+      "delete": {
+        "operationId": "v2-delete-project-function",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to delete project functions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deletes all Edge Functions from a project",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["support-tooling", "functions"],
+        "x-fga-permissions": [["edge_functions_write"]],
+        "x-oauth-scope": "edge_functions:write"
       }
     },
     "/v2/projects/{ref}/notebooks": {
@@ -38828,6 +39080,40 @@
           }
         }
       },
+      "V1PostProjectLogsBody": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "example": "select event_message from edge_logs limit 10",
+            "description": "Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
+            "type": "string"
+          },
+          "lql": {
+            "example": "s:event_message",
+            "description": "Custom LQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
+            "type": "string"
+          },
+          "iso_timestamp_start": {
+            "example": "2025-03-01T00:00:00Z",
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "iso_timestamp_end": {
+            "example": "2025-03-01T23:59:59Z",
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "description": "Request body for searching project logs with POST body",
+        "example": {
+          "sql": "select event_message from edge_logs limit 10",
+          "iso_timestamp_start": "2025-03-01T00:00:00Z",
+          "iso_timestamp_end": "2025-03-01T23:59:59Z"
+        },
+        "additionalProperties": false
+      },
       "V1GetUsageApiCountResponse_Output": {
         "type": "object",
         "properties": {
@@ -41327,6 +41613,10 @@
               "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
               "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
             ]
+          },
+          "dedicated_scope": {
+            "description": "When `true`, the provider's SAML ACS URL and entity ID are scoped to its own provider ID instead of the ones shared by all SAML providers in the project. The same signing key is still used. This cannot be changed once the provider is created.",
+            "type": "boolean"
           }
         },
         "required": ["type"],
@@ -41353,6 +41643,29 @@
         "type": "object",
         "properties": {
           "id": {
+            "type": "string"
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "domain": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
             "type": "string"
           },
           "saml": {
@@ -41418,32 +41731,13 @@
                   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
                 ]
+              },
+              "dedicated_scope": {
+                "type": "boolean",
+                "nullable": true
               }
             },
             "required": ["entity_id"]
-          },
-          "domains": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "domain": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "updated_at": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string"
           }
         },
         "required": ["id"]
@@ -41457,6 +41751,29 @@
               "type": "object",
               "properties": {
                 "id": {
+                  "type": "string"
+                },
+                "domains": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "domain": {
+                        "type": "string"
+                      },
+                      "created_at": {
+                        "type": "string"
+                      },
+                      "updated_at": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "updated_at": {
                   "type": "string"
                 },
                 "saml": {
@@ -41522,32 +41839,13 @@
                         "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                         "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
                       ]
+                    },
+                    "dedicated_scope": {
+                      "type": "boolean",
+                      "nullable": true
                     }
                   },
                   "required": ["entity_id"]
-                },
-                "domains": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "domain": {
-                        "type": "string"
-                      },
-                      "created_at": {
-                        "type": "string"
-                      },
-                      "updated_at": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "updated_at": {
-                  "type": "string"
                 }
               },
               "required": ["id"]
@@ -41560,6 +41858,29 @@
         "type": "object",
         "properties": {
           "id": {
+            "type": "string"
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "domain": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
             "type": "string"
           },
           "saml": {
@@ -41625,32 +41946,13 @@
                   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
                 ]
+              },
+              "dedicated_scope": {
+                "type": "boolean",
+                "nullable": true
               }
             },
             "required": ["entity_id"]
-          },
-          "domains": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "domain": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "updated_at": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string"
           }
         },
         "required": ["id"]
@@ -41734,6 +42036,29 @@
           "id": {
             "type": "string"
           },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "domain": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
           "saml": {
             "type": "object",
             "properties": {
@@ -41800,29 +42125,6 @@
               }
             },
             "required": ["entity_id"]
-          },
-          "domains": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "domain": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "updated_at": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string"
           }
         },
         "required": ["id"]
@@ -41833,6 +42135,29 @@
           "id": {
             "type": "string"
           },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "domain": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
           "saml": {
             "type": "object",
             "properties": {
@@ -41896,32 +42221,13 @@
                   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
                 ]
+              },
+              "dedicated_scope": {
+                "type": "boolean",
+                "nullable": true
               }
             },
             "required": ["entity_id"]
-          },
-          "domains": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "domain": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "type": "string"
-                },
-                "updated_at": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string"
           }
         },
         "required": ["id"]
